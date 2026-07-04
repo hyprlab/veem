@@ -1,0 +1,27 @@
+# Veem account configuration.
+#
+# Copy this file to ~/.config/veem/accounts.toml and fill in your details.
+# When this file is present and lists at least one account, Veem connects over
+# IMAP; otherwise it starts empty with an "Add account" prompt. (Most people just
+# add accounts from the in-app Settings instead of editing this file.)
+#
+# NOTE: a `password` set here is migrated into the system keyring (secret-service)
+# on first run and then removed from this file — passwords are never kept on disk.
+# You can also just enter credentials in the in-app Settings. For Gmail, iCloud,
+# etc. use an app-specific password.
+
+[[accounts]]
+name = "Personal"
+email = "you@example.com"
+imap_host = "imap.example.com"
+imap_port = 993            # optional, defaults to 993 (implicit TLS)
+smtp_host = "smtp.example.com"  # optional, derived from imap_host if omitted
+smtp_port = 587            # optional, defaults to 587 (STARTTLS; use 465 for implicit TLS)
+username = "you@example.com"
+password = "app-specific-password"
+
+# Common servers:
+#   Gmail   imap.gmail.com           (requires an app password)
+#   iCloud  imap.mail.me.com         (requires an app-specific password)
+#   Outlook outlook.office365.com
+#   Fastmail imap.fastmail.com

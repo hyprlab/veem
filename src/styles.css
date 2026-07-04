@@ -1,0 +1,542 @@
+/* Veem — clean, calm styling layered on top of libadwaita defaults. */
+
+.app-title {
+  font-weight: 700;
+}
+
+.pane-title {
+  font-weight: 600;
+}
+
+/* ---- Sidebar / account header ---- */
+
+.account-header {
+  padding: 10px 12px 14px 12px;
+  /* Match the side margin + rounded highlight of the navigation-sidebar rows
+     (libadwaita uses margin: 0 6px; border-radius: 9px) so the hover background
+     sits inset from the edges instead of flush against them. */
+  margin: 0 6px;
+  border-radius: 9px;
+}
+
+/* Icon-only rail: tighten horizontal padding/margin so pills/icons fit a narrow column. */
+.rail-collapsed .account-header {
+  padding-left: 4px;
+  padding-right: 4px;
+  margin-left: 2px;
+  margin-right: 2px;
+}
+
+.rail-collapsed .folder-row {
+  padding-left: 2px;
+  padding-right: 2px;
+}
+
+.account-avatar {
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, @accent_bg_color, shade(@accent_bg_color, 0.8));
+  color: #fff;
+}
+
+/* Version pill on the About window. */
+.about-version-chip {
+  background-color: alpha(@accent_color, 0.15);
+  color: @accent_color;
+  border-radius: 999px;
+  padding: 1px 12px;
+  font-weight: 600;
+}
+
+.about-section {
+  padding: 12px 14px;
+}
+
+.about-coffee {
+  font-size: 1.2em;
+}
+
+.account-avatar label {
+  font-weight: 700;
+  color: #fff;
+}
+
+.account-name {
+  font-weight: 600;
+}
+
+/* Per-account avatar circle in the sidebar (background colour set at runtime). */
+.account-circle {
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 17px;
+}
+
+.account-circle label {
+  font-weight: 700;
+  font-size: 0.95em;
+}
+
+/* Optical centring. Glyphs centre by their font's logical box, which sits a
+   little low and left of the visible ink, so each glyph type/size is nudged back
+   up and right independently (initials and emoji tuned separately). */
+
+/* Large header circle — emoji nudged; initials centre fine on their own. */
+.account-circle label.account-emoji {
+  font-size: 1.05em;
+  font-weight: 400;
+  margin-bottom: 2px;
+  margin-left: 2px;
+}
+
+/* Small pill for the "All Inboxes" per-account sub-list. */
+.account-circle-sm {
+  min-width: 22px;
+  min-height: 22px;
+  border-radius: 11px;
+}
+
+/* Small-circle initials. */
+.account-circle-sm label {
+  font-weight: 700;
+  font-size: 0.72em;
+  margin-bottom: 1px;
+  margin-left: 1px;
+}
+
+/* Small-circle emoji (overrides the initials rule above for emoji glyphs). */
+.account-circle-sm label.account-emoji {
+  font-size: 0.85em;
+  font-weight: 400;
+  margin-bottom: 1px;
+  margin-left: 1px;
+}
+
+/* Inbox rows nested under "All Inboxes": no indent so their account pills
+   line up with the folder icons in the rest of the sidebar. */
+.unified-subrow {
+  margin-left: -2px;
+}
+
+/* Compact disclosure button in the "All Inboxes" row. */
+.chevron-btn {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+}
+
+/* Draggable account rows in the Accounts window. */
+.account-list-row {
+  padding: 14px 12px;
+}
+
+/* Recipient autocomplete: highlight the keyboard-selected suggestion. */
+.autocomplete {
+  background: transparent;
+}
+
+.autocomplete row {
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.autocomplete row:selected {
+  background-color: @accent_bg_color;
+}
+
+.autocomplete row:selected label {
+  color: @accent_fg_color;
+}
+
+/* Compose attachment chips. */
+.attach-chip {
+  padding: 3px 4px 3px 10px;
+  border-radius: 14px;
+  background: alpha(currentColor, 0.08);
+}
+
+/* Reader attachment popover rows. */
+.attach-row {
+  padding: 4px 6px;
+}
+
+/* Tint the attachments button with the GNOME accent when present. */
+.attach-present {
+  color: @accent_color;
+}
+
+/* Account chip in the reader header (colours set at runtime). */
+.account-chip {
+  border-radius: 8px;
+  padding: 1px 9px;
+  font-size: 0.78em;
+  font-weight: 700;
+}
+
+.account-email {
+  font-size: 0.85em;
+  opacity: 0.6;
+}
+
+.folder-row {
+  padding: 7px 8px;
+}
+
+.folder-icon {
+  opacity: 0.75;
+}
+
+/* Subtle "+ Add Folder" button under each account's folder list, aligned with
+   the navigation-sidebar rows above it. */
+.add-folder-btn {
+  margin: 0 6px 2px;
+  border-radius: 9px;
+}
+
+.add-folder-btn label,
+.add-folder-btn image {
+  opacity: 0.6;
+}
+
+/* Unread count: a perfect circle for a single digit that grows horizontally
+   into a pill for larger numbers, but never taller. */
+.unread-badge {
+  background: @accent_bg_color;
+  color: @accent_fg_color;
+  border-radius: 9999px;
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0 5px;
+  font-size: 0.8em;
+  font-weight: 700;
+}
+
+/* ---- Message list ---- */
+
+.list-toolbar {
+  padding: 8px 12px 10px 12px;
+}
+
+.list-title {
+  font-size: 1.25em;
+  font-weight: 800;
+}
+
+.list-count {
+  opacity: 0.5;
+  font-weight: 600;
+}
+
+/* Bulk-action bar shown while several messages are selected. */
+.bulk-bar {
+  padding: 4px 8px 6px 12px;
+  border-bottom: 1px solid alpha(currentColor, 0.08);
+}
+
+.bulk-count {
+  font-weight: 700;
+}
+
+.message-listbox {
+  background: transparent;
+}
+
+.message-listbox > row {
+  padding: 0;
+  border-bottom: 1px solid alpha(currentColor, 0.07);
+}
+
+/* Reactive hover highlight (kept below the selection colour). */
+.message-listbox > row:hover:not(:selected) {
+  background-color: alpha(currentColor, 0.05);
+}
+
+/* Unread messages: pale accent background until read. */
+.message-listbox > row.message-unread:not(:selected) {
+  background-color: alpha(@accent_bg_color, 0.12);
+}
+
+.message-listbox > row.message-unread:hover:not(:selected) {
+  background-color: alpha(@accent_bg_color, 0.2);
+}
+
+/* Selected (currently-viewed) message: stronger accent tint than libadwaita's
+   default 25%. The hover/active variants are overridden too so the highlight
+   stays uniform when the cursor passes over the selected row. */
+.message-listbox > row:selected {
+  background-color: alpha(@accent_bg_color, 0.5);
+}
+
+.message-listbox > row.activatable:selected:hover,
+.message-listbox > row.activatable:selected:active {
+  background-color: alpha(@accent_bg_color, 0.5);
+}
+
+.message-row {
+  padding: 10px 12px;
+}
+
+/* Conversation threading: count chip + compact expand/collapse chevron on the
+   thread head, and an indented, accent-edged look for nested replies. */
+.thread-count {
+  background: alpha(currentColor, 0.1);
+  border-radius: 9999px;
+  min-width: 16px;
+  padding: 0 5px;
+  font-size: 0.72em;
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+.thread-toggle {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+}
+
+.thread-toggle image {
+  -gtk-icon-size: 13px;
+  opacity: 0.6;
+}
+
+.message-listbox > row.thread-child .message-row {
+  margin-left: 22px;
+  border-left: 2px solid alpha(@accent_bg_color, 0.4);
+}
+
+/* The Actions Palette: quick-action buttons that slide in from the chevron,
+   over the preview slot (so the row height doesn't change). */
+.actions-palette button {
+  min-width: 22px;
+  min-height: 0;
+  padding: 0 2px;
+}
+
+.actions-palette button image {
+  -gtk-icon-size: 14px;
+}
+
+/* The chevron that slides the Actions Palette open. Hidden until the row is
+   hovered (or the palette is open), then faded in over 200ms. Its slot is always
+   reserved, so revealing it doesn't shift the preview text. */
+.palette-toggle {
+  min-width: 20px;
+  min-height: 0;
+  padding: 0 2px;
+  opacity: 0;
+  transition: opacity 200ms ease-in-out;
+}
+
+.palette-toggle.revealed {
+  opacity: 0.6;
+}
+
+.palette-toggle.revealed:hover {
+  opacity: 1;
+}
+
+.palette-toggle image {
+  -gtk-icon-size: 14px;
+}
+
+.unread-dot {
+  min-width: 8px;
+  min-height: 8px;
+  border-radius: 4px;
+  background: @accent_bg_color;
+  margin-top: 6px;
+}
+
+.message-sender {
+  font-weight: 600;
+}
+
+.message-sender.unread {
+  font-weight: 800;
+}
+
+.message-subject {
+  opacity: 0.85;
+  font-size: 0.95em;
+}
+
+.message-subject.unread {
+  font-weight: 700;
+  opacity: 1;
+}
+
+.message-preview {
+  opacity: 0.5;
+  font-size: 0.9em;
+}
+
+.message-date {
+  font-size: 0.82em;
+  opacity: 0.5;
+}
+
+.dim-icon,
+.star-icon {
+  opacity: 0.6;
+  -gtk-icon-size: 12px;
+}
+
+.star-icon {
+  color: #e5a50a;
+  opacity: 0.9;
+}
+
+/* ---- Reader ---- */
+
+.reader-header {
+  padding: 20px 24px 16px 24px;
+}
+
+.reader-subject {
+  font-size: 1.5em;
+  font-weight: 800;
+}
+
+.reader-avatar {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, @accent_bg_color, shade(@accent_bg_color, 0.75));
+}
+
+.reader-avatar label {
+  font-weight: 700;
+  color: #fff;
+}
+
+.reader-from-name {
+  font-weight: 700;
+}
+
+.reader-from-addr {
+  opacity: 0.55;
+  font-size: 0.9em;
+}
+
+.reader-date {
+  opacity: 0.55;
+  font-size: 0.9em;
+}
+
+.reader-cc {
+  opacity: 0.55;
+  font-size: 0.9em;
+}
+
+.reader-body {
+  padding: 22px 24px;
+  font-size: 1.02em;
+  line-height: 1.55;
+}
+
+/* ---- Notifications ---- */
+
+/* The bar uses the desktop accent colour (libadwaita maps the GNOME accent to
+   @accent_bg_color, defaulting to #3584e4); errors turn amber. */
+.notify-area {
+  background-color: @accent_bg_color;
+  color: @accent_fg_color;
+}
+
+.notify-area.error {
+  background-color: #ffca28;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.notify-bar {
+  padding: 8px 10px 8px 14px;
+}
+
+.notify-bar button.flat {
+  color: inherit;
+}
+
+.notify-cards {
+  padding: 4px 12px 14px 12px;
+}
+
+/* Toast-like cards floating on the coloured bar. Fixed amber with dark text
+   (no light/dark switch); slightly deeper than the bar behind for separation. */
+.toast-card {
+  background-color: #ffca28;
+  color: rgba(0, 0, 0, 0.85);
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 12px;
+  padding: 10px 8px 10px 14px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.toast-card label {
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.toast-card-icon {
+  color: rgba(0, 0, 0, 0.75);
+  margin-top: 2px;
+}
+
+/* Header notification icon turns yellow while there are errors to see. */
+.attention-icon {
+  color: #ffca28;
+}
+
+/* Count pill in the header button. */
+.needs-attention {
+  font-weight: 700;
+}
+
+/* ---- Remote-content (privacy) alert in the reader ---- */
+
+.remote-alert {
+  background-color: #ffca28;
+  color: rgba(0, 0, 0, 0.85);
+  padding: 8px 10px 8px 14px;
+}
+
+.remote-alert image {
+  color: rgba(0, 0, 0, 0.75);
+}
+
+/* ---- Compose ---- */
+
+.compose-pane {
+  padding: 16px;
+}
+
+/* Compact recipient fields (From/To/Cc/Bcc/Subject) so the body editor, which
+   expands to fill, gets far more vertical room. Default row header is 50px. */
+.compose-fields > row > box.header {
+  min-height: 34px;
+}
+
+.compose-body {
+  font-size: 1.02em;
+  line-height: 1.5;
+  background: transparent;
+}
+
+/* ---- Sidebar footer / reorder ---- */
+
+.sidebar-footer {
+  padding: 4px 8px;
+  border-top: 1px solid alpha(currentColor, 0.08);
+}
+
+.reorder-row {
+  padding: 10px 8px;
+}
+
+.reorder-row image {
+  opacity: 0.6;
+}
+
+/* Bottom "loading more" indicator for infinite scroll. */
+.list-loading label {
+  font-size: 0.9em;
+}

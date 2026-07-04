@@ -1,0 +1,10 @@
+pub mod accounts;
+pub mod compose;
+pub mod contacts_browser;
+pub mod message_list;
+pub mod message_view;
+pub mod message_window;
+pub mod notifications;
+pub mod preferences;
+pub mod rich_editor;
+pub mod sidebar;

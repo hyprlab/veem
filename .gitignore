@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+*.log
+
+# Local, untracked OAuth client credentials (never commit real secrets)
+oauth.toml
+
+# Developer scratch / asset drop-off
+/temp

@@ -1,0 +1,117 @@
+//! A reusable modal that browses GNOME Contacts: search, pick a contact (the
+//! caller decides what to do with it), or open the full GNOME Contacts app.
+
+use adw::prelude::*;
+
+use crate::contacts::Contact;
+
+/// Present the contacts browser as a modal of `parent`. `on_choose` runs with
+/// the chosen contact when a row is activated (the window then closes).
+pub fn present(parent: &impl IsA<gtk::Window>, on_choose: impl Fn(Contact) + 'static) {
+    let on_choose = std::rc::Rc::new(on_choose);
+    let mut contacts = crate::contacts::read_contacts();
+    contacts.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+    let win = adw::Window::builder()
+        .transient_for(parent)
+        .modal(true)
+        .title("Contacts")
+        .default_width(420)
+        .default_height(560)
+        .build();
+
+    let toolbar = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    let open_btn = gtk::Button::from_icon_name("x-office-address-book-symbolic");
+    open_btn.set_tooltip_text(Some("Open in GNOME Contacts"));
+    open_btn.connect_clicked(|_| launch_gnome_contacts());
+    header.pack_end(&open_btn);
+    toolbar.add_top_bar(&header);
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    content.set_margin_top(8);
+    content.set_margin_bottom(8);
+    content.set_margin_start(12);
+    content.set_margin_end(12);
+
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some("Search contacts"));
+    content.append(&search);
+
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.set_vexpand(true);
+    scroller.set_hscrollbar_policy(gtk::PolicyType::Never);
+
+    if contacts.is_empty() {
+        let empty = adw::StatusPage::builder()
+            .icon_name("x-office-address-book-symbolic")
+            .title("No Contacts")
+            .description("Add contacts in GNOME Contacts to see them here.")
+            .build();
+        scroller.set_child(Some(&empty));
+    } else {
+        let list = gtk::ListBox::new();
+        list.add_css_class("boxed-list");
+        list.set_selection_mode(gtk::SelectionMode::None);
+        for c in &contacts {
+            let row = adw::ActionRow::new();
+            row.set_title(&gtk::glib::markup_escape_text(&c.name));
+            if c.name != c.email {
+                row.set_subtitle(&gtk::glib::markup_escape_text(&c.email));
+            }
+            row.set_activatable(true);
+            row.add_prefix(&adw::Avatar::new(32, Some(&c.name), true));
+
+            let contact = c.clone();
+            let cb = on_choose.clone();
+            let w = win.clone();
+            row.connect_activated(move |_| {
+                cb(contact.clone());
+                w.close();
+            });
+            list.append(&row);
+        }
+
+        // Live filter by name or email.
+        let query = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let filter_contacts = contacts.clone();
+        let q = query.clone();
+        list.set_filter_func(move |row| {
+            let q = q.borrow();
+            if q.is_empty() {
+                return true;
+            }
+            filter_contacts
+                .get(row.index() as usize)
+                .map(|c| {
+                    c.name.to_lowercase().contains(q.as_str())
+                        || c.email.to_lowercase().contains(q.as_str())
+                })
+                .unwrap_or(true)
+        });
+        let q = query.clone();
+        let list2 = list.clone();
+        search.connect_search_changed(move |e| {
+            *q.borrow_mut() = e.text().to_lowercase();
+            list2.invalidate_filter();
+        });
+
+        scroller.set_child(Some(&list));
+    }
+
+    content.append(&scroller);
+    toolbar.set_content(Some(&content));
+    win.set_content(Some(&toolbar));
+    win.present();
+}
+
+/// Launch the GNOME Contacts application via the desktop session.
+pub fn launch_gnome_contacts() {
+    if let Ok(app) = gtk::gio::AppInfo::create_from_commandline(
+        "gnome-contacts",
+        Some("Contacts"),
+        gtk::gio::AppInfoCreateFlags::NONE,
+    ) {
+        let _ = app.launch(&[], gtk::gio::AppLaunchContext::NONE);
+    }
+}
