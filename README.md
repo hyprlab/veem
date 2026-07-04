@@ -75,9 +75,17 @@ removed from the file.
 
 ### OAuth (Google / Microsoft)
 
-Veem ships with **no embedded OAuth credentials**. To use Google or Microsoft
-sign-in, register your own OAuth app and provide its client details in
-`~/.config/veem/oauth.toml`:
+**Microsoft** works out of the box — pick *Microsoft* in the account editor and
+sign in.
+
+**Google** signs in through **GNOME Online Accounts** (add your Google account in
+*GNOME Settings → Online Accounts*, then import it in Veem) or with your own OAuth
+client. Official/Flathub builds also bundle Veem's Google app for one-click Google
+sign-in — the Google client is injected at build time rather than committed to
+this repo (see below), so a plain `cargo build` ships without it.
+
+To use **your own** OAuth client (a fork, a self-hosted build, or to replace the
+bundled ones), put it in `~/.config/veem/oauth.toml`:
 
 ```toml
 [google]
@@ -88,9 +96,15 @@ client_secret = "your-client-secret"
 client_id = "your-azure-application-client-id"  # public client, no secret
 ```
 
-You can also set them via the `VEEM_GOOGLE_CLIENT_ID` / `VEEM_GOOGLE_CLIENT_SECRET`
-and `VEEM_MICROSOFT_CLIENT_ID` / `VEEM_MICROSOFT_CLIENT_SECRET` environment
-variables. Password/IMAP accounts need none of this.
+or via the `VEEM_GOOGLE_CLIENT_ID` / `VEEM_GOOGLE_CLIENT_SECRET` and
+`VEEM_MICROSOFT_CLIENT_ID` / `VEEM_MICROSOFT_CLIENT_SECRET` environment variables.
+
+**Bundling a Google client at build time** (for maintainers) — set the env vars
+during the build and they're compiled in via `option_env!`:
+
+```sh
+VEEM_GOOGLE_CLIENT_ID=... VEEM_GOOGLE_CLIENT_SECRET=... cargo build --release
+```
 
 ## Privacy
 

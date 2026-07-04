@@ -1,12 +1,11 @@
-# Veem 1.0.0
+# Veem 1.0.1
 
 The first stable release of Veem — a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
 ## Accounts & sign-in
 - Multiple IMAP and POP3 accounts, each running on its own background worker.
-- Google and Microsoft OAuth 2.0 sign-in (XOAUTH2) through the system browser, using an authorization-code + PKCE loopback flow — no client secret needed for public desktop clients.
-- Custom OAuth for any other provider (your own client ID, secret and endpoints).
-- Bring your own OAuth client via ~/.config/veem/oauth.toml or environment variables; Veem ships with no embedded credentials.
+- Google and Microsoft OAuth 2.0 sign-in (XOAUTH2) via the system browser (authorization-code + PKCE) — one-click in official builds, or through GNOME Online Accounts and your own OAuth client.
+- Custom OAuth for any other provider; supply or override client credentials via ~/.config/veem/oauth.toml or the VEEM_* environment variables.
 - Import accounts from GNOME Online Accounts.
 - Enable or disable each account without deleting it.
 - Passwords and OAuth refresh tokens are stored in the system keyring (secret-service), never written to disk.

@@ -5,9 +5,10 @@
 //! code for a refresh token. The refresh token is kept in the keyring; a fresh
 //! access token is minted from it at connect time.
 //!
-//! Google/Microsoft/Custom OAuth all use client credentials the user supplies
-//! (via `~/.config/veem/oauth.toml` or env vars — see `provider_credentials`);
-//! Veem ships with none of its own.
+//! Microsoft uses Veem's built-in OAuth client; Google's client is bundled into
+//! official builds at compile time (otherwise use GNOME Online Accounts, or your
+//! own client in `~/.config/veem/oauth.toml`). Advanced users can override any of
+//! it or point "Custom OAuth" at another provider — see `provider_credentials`.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -17,14 +18,29 @@ use serde::Deserialize;
 
 use crate::config::OAuthSettings;
 
-// No OAuth client credentials ship with Veem — a public build must not embed
-// anyone's client secret. To use Google or Microsoft sign-in, register your own
-// OAuth app and supply its credentials via `~/.config/veem/oauth.toml` (or the
-// `VEEM_GOOGLE_CLIENT_ID`/`_SECRET`, `VEEM_MICROSOFT_CLIENT_ID`/`_SECRET` env
-// vars) — see `provider_credentials`. Password/IMAP accounts need none of this.
-const GOOGLE_CLIENT_ID: &str = "";
-const GOOGLE_CLIENT_SECRET: &str = "";
-const MICROSOFT_CLIENT_ID: &str = "";
+// Built-in OAuth client credentials.
+//
+// Microsoft is a public client (PKCE, no secret), and a client ID is just a
+// public identifier, so it's embedded directly for one-click sign-in in every
+// build.
+//
+// Google's client is deliberately kept OUT of the public source — GitHub push
+// protection and Google's own secret scanning flag it, and Google may auto-revoke
+// an exposed secret. Instead it's read at COMPILE TIME from env vars, so official
+// / Flathub builds bundle Veem's Google app by setting `VEEM_GOOGLE_CLIENT_ID`
+// and `VEEM_GOOGLE_CLIENT_SECRET` during the build, while a plain `cargo build`
+// ships empty (Google sign-in then works via GNOME Online Accounts or a client
+// the user supplies). Runtime overrides — `~/.config/veem/oauth.toml` or `VEEM_*`
+// env vars at runtime — still take precedence; see `provider_credentials`.
+const GOOGLE_CLIENT_ID: &str = match option_env!("VEEM_GOOGLE_CLIENT_ID") {
+    Some(v) => v,
+    None => "",
+};
+const GOOGLE_CLIENT_SECRET: &str = match option_env!("VEEM_GOOGLE_CLIENT_SECRET") {
+    Some(v) => v,
+    None => "",
+};
+const MICROSOFT_CLIENT_ID: &str = "47579d63-4785-4131-98bb-7f2a2a1a2c59";
 const MICROSOFT_CLIENT_SECRET: &str = "";
 
 /// The Veem app icon, embedded so the success page needs no external resources.
