@@ -235,10 +235,10 @@ fn sample_messages() -> Vec<Message> {
             preview: "Your repository hyprlab/veem just reached 1,000 stars. Nice work! See who starred recently…",
             body: "hyprlab/veem just reached 1,000 stars 🎉\n\nRecent stargazers: @ada, @torvalds-fan, @rustacean…\n\nView on GitHub.",
             date: "Yesterday", unread: true, starred: false, has_attachment: false, in_reply_to: None },
-        Spec { id: 33, account_id: 2, folder_id: 11, from_name: "Flathub", from_addr: "noreply@flathub.org", to: LAB,
-            subject: "Your submission is under review",
-            preview: "Thanks for submitting com.getveem.Veem to Flathub. A reviewer has been assigned and will follow up shortly…",
-            body: "Thanks for submitting com.getveem.Veem to Flathub.\n\nA reviewer has been assigned and will follow up on the pull request shortly.\n\n— The Flathub Team",
+        Spec { id: 33, account_id: 2, folder_id: 11, from_name: "This Week in GNOME", from_addr: "hello@thisweek.gnome.org", to: LAB,
+            subject: "This Week in GNOME #180",
+            preview: "Highlights from across the GNOME project: new adaptive widgets, shell performance work, and a wave of app releases…",
+            body: "This Week in GNOME\n\nHighlights this week:\n  • New adaptive widgets in libadwaita\n  • Shell performance improvements\n  • A fresh wave of app releases\n\nRead the full issue online.",
             date: "Fri", unread: false, starred: false, has_attachment: false, in_reply_to: None },
     ];
     specs.iter().map(build).collect()

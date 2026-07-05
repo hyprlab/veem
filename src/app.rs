@@ -2832,9 +2832,7 @@ impl AppModel {
         };
         links.append(&mk_row("Website", "https://getveem.com"));
         links.append(&mk_row("Contact — hyprlab@proton.me", "mailto:hyprlab@proton.me"));
-        // TODO: swap these placeholder URLs for the real pages once published.
         links.append(&mk_row("Source Code", "https://github.com/hyprlab/veem"));
-        links.append(&mk_row("Flathub", "https://flathub.org/apps/com.getveem.Veem"));
         links.append(&mk_row("License (GNU AGPL v3)", "https://www.gnu.org/licenses/agpl-3.0.html"));
 
         // Buy Me a Coffee — with a coffee-cup glyph as its leading icon.

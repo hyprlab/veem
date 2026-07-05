@@ -8,5 +8,8 @@ oauth.toml
 # Developer scratch / asset drop-off
 /temp
 
-# Generated for the Flathub build (lives in the flathub repo)
+# Generated for the offline Flatpak build (regenerate from Cargo.lock)
 cargo-sources.json
+
+# Self-hosted Flatpak distribution (signed repo, private GPG key)
+/dist/

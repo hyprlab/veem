@@ -52,10 +52,16 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.0.7" date="2026-07-05" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.7</url>
+      <description>
+        <p>Housekeeping: tidy up in-app links and bundled sample content.</p>
+      </description>
+    </release>
     <release version="1.0.6" date="2026-07-05" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.6</url>
       <description>
-        <p>First Flathub release.</p>
+        <p>First public release.</p>
       </description>
     </release>
     <release version="1.0.4" date="2026-07-05" type="stable">

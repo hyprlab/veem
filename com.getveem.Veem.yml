@@ -1,4 +1,7 @@
-# Flatpak manifest for Veem — used for the Flathub submission.
+# Flatpak manifest for Veem — builds the self-hosted Flatpak distributed from
+# getveem.com. (The GNOME runtime + SDK below come from the flathub *remote* — that
+# is just where the org.gnome.Platform runtime is hosted; Veem itself is not on
+# Flathub.)
 #
 # Local test build (both tools are already installed):
 #   python3 flatpak-cargo-generator.py Cargo.lock -o cargo-sources.json
@@ -49,6 +52,6 @@ modules:
         url: https://github.com/hyprlab/veem.git
         tag: v1.0.6
         commit: 5a77eed723e622c3ccd36184fa3158a296cbcc1f
-      # Vendored crate sources for the offline Flathub build. Generate with:
+      # Vendored crate sources for the offline Flatpak build. Generate with:
       #   flatpak-cargo-generator.py Cargo.lock -o cargo-sources.json
       - cargo-sources.json

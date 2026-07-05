@@ -78,11 +78,11 @@ removed from the file.
 **Microsoft** works out of the box — pick *Microsoft* in the account editor and
 sign in.
 
-**Google** signs in through **GNOME Online Accounts** (add your Google account in
-*GNOME Settings → Online Accounts*, then import it in Veem) or with your own OAuth
-client. Official/Flathub builds also bundle Veem's Google app for one-click Google
-sign-in — the Google client is injected at build time rather than committed to
-this repo (see below), so a plain `cargo build` ships without it.
+**Google** signs in through **GNOME Online Accounts** — add your Google account in
+*GNOME Settings → Online Accounts*, then import it in Veem. Official builds don't
+bundle a Google OAuth client (Google's secret can't live in a public repo), so
+GNOME Online Accounts is the standard path. You can also use your own OAuth client
+(see below).
 
 To use **your own** OAuth client (a fork, a self-hosted build, or to replace the
 bundled ones), put it in `~/.config/veem/oauth.toml`:

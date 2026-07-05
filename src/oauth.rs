@@ -26,12 +26,12 @@ use crate::config::OAuthSettings;
 //
 // Google's client is deliberately kept OUT of the public source — GitHub push
 // protection and Google's own secret scanning flag it, and Google may auto-revoke
-// an exposed secret. Instead it's read at COMPILE TIME from env vars, so official
-// / Flathub builds bundle Veem's Google app by setting `VEEM_GOOGLE_CLIENT_ID`
-// and `VEEM_GOOGLE_CLIENT_SECRET` during the build, while a plain `cargo build`
-// ships empty (Google sign-in then works via GNOME Online Accounts or a client
-// the user supplies). Runtime overrides — `~/.config/veem/oauth.toml` or `VEEM_*`
-// env vars at runtime — still take precedence; see `provider_credentials`.
+// an exposed secret. It's read at COMPILE TIME from env vars, so a build *can*
+// bundle a Google app by setting `VEEM_GOOGLE_CLIENT_ID` / `VEEM_GOOGLE_CLIENT_SECRET`
+// — but the official builds ship empty, so Google sign-in goes through GNOME
+// Online Accounts (or a client the user supplies). Runtime overrides —
+// `~/.config/veem/oauth.toml` or `VEEM_*` env vars at runtime — still take
+// precedence; see `provider_credentials`.
 const GOOGLE_CLIENT_ID: &str = match option_env!("VEEM_GOOGLE_CLIENT_ID") {
     Some(v) => v,
     None => "",
