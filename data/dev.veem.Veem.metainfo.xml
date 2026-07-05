@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.0.4" date="2026-07-05" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.4</url>
+      <description>
+        <p>Manage GNOME Online Accounts from the account editor (enable/disable instead of remove), mark each account's source in the list, and route Google sign-in through GNOME Online Accounts.</p>
+      </description>
+    </release>
     <release version="1.0.3" date="2026-07-05" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.3</url>
       <description>
