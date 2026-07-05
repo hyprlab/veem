@@ -273,6 +273,33 @@ pub struct FlowResult {
     pub refresh_token: String,
 }
 
+/// Open a URI in the user's default handler (a browser, for http/https).
+///
+/// Uses the XDG **OpenURI portal** over D-Bus so it works inside a Flatpak
+/// sandbox as well as natively, and is safe to call from any thread (the OAuth
+/// flow opens the browser from a worker thread). Falls back to `xdg-open` if the
+/// portal isn't available.
+pub fn open_uri(uri: &str) {
+    if open_uri_portal(uri).is_err() {
+        let _ = std::process::Command::new("xdg-open").arg(uri).spawn();
+    }
+}
+
+fn open_uri_portal(uri: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let conn = zbus::blocking::Connection::session()?;
+    // OpenURI(parent_window: s, uri: s, options: a{sv}) — fire and forget.
+    let options: std::collections::HashMap<&str, zbus::zvariant::Value> =
+        std::collections::HashMap::new();
+    conn.call_method(
+        Some("org.freedesktop.portal.Desktop"),
+        "/org/freedesktop/portal/desktop",
+        Some("org.freedesktop.portal.OpenURI"),
+        "OpenURI",
+        &("", uri, options),
+    )?;
+    Ok(())
+}
+
 /// Run the interactive authorization-code + PKCE flow (blocking — call off the
 /// UI thread). Opens the browser and waits for the loopback redirect.
 pub fn run_flow(settings: &OAuthSettings) -> Result<FlowResult, String> {
@@ -304,8 +331,8 @@ pub fn run_flow(settings: &OAuthSettings) -> Result<FlowResult, String> {
         state = pct(&state),
     );
 
-    // Open the system browser (Linux/GNOME).
-    let _ = std::process::Command::new("xdg-open").arg(&auth_url).spawn();
+    // Open the system browser (via the OpenURI portal, so it works in a Flatpak).
+    open_uri(&auth_url);
 
     // Wait for the redirect (with a timeout so a cancelled sign-in doesn't hang).
     let code = wait_for_code(&listener, &state)?;

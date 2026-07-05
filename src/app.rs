@@ -2827,9 +2827,7 @@ impl AppModel {
             row.set_tooltip_text(Some(url));
             row.add_suffix(&gtk::Image::from_icon_name("adw-external-link-symbolic"));
             let u = url.to_string();
-            row.connect_activated(move |_| {
-                let _ = std::process::Command::new("xdg-open").arg(&u).spawn();
-            });
+            row.connect_activated(move |_| crate::oauth::open_uri(&u));
             row
         };
         links.append(&mk_row("Website", "https://getveem.com"));
@@ -2849,11 +2847,7 @@ impl AppModel {
         cup.add_css_class("about-coffee");
         coffee.add_prefix(&cup);
         coffee.add_suffix(&gtk::Image::from_icon_name("adw-external-link-symbolic"));
-        coffee.connect_activated(move |_| {
-            let _ = std::process::Command::new("xdg-open")
-                .arg("https://buymeacoffee.com/hyprlab")
-                .spawn();
-        });
+        coffee.connect_activated(move |_| crate::oauth::open_uri("https://buymeacoffee.com/hyprlab"));
         links.append(&coffee);
         page.append(&links);
 
