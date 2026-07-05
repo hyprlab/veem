@@ -7,3 +7,6 @@ oauth.toml
 
 # Developer scratch / asset drop-off
 /temp
+
+# Generated for the Flathub build (lives in the flathub repo)
+cargo-sources.json
