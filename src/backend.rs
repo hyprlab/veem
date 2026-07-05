@@ -33,7 +33,7 @@ impl MockBackend {
         let accounts = vec![
             Account {
                 id: 1,
-                name: "Jason Martin".into(),
+                name: "Jason M.".into(),
                 email: "jason@getveem.com".into(),
                 label: "jason@getveem.com".into(),
                 accent: "#3584e4".into(),
@@ -173,7 +173,7 @@ fn sample_messages() -> Vec<Message> {
             preview: "Sharing the draft roadmap ahead of Thursday. The migration phase is the big open question — see the timeline…",
             body: "Hi Jason,\n\nSharing the draft roadmap ahead of Thursday. The migration phase is the big open question — see the timeline in the doc and let me know if the sequencing works.\n\nThanks,\nSophie",
             date: "9:05 AM", unread: true, starred: false, has_attachment: true, in_reply_to: None },
-        Spec { id: 3, account_id: 1, folder_id: 1, from_name: "Jason Martin", from_addr: ME, to: "sophie@studio.dev",
+        Spec { id: 3, account_id: 1, folder_id: 1, from_name: "Jason M.", from_addr: ME, to: "sophie@studio.dev",
             subject: "Re: Q3 roadmap review",
             preview: "Looks great overall. I left comments on the migration phase — I think we can parallelize the first two steps…",
             body: "Looks great overall. I left comments on the migration phase — I think we can parallelize the first two steps and pull the whole thing in by a week. Happy to walk through it tomorrow at 10.\n\nJason",
@@ -214,7 +214,7 @@ fn sample_messages() -> Vec<Message> {
             body: "getveem.com — weekly summary\n\nVisitors: 4,218 (+32%)\nTop page: /download\nAvg. time on page: 1m 47s\n\nView the full report online.",
             date: "Mon", unread: false, starred: false, has_attachment: false, in_reply_to: None },
         // ---- Account 1 · Drafts ----
-        Spec { id: 20, account_id: 1, folder_id: 4, from_name: "Jason Martin", from_addr: ME, to: "team@getveem.com",
+        Spec { id: 20, account_id: 1, folder_id: 4, from_name: "Jason M.", from_addr: ME, to: "team@getveem.com",
             subject: "Release notes for 0.2",
             preview: "Draft — Highlights for the next build: Actions Palette, message-content theme, infinite scroll…",
             body: "Draft.\n\nHighlights for 0.2:\n  • Actions Palette with slide-in animation\n  • Per-message light/dark content theme\n  • Infinite scroll for large folders\n\nTODO: add screenshots.",
