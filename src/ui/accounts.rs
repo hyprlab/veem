@@ -40,6 +40,8 @@ pub enum AccountsInput {
     MoveRow { from: usize, to: usize },
     /// Enable/disable an account from the list toggle.
     ToggleEnabled { index: usize, enabled: bool },
+    /// Enable/disable the account currently open in the editor (GOA group toggle).
+    ToggleCurrentEnabled(bool),
     /// Import a GNOME Online Account (by index into `goa`) into Veem.
     ImportGoa(usize),
     /// The authentication-method dropdown changed (Password / OAuth provider).
@@ -384,6 +386,35 @@ impl Component for AccountsWindow {
                                 },
                             },
 
+                            // GOA-imported accounts: you can't meaningfully "remove"
+                            // one from Veem while it still lives in GNOME Online
+                            // Accounts — so disable it here, or open GOA to change it.
+                            #[name = "goa_manage_group"]
+                            add = &adw::PreferencesGroup {
+                                set_visible: false,
+                                set_title: "GNOME Online Account",
+                                set_description: Some(
+                                    "This account comes from GNOME Online Accounts. Turn it off \
+                                     to hide it in Veem without touching your system; to edit or \
+                                     remove it, open Online Accounts."
+                                ),
+
+                                #[name = "goa_enabled_row"]
+                                adw::SwitchRow {
+                                    set_title: "Enabled in Veem",
+                                    connect_active_notify[sender] => move |row| {
+                                        sender.input(AccountsInput::ToggleCurrentEnabled(row.is_active()));
+                                    },
+                                },
+
+                                gtk::Button {
+                                    set_label: "Open Online Accounts…",
+                                    set_halign: gtk::Align::Center,
+                                    set_margin_top: 12,
+                                    connect_clicked => AccountsInput::OpenOnlineAccounts,
+                                },
+                            },
+
                             #[name = "remove_group"]
                             add = &adw::PreferencesGroup {
                                 gtk::Button {
@@ -442,7 +473,7 @@ impl Component for AccountsWindow {
             .set_model(Some(&gtk::StringList::new(&["IMAP", "POP3"])));
         widgets.auth_row.set_model(Some(&gtk::StringList::new(&[
             "IMAP/POP3 Password",
-            "Google OAuth (experimental)",
+            "Google OAuth",
             "Microsoft OAuth (experimental)",
             "Custom OAuth (experimental)",
         ])));
@@ -488,6 +519,7 @@ impl Component for AccountsWindow {
                 widgets.color_btn.set_rgba(&parse_color(DEFAULT_COLOR));
                 widgets.emoji_btn.set_label("Add");
                 widgets.remove_group.set_visible(false);
+                widgets.goa_manage_group.set_visible(false);
                 widgets.nav.push_by_tag("editor");
             }
 
@@ -508,7 +540,12 @@ impl Component for AccountsWindow {
                     .set_rgba(&parse_color(acc.color.as_deref().unwrap_or(DEFAULT_COLOR)));
                 self.emoji = acc.emoji.clone();
                 widgets.emoji_btn.set_label(self.emoji.as_deref().unwrap_or("Add"));
-                widgets.remove_group.set_visible(true);
+                // GOA accounts: no "Remove" (it lives in the system) — offer an
+                // enable/disable toggle and a shortcut to Online Accounts instead.
+                let is_goa = acc.goa_id.is_some();
+                widgets.remove_group.set_visible(!is_goa);
+                widgets.goa_manage_group.set_visible(is_goa);
+                widgets.goa_enabled_row.set_active(acc.enabled);
                 widgets.nav.push_by_tag("editor");
             }
 
@@ -540,6 +577,19 @@ impl Component for AccountsWindow {
                         acc.enabled = enabled;
                         let email = acc.email.clone();
                         let _ = sender.output(AccountsOutput::EnabledChanged { email, enabled });
+                    }
+                }
+            }
+
+            AccountsInput::ToggleCurrentEnabled(enabled) => {
+                if let Some(i) = self.editing {
+                    if let Some(acc) = self.accounts.get_mut(i) {
+                        if acc.enabled != enabled {
+                            acc.enabled = enabled;
+                            let email = acc.email.clone();
+                            let _ = sender.output(AccountsOutput::EnabledChanged { email, enabled });
+                            self.rebuild_account_list(&widgets.accounts_list, &sender);
+                        }
                     }
                 }
             }
@@ -952,9 +1002,12 @@ impl AccountsWindow {
         // OAuth still needs the server addresses (and its own client details).
         let show_servers = is_password || is_custom;
 
+        // Google now goes through GNOME Online Accounts (stable); only the native
+        // Microsoft/Custom OAuth flows are still flagged experimental.
+        let experimental = idx == 2 || idx == 3;
         widgets
             .auth_row
-            .set_subtitle(if is_oauth { "OAuth sign-in is experimental" } else { "" });
+            .set_subtitle(if experimental { "OAuth sign-in is experimental" } else { "" });
 
         // Server/credential fields.
         widgets.protocol_row.set_visible(is_password);
