@@ -901,6 +901,20 @@ impl AccountsWindow {
             vbox.append(&email);
             hbox.append(&vbox);
 
+            // Source badge: is this account from GNOME Online Accounts, or added
+            // directly in Veem?
+            let from_goa = acc.goa_id.is_some();
+            let badge = gtk::Label::new(Some(if from_goa { "Online Account" } else { "Veem" }));
+            badge.set_valign(gtk::Align::Center);
+            badge.add_css_class("account-source-badge");
+            if from_goa {
+                badge.add_css_class("goa");
+                badge.set_tooltip_text(Some("Imported from GNOME Online Accounts"));
+            } else {
+                badge.set_tooltip_text(Some("Added directly in Veem"));
+            }
+            hbox.append(&badge);
+
             // Enable/disable toggle. Disabled accounts stay configured but don't
             // sync or appear in the sidebar.
             let toggle = gtk::Switch::new();

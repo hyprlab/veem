@@ -131,6 +131,22 @@
   padding: 14px 12px;
 }
 
+/* Badge marking where an account comes from (GNOME Online Accounts vs Veem). */
+.account-source-badge {
+  font-size: 0.72em;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  background: alpha(currentColor, 0.1);
+  opacity: 0.6;
+}
+
+.account-source-badge.goa {
+  background-color: alpha(@accent_bg_color, 0.18);
+  color: @accent_color;
+  opacity: 1;
+}
+
 /* Recipient autocomplete: highlight the keyboard-selected suggestion. */
 .autocomplete {
   background: transparent;
