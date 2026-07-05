@@ -260,7 +260,13 @@ impl SimpleComponent for AppModel {
                     (w.width(), w.height())
                 };
                 crate::config::save_window_state(width, height, maximized);
-                gtk::glib::Propagation::Proceed
+                // Exit cleanly the moment window state is saved. Letting GTK,
+                // WebKit and the per-account worker threads tear down the normal
+                // way can abort — a Rust panic fired from a GObject dispose
+                // callback becomes SIGABRT, which the Flatpak surfaces as a crash
+                // notification. Nothing else needs persisting on quit: accounts
+                // and settings are written as they change.
+                std::process::exit(0)
             },
 
             #[wrap(Some)]

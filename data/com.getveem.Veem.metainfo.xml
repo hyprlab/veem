@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.0.8" date="2026-07-05" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.8</url>
+      <description>
+        <p>Quit cleanly when closing the window, fixing a spurious crash notification after the app had been running for a while.</p>
+      </description>
+    </release>
     <release version="1.0.7" date="2026-07-05" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.7</url>
       <description>
