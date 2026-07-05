@@ -4,9 +4,9 @@
 #   python3 flatpak-cargo-generator.py Cargo.lock -o cargo-sources.json
 #   flatpak install flathub org.gnome.Sdk//50 org.gnome.Platform//50 \
 #       org.freedesktop.Sdk.Extension.rust-stable//25.08
-#   flatpak-builder --user --install --force-clean build-dir dev.veem.Veem.yml
-#   flatpak run dev.veem.Veem
-id: dev.veem.Veem
+#   flatpak-builder --user --install --force-clean build-dir com.getveem.Veem.yml
+#   flatpak run com.getveem.Veem
+id: com.getveem.Veem
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
@@ -40,10 +40,10 @@ modules:
       - cargo --offline fetch --manifest-path Cargo.toml --verbose
       - cargo --offline build --release --verbose
       - install -Dm755 target/release/veem /app/bin/veem
-      - install -Dm644 data/dev.veem.Veem.desktop /app/share/applications/dev.veem.Veem.desktop
-      - install -Dm644 data/icons/hicolor/256x256/apps/dev.veem.Veem.png /app/share/icons/hicolor/256x256/apps/dev.veem.Veem.png
-      - install -Dm644 data/icons/hicolor/512x512/apps/dev.veem.Veem.png /app/share/icons/hicolor/512x512/apps/dev.veem.Veem.png
-      - install -Dm644 data/dev.veem.Veem.metainfo.xml /app/share/metainfo/dev.veem.Veem.metainfo.xml
+      - install -Dm644 data/com.getveem.Veem.desktop /app/share/applications/com.getveem.Veem.desktop
+      - install -Dm644 data/icons/hicolor/256x256/apps/com.getveem.Veem.png /app/share/icons/hicolor/256x256/apps/com.getveem.Veem.png
+      - install -Dm644 data/icons/hicolor/512x512/apps/com.getveem.Veem.png /app/share/icons/hicolor/512x512/apps/com.getveem.Veem.png
+      - install -Dm644 data/com.getveem.Veem.metainfo.xml /app/share/metainfo/com.getveem.Veem.metainfo.xml
     sources:
       - type: git
         url: https://github.com/hyprlab/veem.git

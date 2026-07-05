@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// Service name used for keyring entries; password items are keyed by email.
-const KEYRING_SERVICE: &str = "dev.veem.Veem";
+const KEYRING_SERVICE: &str = "com.getveem.Veem";
 
 /// Incoming-mail protocol for an account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]

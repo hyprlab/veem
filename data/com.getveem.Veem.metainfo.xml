@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Copyright 2026 Hyprlab -->
 <component type="desktop-application">
-  <id>dev.veem.Veem</id>
+  <id>com.getveem.Veem</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>AGPL-3.0-or-later</project_license>
 
@@ -26,7 +26,7 @@
     </ul>
   </description>
 
-  <launchable type="desktop-id">dev.veem.Veem.desktop</launchable>
+  <launchable type="desktop-id">com.getveem.Veem.desktop</launchable>
 
   <branding>
     <color type="primary" scheme_preference="light">#99c1f1</color>
@@ -44,7 +44,7 @@
   <url type="bugtracker">https://github.com/hyprlab/veem/issues</url>
   <url type="vcs-browser">https://github.com/hyprlab/veem</url>
 
-  <developer id="dev.veem">
+  <developer id="com.getveem">
     <name>Hyprlab</name>
   </developer>
   <update_contact>hyprlab@proton.me</update_contact>
@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.0.5" date="2026-07-05" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.5</url>
+      <description>
+        <p>First Flathub release.</p>
+      </description>
+    </release>
     <release version="1.0.4" date="2026-07-05" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.4</url>
       <description>

@@ -17,7 +17,7 @@ use relm4::RelmApp;
 
 use crate::app::AppModel;
 
-const APP_ID: &str = "dev.veem.Veem";
+const APP_ID: &str = "com.getveem.Veem";
 
 fn main() {
     tracing_subscriber::fmt()

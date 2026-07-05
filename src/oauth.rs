@@ -44,7 +44,7 @@ const MICROSOFT_CLIENT_ID: &str = "47579d63-4785-4131-98bb-7f2a2a1a2c59";
 const MICROSOFT_CLIENT_SECRET: &str = "";
 
 /// The Veem app icon, embedded so the success page needs no external resources.
-const ICON_PNG: &[u8] = include_bytes!("../data/icons/hicolor/256x256/apps/dev.veem.Veem.png");
+const ICON_PNG: &[u8] = include_bytes!("../data/icons/hicolor/256x256/apps/com.getveem.Veem.png");
 
 /// Branded sign-in success page. `__ICON__` is replaced with the app icon (as a
 /// data URI) at runtime by [`success_page`]. Self-contained (inline CSS/SVG,

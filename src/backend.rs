@@ -237,8 +237,8 @@ fn sample_messages() -> Vec<Message> {
             date: "Yesterday", unread: true, starred: false, has_attachment: false, in_reply_to: None },
         Spec { id: 33, account_id: 2, folder_id: 11, from_name: "Flathub", from_addr: "noreply@flathub.org", to: LAB,
             subject: "Your submission is under review",
-            preview: "Thanks for submitting dev.veem.Veem to Flathub. A reviewer has been assigned and will follow up shortly…",
-            body: "Thanks for submitting dev.veem.Veem to Flathub.\n\nA reviewer has been assigned and will follow up on the pull request shortly.\n\n— The Flathub Team",
+            preview: "Thanks for submitting com.getveem.Veem to Flathub. A reviewer has been assigned and will follow up shortly…",
+            body: "Thanks for submitting com.getveem.Veem to Flathub.\n\nA reviewer has been assigned and will follow up on the pull request shortly.\n\n— The Flathub Team",
             date: "Fri", unread: false, starred: false, has_attachment: false, in_reply_to: None },
     ];
     specs.iter().map(build).collect()

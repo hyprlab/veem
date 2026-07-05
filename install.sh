@@ -8,7 +8,7 @@
 #         PREFIX=/usr ./install.sh   # system-wide (run with sudo)
 set -euo pipefail
 
-APP_ID="dev.veem.Veem"
+APP_ID="com.getveem.Veem"
 PREFIX="${PREFIX:-$HOME/.local}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
