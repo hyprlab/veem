@@ -46,6 +46,8 @@ pub enum AccountsInput {
     AuthMethodChanged,
     /// Start the OAuth browser sign-in flow.
     OAuthSignIn,
+    /// Open GNOME Settings → Online Accounts (the Google path).
+    OpenOnlineAccounts,
     SetEmoji(String),
     ClearEmoji,
     TestConnection,
@@ -262,6 +264,33 @@ impl Component for AccountsWindow {
                                     set_halign: gtk::Align::Start,
                                     set_xalign: 0.0,
                                     set_wrap: true,
+                                },
+
+                                // Shown for Google when no built-in/own OAuth client
+                                // is available: point the user at GNOME Online Accounts.
+                                #[name = "goa_hint"]
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_spacing: 12,
+                                    set_margin_top: 8,
+                                    set_visible: false,
+
+                                    gtk::Label {
+                                        set_wrap: true,
+                                        set_xalign: 0.0,
+                                        add_css_class: "dim-label",
+                                        set_label: "Google sign-in uses GNOME Online Accounts.\n\n\
+                                            1. Open Online Accounts and sign in with Google.\n\
+                                            2. Come back to Veem and reopen this window — your \
+                                            Google account then appears under “GNOME Online \
+                                            Accounts” at the top of this window. Enable it there.",
+                                    },
+                                    gtk::Button {
+                                        set_label: "Open Online Accounts…",
+                                        set_halign: gtk::Align::Start,
+                                        add_css_class: "suggested-action",
+                                        connect_clicked => AccountsInput::OpenOnlineAccounts,
+                                    },
                                 },
 
                                 #[name = "smtp_separate_row"]
@@ -596,6 +625,8 @@ impl Component for AccountsWindow {
                 });
             }
 
+            AccountsInput::OpenOnlineAccounts => open_online_accounts(),
+
             AccountsInput::Save => {
                 // Pull the signature HTML out of the editor first (async), then
                 // finish saving in SaveWithSig.
@@ -912,6 +943,10 @@ impl AccountsWindow {
         let is_password = idx == 0;
         let is_oauth = idx != 0;
         let is_custom = idx == 3;
+        // Google with no built-in (or user-supplied) OAuth client: there's nothing
+        // to sign in with, so guide the user to GNOME Online Accounts instead.
+        let google_needs_goa =
+            idx == 1 && crate::oauth::provider_credentials("google").0.trim().is_empty();
         // Google/Microsoft: servers come from the built-in preset, so hide all the
         // server/credential plumbing — the user only needs email + sign-in. Custom
         // OAuth still needs the server addresses (and its own client details).
@@ -935,15 +970,19 @@ impl AccountsWindow {
             widgets.smtp_separate_row.set_active(false);
         }
 
-        // Google/Microsoft use built-in credentials — the user just signs in.
-        // Only "Custom OAuth" exposes client ID/secret and endpoint fields.
-        widgets.oauth_signin_btn.set_visible(is_oauth);
+        // Microsoft/Custom use built-in or entered credentials — the user just
+        // signs in. Google with no client falls back to the GNOME Online Accounts
+        // panel, which replaces the sign-in button and the identity fields.
+        widgets.name_row.set_visible(!google_needs_goa);
+        widgets.email_row.set_visible(!google_needs_goa);
+        widgets.goa_hint.set_visible(google_needs_goa);
+        widgets.oauth_signin_btn.set_visible(is_oauth && !google_needs_goa);
         widgets.oauth_client_id_row.set_visible(is_custom);
         widgets.oauth_secret_row.set_visible(is_custom);
         widgets.oauth_auth_url_row.set_visible(is_custom);
         widgets.oauth_token_url_row.set_visible(is_custom);
         widgets.oauth_scope_row.set_visible(is_custom);
-        if !is_oauth {
+        if !is_oauth || google_needs_goa {
             widgets.oauth_status.set_visible(false);
         }
 
@@ -993,6 +1032,40 @@ impl AccountsWindow {
 
 /// A list-item factory whose labels never ellipsize, so a `ComboRow` popup grows
 /// to fit its longest option instead of truncating it.
+/// Open GNOME Settings → Online Accounts. Uses D-Bus app activation so it works
+/// both natively and inside a Flatpak (with `--talk-name=org.gnome.Settings`);
+/// falls back to the CLI on non-GNOME/older setups.
+fn open_online_accounts() {
+    if activate_online_accounts_panel().is_err() {
+        let _ = std::process::Command::new("gnome-control-center")
+            .arg("online-accounts")
+            .spawn();
+    }
+}
+
+fn activate_online_accounts_panel() -> Result<(), gtk::glib::Error> {
+    let conn = gtk::gio::bus_get_sync(gtk::gio::BusType::Session, gtk::gio::Cancellable::NONE)?;
+    // org.freedesktop.Application.ActivateAction(action: s, parameter: av, a{sv}).
+    // GNOME Settings' "launch-panel" action takes a (sav): (panel_id, extra_args).
+    let panel = ("online-accounts", Vec::<gtk::glib::Variant>::new()).to_variant();
+    let params: Vec<gtk::glib::Variant> = vec![panel];
+    let platform: std::collections::HashMap<String, gtk::glib::Variant> =
+        std::collections::HashMap::new();
+    let args = ("launch-panel", params, platform).to_variant();
+    conn.call_sync(
+        Some("org.gnome.Settings"),
+        "/org/gnome/Settings",
+        "org.freedesktop.Application",
+        "ActivateAction",
+        Some(&args),
+        None,
+        gtk::gio::DBusCallFlags::NONE,
+        -1,
+        gtk::gio::Cancellable::NONE,
+    )?;
+    Ok(())
+}
+
 fn non_ellipsizing_factory() -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, item| {

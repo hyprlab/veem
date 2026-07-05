@@ -22,19 +22,16 @@ finish-args:
   - --device=dri                                 # WebKit rendering
   - --talk-name=org.freedesktop.secrets          # keyring: passwords + OAuth tokens
   - --talk-name=org.gnome.OnlineAccounts          # import GNOME Online Accounts
+  - --talk-name=org.gnome.Settings                 # "Open Online Accounts" button
   - --talk-name=org.gnome.evolution.dataserver.*  # GNOME Contacts (Evolution Data Server)
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:
     CARGO_HOME: /run/build/veem/cargo
-    # For the Flathub build, uncomment these and fill in Veem's Google OAuth
-    # client to make Google sign-in one-click. They are intentionally kept out of
-    # this (public) repo — add them only in the Flathub manifest and allow the
-    # secret-scanning push once. For a desktop/installed client the "secret" is
-    # non-confidential. (Microsoft's client ID is already built into the source.)
-    # VEEM_GOOGLE_CLIENT_ID: "<your-google-client-id>.apps.googleusercontent.com"
-    # VEEM_GOOGLE_CLIENT_SECRET: "<your-google-client-secret>"
+    # No Google OAuth client is bundled — Google sign-in goes through GNOME Online
+    # Accounts (the account editor guides users there). Microsoft's client ID is
+    # built into the source and works out of the box.
 
 modules:
   - name: veem
