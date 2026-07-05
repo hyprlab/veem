@@ -2815,6 +2815,18 @@ impl AppModel {
             notes_row.connect_activated(move |_| nav.push_by_tag("notes"));
         }
         info.append(&notes_row);
+
+        let changelog_row = adw::ActionRow::builder()
+            .title("Changelog")
+            .subtitle("Full version history")
+            .activatable(true)
+            .build();
+        changelog_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+        {
+            let nav = nav.clone();
+            changelog_row.connect_activated(move |_| nav.push_by_tag("changelog"));
+        }
+        info.append(&changelog_row);
         page.append(&info);
 
         // Project links. Each row shows its URL as a hover tooltip.
@@ -2881,6 +2893,7 @@ impl AppModel {
                 .build(),
         );
         nav.add(&notes_page("Release Notes", "notes", &release_notes_pango()));
+        nav.add(&notes_page("Changelog", "changelog", &changelog_pango()));
 
         win.set_content(Some(&nav));
         win.present();
@@ -3105,12 +3118,23 @@ impl AppModel {
 }
 
 /// Render the single source of truth — `RELEASE_NOTES.md` at the repo root — as
-/// Pango markup for the About window's "Release Notes" page. The same file is
-/// used verbatim for the GitHub release, so the notes stay identical everywhere.
+/// Pango markup for the About window's "Release Notes" page. The same
+/// `RELEASE_NOTES.md` is used verbatim for the GitHub release, so the notes stay
+/// identical everywhere.
 fn release_notes_pango() -> String {
-    const MD: &str = include_str!("../RELEASE_NOTES.md");
+    md_to_pango(include_str!("../RELEASE_NOTES.md"))
+}
+
+/// Pango markup for the About window's "Changelog" page, from the centralized
+/// `CHANGELOG.md` — so the version history updates everywhere from one file.
+fn changelog_pango() -> String {
+    md_to_pango(include_str!("../CHANGELOG.md"))
+}
+
+/// Minimal Markdown → Pango markup (headings, bullets) for the About sub-pages.
+fn md_to_pango(md: &str) -> String {
     let mut out = String::new();
-    for raw in MD.lines() {
+    for raw in md.lines() {
         let line = raw.trim_end();
         let rendered = if let Some(rest) = line.strip_prefix("## ") {
             format!("<b>{}</b>", gtk::glib::markup_escape_text(rest))
