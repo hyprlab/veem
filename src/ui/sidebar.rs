@@ -490,7 +490,6 @@ impl Sidebar {
             hbox.add_css_class("folder-row");
             let img = gtk::Image::from_icon_name("mail-inbox-symbolic");
             img.add_css_class("folder-icon");
-            hbox.append(&img);
             if self.collapsed {
                 hbox.set_halign(gtk::Align::Center);
                 row.set_tooltip_text(Some(&if self.unified_unread > 0 {
@@ -498,7 +497,13 @@ impl Sidebar {
                 } else {
                     "All Inboxes".to_string()
                 }));
+                // Total-unread chip overlaid on the inbox icon so the count stays
+                // visible in the icon-only rail.
+                let (overlay, badge) = with_unread_overlay(&img, self.unified_unread);
+                hbox.append(&overlay);
+                self.unified_badge = Some(badge);
             } else {
+                hbox.append(&img);
                 let label = gtk::Label::new(Some("All Inboxes"));
                 label.set_hexpand(true);
                 label.set_halign(gtk::Align::Start);
@@ -560,8 +565,30 @@ impl Sidebar {
             container.append(&list);
             self.unified_list = Some(list);
 
-            // Per-account inbox sub-list (expanded sidebar only).
-            if !self.collapsed {
+            // Per-account inbox sub-list, in both layouts. In the icon-only rail a
+            // small toggle button under the "All Inboxes" icon stands in for the
+            // in-row chevron and expands/collapses these account pills.
+            {
+                if self.collapsed {
+                    let toggle = gtk::Button::new();
+                    toggle.add_css_class("flat");
+                    toggle.add_css_class("chevron-btn");
+                    toggle.set_halign(gtk::Align::Center);
+                    toggle.set_tooltip_text(Some("Show each inbox"));
+                    let chevron = gtk::Image::from_icon_name(if self.unified_expanded {
+                        "pan-down-symbolic"
+                    } else {
+                        "pan-end-symbolic"
+                    });
+                    toggle.set_child(Some(&chevron));
+                    let cs = sender.input_sender().clone();
+                    toggle.connect_clicked(move |_| {
+                        let _ = cs.send(SidebarInput::ToggleUnifiedExpand);
+                    });
+                    container.append(&toggle);
+                    self.unified_chevron = Some(chevron);
+                }
+
                 let sub = gtk::ListBox::new();
                 sub.set_selection_mode(gtk::SelectionMode::Single);
                 sub.add_css_class("navigation-sidebar");
@@ -572,7 +599,7 @@ impl Sidebar {
                         continue;
                     };
                     let aid = section.account.id;
-                    let (row, badge) = build_unified_inbox_row(section, inbox);
+                    let (row, badge) = build_unified_inbox_row(section, inbox, self.collapsed);
                     sub.append(&row);
                     self.unified_inbox_badges.insert((aid, inbox.id), badge);
                     self.unified_inboxes.push(InboxRef {
@@ -1004,13 +1031,21 @@ fn show_sidebar_menu(
 }
 
 /// A row in the "All Inboxes" sub-list: a small account pill, the account name,
-/// and that inbox's unread badge. Returns the badge for in-place updates.
-fn build_unified_inbox_row(section: &SectionData, inbox: &Folder) -> (gtk::ListBoxRow, gtk::Label) {
+/// and that inbox's unread badge. In the compact rail only the pill is shown
+/// (centred), with the unread count as a corner chip. Returns the badge for
+/// in-place updates.
+fn build_unified_inbox_row(
+    section: &SectionData,
+    inbox: &Folder,
+    collapsed: bool,
+) -> (gtk::ListBoxRow, gtk::Label) {
     let id = section.account.id;
     let row = gtk::ListBoxRow::new();
     let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     hbox.add_css_class("folder-row");
-    hbox.add_css_class("unified-subrow");
+    if !collapsed {
+        hbox.add_css_class("unified-subrow");
+    }
 
     // Show the account's configured label (defaults to its email) so accounts are
     // easy to tell apart in the All Inboxes view.
@@ -1036,22 +1071,56 @@ fn build_unified_inbox_row(section: &SectionData, inbox: &Folder) -> (gtk::ListB
         _ => glyph.set_text(&account_initials(&name_str, &section.account.email)),
     }
     circle.append(&glyph);
-    hbox.append(&circle);
 
-    let name = gtk::Label::new(Some(&name_str));
-    name.set_hexpand(true);
-    name.set_halign(gtk::Align::Start);
-    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    hbox.append(&name);
+    let badge = if collapsed {
+        hbox.set_halign(gtk::Align::Center);
+        let tip = if inbox.unread > 0 {
+            format!("{} ({})", name_str, inbox.unread)
+        } else {
+            name_str.clone()
+        };
+        row.set_tooltip_text(Some(&tip));
+        let (overlay, badge) = with_unread_overlay(&circle, inbox.unread);
+        hbox.append(&overlay);
+        badge
+    } else {
+        hbox.append(&circle);
 
-    let badge = gtk::Label::new(Some(&inbox.unread.to_string()));
-    badge.add_css_class("unread-badge");
-    badge.set_valign(gtk::Align::Center);
-    badge.set_visible(inbox.unread > 0);
-    hbox.append(&badge);
+        let name = gtk::Label::new(Some(&name_str));
+        name.set_hexpand(true);
+        name.set_halign(gtk::Align::Start);
+        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        hbox.append(&name);
+
+        let badge = gtk::Label::new(Some(&inbox.unread.to_string()));
+        badge.add_css_class("unread-badge");
+        badge.set_valign(gtk::Align::Center);
+        badge.set_visible(inbox.unread > 0);
+        hbox.append(&badge);
+        badge
+    };
 
     row.set_child(Some(&hbox));
     (row, badge)
+}
+
+/// Wrap `child` in an overlay with a small unread chip pinned to its top-right
+/// corner — used in the compact rail, where there's no room for an inline badge.
+/// Returns the overlay (to place in the tree) and the chip label (for updates).
+fn with_unread_overlay(
+    child: &impl IsA<gtk::Widget>,
+    unread: u32,
+) -> (gtk::Overlay, gtk::Label) {
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(child));
+    let badge = gtk::Label::new(Some(&unread.to_string()));
+    badge.add_css_class("unread-badge");
+    badge.add_css_class("unread-badge-mini");
+    badge.set_halign(gtk::Align::End);
+    badge.set_valign(gtk::Align::Start);
+    badge.set_visible(unread > 0);
+    overlay.add_overlay(&badge);
+    (overlay, badge)
 }
 
 fn build_folder_row(folder: &Folder, collapsed: bool) -> (gtk::ListBoxRow, Option<gtk::Label>) {
@@ -1061,7 +1130,6 @@ fn build_folder_row(folder: &Folder, collapsed: bool) -> (gtk::ListBoxRow, Optio
 
     let img = gtk::Image::from_icon_name(folder.kind.icon());
     img.add_css_class("folder-icon");
-    hbox.append(&img);
 
     let badge = if collapsed {
         hbox.set_halign(gtk::Align::Center);
@@ -1071,8 +1139,18 @@ fn build_folder_row(folder: &Folder, collapsed: bool) -> (gtk::ListBoxRow, Optio
             folder.name.clone()
         };
         row.set_tooltip_text(Some(&tip));
-        None
+        // Only the Inbox carries an unread chip; in the rail it rides the icon's
+        // corner so new mail shows without expanding the sidebar.
+        if folder.kind == FolderKind::Inbox {
+            let (overlay, badge) = with_unread_overlay(&img, folder.unread);
+            hbox.append(&overlay);
+            Some(badge)
+        } else {
+            hbox.append(&img);
+            None
+        }
     } else {
+        hbox.append(&img);
         let name = gtk::Label::new(Some(&folder.name));
         name.set_hexpand(true);
         name.set_halign(gtk::Align::Start);

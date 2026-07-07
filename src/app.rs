@@ -9,7 +9,7 @@ use relm4::prelude::*;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Width of the collapsed, icon-only sidebar rail.
-const SIDEBAR_RAIL_WIDTH: f64 = 48.0;
+const SIDEBAR_RAIL_WIDTH: f64 = 80.0;
 
 relm4::new_action_group!(WindowActionGroup, "win");
 relm4::new_stateless_action!(AccountsAction, WindowActionGroup, "accounts");
@@ -92,6 +92,9 @@ pub struct AppModel {
     sidebar_split: Option<adw::OverlaySplitView>,
     /// The "Veem" title label, hidden while the sidebar is collapsed.
     app_title: Option<gtk::Label>,
+    /// Sidebar header. In the icon-only rail its window-control buttons are
+    /// hidden so the header stops forcing a minimum width wider than the rail.
+    sidebar_header: Option<adw::HeaderBar>,
     /// Whether the sidebar is in icon-only (collapsed) mode.
     sidebar_collapsed: bool,
     /// Held so the in-flight collapse/expand width animation isn't dropped.
@@ -284,6 +287,7 @@ impl SimpleComponent for AppModel {
 
                     #[wrap(Some)]
                     set_sidebar = &adw::ToolbarView {
+                        #[name = "sidebar_header"]
                         add_top_bar = &adw::HeaderBar {
                             add_css_class: "flat",
                             #[wrap(Some)]
@@ -624,6 +628,7 @@ impl SimpleComponent for AppModel {
             folder_unread: HashMap::new(),
             sidebar_split: None,
             app_title: None,
+            sidebar_header: None,
             sidebar_collapsed: icon_only,
             sidebar_anim: None,
             current: None,
@@ -674,10 +679,12 @@ impl SimpleComponent for AppModel {
         }
         model.sidebar_split = Some(widgets.sidebar_split.clone());
         model.app_title = Some(widgets.app_title.clone());
+        model.sidebar_header = Some(widgets.sidebar_header.clone());
         if model.sidebar_collapsed {
             widgets.sidebar_split.set_min_sidebar_width(SIDEBAR_RAIL_WIDTH);
             widgets.sidebar_split.set_max_sidebar_width(SIDEBAR_RAIL_WIDTH);
             widgets.app_title.set_visible(false);
+            set_sidebar_header_compact(&widgets.sidebar_header, true);
         }
 
         let mut group = RelmActionGroup::<WindowActionGroup>::new();
@@ -775,6 +782,9 @@ impl SimpleComponent for AppModel {
                 self.animate_sidebar(collapsed);
                 if let Some(title) = &self.app_title {
                     title.set_visible(!collapsed);
+                }
+                if let Some(header) = &self.sidebar_header {
+                    set_sidebar_header_compact(header, collapsed);
                 }
                 config::save_sidebar_state(&self.account_order, &self.collapsed, collapsed);
             }
@@ -3191,6 +3201,21 @@ fn notes_page(title: &str, tag: &str, markup: &str) -> adw::NavigationPage {
 /// `VEEM_DEMO` is set, so removing all real accounts leaves the app blank.
 fn demo_mode() -> bool {
     std::env::var_os("VEEM_DEMO").is_some()
+}
+
+/// Trim the sidebar header in the icon-only rail so it no longer forces a minimum
+/// width wider than the rail: hide the (redundant) window-control buttons and tag
+/// the header so its Compose/Menu buttons shrink to fit (see `.rail-header` in the
+/// stylesheet). The reader pane's header still carries the window's close button,
+/// so nothing becomes unreachable.
+fn set_sidebar_header_compact(header: &adw::HeaderBar, compact: bool) {
+    header.set_show_start_title_buttons(!compact);
+    header.set_show_end_title_buttons(!compact);
+    if compact {
+        header.add_css_class("rail-header");
+    } else {
+        header.remove_css_class("rail-header");
+    }
 }
 
 fn open_attachment(att: &Attachment) {

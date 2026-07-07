@@ -32,6 +32,31 @@
   padding-right: 2px;
 }
 
+/* Icon-only rail: shrink the sidebar header's Compose/Menu buttons and tighten
+   its padding so the header stops forcing the rail wider than SIDEBAR_RAIL_WIDTH.
+   Uses the `headerbar` node name for enough specificity to beat Adwaita's own
+   header-button sizing. */
+headerbar.rail-header {
+  padding-left: 2px;
+  padding-right: 2px;
+  min-height: 0;
+}
+
+headerbar.rail-header button,
+headerbar.rail-header menubutton,
+headerbar.rail-header menubutton > button {
+  min-width: 20px;
+  min-height: 20px;
+  padding: 1px;
+  margin: 0;
+}
+
+/* Smaller glyphs inside the rail's Compose/Menu buttons (default symbolic icons
+   are 16px). */
+headerbar.rail-header button image {
+  -gtk-icon-size: 12px;
+}
+
 .account-avatar {
   min-width: 36px;
   min-height: 36px;
@@ -226,6 +251,19 @@
   padding: 0 5px;
   font-size: 0.8em;
   font-weight: 700;
+}
+
+/* Compact-rail variant: a smaller chip pinned to an icon/pill corner via an
+   overlay, so unread counts stay visible when the sidebar is icon-only. The
+   ring in the sidebar's background colour separates it from the icon beneath. */
+.unread-badge-mini {
+  min-width: 14px;
+  min-height: 14px;
+  padding: 0 3px;
+  font-size: 0.6em;
+  margin-top: -4px;
+  margin-right: -14px;
+  box-shadow: 0 0 0 2px @sidebar_bg_color;
 }
 
 /* ---- Message list ---- */

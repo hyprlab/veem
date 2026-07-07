@@ -56,7 +56,7 @@ impl MockBackend {
             folder(5, 1, "Archive", FolderKind::Archive, 0),
             folder(6, 1, "Junk", FolderKind::Junk, 2),
             folder(7, 1, "Trash", FolderKind::Trash, 0),
-            folder(11, 2, "Inbox", FolderKind::Inbox, 3),
+            folder(11, 2, "Inbox", FolderKind::Inbox, 12),
             folder(12, 2, "Starred", FolderKind::Starred, 0),
             folder(13, 2, "Sent", FolderKind::Sent, 0),
             folder(14, 2, "Drafts", FolderKind::Drafts, 0),
