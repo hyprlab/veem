@@ -1895,6 +1895,19 @@ async fn list_folders(
             f.unread = mb.unseen.unwrap_or(0);
         }
     }
+
+    // STATUS is unreliable on some servers (notably iCloud), which leaves stale
+    // inbox chips in the sidebar until the folder is opened. The inbox is the only
+    // folder whose unread count is shown, so refine just that one up front with the
+    // accurate EXAMINE + SEARCH UNSEEN (read-only; leaves the mailbox unselected
+    // for the main loop to re-select as needed).
+    if let Some(inbox) = folders.iter_mut().find(|f| f.kind == FolderKind::Inbox) {
+        if session.examine(&inbox.path).await.is_ok() {
+            if let Some(n) = selected_unseen(session).await {
+                inbox.unread = n;
+            }
+        }
+    }
     Ok(folders)
 }
 

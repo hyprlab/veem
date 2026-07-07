@@ -337,6 +337,19 @@ impl Component for Sidebar {
                     label.set_visible(unified > 0);
                 }
                 self.unified_unread = unified;
+                // Persist the fresh counts into `sections` as well. Otherwise the
+                // next rebuild_normal (e.g. toggling the sidebar collapse) recreates
+                // every badge from the folder unread values captured at the last
+                // SetContents, reverting in-place updates — so a read inbox's chip
+                // reappears on collapse. Keep `sections` a faithful mirror.
+                for section in &mut self.sections {
+                    for folder in &mut section.folders {
+                        folder.unread = folders
+                            .get(&(section.account.id, folder.id))
+                            .copied()
+                            .unwrap_or(0);
+                    }
+                }
             }
 
             SidebarInput::ToggleCollapsed => {
