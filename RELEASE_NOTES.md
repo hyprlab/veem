@@ -1,6 +1,11 @@
 # Veem
 
-The first stable release of Veem — a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
+Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
+
+## What's new in 1.1.0
+- The collapsed, icon-only sidebar now shows unread count chips directly on the inbox icons.
+- The per-account inboxes under "All Inboxes" stay available when the sidebar is collapsed, with a button to expand or collapse them.
+- The collapsed sidebar rail is narrower, reclaiming horizontal space.
 
 ## Accounts & sign-in
 - Multiple IMAP and POP3 accounts, each running on its own background worker.

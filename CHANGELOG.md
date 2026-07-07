@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.1.0 — 2026-07-06
+- Compact (icon-only) sidebar improvements: inboxes now show unread count chips on their icons, the per-account inboxes under "All Inboxes" stay visible (with a button to expand/collapse them), and the collapsed rail is narrower.
+
 ## 1.0.9 — 2026-07-05
 - Added a Changelog section to the About window, backed by this file so the version history stays in sync everywhere.
 
