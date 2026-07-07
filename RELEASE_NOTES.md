@@ -2,8 +2,11 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.1.0
-- The collapsed, icon-only sidebar now shows unread count chips directly on the inbox icons.
+## What's new in 1.1.1
+- Fixed the sidebar's unread count badges: they no longer show a stale number after collapsing and expanding the sidebar, and empty inboxes now report the correct count as soon as an account connects.
+
+## In 1.1.0
+- The collapsed, icon-only sidebar shows unread count chips directly on the inbox icons.
 - The per-account inboxes under "All Inboxes" stay available when the sidebar is collapsed, with a button to expand or collapse them.
 - The collapsed sidebar rail is narrower, reclaiming horizontal space.
 

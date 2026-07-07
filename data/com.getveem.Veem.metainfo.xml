@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.1.1" date="2026-07-07" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.1.1</url>
+      <description>
+        <p>Fixed unreliable sidebar unread badges: stale counts after collapsing the sidebar, and inaccurate STATUS-based counts for inboxes on connect.</p>
+      </description>
+    </release>
     <release version="1.1.0" date="2026-07-06" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.1.0</url>
       <description>
