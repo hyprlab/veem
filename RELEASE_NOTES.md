@@ -2,7 +2,11 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.1.1
+## What's new in 1.1.2
+- Mass delete and archive of large selections is now fast and reliable, with a progress spinner — and on Gmail it correctly moves mail to Trash instead of leaving it in All Mail.
+- Accounts removed in GNOME Online Accounts are now dropped from Veem automatically, on startup and while running.
+
+## In 1.1.1
 - Fixed the sidebar's unread count badges: they no longer show a stale number after collapsing and expanding the sidebar, and empty inboxes now report the correct count as soon as an account connects.
 
 ## In 1.1.0
