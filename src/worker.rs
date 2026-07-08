@@ -93,6 +93,14 @@ pub enum MailRequest {
         uid: u32,
         dest: String,
     },
+    /// Move many messages from one mailbox to another in a single UID MOVE (bulk
+    /// archive / delete / spam). Far faster and more reliable than one request per
+    /// message on large mailboxes.
+    MoveMessages {
+        path: String,
+        uids: Vec<u32>,
+        dest: String,
+    },
     /// Create a new mailbox (folder) at `path`.
     CreateFolder { path: String },
     /// Delete a mailbox, first moving its contents to `trash` (if set).
@@ -158,6 +166,9 @@ pub enum WorkerEvent {
     Sent,
     /// A draft was saved to the Drafts folder.
     DraftSaved,
+    /// A bulk MoveMessages request finished (success or failure) — drives the
+    /// bulk-action spinner in the UI.
+    BulkComplete,
     Status(String),
     /// `connectivity` marks connection/sync errors that should auto-clear once
     /// a later connect or sync succeeds.
@@ -736,6 +747,31 @@ async fn run_imap(
                         lost = true;
                     }
                 }
+            }
+
+            MailRequest::MoveMessages { path, uids, dest } => {
+                let sess = session.as_mut().unwrap();
+                match move_messages(sess, &path, &uids, &dest).await {
+                    Ok(created) => {
+                        if let Some(c) = cache.as_ref() {
+                            for uid in &uids {
+                                c.delete_message(account_id, &path, *uid);
+                            }
+                        }
+                        if created {
+                            refresh_folders(account_id, sess, cache.as_ref(), &emit).await;
+                        }
+                    }
+                    Err(e) => {
+                        emit(WorkerEvent::Error {
+                            text: format!("Could not move {} messages: {e}", uids.len()),
+                            connectivity: false,
+                        });
+                        lost = true;
+                    }
+                }
+                // Always signal completion so the UI's bulk spinner clears.
+                emit(WorkerEvent::BulkComplete);
             }
 
             MailRequest::CreateFolder { path } => {
@@ -1665,6 +1701,37 @@ async fn move_message(
     move_or_create(session, path, uid, dest).await
 }
 
+/// Move many messages from `path` to `dest` with as few IMAP commands as
+/// possible: one SELECT, then a UID MOVE per chunk of the UID set (chunked so a
+/// huge selection never overflows the server's command-length limit). Creates and
+/// subscribes to `dest` on demand. Returns whether the destination was created.
+async fn move_messages(
+    session: &mut ImapSession,
+    path: &str,
+    uids: &[u32],
+    dest: &str,
+) -> Result<bool, async_imap::error::Error> {
+    session.select(path).await?;
+    let mut created = false;
+    let mut ensured_dest = false;
+    for chunk in uids.chunks(300) {
+        let set = chunk.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+        if session.uid_mv(&set, dest).await.is_ok() {
+            continue;
+        }
+        // First failure is most likely a missing destination mailbox — create,
+        // subscribe, re-select the source, and retry this chunk (then the rest).
+        if !ensured_dest {
+            created = session.create(dest).await.is_ok();
+            let _ = session.subscribe(dest).await;
+            ensured_dest = true;
+            session.select(path).await?;
+        }
+        session.uid_mv(&set, dest).await?;
+    }
+    Ok(created)
+}
+
 /// Create (and subscribe to) a new mailbox.
 async fn create_folder(
     session: &mut ImapSession,
@@ -1866,13 +1933,15 @@ async fn list_folders(
         .await?;
 
     let mut folders = Vec::new();
+    let mut special_use = Vec::new(); // parallel: kind came from a SPECIAL-USE attr
     for name in names.iter() {
         // Skip containers that cannot hold messages.
         if name.attributes().contains(&NameAttribute::NoSelect) {
             continue;
         }
         let path = name.name().to_string();
-        let kind = classify(&path, name.attributes());
+        let (kind, by_special_use) = classify_with_source(&path, name.attributes());
+        special_use.push(by_special_use);
         folders.push(Folder {
             id: 0, // assigned by order below
             account_id,
@@ -1881,6 +1950,31 @@ async fn list_folders(
             kind,
             unread: 0,
         });
+    }
+
+    // When a role has a real SPECIAL-USE folder, demote any name-matched impostors
+    // of that role to Custom — otherwise a stray folder like a plain "Trash" label
+    // can shadow the server's actual [Gmail]/Trash and mail "moved" there never
+    // really leaves (it just gains a label).
+    for role in [
+        FolderKind::Sent,
+        FolderKind::Drafts,
+        FolderKind::Trash,
+        FolderKind::Junk,
+        FolderKind::Archive,
+        FolderKind::Starred,
+    ] {
+        let has_special = folders
+            .iter()
+            .zip(&special_use)
+            .any(|(f, su)| f.kind == role && *su);
+        if has_special {
+            for (f, su) in folders.iter_mut().zip(&special_use) {
+                if f.kind == role && !*su {
+                    f.kind = FolderKind::Custom;
+                }
+            }
+        }
     }
 
     folders.sort_by_key(|f| folder_order(f.kind));
@@ -2951,6 +3045,16 @@ async fn run_pop3(
                     }),
                 }
             }
+            MailRequest::MoveMessages { uids, .. } => {
+                for uid in uids {
+                    if pop3_delete(&account, uid).await.is_ok() {
+                        if let Some(c) = cache.as_ref() {
+                            c.delete_message(account_id, INBOX, uid);
+                        }
+                    }
+                }
+                emit(WorkerEvent::BulkComplete);
+            }
 
             // POP3 has no folders beyond the inbox.
             MailRequest::CreateFolder { .. }
@@ -3108,6 +3212,8 @@ async fn run_mock(
             | MailRequest::CreateFolder { .. }
             | MailRequest::DeleteFolder { .. }
             | MailRequest::Reconnect => {}
+            // Signal completion so the demo's bulk spinner clears.
+            MailRequest::MoveMessages { .. } => emit(WorkerEvent::BulkComplete),
             MailRequest::SaveDraft { .. } => emit(WorkerEvent::DraftSaved),
             // Pretend the send succeeded so the compose flow is demoable offline.
             MailRequest::Send { .. } => emit(WorkerEvent::Sent),
@@ -3119,22 +3225,27 @@ async fn run_mock(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn classify(path: &str, attrs: &[NameAttribute]) -> FolderKind {
+/// Classify a folder, also reporting whether the kind came from an RFC 6154
+/// SPECIAL-USE attribute (`true`) rather than name matching (`false`). This lets
+/// `list_folders` prefer the real special-use folder when a server also exposes a
+/// stray folder that merely *looks* like it fills the same role — e.g. Gmail's
+/// real `[Gmail]/Trash` (\Trash) next to a plain top-level `Trash` label.
+fn classify_with_source(path: &str, attrs: &[NameAttribute]) -> (FolderKind, bool) {
     // Prefer RFC 6154 SPECIAL-USE attributes; fall back to name matching.
     for a in attrs {
         match a {
-            NameAttribute::Sent => return FolderKind::Sent,
-            NameAttribute::Drafts => return FolderKind::Drafts,
-            NameAttribute::Trash => return FolderKind::Trash,
-            NameAttribute::Junk => return FolderKind::Junk,
-            NameAttribute::Archive => return FolderKind::Archive,
-            NameAttribute::Flagged => return FolderKind::Starred,
+            NameAttribute::Sent => return (FolderKind::Sent, true),
+            NameAttribute::Drafts => return (FolderKind::Drafts, true),
+            NameAttribute::Trash => return (FolderKind::Trash, true),
+            NameAttribute::Junk => return (FolderKind::Junk, true),
+            NameAttribute::Archive => return (FolderKind::Archive, true),
+            NameAttribute::Flagged => return (FolderKind::Starred, true),
             _ => {}
         }
     }
 
     let leaf = path.rsplit(['/', '.']).next().unwrap_or(path).to_lowercase();
-    match leaf.as_str() {
+    let kind = match leaf.as_str() {
         "inbox" => FolderKind::Inbox,
         "sent" | "sent items" | "sent mail" => FolderKind::Sent,
         "drafts" => FolderKind::Drafts,
@@ -3143,7 +3254,8 @@ fn classify(path: &str, attrs: &[NameAttribute]) -> FolderKind {
         "archive" | "all mail" => FolderKind::Archive,
         "starred" | "flagged" => FolderKind::Starred,
         _ => FolderKind::Custom,
-    }
+    };
+    (kind, false)
 }
 
 fn folder_order(kind: FolderKind) -> u8 {

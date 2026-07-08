@@ -665,6 +665,9 @@ pub struct MessageList {
     sort: SortOrder,
     /// Group messages into conversation threads (user preference).
     threading: bool,
+    /// When `Some`, a spinner + this message overlays the list — shown while a
+    /// large bulk action (archive/delete/spam) is applied.
+    busy: Option<String>,
 }
 
 /// How the message list is ordered.
@@ -744,6 +747,11 @@ pub enum MessageListInput {
     RowAction { action: RowAction, message: Box<Message> },
     SetStarred { id: u32, starred: bool },
     Remove(u32),
+    /// Remove many messages in a single batch (bulk archive/delete/spam), so the
+    /// list updates in one render pass instead of one per message.
+    RemoveMany(Vec<u32>),
+    /// Show (`Some(message)`) or hide (`None`) the busy spinner over the list.
+    SetBusy(Option<String>),
     /// Secondary-click at (x, y) in the list: open the context menu.
     ContextMenu { x: f64, y: f64 },
     /// Set the Actions Palette auto-collapse delay (seconds).
@@ -893,8 +901,10 @@ impl SimpleComponent for MessageList {
                 },
             },
 
-            #[name = "scroller"]
-            gtk::ScrolledWindow {
+            gtk::Overlay {
+                #[wrap(Some)]
+                #[name = "scroller"]
+                set_child = &gtk::ScrolledWindow {
                 set_vexpand: true,
                 set_hscrollbar_policy: gtk::PolicyType::Never,
 
@@ -944,6 +954,27 @@ impl SimpleComponent for MessageList {
                             set_label: "Loading more…",
                             add_css_class: "dim-label",
                         },
+                    },
+                },
+                },
+
+                add_overlay = &gtk::Box {
+                    add_css_class: "bulk-busy",
+                    set_halign: gtk::Align::Center,
+                    set_valign: gtk::Align::Center,
+                    set_orientation: gtk::Orientation::Vertical,
+                    set_spacing: 12,
+                    #[watch]
+                    set_visible: model.busy.is_some(),
+
+                    gtk::Spinner {
+                        set_spinning: true,
+                        set_width_request: 32,
+                        set_height_request: 32,
+                    },
+                    gtk::Label {
+                        #[watch]
+                        set_label: model.busy.as_deref().unwrap_or(""),
                     },
                 },
             },
@@ -1001,6 +1032,7 @@ impl SimpleComponent for MessageList {
             scroller: None,
             sort: SortOrder::DateNewest,
             threading: true,
+            busy: None,
         };
 
         let row_box = model.rows.widget();
@@ -1281,6 +1313,51 @@ impl SimpleComponent for MessageList {
                         }
                     }
                 }
+            }
+            MessageListInput::RemoveMany(ids) => {
+                if ids.is_empty() {
+                    return;
+                }
+                let set: std::collections::HashSet<u32> = ids.into_iter().collect();
+                let was_viewed = self.selected_id.map(|(_, i)| i).is_some_and(|i| set.contains(&i));
+                if was_viewed {
+                    self.selected_id = None;
+                }
+                self.selected_ids.retain(|(_, i)| !set.contains(i));
+                self.all.retain(|m| !set.contains(&m.id));
+                // Where the first removed row sat, so we can re-select in its place.
+                let first_removed = self.shown.iter().position(|m| set.contains(&m.id));
+                // Remove all matching rows in one guarded batch (a single widget
+                // update) instead of one render cycle per message. Walk back-to-front
+                // so indices stay valid.
+                {
+                    let mut guard = self.rows.guard();
+                    let mut idx = self.shown.len();
+                    while idx > 0 {
+                        idx -= 1;
+                        if set.contains(&self.shown[idx].id) {
+                            self.shown.remove(idx);
+                            guard.remove(idx);
+                        }
+                    }
+                }
+                self.selection_count = self.selected_ids.len();
+                if was_viewed {
+                    match first_removed {
+                        Some(idx) if !self.shown.is_empty() => {
+                            let next = idx.min(self.shown.len() - 1);
+                            if let Some(row) = self.rows.widget().row_at_index(next as i32) {
+                                self.rows.widget().select_row(Some(&row));
+                            }
+                        }
+                        _ => {
+                            let _ = sender.output(MessageListOutput::SelectionCleared);
+                        }
+                    }
+                }
+            }
+            MessageListInput::SetBusy(text) => {
+                self.busy = text;
             }
             MessageListInput::RowAction { action, message } => {
                 let _ = sender.output(MessageListOutput::Action { action, message });

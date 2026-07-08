@@ -185,6 +185,61 @@ fn try_list() -> Result<Vec<GoaMailAccount>, String> {
     Ok(out)
 }
 
+/// Live set of ids for accounts that currently exist in GNOME Online Accounts
+/// (any account object, mail-capable or not — so merely disabling Mail doesn't
+/// count as removal). Returns `None` when GOA / the session bus can't be reached —
+/// callers MUST treat that as "unknown", not "no accounts", or they'd wrongly
+/// prune every imported GOA account whenever GOA is momentarily unavailable.
+pub fn live_account_ids() -> Option<std::collections::HashSet<String>> {
+    let conn = zbus::blocking::Connection::session().ok()?;
+    let reply = conn
+        .call_method(
+            Some(GOA_DEST),
+            GOA_PATH,
+            Some("org.freedesktop.DBus.ObjectManager"),
+            "GetManagedObjects",
+            &(),
+        )
+        .ok()?;
+    let (objects,): (ManagedObjects,) = reply.body().deserialize().ok()?;
+    Some(
+        objects
+            .values()
+            .filter_map(|ifaces| ifaces.get(IFACE_ACCOUNT))
+            .map(|account| get_str(account, "Id"))
+            .filter(|id| !id.is_empty())
+            .collect(),
+    )
+}
+
+/// Watch GNOME Online Accounts for account/interface removals, invoking
+/// `on_change` on each. Runs on a dedicated thread; silently no-ops if GOA or the
+/// session bus is unavailable. Lets Veem prune accounts removed in GNOME Settings
+/// without a restart.
+pub fn watch_removals<F: Fn() + Send + 'static>(on_change: F) {
+    let _ = std::thread::Builder::new()
+        .name("goa-watch".into())
+        .spawn(move || {
+            if let Err(e) = watch_loop(&on_change) {
+                tracing::debug!("GOA watch stopped: {e}");
+            }
+        });
+}
+
+fn watch_loop<F: Fn()>(on_change: &F) -> Result<(), Box<dyn std::error::Error>> {
+    let conn = zbus::blocking::Connection::session()?;
+    let om = zbus::blocking::fdo::ObjectManagerProxy::builder(&conn)
+        .destination(GOA_DEST)?
+        .path(GOA_PATH)?
+        .build()?;
+    // Blocks until GOA emits an InterfacesRemoved signal; ends if the bus closes.
+    let mut removed = om.receive_interfaces_removed()?;
+    for _ in removed.by_ref() {
+        on_change();
+    }
+    Ok(())
+}
+
 /// Fetch a fresh OAuth2 access token for a GOA account (by id). GOA refreshes the
 /// token as needed, so this always returns a currently-valid token. Blocking.
 pub fn oauth_token(goa_id: &str) -> Option<String> {

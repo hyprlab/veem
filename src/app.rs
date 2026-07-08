@@ -11,6 +11,10 @@ use tokio::sync::mpsc::UnboundedSender;
 /// Width of the collapsed, icon-only sidebar rail.
 const SIDEBAR_RAIL_WIDTH: f64 = 80.0;
 
+/// Selection size at/above which a bulk archive/delete/spam shows a spinner and
+/// applies deferred (smaller batches are fast enough to run inline).
+const BULK_SPINNER_MIN: usize = 25;
+
 relm4::new_action_group!(WindowActionGroup, "win");
 relm4::new_stateless_action!(AccountsAction, WindowActionGroup, "accounts");
 relm4::new_stateless_action!(PreferencesAction, WindowActionGroup, "preferences");
@@ -132,6 +136,12 @@ pub struct AppModel {
     current_thread: Vec<Message>,
     /// A draft awaiting its body before opening in the compose editor.
     pending_draft: Option<Message>,
+    /// Outstanding bulk MoveMessages requests awaiting a worker `BulkComplete`.
+    /// While > 0 (and a large selection triggered it) the list shows a spinner.
+    bulk_pending: usize,
+    /// A large bulk archive/delete/spam deferred one tick so its spinner paints
+    /// before the (blocking) apply runs.
+    pending_bulk: Option<(BulkAction, Vec<Message>)>,
 }
 
 /// A message displayed in its own top-level window (double-click to pop out).
@@ -177,6 +187,11 @@ pub enum AppMsg {
     RowAction { action: RowAction, message: Box<Message> },
     /// A bulk action applied to every selected message.
     Bulk { action: BulkAction, messages: Vec<Message> },
+    /// Apply the deferred large bulk action (runs after its spinner has painted).
+    BulkApply,
+    /// A worker finished one bulk MoveMessages request; clears the spinner once
+    /// all outstanding bulk moves are done.
+    BulkComplete,
     Compose,
     OpenAbout,
     AllowSender(String),
@@ -215,6 +230,9 @@ pub enum AppMsg {
     AccountRemoved { email: String },
     AccountEnabledChanged { email: String, enabled: bool },
     ImportGoaAccount(Box<AccountConfig>),
+    /// GNOME Online Accounts changed on the session bus — re-reconcile and drop
+    /// any imported account whose GOA account was removed.
+    GoaChanged,
     CloseAccounts,
     OpenPreferences,
     ClosePreferences,
@@ -543,7 +561,23 @@ impl SimpleComponent for AppModel {
         relm4::set_global_css(include_str!("styles.css"));
         register_icons();
 
-        let (order, collapsed, icon_only) = config::load_sidebar_state();
+        let (mut order, mut collapsed, icon_only) = config::load_sidebar_state();
+
+        // Load accounts, then drop any imported GOA account that GNOME Online
+        // Accounts no longer has (removed or Mail-disabled there). Reconciliation
+        // is skipped when GOA is unreachable, so a momentary outage never wipes
+        // imported accounts. Live changes are handled by the watcher below.
+        let mut config = config::load().unwrap_or_default();
+        let goa_removed = reconcile_goa(&mut config);
+        if !goa_removed.is_empty() {
+            for email in &goa_removed {
+                config::delete_password(email);
+            }
+            order.retain(|e| !goa_removed.contains(e));
+            collapsed.retain(|e| !goa_removed.contains(e));
+            let _ = config::save(&config);
+            config::save_sidebar_state(&order, &collapsed, icon_only);
+        }
 
         let sidebar = Sidebar::builder()
             .launch(icon_only)
@@ -601,7 +635,7 @@ impl SimpleComponent for AppModel {
 
         let mut model = AppModel {
             workers: HashMap::new(),
-            config: config::load().unwrap_or_default(),
+            config,
             window: root.clone(),
             prefs: None,
             accounts_win: None,
@@ -625,6 +659,8 @@ impl SimpleComponent for AppModel {
             pending_draft: None,
             popouts: HashMap::new(),
             current_thread: Vec::new(),
+            bulk_pending: 0,
+            pending_bulk: None,
             folder_unread: HashMap::new(),
             sidebar_split: None,
             app_title: None,
@@ -649,6 +685,14 @@ impl SimpleComponent for AppModel {
             message_view,
         };
         model.spawn_workers(&sender);
+        // Watch GNOME Online Accounts so an account removed there disappears from
+        // Veem live (no restart needed); reconciliation happens on GoaChanged.
+        crate::goa::watch_removals({
+            let s = sender.input_sender().clone();
+            move || {
+                let _ = s.send(AppMsg::GoaChanged);
+            }
+        });
         // With no accounts, no worker events will populate the sidebar, so render
         // its empty state (the "Add first account" prompt) up front.
         if model.config.is_empty() {
@@ -1094,15 +1138,50 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::Bulk { action, messages } => {
-                for m in messages {
-                    match action {
-                        BulkAction::MarkRead => self.set_read(&m, true),
-                        BulkAction::MarkUnread => self.set_read(&m, false),
-                        BulkAction::Flag => self.set_star(&m, true),
-                        BulkAction::Archive => self.move_to(m, FolderKind::Archive),
-                        BulkAction::Spam => self.mark_spam_msg(m),
-                        BulkAction::Delete => self.move_to(m, FolderKind::Trash),
+                match action {
+                    // Flag/read changes update rows in place (no removal).
+                    BulkAction::MarkRead => for m in &messages { self.set_read(m, true); },
+                    BulkAction::MarkUnread => for m in &messages { self.set_read(m, false); },
+                    BulkAction::Flag => for m in &messages { self.set_star(m, true); },
+                    // Archive/Delete/Spam remove every selected row. Doing that one
+                    // at a time blocks the UI thread (a render cycle per message) and
+                    // trips GTK's "app is not responding" dialog for large selections.
+                    // Batch it; for big selections show a spinner and defer the apply
+                    // one tick so the spinner paints before the blocking work runs.
+                    BulkAction::Archive | BulkAction::Spam | BulkAction::Delete => {
+                        if messages.len() >= BULK_SPINNER_MIN {
+                            self.message_list.emit(MessageListInput::SetBusy(Some(
+                                bulk_busy_label(action, messages.len()),
+                            )));
+                            self.pending_bulk = Some((action, messages));
+                            let s = sender.clone();
+                            gtk::glib::timeout_add_local_once(
+                                std::time::Duration::from_millis(16),
+                                move || s.input(AppMsg::BulkApply),
+                            );
+                        } else {
+                            self.apply_bulk_move(action, messages);
+                        }
                     }
+                }
+            }
+
+            AppMsg::BulkApply => {
+                if let Some((action, messages)) = self.pending_bulk.take() {
+                    self.apply_bulk_move(action, messages);
+                    // The optimistic removal is done; keep the spinner up until the
+                    // server-side moves finish (BulkComplete). If nothing was sent,
+                    // clear it now.
+                    if self.bulk_pending == 0 {
+                        self.message_list.emit(MessageListInput::SetBusy(None));
+                    }
+                }
+            }
+
+            AppMsg::BulkComplete => {
+                self.bulk_pending = self.bulk_pending.saturating_sub(1);
+                if self.bulk_pending == 0 {
+                    self.message_list.emit(MessageListInput::SetBusy(None));
                 }
             }
 
@@ -1439,6 +1518,29 @@ impl SimpleComponent for AppModel {
                 }
                 config::save_sidebar_state(&self.account_order, &self.collapsed, self.sidebar_collapsed);
                 self.reconnect_all(&sender);
+            }
+
+            AppMsg::GoaChanged => {
+                // A GOA account was removed/disabled in GNOME Settings. Drop any
+                // imported account that no longer exists there. (Adding an account
+                // to GOA never auto-imports — that stays a manual choice.)
+                let removed = reconcile_goa(&mut self.config);
+                if !removed.is_empty() {
+                    for email in &removed {
+                        config::delete_password(email);
+                        self.account_order.retain(|e| e != email);
+                        self.collapsed.retain(|e| e != email);
+                    }
+                    if let Err(e) = config::save(&self.config) {
+                        tracing::error!("could not save config after GOA change: {e}");
+                    }
+                    config::save_sidebar_state(
+                        &self.account_order,
+                        &self.collapsed,
+                        self.sidebar_collapsed,
+                    );
+                    self.reconnect_all(&sender);
+                }
             }
 
             AppMsg::CloseAccounts => self.accounts_win = None,
@@ -2381,16 +2483,18 @@ impl AppModel {
     }
 
     /// Move a message to its account's folder of `kind` (archive/delete).
-    fn move_to(&mut self, m: Message, kind: FolderKind) {
-        // Use the existing folder if present, otherwise a default path (the worker
-        // creates it on the server if it doesn't exist yet).
-        let dest = self
-            .folders
-            .get(&m.account_id)
+    /// Destination path for `kind` on an account: its existing folder of that kind,
+    /// else a sensible default (the worker creates it on the server on first move).
+    fn folder_path_for(&self, account_id: u32, kind: FolderKind) -> Option<String> {
+        self.folders
+            .get(&account_id)
             .and_then(|fs| fs.iter().find(|f| f.kind == kind))
             .map(|f| f.path.clone())
-            .or_else(|| self.default_folder_path(m.account_id, kind));
-        let Some(dest) = dest else {
+            .or_else(|| self.default_folder_path(account_id, kind))
+    }
+
+    fn move_to(&mut self, m: Message, kind: FolderKind) {
+        let Some(dest) = self.folder_path_for(m.account_id, kind) else {
             self.notifications.emit(NotifyInput::Push {
                 text: format!("No {} folder available", kind_label(kind)),
                 error: true,
@@ -2972,13 +3076,66 @@ impl AppModel {
 
     /// Remove a handled message from the list, caches, and badges. Clears the
     /// reader only if that message was the one open. Shared by archive/delete/spam.
-    fn discard_message(&mut self, m: &Message) {
-        // Close any popped-out window showing this message — it's leaving the
-        // folder. (The window's close handler removes it from the map.)
+    /// Apply a removing bulk action (archive/delete/spam) to many messages at once.
+    /// Messages are grouped by (account, source folder) and each group is moved in a
+    /// SINGLE `MoveMessages` request (one server-side UID MOVE) — far faster and more
+    /// reliable than one request per message, which on a huge mailbox (e.g. Gmail's
+    /// All Mail) is slow and drops moves when the connection blips. The list is
+    /// updated once (`RemoveMany`); the spinner clears when every group's worker
+    /// reports `BulkComplete`.
+    fn apply_bulk_move(&mut self, action: BulkAction, messages: Vec<Message>) {
+        let kind = match action {
+            BulkAction::Archive => FolderKind::Archive,
+            BulkAction::Delete => FolderKind::Trash,
+            BulkAction::Spam => FolderKind::Junk,
+            // Non-removing actions never reach here (handled inline).
+            BulkAction::MarkRead | BulkAction::MarkUnread | BulkAction::Flag => return,
+        };
+        // (account, source path) → (dest path, uids). dest is per-account.
+        let mut groups: HashMap<(u32, String), (String, Vec<u32>)> = HashMap::new();
+        let mut removed_ids = Vec::with_capacity(messages.len());
+        let mut missing_dest = false;
+        for m in &messages {
+            let Some(src) = self.resolve_folder_path(m) else { continue };
+            let Some(dest) = self.folder_path_for(m.account_id, kind) else {
+                missing_dest = true;
+                continue;
+            };
+            if src == dest {
+                continue;
+            }
+            groups
+                .entry((m.account_id, src))
+                .or_insert_with(|| (dest, Vec::new()))
+                .1
+                .push(m.uid);
+            self.discard_message_local(m);
+            removed_ids.push(m.id);
+        }
+        if missing_dest {
+            self.notifications.emit(NotifyInput::Push {
+                text: format!("No {} folder available for some messages", kind_label(kind)),
+                error: true,
+                connectivity: false,
+            });
+        }
+        self.bulk_pending += groups.len();
+        for ((account_id, src), (dest, uids)) in groups {
+            self.send_to(account_id, MailRequest::MoveMessages { path: src, uids, dest });
+        }
+        self.message_list.emit(MessageListInput::RemoveMany(removed_ids));
+        self.push_unread_counts();
+    }
+
+    /// Optimistic local cleanup when a message leaves the current folder: close its
+    /// popout, drop it from the in-memory caches and the unread count, and clear the
+    /// reader if it was the viewed message. Does NOT touch the list widget or push
+    /// unread counts — the caller does that (single delete via `discard_message`;
+    /// bulk via one `RemoveMany` + one push in `apply_bulk_move`).
+    fn discard_message_local(&mut self, m: &Message) {
         if let Some(p) = self.popouts.get(&(m.account_id, m.id)) {
             p.window.close();
         }
-        self.message_list.emit(MessageListInput::Remove(m.id));
         if let Some(msgs) = self.unified_by_account.get_mut(&m.account_id) {
             msgs.retain(|x| x.uid != m.uid);
         }
@@ -3001,6 +3158,11 @@ impl AppModel {
             self.attachments_loading = false;
             self.attachments_available = false;
         }
+    }
+
+    fn discard_message(&mut self, m: &Message) {
+        self.discard_message_local(m);
+        self.message_list.emit(MessageListInput::Remove(m.id));
         self.push_unread_counts();
     }
 
@@ -3203,6 +3365,36 @@ fn demo_mode() -> bool {
     std::env::var_os("VEEM_DEMO").is_some()
 }
 
+/// Drop imported accounts whose GNOME Online Account no longer exists (removed or
+/// Mail-disabled in GNOME Settings), returning the emails dropped. Keeps every
+/// account — a no-op — when GOA can't be reached, so a momentarily-unavailable GOA
+/// never wipes imported accounts.
+fn reconcile_goa(config: &mut Vec<AccountConfig>) -> Vec<String> {
+    let Some(live) = crate::goa::live_account_ids() else {
+        return Vec::new();
+    };
+    let mut removed = Vec::new();
+    config.retain(|c| match &c.goa_id {
+        Some(id) if !live.contains(id) => {
+            removed.push(c.email.clone());
+            false
+        }
+        _ => true,
+    });
+    removed
+}
+
+/// Label for the spinner shown while a large bulk action is applied.
+fn bulk_busy_label(action: BulkAction, n: usize) -> String {
+    let verb = match action {
+        BulkAction::Archive => "Archiving",
+        BulkAction::Delete => "Deleting",
+        BulkAction::Spam => "Moving to Spam",
+        BulkAction::MarkRead | BulkAction::MarkUnread | BulkAction::Flag => "Updating",
+    };
+    format!("{verb} {n} messages…")
+}
+
 /// Trim the sidebar header in the icon-only rail so it no longer forces a minimum
 /// width wider than the rail: hide the (redundant) window-control buttons and tag
 /// the header so its Compose/Menu buttons shrink to fit (see `.rail-header` in the
@@ -3261,6 +3453,7 @@ fn register_icons() {
 
 fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
     match event {
+        WorkerEvent::BulkComplete => AppMsg::BulkComplete,
         WorkerEvent::Account(a) => AppMsg::SetAccount(a),
         WorkerEvent::Folders(folders) => AppMsg::SetFolders { account_id, folders },
         WorkerEvent::Messages { folder_id, messages } => {
