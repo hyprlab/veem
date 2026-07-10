@@ -2,7 +2,11 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.1.2
+## What's new in 1.1.3
+- Fixed photos emailed from an iPhone showing up as a blank message with no attachment. The text now appears, the photos are shown inline in the message, and they're listed as attachments you can save.
+- Plain-text messages now follow the light/dark theme instead of always rendering on white.
+
+## In 1.1.2
 - Mass delete and archive of large selections is now fast and reliable, with a progress spinner — and on Gmail it correctly moves mail to Trash instead of leaving it in All Mail.
 - Accounts removed in GNOME Online Accounts are now dropped from Veem automatically, on startup and while running.
 

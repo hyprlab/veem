@@ -1368,6 +1368,12 @@ fn extract_attachments(raw: &[u8]) -> Vec<crate::models::Attachment> {
     };
     let mut out = Vec::new();
     for (i, part) in parsed.attachments().enumerate() {
+        // Skip `cid:` resources referenced from the HTML body (newsletter logos):
+        // they're rendered in place, and `structure_has_attachment` doesn't count
+        // them, so listing them here would contradict the paperclip.
+        if part.content_id().is_some() {
+            continue;
+        }
         let name = part
             .attachment_name()
             .map(|s| s.to_string())
@@ -2627,14 +2633,28 @@ fn normalize_msgids(raw: &[u8]) -> String {
 }
 
 /// Whether an IMAP BODYSTRUCTURE contains a part marked as an attachment.
+///
+/// `Content-Disposition: attachment` is the obvious case, but Apple Mail sends
+/// iPhone photos as *inline* parts of a multipart/mixed, so disposition alone
+/// misses them. Any non-text part therefore counts, except one carrying a
+/// Content-ID — that marks a `cid:` resource referenced from the HTML body
+/// (a newsletter logo), which is rendered in place rather than listed.
 fn structure_has_attachment(bs: &async_imap::imap_proto::types::BodyStructure) -> bool {
     use async_imap::imap_proto::types::BodyStructure as Bs;
-    match bs {
-        Bs::Multipart { bodies, .. } => bodies.iter().any(structure_has_attachment),
-        Bs::Basic { common, .. } | Bs::Text { common, .. } | Bs::Message { common, .. } => common
+
+    let is_attachment = |common: &async_imap::imap_proto::types::BodyContentCommon| {
+        common
             .disposition
             .as_ref()
-            .is_some_and(|d| d.ty.eq_ignore_ascii_case("attachment")),
+            .is_some_and(|d| d.ty.eq_ignore_ascii_case("attachment"))
+    };
+
+    match bs {
+        Bs::Multipart { bodies, .. } => bodies.iter().any(structure_has_attachment),
+        Bs::Text { common, .. } => is_attachment(common),
+        Bs::Basic { common, other, .. } | Bs::Message { common, other, .. } => {
+            is_attachment(common) || other.id.is_none()
+        }
     }
 }
 
@@ -3364,33 +3384,263 @@ fn format_date(raw: &[u8]) -> (String, i64) {
     (label, dt.timestamp())
 }
 
-/// Extract a renderable HTML body from a raw RFC 822 message. The HTML part is
-/// used directly when present; a plain-text part is escaped and wrapped so it
-/// renders readably in the web view.
+/// Extract a renderable HTML body from a raw RFC 822 message. A lone HTML part is
+/// used directly; anything else is composed part by part.
+///
+/// A message can carry more than one display body. Apple Mail (iPhone) sends photo
+/// mail as a multipart/mixed that interleaves text parts with the images, so taking
+/// only the first body — as `body_html(0)` does — renders the message blank. Walk
+/// every display part in order instead, embedding inline images as `data:` URIs:
+/// the reader's CSP permits those even while remote content is blocked, and the
+/// bytes arrived with the message, so nothing is fetched from the network.
 fn extract_body(raw: &[u8]) -> String {
-    use mail_parser::MessageParser;
+    use mail_parser::{MessageParser, PartType};
+
+    /// Total decoded bytes of inline images embedded into one message body.
+    const INLINE_IMAGE_BUDGET: usize = 16 * 1024 * 1024;
+
     let Some(parsed) = MessageParser::default().parse(raw) else {
         return wrap_plain(&String::from_utf8_lossy(raw));
     };
-    if let Some(html) = parsed.body_html(0) {
-        return html.into_owned();
+
+    let bodies: Vec<_> = parsed.html_bodies().collect();
+
+    // A single HTML part is already a complete document — pass it through untouched
+    // so the sender's own layout and styling survive.
+    if let [only] = bodies.as_slice() {
+        if let PartType::Html(html) = &only.body {
+            return html.to_string();
+        }
     }
-    if let Some(text) = parsed.body_text(0) {
-        return wrap_plain(&text);
+
+    let mut inner = String::new();
+    let mut budget = INLINE_IMAGE_BUDGET;
+    for part in &bodies {
+        match &part.body {
+            PartType::Html(html) => inner.push_str(html),
+            PartType::Text(text) if !text.trim().is_empty() => {
+                inner.push_str("<div class=\"veem-plain\">");
+                inner.push_str(&escape_html(text));
+                inner.push_str("</div>");
+            }
+            PartType::Binary(bytes) | PartType::InlineBinary(bytes) => {
+                // Embedding inflates by ~4/3 and the result is cached on disk, so
+                // stop inlining past a budget. Oversized images are still listed
+                // as attachments and can be opened from there.
+                if let Some(mime) = image_mime(part) {
+                    if let Some(left) = budget.checked_sub(bytes.len()) {
+                        budget = left;
+                        inner.push_str(&format!(
+                            "<img class=\"veem-inline\" src=\"data:{mime};base64,{}\">",
+                            crate::oauth::base64_encode(bytes)
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
     }
-    wrap_plain("(no readable content)")
+
+    if inner.trim().is_empty() {
+        return match parsed.body_text(0) {
+            Some(text) if !text.trim().is_empty() => wrap_plain(&text),
+            _ => wrap_plain("(no readable content)"),
+        };
+    }
+    wrap_fragment(&inner)
 }
 
-/// Wrap plain text in a minimal, readable HTML document.
-fn wrap_plain(text: &str) -> String {
-    let escaped = text
-        .replace('&', "&amp;")
+/// The `image/<subtype>` MIME type of a part, if it is an image we can inline.
+/// The subtype is validated so it can't break out of the `data:` URI.
+fn image_mime(part: &mail_parser::MessagePart) -> Option<String> {
+    use mail_parser::MimeHeaders;
+    let ty = part.content_type()?;
+    if !ty.ctype().eq_ignore_ascii_case("image") {
+        return None;
+    }
+    let subtype = ty.subtype()?;
+    let safe = subtype
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    safe.then(|| format!("image/{}", subtype.to_ascii_lowercase()))
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
         .replace('<', "&lt;")
-        .replace('>', "&gt;");
+        .replace('>', "&gt;")
+}
+
+/// Wrap plain text in a minimal, readable HTML document. Colours are left to the
+/// `color-scheme` the reader injects, so the message follows the light/dark theme.
+fn wrap_plain(text: &str) -> String {
+    let escaped = escape_html(text);
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><style>\
-         body{{margin:0;padding:16px;font:14px/1.5 system-ui,sans-serif;\
-         white-space:pre-wrap;word-wrap:break-word;color:#1a1a1a;background:#fff}}\
+         body{{margin:0;padding:16px;box-sizing:border-box;\
+         font:14px/1.5 system-ui,sans-serif;\
+         white-space:pre-wrap;word-wrap:break-word}}\
          </style></head><body>{escaped}</body></html>"
     )
+}
+
+/// Wrap composed body fragments (text blocks and inline images) in a document.
+fn wrap_fragment(inner: &str) -> String {
+    format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><style>\
+         body{{margin:0;padding:16px;box-sizing:border-box;\
+         font:14px/1.5 system-ui,sans-serif}}\
+         .veem-plain{{white-space:pre-wrap;word-wrap:break-word}}\
+         .veem-inline{{display:block;max-width:100%;height:auto;\
+         margin:12px 0;border-radius:6px}}\
+         </style></head><body>{inner}</body></html>"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An iPhone photo mail: multipart/mixed interleaving an empty text part, an
+    /// *inline* JPEG, and the signature. Exactly the shape Apple Mail produces.
+    const IPHONE_PHOTO: &str = concat!(
+        "Content-Type: multipart/mixed; boundary=Apple-Mail-32B9517E\r\n",
+        "Content-Transfer-Encoding: 7bit\r\n",
+        "From: Jason Martin <jasonjmartin@me.com>\r\n",
+        "Subject: Panda\r\n",
+        "X-Mailer: iPhone Mail (23F84)\r\n",
+        "\r\n",
+        "--Apple-Mail-32B9517E\r\n",
+        "Content-Type: text/plain;\r\n\tcharset=us-ascii\r\n",
+        "Content-Transfer-Encoding: 7bit\r\n\r\n\r\n\r\n",
+        "--Apple-Mail-32B9517E\r\n",
+        "Content-Type: image/jpeg;\r\n\tname=C21AA3E8.jpeg;\r\n",
+        "\tx-apple-part-url=4F5E768A\r\n",
+        "Content-Disposition: inline;\r\n\tfilename=C21AA3E8.jpeg\r\n",
+        "Content-Transfer-Encoding: base64\r\n\r\n",
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBk=\r\n",
+        "\r\n",
+        "--Apple-Mail-32B9517E\r\n",
+        "Content-Type: text/plain;\r\n\tcharset=us-ascii\r\n",
+        "Content-Transfer-Encoding: 7bit\r\n\r\n",
+        "\r\n\r\nJason Martin\r\nSent from my iPhone\r\n",
+        "--Apple-Mail-32B9517E--\r\n",
+    );
+
+    /// A newsletter: HTML body plus a `cid:` logo referenced from it.
+    const CID_NEWSLETTER: &str = concat!(
+        "Content-Type: multipart/related; boundary=R\r\n",
+        "Subject: News\r\n\r\n",
+        "--R\r\n",
+        "Content-Type: text/html; charset=utf-8\r\n\r\n",
+        "<p>hi <img src=\"cid:logo\"></p>\r\n",
+        "--R\r\n",
+        "Content-Type: image/png; name=logo.png\r\n",
+        "Content-ID: <logo>\r\n",
+        "Content-Disposition: inline; filename=logo.png\r\n",
+        "Content-Transfer-Encoding: base64\r\n\r\n",
+        "iVBORw0KGgo=\r\n",
+        "--R--\r\n",
+    );
+
+    #[test]
+    fn iphone_photo_body_keeps_text_and_inlines_the_image() {
+        let body = extract_body(IPHONE_PHOTO.as_bytes());
+        // The signature lives in the *third* part; taking only the first left the
+        // message blank.
+        assert!(body.contains("Sent from my iPhone"), "body was: {body}");
+        // The photo is embedded, not dropped or fetched from the network.
+        assert!(body.contains("src=\"data:image/jpeg;base64,/9j/4AAQ"), "body was: {body}");
+    }
+
+    #[test]
+    fn iphone_photo_is_listed_as_an_attachment() {
+        let found = extract_attachments(IPHONE_PHOTO.as_bytes());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "C21AA3E8.jpeg");
+        assert!(!found[0].data.is_empty());
+    }
+
+    #[test]
+    fn cid_resources_are_not_listed_as_attachments() {
+        assert!(extract_attachments(CID_NEWSLETTER.as_bytes()).is_empty());
+    }
+
+    #[test]
+    fn lone_html_part_passes_through_untouched() {
+        let raw = b"Content-Type: text/html\r\n\r\n<p>hello</p>";
+        assert_eq!(extract_body(raw), "<p>hello</p>");
+    }
+
+    #[test]
+    fn plain_text_only_message_still_renders() {
+        let raw = b"Content-Type: text/plain\r\n\r\nhello <there>";
+        let body = extract_body(raw);
+        assert!(body.contains("hello &lt;there&gt;"), "body was: {body}");
+    }
+
+    /// Parse a real server BODYSTRUCTURE response into the structure our IMAP
+    /// summary path sees.
+    fn bodystructure(raw: &str) -> async_imap::imap_proto::types::BodyStructure<'_> {
+        use async_imap::imap_proto::{parser::parse_response, AttributeValue, Response};
+        let (_, resp) = parse_response(raw.as_bytes()).expect("parses");
+        match resp {
+            Response::Fetch(_, attrs) => attrs
+                .into_iter()
+                .find_map(|a| match a {
+                    AttributeValue::BodyStructure(bs) => Some(bs),
+                    _ => None,
+                })
+                .expect("has BODYSTRUCTURE"),
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_iphone_photo_counts_as_an_attachment() {
+        // Apple marks the JPEG `INLINE` with no Content-ID; requiring a disposition
+        // of `attachment` missed it, so no paperclip and no download.
+        let bs = bodystructure(concat!(
+            "* 1 FETCH (BODYSTRUCTURE (",
+            "(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"us-ascii\") NIL NIL \"7BIT\" 4 2 NIL NIL NIL NIL)",
+            "(\"IMAGE\" \"JPEG\" (\"NAME\" \"a.jpeg\") NIL NIL \"BASE64\" 100 NIL ",
+            "(\"INLINE\" (\"FILENAME\" \"a.jpeg\")) NIL NIL)",
+            "(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"us-ascii\") NIL NIL \"7BIT\" 40 4 NIL NIL NIL NIL)",
+            " \"MIXED\" (\"BOUNDARY\" \"b\") NIL NIL NIL))\r\n",
+        ));
+        assert!(structure_has_attachment(&bs));
+    }
+
+    #[test]
+    fn cid_logo_does_not_count_as_an_attachment() {
+        // Same inline disposition, but a Content-ID: it's rendered in the body.
+        let bs = bodystructure(concat!(
+            "* 1 FETCH (BODYSTRUCTURE (",
+            "(\"TEXT\" \"HTML\" (\"CHARSET\" \"utf-8\") NIL NIL \"7BIT\" 20 1 NIL NIL NIL NIL)",
+            "(\"IMAGE\" \"PNG\" (\"NAME\" \"logo.png\") \"<logo>\" NIL \"BASE64\" 100 NIL ",
+            "(\"INLINE\" (\"FILENAME\" \"logo.png\")) NIL NIL)",
+            " \"RELATED\" (\"BOUNDARY\" \"r\") NIL NIL NIL))\r\n",
+        ));
+        assert!(!structure_has_attachment(&bs));
+    }
+
+    #[test]
+    fn plain_alternative_has_no_attachment() {
+        let bs = bodystructure(concat!(
+            "* 1 FETCH (BODYSTRUCTURE (",
+            "(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"utf-8\") NIL NIL \"7BIT\" 10 1 NIL NIL NIL NIL)",
+            "(\"TEXT\" \"HTML\" (\"CHARSET\" \"utf-8\") NIL NIL \"7BIT\" 20 1 NIL NIL NIL NIL)",
+            " \"ALTERNATIVE\" (\"BOUNDARY\" \"a\") NIL NIL NIL))\r\n",
+        ));
+        assert!(!structure_has_attachment(&bs));
+    }
+
+    #[test]
+    fn image_mime_rejects_a_hostile_subtype() {
+        // Guards the `data:` URI against a subtype that would break out of it.
+        let raw = b"Content-Type: image/\"onerror=alert(1)\r\n\r\nx";
+        let parsed = mail_parser::MessageParser::default().parse(raw.as_slice()).unwrap();
+        let part = parsed.html_bodies().next().unwrap();
+        assert!(image_mime(part).is_none());
+    }
 }

@@ -124,8 +124,8 @@ fn success_page() -> String {
     SUCCESS_TEMPLATE.replace("__ICON__", &base64_encode(ICON_PNG))
 }
 
-/// Standard base64 encoding (no dependency), for the inline icon data URI.
-fn base64_encode(data: &[u8]) -> String {
+/// Standard base64 encoding (no dependency), for inline `data:` URIs.
+pub fn base64_encode(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
