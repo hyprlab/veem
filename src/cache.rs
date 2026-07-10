@@ -71,7 +71,12 @@ CREATE TABLE IF NOT EXISTS attachments_checked (
 ";
 
 /// Bump when the table layout changes; older rows are dropped on open.
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
+
+/// The first version whose table *layout* matches the current `SCHEMA`. At or
+/// above this, an upgrade only needs to drop the derived caches, not the
+/// expensive message index (which would force a whole-mailbox re-sync).
+const LAYOUT_VERSION: i64 = 6;
 
 pub struct Cache {
     conn: Connection,
@@ -89,7 +94,7 @@ impl Cache {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap_or(0);
-        if version < SCHEMA_VERSION {
+        if version < LAYOUT_VERSION {
             let _ = conn.execute_batch(
                 "DROP TABLE IF EXISTS folders;\
                  DROP TABLE IF EXISTS messages;\
@@ -97,6 +102,12 @@ impl Cache {
                  DROP TABLE IF EXISTS attachments;\
                  DROP TABLE IF EXISTS attachments_checked;",
             );
+        } else if version < SCHEMA_VERSION {
+            // The layout is current but `bodies` holds HTML rendered by an older
+            // build. `LoadBody` serves that cache without ever re-fetching, so a
+            // stale entry would survive forever — drop it and let it re-render on
+            // next open. The message index is kept: it's expensive to rebuild.
+            let _ = conn.execute_batch("DROP TABLE IF EXISTS bodies;");
         }
         conn.execute_batch(SCHEMA)?;
         let _ = conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"));
