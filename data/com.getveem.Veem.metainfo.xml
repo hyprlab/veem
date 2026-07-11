@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.2.3" date="2026-07-11" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.2.3</url>
+      <description>
+        <p>Add Account now has a provider dropdown that auto-fills sign-in and server settings for iCloud, Yahoo, Proton, Google, Microsoft and more.</p>
+      </description>
+    </release>
     <release version="1.2.2" date="2026-07-11" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.2.2</url>
       <description>

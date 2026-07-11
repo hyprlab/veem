@@ -13,6 +13,88 @@ use crate::worker::{self, ConnTest};
 
 const DEFAULT_COLOR: &str = "#3584e4";
 
+/// How an account signs in, chosen via the single Provider dropdown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderKind {
+    /// Manual IMAP/POP3 + password ("Other (IMAP/POP3)…").
+    Manual,
+    /// A known IMAP provider: password auth with auto-filled servers.
+    Preset,
+    /// Google OAuth (browser sign-in; falls back to GNOME Online Accounts).
+    Google,
+    /// Microsoft OAuth (browser sign-in).
+    Microsoft,
+    /// OAuth against a user-entered provider ("Custom (OAuth)…").
+    CustomOAuth,
+}
+
+/// One entry in the Provider dropdown. It selects both the sign-in method and,
+/// for `Preset`, the IMAP/SMTP servers to auto-fill. `hint` is shown as the row's
+/// subtitle. Server fields are empty for non-`Preset` kinds (OAuth providers get
+/// their servers from `crate::oauth::preset`; Manual/Custom are user-entered).
+struct Provider {
+    label: &'static str,
+    kind: ProviderKind,
+    imap_host: &'static str,
+    imap_port: u16,
+    smtp_host: &'static str,
+    smtp_port: u16,
+    hint: &'static str,
+}
+
+impl Provider {
+    fn is_password(&self) -> bool {
+        matches!(self.kind, ProviderKind::Manual | ProviderKind::Preset)
+    }
+    fn is_oauth(&self) -> bool {
+        !self.is_password()
+    }
+    /// OAuth preset key for the built-in providers.
+    fn oauth_name(&self) -> Option<&'static str> {
+        match self.kind {
+            ProviderKind::Google => Some("google"),
+            ProviderKind::Microsoft => Some("microsoft"),
+            _ => None,
+        }
+    }
+}
+
+const APP_PW: &str = "Requires an app-specific password (not your normal login password).";
+
+/// The Provider dropdown, in display order. OAuth options first, then the major
+/// app-password IMAP providers, then the two manual escape hatches. IMAP uses
+/// SSL/TLS on 993; SMTP uses implicit TLS on 465 or STARTTLS on 587.
+const PROVIDERS: &[Provider] = &[
+    Provider { label: "Google (Gmail) — sign in", kind: ProviderKind::Google, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Sign in with your browser — no password needed." },
+    Provider { label: "Microsoft / Outlook — sign in", kind: ProviderKind::Microsoft, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Sign in with your browser (experimental)." },
+    Provider { label: "iCloud", kind: ProviderKind::Preset, imap_host: "imap.mail.me.com", imap_port: 993, smtp_host: "smtp.mail.me.com", smtp_port: 587, hint: APP_PW },
+    Provider { label: "Yahoo Mail", kind: ProviderKind::Preset, imap_host: "imap.mail.yahoo.com", imap_port: 993, smtp_host: "smtp.mail.yahoo.com", smtp_port: 465, hint: APP_PW },
+    Provider { label: "Proton Mail (Bridge)", kind: ProviderKind::Preset, imap_host: "127.0.0.1", imap_port: 1143, smtp_host: "127.0.0.1", smtp_port: 1025, hint: "Requires Proton Mail Bridge running locally." },
+    Provider { label: "Fastmail", kind: ProviderKind::Preset, imap_host: "imap.fastmail.com", imap_port: 993, smtp_host: "smtp.fastmail.com", smtp_port: 465, hint: APP_PW },
+    Provider { label: "AOL Mail", kind: ProviderKind::Preset, imap_host: "imap.aol.com", imap_port: 993, smtp_host: "smtp.aol.com", smtp_port: 465, hint: APP_PW },
+    Provider { label: "Zoho Mail", kind: ProviderKind::Preset, imap_host: "imap.zoho.com", imap_port: 993, smtp_host: "smtp.zoho.com", smtp_port: 465, hint: "" },
+    Provider { label: "GMX", kind: ProviderKind::Preset, imap_host: "imap.gmx.com", imap_port: 993, smtp_host: "mail.gmx.com", smtp_port: 587, hint: "Enable POP/IMAP access in GMX settings first." },
+    Provider { label: "Yandex Mail", kind: ProviderKind::Preset, imap_host: "imap.yandex.com", imap_port: 993, smtp_host: "smtp.yandex.com", smtp_port: 465, hint: APP_PW },
+    Provider { label: "Mail.com", kind: ProviderKind::Preset, imap_host: "imap.mail.com", imap_port: 993, smtp_host: "smtp.mail.com", smtp_port: 587, hint: "" },
+    Provider { label: "Custom (OAuth)…", kind: ProviderKind::CustomOAuth, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Enter your provider's OAuth endpoints, then sign in." },
+    Provider { label: "Other (IMAP/POP3)…", kind: ProviderKind::Manual, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Enter your server details manually." },
+];
+
+/// Dropdown index of the "Other (IMAP/POP3)…" manual entry (the default).
+fn manual_index() -> u32 {
+    PROVIDERS
+        .iter()
+        .position(|p| p.kind == ProviderKind::Manual)
+        .unwrap_or(0) as u32
+}
+
+/// The provider entry for a dropdown index (clamped to the manual default).
+fn provider_at(idx: u32) -> &'static Provider {
+    PROVIDERS
+        .get(idx as usize)
+        .unwrap_or(&PROVIDERS[manual_index() as usize])
+}
+
 pub struct AccountsWindow {
     /// Accounts in display order.
     accounts: Vec<AccountConfig>,
@@ -44,8 +126,8 @@ pub enum AccountsInput {
     ToggleCurrentEnabled(bool),
     /// Import a GNOME Online Account (by index into `goa`) into Veem.
     ImportGoa(usize),
-    /// The authentication-method dropdown changed (Password / OAuth provider).
-    AuthMethodChanged,
+    /// The provider dropdown changed — adapt the form (servers vs. OAuth).
+    ProviderChanged,
     /// Start the OAuth browser sign-in flow.
     OAuthSignIn,
     /// Open GNOME Settings → Online Accounts (the Google path).
@@ -188,12 +270,13 @@ impl Component for AccountsWindow {
                             add = &adw::PreferencesGroup {
                                 set_title: "Mail Account",
 
-                                // Pick how to sign in first; the rest of the form
-                                // adapts to the choice.
-                                #[name = "auth_row"]
+                                // Pick the provider first; the rest of the form
+                                // adapts (server fields vs. OAuth sign-in).
+                                #[name = "provider_row"]
                                 adw::ComboRow {
-                                    set_title: "Authentication",
-                                    connect_selected_notify => AccountsInput::AuthMethodChanged,
+                                    set_title: "Provider",
+                                    set_subtitle: "Choose your email provider.",
+                                    connect_selected_notify => AccountsInput::ProviderChanged,
                                 },
                                 #[name = "name_row"]
                                 adw::EntryRow { set_title: "Display Name" },
@@ -471,15 +554,15 @@ impl Component for AccountsWindow {
         widgets
             .protocol_row
             .set_model(Some(&gtk::StringList::new(&["IMAP", "POP3"])));
-        widgets.auth_row.set_model(Some(&gtk::StringList::new(&[
-            "IMAP/POP3 Password",
-            "Google OAuth",
-            "Microsoft OAuth (experimental)",
-            "Custom OAuth (experimental)",
-        ])));
-        // The default dropdown popup ellipsizes items; use a factory whose labels
-        // don't, so the list widens to show the full option text.
-        widgets.auth_row.set_list_factory(Some(&non_ellipsizing_factory()));
+
+        // The Provider dropdown picks both the sign-in method and (for known
+        // providers) the servers. The default popup ellipsizes items; a factory
+        // whose labels don't lets the list widen to the full option text.
+        let provider_labels: Vec<&str> = PROVIDERS.iter().map(|p| p.label).collect();
+        widgets
+            .provider_row
+            .set_model(Some(&gtk::StringList::new(&provider_labels)));
+        widgets.provider_row.set_list_factory(Some(&non_ellipsizing_factory()));
 
         // Show the SMTP credential fields only when the toggle is on.
         widgets
@@ -514,7 +597,7 @@ impl Component for AccountsWindow {
                 self.label_synced = String::new();
                 self.pending_oauth_refresh = None;
                 clear_editor(widgets);
-                self.apply_auth_visibility(widgets);
+                self.apply_provider(widgets);
                 self.sig_editor.set_html("");
                 widgets.color_btn.set_rgba(&parse_color(DEFAULT_COLOR));
                 widgets.emoji_btn.set_label("Add");
@@ -530,7 +613,7 @@ impl Component for AccountsWindow {
                 self.editing = Some(i);
                 self.pending_oauth_refresh = None;
                 fill_editor(widgets, &acc);
-                self.apply_auth_visibility(widgets);
+                self.apply_provider(widgets);
                 // Label mirrors the email until customized.
                 self.label_synced = acc.email.clone();
                 self.sig_editor
@@ -642,8 +725,8 @@ impl Component for AccountsWindow {
                 });
             }
 
-            AccountsInput::AuthMethodChanged => {
-                self.apply_auth_visibility(widgets);
+            AccountsInput::ProviderChanged => {
+                self.apply_provider(widgets);
             }
 
             AccountsInput::OAuthSignIn => {
@@ -708,10 +791,10 @@ impl Component for AccountsWindow {
                     }
                 }
 
-                // Native account: authentication comes from the combo.
-                let auth_idx = widgets.auth_row.selected();
+                // Native account: authentication comes from the provider dropdown.
+                let is_oauth = provider_at(widgets.provider_row.selected()).is_oauth();
                 if account.goa_id.is_none() {
-                    if auth_idx != 0 {
+                    if is_oauth {
                         account.oauth = true;
                         account.oauth_settings = Some(self.oauth_settings_from_form(widgets));
                         if account.username.trim().is_empty() {
@@ -1002,28 +1085,25 @@ impl AccountsWindow {
 
     /// Show/hide credential rows based on the Authentication combo, and pre-fill
     /// server settings for known OAuth providers.
-    fn apply_auth_visibility(&self, widgets: &AccountsWindowWidgets) {
-        let idx = widgets.auth_row.selected();
-        let is_password = idx == 0;
-        let is_oauth = idx != 0;
-        let is_custom = idx == 3;
+    /// Adapt the editor to the selected provider: show server + credential fields
+    /// for password providers, the OAuth sign-in for OAuth providers, and fill in
+    /// the servers for known providers.
+    fn apply_provider(&self, widgets: &AccountsWindowWidgets) {
+        let p = provider_at(widgets.provider_row.selected());
+        let is_password = p.is_password();
+        let is_oauth = p.is_oauth();
+        let is_custom = matches!(p.kind, ProviderKind::CustomOAuth);
         // Google with no built-in (or user-supplied) OAuth client: there's nothing
         // to sign in with, so guide the user to GNOME Online Accounts instead.
-        let google_needs_goa =
-            idx == 1 && crate::oauth::provider_credentials("google").0.trim().is_empty();
-        // Google/Microsoft: servers come from the built-in preset, so hide all the
-        // server/credential plumbing — the user only needs email + sign-in. Custom
-        // OAuth still needs the server addresses (and its own client details).
+        let google_needs_goa = matches!(p.kind, ProviderKind::Google)
+            && crate::oauth::provider_credentials("google").0.trim().is_empty();
+        // Google/Microsoft servers come from the built-in preset (hidden). Custom
+        // OAuth still needs its server addresses and client details entered.
         let show_servers = is_password || is_custom;
 
-        // Google now goes through GNOME Online Accounts (stable); only the native
-        // Microsoft/Custom OAuth flows are still flagged experimental.
-        let experimental = idx == 2 || idx == 3;
-        widgets
-            .auth_row
-            .set_subtitle(if experimental { "OAuth sign-in is experimental" } else { "" });
+        widgets.provider_row.set_subtitle(p.hint);
 
-        // Server/credential fields.
+        // Server/credential fields (password or Custom-OAuth manual servers).
         widgets.protocol_row.set_visible(is_password);
         widgets.host_row.set_visible(show_servers);
         widgets.port_row.set_visible(show_servers);
@@ -1037,9 +1117,8 @@ impl AccountsWindow {
             widgets.smtp_separate_row.set_active(false);
         }
 
-        // Microsoft/Custom use built-in or entered credentials — the user just
-        // signs in. Google with no client falls back to the GNOME Online Accounts
-        // panel, which replaces the sign-in button and the identity fields.
+        // OAuth: the user just signs in. Google with no client falls back to the
+        // GNOME Online Accounts panel, which replaces the sign-in + identity fields.
         widgets.name_row.set_visible(!google_needs_goa);
         widgets.email_row.set_visible(!google_needs_goa);
         widgets.goa_hint.set_visible(google_needs_goa);
@@ -1053,28 +1132,28 @@ impl AccountsWindow {
             widgets.oauth_status.set_visible(false);
         }
 
-        // Pre-fill IMAP/SMTP for known providers.
-        let preset = match idx {
-            1 => crate::oauth::preset("google"),
-            2 => crate::oauth::preset("microsoft"),
-            _ => None,
+        // Auto-fill IMAP/SMTP: known password providers from the preset table,
+        // Google/Microsoft from the OAuth preset (filled but hidden, so the saved
+        // account still carries the right servers). Manual/Custom are left alone.
+        let servers = match p.kind {
+            ProviderKind::Preset => Some((p.imap_host, p.imap_port, p.smtp_host, p.smtp_port)),
+            ProviderKind::Google | ProviderKind::Microsoft => crate::oauth::preset(p.oauth_name().unwrap())
+                .map(|o| (o.imap_host, o.imap_port, o.smtp_host, o.smtp_port)),
+            ProviderKind::Manual | ProviderKind::CustomOAuth => None,
         };
-        if let Some(p) = preset {
-            widgets.host_row.set_text(p.imap_host);
-            widgets.port_row.set_text(&p.imap_port.to_string());
-            widgets.smtp_row.set_text(p.smtp_host);
-            widgets.smtp_port_row.set_text(&p.smtp_port.to_string());
+        if let Some((ih, ip, sh, sp)) = servers {
+            widgets.protocol_row.set_selected(0); // IMAP
+            widgets.host_row.set_text(ih);
+            widgets.port_row.set_text(&ip.to_string());
+            widgets.smtp_row.set_text(sh);
+            widgets.smtp_port_row.set_text(&sp.to_string());
         }
     }
 
     /// Build the OAuth client config from the form. Google/Microsoft use built-in
     /// endpoints + credentials; "Custom OAuth" uses the user-entered fields.
     fn oauth_settings_from_form(&self, widgets: &AccountsWindowWidgets) -> OAuthSettings {
-        let provider = match widgets.auth_row.selected() {
-            1 => Some("google"),
-            2 => Some("microsoft"),
-            _ => None,
-        };
+        let provider = provider_at(widgets.provider_row.selected()).oauth_name();
         if let Some(name) = provider {
             let p = crate::oauth::preset(name).unwrap();
             let (client_id, client_secret) = crate::oauth::provider_credentials(name);
@@ -1234,6 +1313,9 @@ fn signature_is_empty(html: &str) -> bool {
 fn fill_editor(widgets: &AccountsWindowWidgets, acc: &AccountConfig) {
     widgets.name_row.set_text(&acc.name);
     widgets.email_row.set_text(&acc.email);
+    // Reflect the account's provider in the dropdown (OAuth by endpoint, known
+    // password providers by server, otherwise "Other (IMAP/POP3)…").
+    widgets.provider_row.set_selected(provider_index_for_account(acc));
     widgets
         .protocol_row
         .set_selected(if acc.protocol == Protocol::Pop3 { 1 } else { 0 });
@@ -1251,23 +1333,12 @@ fn fill_editor(widgets: &AccountsWindowWidgets, acc: &AccountConfig) {
         .label_row
         .set_text(acc.label.as_deref().unwrap_or(&acc.email));
 
-    // Authentication method + OAuth fields. GOA accounts (goa_id set) can't be
-    // re-authenticated here, so they show as Password (their mechanism is kept on
-    // save); natively-added OAuth accounts show their provider + client details.
-    let (auth_idx, s) = match (&acc.oauth_settings, acc.goa_id.is_none() && acc.oauth) {
-        (Some(s), true) => {
-            let idx = if s.token_url.contains("googleapis") {
-                1
-            } else if s.token_url.contains("microsoftonline") {
-                2
-            } else {
-                3
-            };
-            (idx, Some(s))
-        }
-        _ => (0u32, None),
-    };
-    widgets.auth_row.set_selected(auth_idx);
+    // OAuth client detail fields. GOA accounts (goa_id set) can't be
+    // re-authenticated here, so they show as password (their mechanism is kept on
+    // save); natively-added OAuth accounts show their client details.
+    let s = (acc.goa_id.is_none() && acc.oauth)
+        .then_some(acc.oauth_settings.as_ref())
+        .flatten();
     widgets.oauth_client_id_row.set_text(s.map(|s| s.client_id.as_str()).unwrap_or(""));
     widgets.oauth_secret_row.set_text(s.map(|s| s.client_secret.as_str()).unwrap_or(""));
     widgets.oauth_auth_url_row.set_text(s.map(|s| s.auth_url.as_str()).unwrap_or(""));
@@ -1284,6 +1355,7 @@ fn fill_editor(widgets: &AccountsWindowWidgets, acc: &AccountConfig) {
 fn clear_editor(widgets: &AccountsWindowWidgets) {
     widgets.name_row.set_text("");
     widgets.email_row.set_text("");
+    widgets.provider_row.set_selected(manual_index());
     widgets.protocol_row.set_selected(0);
     widgets.host_row.set_text("");
     widgets.port_row.set_text("993");
@@ -1295,7 +1367,6 @@ fn clear_editor(widgets: &AccountsWindowWidgets) {
     widgets.smtp_user_row.set_text("");
     widgets.smtp_pass_row.set_text("");
     widgets.label_row.set_text("");
-    widgets.auth_row.set_selected(0);
     widgets.oauth_client_id_row.set_text("");
     widgets.oauth_secret_row.set_text("");
     widgets.oauth_auth_url_row.set_text("");
@@ -1310,6 +1381,96 @@ fn trimmed(row: &impl IsA<gtk::Editable>) -> String {
     row.text().trim().to_string()
 }
 
+/// Dropdown index of the first provider entry of a given kind (the manual entry
+/// if none — shouldn't happen for kinds present in the table).
+fn kind_index(kind: ProviderKind) -> u32 {
+    PROVIDERS
+        .iter()
+        .position(|p| p.kind == kind)
+        .map(|i| i as u32)
+        .unwrap_or_else(manual_index)
+}
+
+/// Dropdown index of the `Preset` provider whose incoming server matches `host`,
+/// or the manual entry when nothing matches.
+fn preset_index_for_host(host: &str) -> u32 {
+    let host = host.trim().to_ascii_lowercase();
+    if host.is_empty() {
+        return manual_index();
+    }
+    PROVIDERS
+        .iter()
+        .position(|p| p.kind == ProviderKind::Preset && p.imap_host.eq_ignore_ascii_case(&host))
+        .map(|i| i as u32)
+        .unwrap_or_else(manual_index)
+}
+
+/// Dropdown index reflecting an existing account: its OAuth provider (by token
+/// endpoint) for native OAuth accounts, otherwise the matching password provider.
+fn provider_index_for_account(acc: &AccountConfig) -> u32 {
+    if acc.goa_id.is_none() && acc.oauth {
+        let kind = match acc.oauth_settings.as_ref() {
+            Some(s) if s.token_url.contains("googleapis") => ProviderKind::Google,
+            Some(s) if s.token_url.contains("microsoftonline") => ProviderKind::Microsoft,
+            _ => ProviderKind::CustomOAuth,
+        };
+        return kind_index(kind);
+    }
+    preset_index_for_host(&acc.imap_host)
+}
+
 fn parse_color(hex: &str) -> gtk::gdk::RGBA {
     gtk::gdk::RGBA::parse(hex).unwrap_or_else(|_| gtk::gdk::RGBA::new(0.21, 0.52, 0.89, 1.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{manual_index, preset_index_for_host, provider_at, ProviderKind, PROVIDERS};
+
+    #[test]
+    fn known_host_maps_to_its_own_entry() {
+        let idx = preset_index_for_host("imap.mail.me.com");
+        assert_eq!(provider_at(idx).label, "iCloud");
+        // Case-insensitive.
+        assert_eq!(preset_index_for_host("IMAP.FASTMAIL.COM"), preset_index_for_host("imap.fastmail.com"));
+        assert_eq!(provider_at(preset_index_for_host("imap.fastmail.com")).label, "Fastmail");
+    }
+
+    #[test]
+    fn unknown_or_empty_host_falls_back_to_manual() {
+        assert_eq!(preset_index_for_host("mail.example.org"), manual_index());
+        assert_eq!(preset_index_for_host(""), manual_index());
+        assert_eq!(preset_index_for_host("  "), manual_index());
+        assert_eq!(provider_at(manual_index()).kind, ProviderKind::Manual);
+    }
+
+    #[test]
+    fn removed_password_providers_are_gone() {
+        // Gmail/Hotmail no longer work with a password — only via OAuth.
+        for p in PROVIDERS {
+            if p.kind == ProviderKind::Preset {
+                assert_ne!(p.imap_host, "imap.gmail.com");
+                assert_ne!(p.imap_host, "outlook.office365.com");
+            }
+        }
+    }
+
+    #[test]
+    fn provider_table_is_well_formed() {
+        // Distinct labels; presets have sane servers; exactly one Manual entry.
+        let mut labels: Vec<&str> = PROVIDERS.iter().map(|p| p.label).collect();
+        let n = labels.len();
+        labels.sort_unstable();
+        labels.dedup();
+        assert_eq!(labels.len(), n, "provider labels must be unique");
+        assert_eq!(PROVIDERS.iter().filter(|p| p.kind == ProviderKind::Manual).count(), 1);
+        for p in PROVIDERS {
+            if p.kind == ProviderKind::Preset {
+                assert!(!p.imap_host.is_empty() && !p.smtp_host.is_empty(), "{}", p.label);
+                assert!(p.imap_port > 0 && p.smtp_port > 0, "{}", p.label);
+                // Each preset's host round-trips to its own entry.
+                assert_eq!(provider_at(preset_index_for_host(p.imap_host)).label, p.label);
+            }
+        }
+    }
 }
