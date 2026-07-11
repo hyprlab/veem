@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.2.2" date="2026-07-11" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.2.2</url>
+      <description>
+        <p>Desktop notifications for new mail and error alerts, with click-to-open and a toggle in Preferences.</p>
+      </description>
+    </release>
     <release version="1.2.1" date="2026-07-11" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.2.1</url>
       <description>

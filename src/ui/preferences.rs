@@ -19,6 +19,7 @@ pub struct PrefInit {
     pub palette_collapse_secs: u64,
     pub threading: bool,
     pub message_theme: MessageTheme,
+    pub notifications: bool,
 }
 
 /// Message-content appearance options, in combo order.
@@ -95,6 +96,7 @@ pub enum PrefInput {
     ToggleThreading(bool),
     ChangeFetchInterval(u32),
     TogglePush(bool),
+    ToggleNotifications(bool),
     ChangePaletteCollapse(u64),
     ChangeMessageTheme(u32),
 }
@@ -109,6 +111,7 @@ pub enum PrefOutput {
     SetThreading(bool),
     SetFetchInterval(u64),
     SetPush(bool),
+    SetNotifications(bool),
     SetPaletteCollapse(u64),
     SetMessageTheme(MessageTheme),
     Closed,
@@ -156,6 +159,15 @@ impl Component for Preferences {
                             set_subtitle: "Uses IMAP IDLE to receive messages the moment they arrive.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::TogglePush(row.is_active()));
+                            },
+                        },
+
+                        #[name = "notifications_row"]
+                        adw::SwitchRow {
+                            set_title: "Desktop notifications",
+                            set_subtitle: "Show system notifications for new mail and error alerts when Veem isn't focused.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleNotifications(row.is_active()));
                             },
                         },
                     },
@@ -319,6 +331,7 @@ impl Component for Preferences {
             .unwrap_or(0);
         widgets.fetch_row.set_selected(selected as u32);
         widgets.push_row.set_active(init.push);
+        widgets.notifications_row.set_active(init.notifications);
         widgets.threading_row.set_active(init.threading);
 
         // Message-content appearance combo.
@@ -357,6 +370,9 @@ impl Component for Preferences {
             }
             PrefInput::TogglePush(on) => {
                 let _ = sender.output(PrefOutput::SetPush(on));
+            }
+            PrefInput::ToggleNotifications(on) => {
+                let _ = sender.output(PrefOutput::SetNotifications(on));
             }
             PrefInput::ChangePaletteCollapse(secs) => {
                 let _ = sender.output(PrefOutput::SetPaletteCollapse(secs));

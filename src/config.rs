@@ -344,6 +344,9 @@ struct PrivacyFile {
     /// How email content is themed (independent of the app UI theme).
     #[serde(default)]
     message_theme: MessageTheme,
+    /// Whether to post desktop notifications (new mail, error alerts).
+    #[serde(default = "default_notifications")]
+    notifications: bool,
 }
 
 fn default_fetch_interval() -> u64 {
@@ -362,6 +365,10 @@ fn default_palette_collapse() -> u64 {
     5
 }
 
+fn default_notifications() -> bool {
+    true
+}
+
 impl Default for PrivacyFile {
     fn default() -> Self {
         Self {
@@ -373,6 +380,7 @@ impl Default for PrivacyFile {
             palette_collapse_secs: default_palette_collapse(),
             threading: default_threading(),
             message_theme: MessageTheme::default(),
+            notifications: default_notifications(),
         }
     }
 }
@@ -431,6 +439,11 @@ pub fn load_message_theme() -> MessageTheme {
     load_privacy().message_theme
 }
 
+/// Whether desktop notifications (new mail, error alerts) are enabled.
+pub fn load_notifications() -> bool {
+    load_privacy().notifications
+}
+
 /// Persist all app settings together (so no field is clobbered).
 #[allow(clippy::too_many_arguments)]
 pub fn save_privacy(
@@ -442,6 +455,7 @@ pub fn save_privacy(
     palette_collapse_secs: u64,
     threading: bool,
     message_theme: MessageTheme,
+    notifications: bool,
 ) {
     let Some(path) = privacy_path() else {
         return;
@@ -458,6 +472,7 @@ pub fn save_privacy(
         palette_collapse_secs,
         threading,
         message_theme,
+        notifications,
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {
@@ -573,3 +588,21 @@ pub fn save_window_state(width: i32, height: i32, maximized: bool) {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::PrivacyFile;
+
+    #[test]
+    fn notifications_default_on_when_absent() {
+        // An older privacy.toml with no `notifications` key opts in by default.
+        let p: PrivacyFile = toml::from_str("").unwrap();
+        assert!(p.notifications);
+    }
+
+    #[test]
+    fn notifications_can_be_disabled() {
+        let p: PrivacyFile = toml::from_str("notifications = false").unwrap();
+        assert!(!p.notifications);
+    }
+}

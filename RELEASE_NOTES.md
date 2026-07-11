@@ -2,7 +2,10 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.2.1
+## What's new in 1.2.2
+- Desktop notifications for new mail and error alerts, shown when Veem isn't focused. Click a new-mail notification to jump straight to the message; it clears once you've read it. Toggle it in Preferences → Mail.
+
+## In 1.2.1
 - Links in plain-text emails are now clickable and open in your browser.
 - Press Delete or Backspace in the message list to delete the selected message(s).
 - Right-click an account under "All Inboxes" to jump to its account settings.

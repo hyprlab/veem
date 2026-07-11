@@ -116,6 +116,8 @@ pub struct AppModel {
     fetch_interval_secs: u64,
     /// Whether IMAP IDLE push is enabled.
     push: bool,
+    /// Whether desktop notifications (new mail, error alerts) are posted.
+    notifications_enabled: bool,
     /// Whether messages are grouped into conversation threads.
     threading: bool,
     /// How email content is themed (message content only, not the app UI).
@@ -166,6 +168,8 @@ pub enum AppMsg {
     DeleteFolder { account_id: u32, path: String },
     AccountsReordered(Vec<String>),
     MessageSelected { message: Message, thread: Vec<Message> },
+    /// A new-mail desktop notification was clicked — open that message.
+    OpenMessageFromNotification { account_id: u32, folder_id: u32, message_id: u32 },
     /// The search field became active/inactive — supply or drop the cross-folder
     /// search pool (every folder's messages, so search can span the mailbox).
     SearchActive(bool),
@@ -207,6 +211,7 @@ pub enum AppMsg {
     SetThreading(bool),
     SetFetchInterval(u64),
     SetPush(bool),
+    SetNotifications(bool),
     SetPaletteCollapse(u64),
     SetMessageTheme(config::MessageTheme),
     ComposeTo(String),
@@ -686,6 +691,7 @@ impl SimpleComponent for AppModel {
             gravatar: config::load_gravatar(),
             fetch_interval_secs: config::load_fetch_interval(),
             push: config::load_push(),
+            notifications_enabled: config::load_notifications(),
             threading: config::load_threading(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
@@ -726,6 +732,39 @@ impl SimpleComponent for AppModel {
 
         let attach_list = &model.attach_list;
         let widgets = view_output!();
+        // Desktop-notification click actions: raise the window (error alerts) and
+        // raise + open a specific message (new-mail alerts). Registered here rather
+        // than in `notify` because opening a message needs the app's channel.
+        {
+            use gtk::prelude::*;
+            let app = relm4::main_application();
+            let present = gtk::gio::SimpleAction::new(crate::notify::PRESENT_ACTION, None);
+            let win = model.window.clone();
+            present.connect_activate(move |_, _| {
+                win.set_visible(true);
+                win.present();
+            });
+            app.add_action(&present);
+
+            let ty = gtk::glib::VariantTy::new("(uuu)").unwrap();
+            let open = gtk::gio::SimpleAction::new(crate::notify::OPEN_MESSAGE_ACTION, Some(ty));
+            let win = model.window.clone();
+            let osender = sender.clone();
+            open.connect_activate(move |_, param| {
+                win.set_visible(true);
+                win.present();
+                if let Some((account_id, folder_id, message_id)) =
+                    param.and_then(|v| v.get::<(u32, u32, u32)>())
+                {
+                    osender.input(AppMsg::OpenMessageFromNotification {
+                        account_id,
+                        folder_id,
+                        message_id,
+                    });
+                }
+            });
+            app.add_action(&open);
+        }
         // Restore the last window size + maximized state (Wayland can't restore
         // position/monitor).
         let (win_w, win_h, win_max) = config::load_window_state();
@@ -791,33 +830,26 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::FolderSelected { account_id, folder_id, name, path } => {
-                self.unified = false;
-                self.attachments.clear();
-                self.attachments_loading = false;
-                self.attachments_available = false;
-                self.message_list.emit(MessageListInput::SetSelected(None));
-                self.message_list.emit(MessageListInput::SetColorize(false));
-                self.message_list.emit(MessageListInput::ResetPaging);
-                self.selected = Some(SelectedFolder {
-                    account_id,
-                    folder_id,
-                    name: name.clone(),
-                    path: path.clone(),
-                });
-                self.current = None;
-                self.current_thread.clear();
-                self.show_message(None, false);
-                // Show the cached list instantly if we've seen this folder; the
-                // background sync below replaces it (and adds new mail) when done.
-                match self.message_cache.get(&(account_id, folder_id)) {
-                    Some(cached) => self.message_list.emit(MessageListInput::SetMessages {
-                        title: name,
-                        messages: cached.clone(),
-                    }),
-                    None => self.message_list.emit(MessageListInput::SetLoading { title: name }),
+                self.select_folder(account_id, folder_id, name, path);
+            }
+
+            AppMsg::OpenMessageFromNotification { account_id, folder_id, message_id } => {
+                // The user clicked a new-mail notification: they've engaged with
+                // that account's mail, so clear its toast, then navigate to the
+                // message's folder and open it in the reader.
+                crate::notify::withdraw_mail(account_id);
+                if let Some((name, path)) = self
+                    .folders
+                    .get(&account_id)
+                    .and_then(|fs| fs.iter().find(|f| f.id == folder_id))
+                    .map(|f| (f.name.clone(), f.path.clone()))
+                {
+                    // select_folder emits the (cached) list synchronously, so the
+                    // subsequent SelectAndLoad finds the row and opens it.
+                    self.select_folder(account_id, folder_id, name, path);
+                    self.message_list
+                        .emit(MessageListInput::SelectAndLoad((account_id, message_id)));
                 }
-                self.push_index_complete();
-                self.send_to(account_id, MailRequest::LoadMessages { folder_id, path });
             }
 
             AppMsg::ToggleCollapse(account_id) => {
@@ -993,6 +1025,8 @@ impl SimpleComponent for AppModel {
                     if let Some(path) = folder_path.clone() {
                         self.send_to(account_id, MailRequest::SetSeen { path, uid: m.uid, seen: true });
                     }
+                    // Reading new mail clears that account's new-mail notification.
+                    crate::notify::withdraw_mail(account_id);
                     self.message_list.emit(MessageListInput::MarkRead(m.id));
                     self.mark_cached_read(account_id, m.id);
                     // Optimistically drop the badge by one; the next server count
@@ -1361,6 +1395,13 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetNotifications(on) => {
+                if self.notifications_enabled != on {
+                    self.notifications_enabled = on;
+                    self.save_settings();
+                }
+            }
+
             AppMsg::SetThreading(on) => {
                 if self.threading != on {
                     self.threading = on;
@@ -1592,6 +1633,7 @@ impl SimpleComponent for AppModel {
                     palette_collapse_secs: self.palette_collapse_secs,
                     threading: self.threading,
                     message_theme: self.message_theme,
+                    notifications: self.notifications_enabled,
                 };
                 let prefs = Preferences::builder()
                     .transient_for(&self.window)
@@ -1605,6 +1647,7 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                         PrefOutput::SetPush(on) => AppMsg::SetPush(on),
+                        PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
                         PrefOutput::SetPaletteCollapse(secs) => AppMsg::SetPaletteCollapse(secs),
                         PrefOutput::SetMessageTheme(t) => AppMsg::SetMessageTheme(t),
                         PrefOutput::Closed => AppMsg::ClosePreferences,
@@ -1666,6 +1709,34 @@ impl SimpleComponent for AppModel {
                 } else {
                     None
                 };
+                // Desktop-notify for genuinely new inbox mail. Only when Veem
+                // isn't the active window (no point notifying about mail you're
+                // watching arrive), only for the Inbox, and never on the first load
+                // of a folder (no prior cache) — that would fire for every existing
+                // message on startup. "New" = unread and not in the previous sync.
+                if self.notifications_enabled && !self.window.is_active() {
+                    let is_inbox = self.folder_kind(account_id, folder_id) == Some(FolderKind::Inbox);
+                    if let (true, Some(old)) =
+                        (is_inbox, self.message_cache.get(&(account_id, folder_id)))
+                    {
+                        let old_uids: std::collections::HashSet<u32> =
+                            old.iter().map(|m| m.uid).collect();
+                        let fresh: Vec<&Message> = messages
+                            .iter()
+                            .filter(|m| m.unread && !old_uids.contains(&m.uid))
+                            .collect();
+                        if let Some(newest) = fresh.iter().max_by_key(|m| m.timestamp) {
+                            crate::notify::new_mail(
+                                account_id,
+                                folder_id,
+                                newest.id,
+                                &newest.from_name,
+                                &newest.subject,
+                                fresh.len() - 1,
+                            );
+                        }
+                    }
+                }
                 // Cache for instant display when revisiting this folder.
                 self.message_cache
                     .insert((account_id, folder_id), messages.clone());
@@ -1863,9 +1934,15 @@ impl SimpleComponent for AppModel {
 
             AppMsg::Error { account_id, text, connectivity } => {
                 tracing::error!("[account {account_id}] {text}");
-                let text = format!("{}: {text}", self.account_label(account_id));
+                let label = self.account_label(account_id);
+                // Desktop-notify only genuine failures (not transient connectivity
+                // blips that auto-recover), and only when unfocused — the in-app bar
+                // already surfaces it while you're looking.
+                if self.notifications_enabled && !connectivity && !self.window.is_active() {
+                    crate::notify::error(account_id, &format!("{label}: mail error"), &text);
+                }
                 self.notifications.emit(NotifyInput::Push {
-                    text,
+                    text: format!("{label}: {text}"),
                     error: true,
                     connectivity,
                 });
@@ -1891,6 +1968,7 @@ impl AppModel {
             self.palette_collapse_secs,
             self.threading,
             self.message_theme,
+            self.notifications_enabled,
         );
     }
 
@@ -2278,6 +2356,37 @@ impl AppModel {
         window.present();
     }
 
+    /// Switch the message list to a folder: reset the view, show its cached
+    /// messages instantly (if any), and kick off a background sync. Shared by the
+    /// sidebar selection and the "open message from notification" flow.
+    fn select_folder(&mut self, account_id: u32, folder_id: u32, name: String, path: String) {
+        self.unified = false;
+        self.attachments.clear();
+        self.attachments_loading = false;
+        self.attachments_available = false;
+        self.message_list.emit(MessageListInput::SetSelected(None));
+        self.message_list.emit(MessageListInput::SetColorize(false));
+        self.message_list.emit(MessageListInput::ResetPaging);
+        self.selected = Some(SelectedFolder {
+            account_id,
+            folder_id,
+            name: name.clone(),
+            path: path.clone(),
+        });
+        self.current = None;
+        self.current_thread.clear();
+        self.show_message(None, false);
+        match self.message_cache.get(&(account_id, folder_id)) {
+            Some(cached) => self.message_list.emit(MessageListInput::SetMessages {
+                title: name,
+                messages: cached.clone(),
+            }),
+            None => self.message_list.emit(MessageListInput::SetLoading { title: name }),
+        }
+        self.push_index_complete();
+        self.send_to(account_id, MailRequest::LoadMessages { folder_id, path });
+    }
+
     fn show_message(&self, message: Option<Message>, loading: bool) {
         let allow_remote = message.as_ref().is_some_and(|m| self.remote_allowed(m));
         let (account_name, account_color) = match message.as_ref() {
@@ -2418,11 +2527,16 @@ impl AppModel {
 
     /// Whether the given folder is the account's Drafts folder.
     fn is_drafts_folder(&self, account_id: u32, folder_id: u32) -> bool {
+        self.folder_kind(account_id, folder_id) == Some(FolderKind::Drafts)
+    }
+
+    /// The kind of a folder by id, if known.
+    fn folder_kind(&self, account_id: u32, folder_id: u32) -> Option<FolderKind> {
         self.folders
-            .get(&account_id)
-            .and_then(|fs| fs.iter().find(|f| f.id == folder_id))
-            .map(|f| f.kind == FolderKind::Drafts)
-            .unwrap_or(false)
+            .get(&account_id)?
+            .iter()
+            .find(|f| f.id == folder_id)
+            .map(|f| f.kind)
     }
 
     /// Open a draft for editing: reuse a cached body if we have one, otherwise

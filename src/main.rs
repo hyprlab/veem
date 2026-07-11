@@ -9,6 +9,7 @@ mod config;
 mod contacts;
 mod goa;
 mod models;
+mod notify;
 mod oauth;
 mod ui;
 mod worker;
