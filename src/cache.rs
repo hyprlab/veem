@@ -291,6 +291,53 @@ impl Cache {
         }
     }
 
+    /// Every cached attachment in a folder (newest message first), for the
+    /// attachments gallery. Data is loaded only for files under `data_cap` bytes
+    /// (so thumbnails/previews are instant); larger files carry `None` and are
+    /// fetched on demand. Capped to `limit` rows.
+    pub fn gallery_items(
+        &self,
+        account_id: u32,
+        folder_path: &str,
+        data_cap: u64,
+        limit: u32,
+    ) -> Vec<crate::models::GalleryItem> {
+        let run = || -> rusqlite::Result<Vec<crate::models::GalleryItem>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT a.uid, a.name, length(a.data), \
+                        CASE WHEN length(a.data) <= ?3 THEN a.data ELSE NULL END, \
+                        COALESCE(m.from_name, ''), COALESCE(m.subject, ''), COALESCE(m.ts, 0) \
+                 FROM attachments a \
+                 LEFT JOIN messages m \
+                   ON m.account_id = a.account_id AND m.folder_path = a.folder_path AND m.uid = a.uid \
+                 WHERE a.account_id = ?1 AND a.folder_path = ?2 \
+                 ORDER BY m.ts DESC, a.uid DESC, a.idx ASC \
+                 LIMIT ?4",
+            )?;
+            let rows = stmt.query_map(
+                params![account_id, folder_path, data_cap as i64, limit],
+                |row| {
+                    Ok(crate::models::GalleryItem {
+                        account_id,
+                        folder_path: folder_path.to_string(),
+                        uid: row.get(0)?,
+                        name: row.get(1)?,
+                        size: row.get::<_, i64>(2)? as u64,
+                        data: row.get(3)?,
+                        from_name: row.get(4)?,
+                        subject: row.get(5)?,
+                        timestamp: row.get(6)?,
+                    })
+                },
+            )?;
+            rows.collect()
+        };
+        run().unwrap_or_else(|e| {
+            tracing::warn!("cache gallery_items failed: {e}");
+            Vec::new()
+        })
+    }
+
     pub fn load_attachments(&self, account_id: u32, folder_path: &str, uid: u32) -> Vec<Attachment> {
         let run = || -> rusqlite::Result<Vec<Attachment>> {
             let mut stmt = self.conn.prepare(
@@ -516,5 +563,64 @@ fn kind_from_i64(v: i64) -> FolderKind {
         5 => FolderKind::Junk,
         6 => FolderKind::Trash,
         _ => FolderKind::Custom,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl Cache {
+        fn in_memory() -> Cache {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            Cache { conn }
+        }
+    }
+
+    fn add_msg(c: &Cache, folder: &str, uid: u32, from: &str, subject: &str, ts: i64) {
+        c.conn.execute(
+            "INSERT INTO messages (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment) \
+             VALUES (1, ?1, ?2, ?3, '', ?4, '', ?5, 0, 0, 1)",
+            params![folder, uid, from, subject, ts],
+        ).unwrap();
+    }
+    fn add_att(c: &Cache, folder: &str, uid: u32, idx: u32, name: &str, data: &[u8]) {
+        c.conn.execute(
+            "INSERT INTO attachments (account_id, folder_path, uid, idx, name, data) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
+            params![folder, uid, idx, name, data],
+        ).unwrap();
+    }
+
+    #[test]
+    fn gallery_items_inbox_only_sorted_with_size_gated_data() {
+        let c = Cache::in_memory();
+        add_msg(&c, "INBOX", 1, "Alice", "Hi", 100);
+        add_msg(&c, "INBOX", 2, "Bob", "Report", 200);
+        add_msg(&c, "Archive", 3, "Carol", "Old", 300);
+        add_att(&c, "INBOX", 1, 0, "a.png", &[0u8; 4]); // small → data kept
+        add_att(&c, "INBOX", 2, 0, "big.bin", &[0u8; 20]); // over cap → data dropped
+        add_att(&c, "Archive", 3, 0, "x.pdf", &[0u8; 4]); // wrong folder → excluded
+
+        let items = c.gallery_items(1, "INBOX", 10, 50);
+        assert_eq!(items.len(), 2, "inbox only");
+        // Newest message first (ts DESC): Bob (200) before Alice (100).
+        assert_eq!(items[0].name, "big.bin");
+        assert_eq!(items[0].from_name, "Bob");
+        assert_eq!(items[0].size, 20);
+        assert!(items[0].data.is_none(), "over the cap → no bytes");
+        assert_eq!(items[1].name, "a.png");
+        assert_eq!(items[1].from_name, "Alice");
+        assert_eq!(items[1].data.as_deref(), Some(&[0u8; 4][..]));
+    }
+
+    #[test]
+    fn gallery_items_respects_limit() {
+        let c = Cache::in_memory();
+        for uid in 1..=5 {
+            add_msg(&c, "INBOX", uid, "X", "S", uid as i64);
+            add_att(&c, "INBOX", uid, 0, "f.png", &[0u8; 2]);
+        }
+        assert_eq!(c.gallery_items(1, "INBOX", 10, 3).len(), 3);
     }
 }

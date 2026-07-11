@@ -41,6 +41,8 @@ pub struct SectionData {
 enum Sel {
     None,
     Unified,
+    /// The attachments gallery (all inboxes).
+    Attachments,
     Folder(u32, String),
     /// An account's inbox selected via the "All Inboxes" sub-list.
     UnifiedInbox(u32),
@@ -57,6 +59,8 @@ pub struct Sidebar {
     folder_lists: HashMap<u32, gtk::ListBox>,
     /// The unified-row list box (one row), when shown.
     unified_list: Option<gtk::ListBox>,
+    /// The "Attachments" row list box (one row), when shown.
+    attachments_list: Option<gtk::ListBox>,
     /// Display-wide provider holding each account's avatar colour rules.
     color_provider: gtk::CssProvider,
     selected: Sel,
@@ -87,6 +91,8 @@ pub enum SidebarInput {
         unified_unread: u32,
     },
     UnifiedRowSelected,
+    /// The "Attachments" row was chosen.
+    AttachmentsRowSelected,
     FolderRowSelected { account_id: u32, index: i32 },
     /// A per-account inbox row under "All Inboxes" was chosen.
     UnifiedInboxRowSelected(i32),
@@ -108,6 +114,8 @@ pub enum SidebarInput {
 #[derive(Debug)]
 pub enum SidebarOutput {
     UnifiedSelected,
+    /// The attachments gallery was selected.
+    AttachmentsSelected,
     FolderSelected {
         account_id: u32,
         folder_id: u32,
@@ -204,6 +212,7 @@ impl Component for Sidebar {
             chevrons: HashMap::new(),
             folder_lists: HashMap::new(),
             unified_list: None,
+            attachments_list: None,
             color_provider,
             selected: Sel::None,
             collapsed: init,
@@ -248,13 +257,17 @@ impl Component for Sidebar {
                     return;
                 }
                 self.selected = Sel::Unified;
-                for lb in self.folder_lists.values() {
-                    lb.unselect_all();
-                }
-                if let Some(sub) = &self.unified_inbox_list {
-                    sub.unselect_all();
-                }
+                self.clear_other_selections(Sel::Unified);
                 let _ = sender.output(SidebarOutput::UnifiedSelected);
+            }
+
+            SidebarInput::AttachmentsRowSelected => {
+                if self.selected == Sel::Attachments {
+                    return;
+                }
+                self.selected = Sel::Attachments;
+                self.clear_other_selections(Sel::Attachments);
+                let _ = sender.output(SidebarOutput::AttachmentsSelected);
             }
 
             SidebarInput::UnifiedInboxRowSelected(index) => {
@@ -263,13 +276,8 @@ impl Component for Sidebar {
                     if self.selected == key {
                         return;
                     }
-                    self.selected = key;
-                    if let Some(u) = &self.unified_list {
-                        u.unselect_all();
-                    }
-                    for lb in self.folder_lists.values() {
-                        lb.unselect_all();
-                    }
+                    self.selected = key.clone();
+                    self.clear_other_selections(key);
                     let _ = sender.output(SidebarOutput::FolderSelected {
                         account_id: r.account_id,
                         folder_id: r.folder_id,
@@ -305,18 +313,8 @@ impl Component for Sidebar {
                     if self.selected == key {
                         return;
                     }
-                    self.selected = key;
-                    if let Some(u) = &self.unified_list {
-                        u.unselect_all();
-                    }
-                    if let Some(sub) = &self.unified_inbox_list {
-                        sub.unselect_all();
-                    }
-                    for (aid, lb) in &self.folder_lists {
-                        if *aid != account_id {
-                            lb.unselect_all();
-                        }
-                    }
+                    self.selected = key.clone();
+                    self.clear_other_selections(key);
                     let _ = sender.output(SidebarOutput::FolderSelected {
                         account_id,
                         folder_id: folder.id,
@@ -446,6 +444,7 @@ impl Sidebar {
         self.chevrons.clear();
         self.folder_lists.clear();
         self.unified_list = None;
+        self.attachments_list = None;
         self.folder_badges.clear();
         self.unified_badge = None;
         self.unified_revealer = None;
@@ -669,6 +668,43 @@ impl Sidebar {
                 self.unified_revealer = Some(revealer);
                 self.unified_inbox_list = Some(sub);
             }
+        }
+
+        // "Attachments" row — a gallery of every inbox attachment. Sits under the
+        // All Inboxes block and above the per-account sections.
+        {
+            let list = gtk::ListBox::new();
+            list.set_selection_mode(gtk::SelectionMode::Single);
+            list.add_css_class("navigation-sidebar");
+
+            let row = gtk::ListBoxRow::new();
+            let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            hbox.add_css_class("folder-row");
+            let img = gtk::Image::from_icon_name("mail-attachment-symbolic");
+            img.add_css_class("folder-icon");
+            if self.collapsed {
+                hbox.set_halign(gtk::Align::Center);
+                row.set_tooltip_text(Some("Attachments"));
+                hbox.append(&img);
+            } else {
+                hbox.append(&img);
+                let label = gtk::Label::new(Some("Attachments"));
+                label.set_hexpand(true);
+                label.set_halign(gtk::Align::Start);
+                label.add_css_class("account-name");
+                hbox.append(&label);
+            }
+            row.set_child(Some(&hbox));
+            list.append(&row);
+
+            let s = sender.clone();
+            list.connect_row_selected(move |_, row| {
+                if row.is_some() {
+                    s.input(SidebarInput::AttachmentsRowSelected);
+                }
+            });
+            container.append(&list);
+            self.attachments_list = Some(list);
         }
 
         for section in &sections {
@@ -927,9 +963,43 @@ impl Sidebar {
 
     /// Re-apply the current selection after a rebuild; on first populate (no
     /// prior selection) default to the unified row if shown, else the first folder.
+    /// Deselect every list except the one owning `keep` (whose own list keeps its
+    /// selection). Used when a selection moves between sections.
+    fn clear_other_selections(&self, keep: Sel) {
+        if keep != Sel::Unified {
+            if let Some(l) = &self.unified_list {
+                l.unselect_all();
+            }
+        }
+        if keep != Sel::Attachments {
+            if let Some(l) = &self.attachments_list {
+                l.unselect_all();
+            }
+        }
+        if !matches!(keep, Sel::UnifiedInbox(_)) {
+            if let Some(l) = &self.unified_inbox_list {
+                l.unselect_all();
+            }
+        }
+        for (aid, lb) in &self.folder_lists {
+            if !matches!(&keep, Sel::Folder(kaid, _) if kaid == aid) {
+                lb.unselect_all();
+            }
+        }
+    }
+
+    fn select_attachments(&self) {
+        if let Some(list) = &self.attachments_list {
+            if let Some(row) = list.row_at_index(0) {
+                list.select_row(Some(&row));
+            }
+        }
+    }
+
     fn restore_selection(&mut self) {
         match self.selected.clone() {
             Sel::Unified => self.select_unified(),
+            Sel::Attachments => self.select_attachments(),
             Sel::Folder(acc, path) => self.select_folder(acc, &path),
             Sel::UnifiedInbox(acc) => self.select_unified_inbox(acc),
             Sel::None => {

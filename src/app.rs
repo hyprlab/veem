@@ -27,6 +27,9 @@ use crate::ui::compose::{Compose, ComposeAccount, ComposeInit, ComposeOutput, Co
 use crate::ui::message_list::{
     BulkAction, MessageList, MessageListInput, MessageListOutput, RowAction,
 };
+use crate::ui::attachments_gallery::{
+    AttachmentsGallery, GalleryInput, GalleryOutput,
+};
 use crate::ui::message_view::{MessageView, MessageViewInput, MessageViewOutput};
 use crate::ui::message_window::{
     MessageWindow, MessageWindowInit, MessageWindowInput, MessageWindowOutput,
@@ -131,6 +134,11 @@ pub struct AppModel {
     sidebar: Controller<Sidebar>,
     message_list: Controller<MessageList>,
     message_view: Controller<MessageView>,
+    gallery: Controller<AttachmentsGallery>,
+    /// True when the attachments gallery replaces the mail panes.
+    showing_gallery: bool,
+    /// Gallery items per account inbox, merged for display.
+    gallery_by_account: HashMap<u32, Vec<crate::models::GalleryItem>>,
     /// Messages popped out into their own windows, keyed by (account, message).
     popouts: HashMap<(u32, u32), PopOut>,
     /// The conversation currently shown in the reader (newest first), with bodies
@@ -156,6 +164,12 @@ struct PopOut {
 pub enum AppMsg {
     // User actions
     UnifiedSelected,
+    /// Show the attachments gallery (sidebar "Attachments" row).
+    ShowAttachments,
+    /// Cached gallery attachments for an account inbox arrived.
+    GalleryItems { account_id: u32, items: Vec<crate::models::GalleryItem> },
+    /// Gallery "Go to Message" — open the attachment's source message.
+    OpenAttachmentMessage { account_id: u32, folder_path: String, uid: u32 },
     FolderSelected { account_id: u32, folder_id: u32, name: String, path: String },
     ToggleCollapse(u32),
     SidebarCollapsed(bool),
@@ -340,7 +354,14 @@ impl SimpleComponent for AppModel {
                     },
 
                     #[wrap(Some)]
-                    set_content = &gtk::Paned {
+                    #[name = "content_stack"]
+                    set_content = &gtk::Stack {
+                        set_transition_type: gtk::StackTransitionType::Crossfade,
+                        // Swap the mail panes for the attachments gallery.
+                        #[watch]
+                        set_visible_child_name: if model.showing_gallery { "gallery" } else { "mail" },
+
+                    add_named[Some("mail")] = &gtk::Paned {
                         set_orientation: gtk::Orientation::Horizontal,
                         // Thin handle so the panes sit flush (just a 1px divider),
                         // no wide-handle gap between them.
@@ -564,6 +585,7 @@ impl SimpleComponent for AppModel {
                             set_content = model.message_view.widget(),
                         },
                     },
+                    },
                 },
             },
         }
@@ -599,6 +621,7 @@ impl SimpleComponent for AppModel {
             .launch(icon_only)
             .forward(sender.input_sender(), |out| match out {
                 SidebarOutput::UnifiedSelected => AppMsg::UnifiedSelected,
+                SidebarOutput::AttachmentsSelected => AppMsg::ShowAttachments,
                 SidebarOutput::FolderSelected { account_id, folder_id, name, path } => {
                     AppMsg::FolderSelected { account_id, folder_id, name, path }
                 }
@@ -636,6 +659,15 @@ impl SimpleComponent for AppModel {
                     MessageViewOutput::AllowSender(addr) => AppMsg::AllowSender(addr),
                     MessageViewOutput::ComposeTo(addr) => AppMsg::ComposeTo(addr),
                     MessageViewOutput::OpenWindow(m) => AppMsg::OpenMessageWindow(*m),
+                });
+
+        let gallery =
+            AttachmentsGallery::builder()
+                .launch(())
+                .forward(sender.input_sender(), |out| match out {
+                    GalleryOutput::OpenMessage { account_id, folder_path, uid } => {
+                        AppMsg::OpenAttachmentMessage { account_id, folder_path, uid }
+                    }
                 });
 
         let notifications = NotificationCenter::builder().launch(()).forward(
@@ -701,6 +733,9 @@ impl SimpleComponent for AppModel {
             sidebar,
             message_list,
             message_view,
+            gallery,
+            showing_gallery: false,
+            gallery_by_account: HashMap::new(),
         };
         model.spawn_workers(&sender);
         // Watch GNOME Online Accounts so an account removed there disappears from
@@ -732,6 +767,10 @@ impl SimpleComponent for AppModel {
 
         let attach_list = &model.attach_list;
         let widgets = view_output!();
+        // The attachments gallery is the content stack's second page.
+        widgets
+            .content_stack
+            .add_named(model.gallery.widget(), Some("gallery"));
         // Desktop-notification click actions: raise the window (error alerts) and
         // raise + open a specific message (new-mail alerts). Registered here rather
         // than in `notify` because opening a message needs the app's channel.
@@ -802,7 +841,51 @@ impl SimpleComponent for AppModel {
 
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
         match msg {
+            AppMsg::ShowAttachments => {
+                self.showing_gallery = true;
+                self.gallery_by_account.clear();
+                self.gallery.emit(GalleryInput::SetLoading(true));
+                self.gallery.emit(GalleryInput::SetItems(Vec::new()));
+                // Load each account's inbox attachments from the cache.
+                let reqs: Vec<(u32, String)> = self
+                    .accounts
+                    .iter()
+                    .filter_map(|a| self.inbox_of(a.id).map(|f| (a.id, f.path.clone())))
+                    .collect();
+                for (account_id, path) in reqs {
+                    self.send_to(account_id, MailRequest::LoadGallery { path });
+                }
+            }
+
+            AppMsg::GalleryItems { account_id, items } => {
+                self.gallery_by_account.insert(account_id, items);
+                let mut merged: Vec<crate::models::GalleryItem> = self
+                    .gallery_by_account
+                    .values()
+                    .flatten()
+                    .cloned()
+                    .collect();
+                merged.sort_by_key(|i| std::cmp::Reverse(i.timestamp));
+                self.gallery.emit(GalleryInput::SetItems(merged));
+            }
+
+            AppMsg::OpenAttachmentMessage { account_id, folder_path, uid } => {
+                self.showing_gallery = false;
+                if let Some(folder) = self
+                    .folders
+                    .get(&account_id)
+                    .and_then(|fs| fs.iter().find(|f| f.path == folder_path))
+                    .cloned()
+                {
+                    self.select_folder(account_id, folder.id, folder.name.clone(), folder.path.clone());
+                    // Messages use their UID as id, so select by (account, uid).
+                    self.message_list
+                        .emit(MessageListInput::SelectAndLoad((account_id, uid)));
+                }
+            }
+
             AppMsg::UnifiedSelected => {
+                self.showing_gallery = false;
                 self.unified = true;
                 self.selected = None;
                 self.current = None;
@@ -2360,6 +2443,7 @@ impl AppModel {
     /// messages instantly (if any), and kick off a background sync. Shared by the
     /// sidebar selection and the "open message from notification" flow.
     fn select_folder(&mut self, account_id: u32, folder_id: u32, name: String, path: String) {
+        self.showing_gallery = false;
         self.unified = false;
         self.attachments.clear();
         self.attachments_loading = false;
@@ -3608,6 +3692,7 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
         WorkerEvent::MessagesAppend { folder_id, messages } => {
             AppMsg::MessagesAppend { account_id, folder_id, messages }
         }
+        WorkerEvent::Gallery { items } => AppMsg::GalleryItems { account_id, items },
         WorkerEvent::BackfillDone { folder_id } => AppMsg::BackfillDone { account_id, folder_id },
         WorkerEvent::FolderUnread { folder_id, unread } => {
             AppMsg::FolderUnread { account_id, folder_id, unread }

@@ -43,6 +43,12 @@ const BACKFILL_CHUNK: usize = 1_000;
 /// older attachment messages download on demand (with a spinner) when opened.
 const PREFETCH_LIMIT: usize = 25;
 
+/// Attachments gallery: cap on how many items to load per inbox, and the largest
+/// file whose bytes are loaded eagerly (for instant thumbnails/preview). Bigger
+/// files carry no bytes in the gallery and are fetched on demand when opened.
+const GALLERY_LIMIT: u32 = 300;
+const GALLERY_DATA_CAP: u64 = 6 * 1024 * 1024;
+
 /// Pre-download message *bodies* for this many of the most recent messages in a
 /// synced folder, so new mail opens instantly with no network wait. Bodies are
 /// small, so this stays cheap; older messages load on demand.
@@ -53,6 +59,8 @@ const PREFETCH_BODY_LIMIT: usize = 50;
 pub enum MailRequest {
     /// Load the message summaries for a folder.
     LoadMessages { folder_id: u32, path: String },
+    /// Load cached attachments for an inbox, for the attachments gallery.
+    LoadGallery { path: String },
     /// Load the full body of a single message.
     LoadBody {
         message_id: u32,
@@ -151,6 +159,8 @@ pub enum WorkerEvent {
     /// Additional indexed message summaries for a folder, produced by the
     /// background backfill. Merged into the existing index without replacing it.
     MessagesAppend { folder_id: u32, messages: Vec<Message> },
+    /// Cached attachments for an inbox, for the attachments gallery.
+    Gallery { items: Vec<crate::models::GalleryItem> },
     /// The background backfill for a folder finished — its whole index is now
     /// present, so the UI can stop expecting more rows to stream in.
     BackfillDone { folder_id: u32 },
@@ -481,6 +491,13 @@ async fn run_imap(
                     }
                 }
             }
+            MailRequest::LoadGallery { path } => {
+                if let Some(c) = cache.as_ref() {
+                    let items = c.gallery_items(account_id, path, GALLERY_DATA_CAP, GALLERY_LIMIT);
+                    emit(WorkerEvent::Gallery { items });
+                }
+                continue; // cache-only, never hits the network
+            }
             MailRequest::LoadBody {
                 message_id,
                 path,
@@ -532,6 +549,8 @@ async fn run_imap(
         let mut lost = false;
 
         match req {
+            // Served from cache before this network match; never reached here.
+            MailRequest::LoadGallery { .. } => {}
             MailRequest::LoadMessages { folder_id, path } => {
                 emit(WorkerEvent::Status("Syncing…".into()));
                 // Fast first page (or a recent-window refresh over the cached
@@ -2946,6 +2965,12 @@ async fn run_pop3(
 
     while let Some(req) = rx.recv().await {
         match req {
+            MailRequest::LoadGallery { path } => {
+                if let Some(c) = cache.as_ref() {
+                    let items = c.gallery_items(account_id, &path, GALLERY_DATA_CAP, GALLERY_LIMIT);
+                    emit(WorkerEvent::Gallery { items });
+                }
+            }
             MailRequest::LoadMessages { folder_id, path } => {
                 if path != INBOX {
                     emit(WorkerEvent::Messages { folder_id, messages: Vec::new() });
@@ -3206,6 +3231,10 @@ async fn run_mock(
 
     while let Some(req) = rx.recv().await {
         match req {
+            // The mock backend has no attachment cache.
+            MailRequest::LoadGallery { .. } => {
+                emit(WorkerEvent::Gallery { items: Vec::new() });
+            }
             MailRequest::LoadMessages { folder_id, .. } => {
                 emit(WorkerEvent::Messages {
                     folder_id,

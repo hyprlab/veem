@@ -108,14 +108,54 @@ pub struct Attachment {
 impl Attachment {
     /// Human-readable size, e.g. "12.3 KB".
     pub fn human_size(&self) -> String {
-        let b = self.data.len() as f64;
-        if b >= 1_048_576.0 {
-            format!("{:.1} MB", b / 1_048_576.0)
-        } else if b >= 1024.0 {
-            format!("{:.1} KB", b / 1024.0)
-        } else {
-            format!("{} B", self.data.len())
-        }
+        human_size(self.data.len() as u64)
+    }
+}
+
+/// Human-readable byte size, e.g. "12.3 KB".
+pub fn human_size(bytes: u64) -> String {
+    let b = bytes as f64;
+    if b >= 1_048_576.0 {
+        format!("{:.1} MB", b / 1_048_576.0)
+    } else if b >= 1024.0 {
+        format!("{:.1} KB", b / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+/// Whether a filename looks like a raster image we can thumbnail/preview inline.
+pub fn is_image_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".heic", ".heif", ".avif"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+}
+
+/// One attachment for the gallery: metadata plus the source message context.
+/// `data` is loaded eagerly for small files (so the preview/open is instant) and
+/// `None` for large ones (fetched on demand when opened).
+#[derive(Debug, Clone)]
+pub struct GalleryItem {
+    pub account_id: u32,
+    pub folder_path: String,
+    pub uid: u32,
+    pub name: String,
+    pub size: u64,
+    /// Sender display name of the source message.
+    pub from_name: String,
+    pub subject: String,
+    /// Source message timestamp (for sorting, newest first).
+    pub timestamp: i64,
+    pub data: Option<Vec<u8>>,
+}
+
+impl GalleryItem {
+    pub fn is_image(&self) -> bool {
+        is_image_name(&self.name)
+    }
+    pub fn human_size(&self) -> String {
+        human_size(self.size)
     }
 }
 
