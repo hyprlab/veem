@@ -50,8 +50,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/hyprlab/veem.git
-        tag: v1.1.5
-        commit: 769eb842e88a76d0445ee7dcadf557554947233a
+        tag: v1.2.0
+        commit: 3df4e276f056ca23b586d7412227a6f5e6b0ed5b
       # Vendored crate sources for the offline Flatpak build. Generate with:
       #   flatpak-cargo-generator.py Cargo.lock -o cargo-sources.json
       - cargo-sources.json
