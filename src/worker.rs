@@ -3420,7 +3420,7 @@ fn extract_body(raw: &[u8]) -> String {
             PartType::Html(html) => inner.push_str(html),
             PartType::Text(text) if !text.trim().is_empty() => {
                 inner.push_str("<div class=\"veem-plain\">");
-                inner.push_str(&escape_html(text));
+                inner.push_str(&linkify(text));
                 inner.push_str("</div>");
             }
             PartType::Binary(bytes) | PartType::InlineBinary(bytes) => {
@@ -3471,10 +3471,104 @@ fn escape_html(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Escape a string for use inside a double-quoted HTML attribute (e.g. `href`).
+fn escape_attr(text: &str) -> String {
+    escape_html(text).replace('"', "&quot;")
+}
+
+/// HTML-escape plain text and turn bare URLs into clickable links. Runs on raw
+/// (unescaped) text: non-URL spans are escaped as usual; each URL becomes an
+/// `<a href>` whose scheme is always http(s) (a bare `www.` host is prefixed with
+/// `https://`), so no `javascript:`-style link can be forged. Links open in the
+/// external browser via the reader's navigation policy.
+fn linkify(text: &str) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while let Some((start, end, href)) = next_url(text, i) {
+        out.push_str(&escape_html(&text[i..start]));
+        out.push_str(&format!(
+            "<a href=\"{}\">{}</a>",
+            escape_attr(&href),
+            escape_html(&text[start..end])
+        ));
+        i = end;
+    }
+    out.push_str(&escape_html(&text[i..]));
+    out
+}
+
+/// Find the next bare URL at or after `from`, returning `(start, end, href)`.
+fn next_url(text: &str, from: usize) -> Option<(usize, usize, String)> {
+    let mut i = from;
+    while i < text.len() {
+        if !text.is_char_boundary(i) {
+            i += 1;
+            continue;
+        }
+        let rest = &text[i..];
+        let (prefix, add_https) = if rest.starts_with("https://") {
+            ("https://", false)
+        } else if rest.starts_with("http://") {
+            ("http://", false)
+        } else if rest.starts_with("www.") {
+            ("www.", true)
+        } else {
+            i += 1;
+            continue;
+        };
+        // Only match at a boundary — the start, after whitespace, or after an
+        // opening bracket/quote — so "shttp://", "awww." and "hi@www.x" (an email)
+        // aren't linked.
+        let boundary = text[..i]
+            .chars()
+            .next_back()
+            .is_none_or(|c| c.is_whitespace() || matches!(c, '(' | '<' | '[' | '{' | '"' | '\'' | '|'));
+        let end = consume_url(text, i);
+        // Reject a scheme with nothing (usable) after it.
+        if boundary && end > i + prefix.len() {
+            let url = &text[i..end];
+            let href = if add_https { format!("https://{url}") } else { url.to_string() };
+            return Some((i, end, href));
+        }
+        i += prefix.len();
+    }
+    None
+}
+
+/// The end index of the URL that begins at `start`: consume non-terminator chars,
+/// then trim trailing sentence punctuation (keeping a `)` that balances a `(`).
+fn consume_url(text: &str, start: usize) -> usize {
+    let mut end = start;
+    for (off, ch) in text[start..].char_indices() {
+        if ch.is_whitespace() || matches!(ch, '<' | '>' | '"' | '`' | '\'' | '\\') {
+            break;
+        }
+        end = start + off + ch.len_utf8();
+    }
+    let url = &text[start..end];
+    let mut trimmed = url;
+    loop {
+        match trimmed.chars().last() {
+            Some(')') => {
+                if trimmed.matches(')').count() > trimmed.matches('(').count() {
+                    trimmed = &trimmed[..trimmed.len() - 1];
+                } else {
+                    break; // balanced — part of the URL (e.g. a Wikipedia link)
+                }
+            }
+            Some('.' | ',' | ';' | ':' | '!' | '?' | ']' | '}') => {
+                trimmed = &trimmed[..trimmed.len() - 1];
+            }
+            _ => break,
+        }
+    }
+    start + trimmed.len()
+}
+
 /// Wrap plain text in a minimal, readable HTML document. Colours are left to the
 /// `color-scheme` the reader injects, so the message follows the light/dark theme.
 fn wrap_plain(text: &str) -> String {
-    let escaped = escape_html(text);
+    let escaped = linkify(text);
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><style>\
          body{{margin:0;padding:16px;box-sizing:border-box;\
@@ -3500,6 +3594,81 @@ fn wrap_fragment(inner: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linkify_wraps_http_and_https() {
+        assert_eq!(
+            linkify("see http://example.com now"),
+            "see <a href=\"http://example.com\">http://example.com</a> now"
+        );
+        assert_eq!(
+            linkify("https://a.b/c?d=1"),
+            "<a href=\"https://a.b/c?d=1\">https://a.b/c?d=1</a>"
+        );
+    }
+
+    #[test]
+    fn linkify_prefixes_bare_www_with_https() {
+        assert_eq!(
+            linkify("go to www.example.com today"),
+            "go to <a href=\"https://www.example.com\">www.example.com</a> today"
+        );
+    }
+
+    #[test]
+    fn linkify_escapes_and_does_not_double_link() {
+        // The surrounding <> are escaped; the URL inside is linked once.
+        assert_eq!(
+            linkify("<http://x.com>"),
+            "&lt;<a href=\"http://x.com\">http://x.com</a>&gt;"
+        );
+        // A query '&' is escaped in both href and text.
+        assert_eq!(
+            linkify("http://x.com/?a=1&b=2"),
+            "<a href=\"http://x.com/?a=1&amp;b=2\">http://x.com/?a=1&amp;b=2</a>"
+        );
+    }
+
+    #[test]
+    fn linkify_trims_trailing_punctuation_but_keeps_balanced_parens() {
+        assert_eq!(
+            linkify("visit http://x.com."),
+            "visit <a href=\"http://x.com\">http://x.com</a>."
+        );
+        assert_eq!(
+            linkify("(see http://x.com)"),
+            "(see <a href=\"http://x.com\">http://x.com</a>)"
+        );
+        // A balanced ')' belongs to the URL (e.g. a Wikipedia article).
+        assert_eq!(
+            linkify("http://en.wikipedia.org/wiki/Foo_(bar)"),
+            "<a href=\"http://en.wikipedia.org/wiki/Foo_(bar)\">http://en.wikipedia.org/wiki/Foo_(bar)</a>"
+        );
+    }
+
+    #[test]
+    fn linkify_ignores_scheme_inside_a_word() {
+        // No word boundary before "http", so it's not a link (just escaped text).
+        assert_eq!(linkify("shttp://x.com"), "shttp://x.com");
+        assert!(!linkify("email hi@www.x").contains("<a "));
+    }
+
+    #[test]
+    fn linkify_never_forges_a_dangerous_scheme() {
+        // "javascript:" isn't one of our recognized prefixes, so it stays plain text.
+        let out = linkify("javascript:alert(1)");
+        assert!(!out.contains("<a "), "got: {out}");
+    }
+
+    #[test]
+    fn extract_body_linkifies_plain_text_mail() {
+        let raw = b"Content-Type: text/plain\r\n\r\nRead http://example.com/x for more.";
+        let body = extract_body(raw);
+        assert!(
+            body.contains("<a href=\"http://example.com/x\">http://example.com/x</a>"),
+            "body was: {body}"
+        );
+    }
 
     /// An iPhone photo mail: multipart/mixed interleaving an empty text part, an
     /// *inline* JPEG, and the signature. Exactly the shape Apple Mail produces.

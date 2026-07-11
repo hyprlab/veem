@@ -1099,6 +1099,20 @@ impl SimpleComponent for MessageList {
         });
         row_box.add_controller(click);
 
+        // Delete / Backspace on a focused row deletes the selection (single or
+        // multi). Scoped to the list, so typing in the search box is unaffected.
+        let key = gtk::EventControllerKey::new();
+        let ks = sender.clone();
+        key.connect_key_pressed(move |_, keyval, _, _| {
+            if matches!(keyval, gtk::gdk::Key::Delete | gtk::gdk::Key::BackSpace) {
+                ks.input(MessageListInput::Bulk(BulkAction::Delete));
+                gtk::glib::Propagation::Stop
+            } else {
+                gtk::glib::Propagation::Proceed
+            }
+        });
+        row_box.add_controller(key);
+
         let widgets = view_output!();
         model.scroller = Some(widgets.scroller.clone());
         model.search_entry = Some(widgets.search_entry.clone());

@@ -652,6 +652,7 @@ impl Sidebar {
                                     account_id: r.account_id,
                                     folder_id: r.folder_id,
                                 }),
+                                ("Account Settings…", CtxAction::OpenAccountSettings),
                             ],
                             &cs,
                         );

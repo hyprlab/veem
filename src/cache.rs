@@ -71,7 +71,9 @@ CREATE TABLE IF NOT EXISTS attachments_checked (
 ";
 
 /// Bump when the table layout changes; older rows are dropped on open.
-const SCHEMA_VERSION: i64 = 7;
+/// v8: bodies are re-rendered with clickable links, so cached bodies (which
+/// `LoadBody` serves without re-fetching) must be dropped and rebuilt on open.
+const SCHEMA_VERSION: i64 = 8;
 
 /// The first version whose table *layout* matches the current `SCHEMA`. At or
 /// above this, an upgrade only needs to drop the derived caches, not the
