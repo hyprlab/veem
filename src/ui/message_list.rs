@@ -622,6 +622,14 @@ pub struct MessageList {
     rows: FactoryVecDeque<MessageRow>,
     /// All messages for the current folder (full searchable index).
     all: Vec<Message>,
+    /// Every folder's messages (all accounts), supplied by the app while a search
+    /// is active, so `AllFolders` scope can filter across the whole mailbox. Empty
+    /// when not searching.
+    search_pool: Vec<Message>,
+    /// Which messages the search field filters over.
+    scope: SearchScope,
+    /// The search field widget, kept so a folder switch can clear its text.
+    search_entry: Option<gtk::SearchEntry>,
     /// Currently displayed (post-filter, capped) messages, aligned with rows.
     shown: Vec<Message>,
     /// Total messages matching the current filter (may exceed what's rendered).
@@ -704,6 +712,15 @@ impl SortOrder {
     }
 }
 
+/// Which messages the search field filters over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchScope {
+    /// Every folder of every account (the merged `search_pool`).
+    AllFolders,
+    /// Only the folder currently shown (the local `all` index).
+    ThisFolder,
+}
+
 /// A bulk action applied to every selected message at once.
 #[derive(Debug, Clone, Copy)]
 pub enum BulkAction {
@@ -729,6 +746,11 @@ pub enum MessageListInput {
     DayChanged,
     SetAccountColors(std::collections::HashMap<u32, String>),
     Search(String),
+    /// Change the search scope (all folders vs. the current folder).
+    SetScope(SearchScope),
+    /// Replace the cross-folder search pool (all folders, all accounts). Sent by
+    /// the app when a search begins; cleared to empty when it ends.
+    SetSearchPool(Vec<Message>),
     /// The set of selected rows changed (single click, Ctrl/Shift multi-select).
     SelectionChanged,
     /// A row was activated (double-click / Enter): pop it out into its own window.
@@ -786,6 +808,9 @@ pub enum MessageListOutput {
     /// The viewed message was removed and no row remains to advance to, so the
     /// reader should clear.
     SelectionCleared,
+    /// The search field became active (non-empty) or inactive (empty), so the app
+    /// can supply or drop the cross-folder search pool.
+    SearchActive(bool),
 }
 
 #[relm4::component(pub)]
@@ -828,10 +853,34 @@ impl SimpleComponent for MessageList {
                     },
                 },
 
-                gtk::SearchEntry {
-                    set_placeholder_text: Some("Search this folder"),
-                    connect_search_changed[sender] => move |entry| {
-                        sender.input(MessageListInput::Search(entry.text().to_string()));
+                gtk::Box {
+                    set_spacing: 6,
+
+                    #[name = "search_entry"]
+                    gtk::SearchEntry {
+                        set_hexpand: true,
+                        #[watch]
+                        set_placeholder_text: Some(model.search_placeholder()),
+                        connect_search_changed[sender] => move |entry| {
+                            sender.input(MessageListInput::Search(entry.text().to_string()));
+                        },
+                    },
+
+                    // Scope picker: 0 = All folders (default), 1 = This folder.
+                    #[name = "scope_dropdown"]
+                    gtk::DropDown {
+                        set_valign: gtk::Align::Center,
+                        set_tooltip_text: Some("Choose which folders to search"),
+                        set_model: Some(&gtk::StringList::new(&["All folders", "This folder"])),
+                        set_selected: 0,
+                        connect_selected_notify[sender] => move |dd| {
+                            let scope = if dd.selected() == 0 {
+                                SearchScope::AllFolders
+                            } else {
+                                SearchScope::ThisFolder
+                            };
+                            sender.input(MessageListInput::SetScope(scope));
+                        },
                     },
                 },
             },
@@ -1012,6 +1061,9 @@ impl SimpleComponent for MessageList {
         let mut model = MessageList {
             rows,
             all: Vec::new(),
+            search_pool: Vec::new(),
+            scope: SearchScope::AllFolders,
+            search_entry: None,
             shown: Vec::new(),
             total_matches: 0,
             render_limit: RENDER_CAP,
@@ -1049,6 +1101,7 @@ impl SimpleComponent for MessageList {
 
         let widgets = view_output!();
         model.scroller = Some(widgets.scroller.clone());
+        model.search_entry = Some(widgets.search_entry.clone());
 
         // Sort menu: a stateful "order" action drives a radio-style menu, so the
         // active sort shows a checkmark.
@@ -1091,10 +1144,9 @@ impl SimpleComponent for MessageList {
             MessageListInput::SetMessages { title, messages } => {
                 self.title = title;
                 self.all = messages;
-                self.query.clear();
-                // A background refresh of the folder you're already viewing: keep
-                // how far you've paged and where you're scrolled. (Folder switches
-                // send `ResetPaging` first to start at the top.)
+                // Keep any active search query: this also fires for a background
+                // re-sync of the folder you're viewing, which shouldn't drop your
+                // search. Folder switches clear the query via `ResetPaging` first.
                 self.rebuild_preserving_scroll();
             }
             MessageListInput::AppendMessages { messages } => {
@@ -1123,12 +1175,14 @@ impl SimpleComponent for MessageList {
             MessageListInput::SetLoading { title } => {
                 self.title = title;
                 self.all.clear();
-                self.query.clear();
+                self.clear_search();
                 self.render_limit = RENDER_CAP;
                 self.rebuild();
             }
             MessageListInput::ResetPaging => {
-                // Folder switch: back to the first page, scrolled to the top.
+                // Folder switch: drop any active search, back to the first page,
+                // scrolled to the top.
+                self.clear_search();
                 self.render_limit = RENDER_CAP;
                 if let Some(s) = &self.scroller {
                     s.vadjustment().set_value(0.0);
@@ -1174,9 +1228,33 @@ impl SimpleComponent for MessageList {
                 // Existing rows keep their classes; the rule update reaches them.
             }
             MessageListInput::Search(q) => {
+                let was_active = self.searching();
                 self.query = q;
+                let now_active = self.searching();
+                // On the empty↔non-empty edge, tell the app to supply or drop the
+                // cross-folder pool.
+                if was_active != now_active {
+                    let _ = sender.output(MessageListOutput::SearchActive(now_active));
+                }
                 self.render_limit = RENDER_CAP;
                 self.rebuild();
+            }
+            MessageListInput::SetScope(scope) => {
+                if self.scope != scope {
+                    self.scope = scope;
+                    // Scope only affects the view while a query is present.
+                    if self.searching() {
+                        self.render_limit = RENDER_CAP;
+                        self.rebuild();
+                    }
+                }
+            }
+            MessageListInput::SetSearchPool(pool) => {
+                self.search_pool = pool;
+                if self.searching() && self.scope == SearchScope::AllFolders {
+                    self.render_limit = RENDER_CAP;
+                    self.rebuild_preserving_scroll();
+                }
             }
             MessageListInput::SelectionChanged => {
                 let keys: Vec<(u32, u32)> = self
@@ -1543,10 +1621,48 @@ impl MessageList {
         }
     }
 
+    /// Whether a search is currently active (the query is non-empty).
+    fn searching(&self) -> bool {
+        !self.query.trim().is_empty()
+    }
+
+    /// The message set the search filters over: the cross-folder pool while an
+    /// `AllFolders` search is active (and the pool has arrived), otherwise the
+    /// current folder's own index.
+    fn active_source(&self) -> &[Message] {
+        if self.searching()
+            && self.scope == SearchScope::AllFolders
+            && !self.search_pool.is_empty()
+        {
+            &self.search_pool
+        } else {
+            &self.all
+        }
+    }
+
+    fn search_placeholder(&self) -> &'static str {
+        match self.scope {
+            SearchScope::AllFolders => "Search all folders",
+            SearchScope::ThisFolder => "Search this folder",
+        }
+    }
+
+    /// Drop any active search: clear the query and the entry text so a folder
+    /// switch doesn't leave a stale term filtering the new folder.
+    fn clear_search(&mut self) {
+        if self.query.is_empty() {
+            return;
+        }
+        self.query.clear();
+        if let Some(e) = &self.search_entry {
+            e.set_text("");
+        }
+    }
+
     fn rebuild(&mut self) {
         let q = self.query.to_lowercase();
         let mut matches: Vec<Message> = self
-            .all
+            .active_source()
             .iter()
             .filter(|m| {
                 q.is_empty()
@@ -1655,12 +1771,14 @@ impl MessageList {
         if !self.threading {
             return vec![m.clone()];
         }
-        let keys = compute_thread_keys(&self.all);
+        // Thread within whatever set is on screen (the search pool while searching,
+        // otherwise the current folder) so the conversation matches the rows shown.
+        let source = self.active_source();
+        let keys = compute_thread_keys(source);
         let Some(key) = keys.get(&(m.account_id, m.id)).cloned() else {
             return vec![m.clone()];
         };
-        let mut members: Vec<Message> = self
-            .all
+        let mut members: Vec<Message> = source
             .iter()
             .filter(|x| keys.get(&(x.account_id, x.id)) == Some(&key))
             .cloned()

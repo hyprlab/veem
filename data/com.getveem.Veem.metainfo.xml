@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.2.0" date="2026-07-11" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.2.0</url>
+      <description>
+        <p>Search now spans every folder of every account, with a selector to narrow it back to the current folder.</p>
+      </description>
+    </release>
     <release version="1.1.5" date="2026-07-11" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.1.5</url>
       <description>

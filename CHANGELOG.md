@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0 — 2026-07-11
+- Search now spans every folder of every account, not just the folder you're viewing. A scope selector beside the search box switches between "All folders" (the default) and "This folder".
+- Cross-folder search runs entirely over the locally indexed messages (subject, sender, preview), so it's instant and works offline. The whole mailbox is covered once background indexing finishes; the pool is snapshotted when a search begins.
+- Multi-account search results are tinted by account (as in the unified inbox) so each hit's origin is legible, and opening a result works from whichever folder it lives in.
+- A search now survives a background re-sync of the folder you're viewing instead of being cleared; switching folders still clears it.
+
 ## 1.1.5 — 2026-07-11
 - Reordered the reader header's message-action buttons to Archive, Delete, Spam, View Source (left to right).
 - The message list now launches at its minimum width — just wide enough for a row's Actions Palette to fit — instead of a slightly-too-wide fixed value. The divider position isn't hardcoded: `shrink_start_child` is false, so GtkPaned clamps the launch position up to the pane's natural minimum, which self-adjusts to font/theme changes.

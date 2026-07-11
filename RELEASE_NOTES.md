@@ -2,7 +2,10 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.1.5
+## What's new in 1.2.0
+- Search now covers every folder of every account, not just the folder you're in. A selector beside the search box switches between "All folders" (default) and "This folder", results are tinted by account, and opening a hit works from whichever folder it lives in.
+
+## In 1.1.5
 - Reordered the message-action buttons in the reader header to Archive, Delete, Spam, View Source.
 - The message list opens at its snug minimum width instead of a touch wider than needed.
 
@@ -35,7 +38,7 @@ Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita 
 
 ## Mail
 - Unified "All Inboxes" view that merges every account by recency.
-- Whole-mailbox sync and search with no message-count cap: a fast first page loads instantly, then a background backfill indexes the rest.
+- Whole-mailbox sync and search with no message-count cap: a fast first page loads instantly, then a background backfill indexes the rest. Search spans every folder of every account (with a scope selector to narrow to the current folder).
 - Infinite scroll through the entire folder, with a loading spinner at the bottom while more messages stream in.
 - Deletions and moves made on your phone or another client sync back automatically (server reconciliation plus IMAP IDLE).
 - Conversation threading, grouped by Message-ID and References (toggleable).

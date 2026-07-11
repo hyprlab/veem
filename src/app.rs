@@ -166,6 +166,9 @@ pub enum AppMsg {
     DeleteFolder { account_id: u32, path: String },
     AccountsReordered(Vec<String>),
     MessageSelected { message: Message, thread: Vec<Message> },
+    /// The search field became active/inactive — supply or drop the cross-folder
+    /// search pool (every folder's messages, so search can span the mailbox).
+    SearchActive(bool),
     /// The message list has no selection to show (e.g. the last message was
     /// removed), so the reader should clear.
     ClearReader,
@@ -618,6 +621,7 @@ impl SimpleComponent for AppModel {
                         AppMsg::Bulk { action, messages }
                     }
                     MessageListOutput::SelectionCleared => AppMsg::ClearReader,
+                    MessageListOutput::SearchActive(active) => AppMsg::SearchActive(active),
                 });
 
         let message_view =
@@ -944,6 +948,26 @@ impl SimpleComponent for AppModel {
                 self.attachments_loading = false;
                 self.attachments_available = false;
                 self.show_message(None, false);
+            }
+            AppMsg::SearchActive(active) => {
+                if active {
+                    // Snapshot every folder's indexed messages so the search can
+                    // span the whole mailbox.
+                    self.message_list.emit(MessageListInput::SetSearchPool(
+                        build_search_pool(&self.message_cache),
+                    ));
+                    // Results span accounts; tint rows by account (as in the unified
+                    // inbox) so their origin is legible.
+                    if self.accounts.len() > 1 {
+                        self.message_list.emit(MessageListInput::SetColorize(true));
+                    }
+                } else {
+                    self.message_list
+                        .emit(MessageListInput::SetSearchPool(Vec::new()));
+                    // Restore the tint state the underlying view wants.
+                    self.message_list
+                        .emit(MessageListInput::SetColorize(self.unified));
+                }
             }
             AppMsg::MessageSelected { message: m, thread } => {
                 // Clicking a draft opens it in the compose editor, not the reader.
@@ -3650,5 +3674,60 @@ fn kind_label(kind: FolderKind) -> &'static str {
         FolderKind::Archive => "archive",
         FolderKind::Trash => "trash",
         _ => "destination",
+    }
+}
+
+/// Flatten every folder's indexed messages into one pool for cross-folder search.
+/// The map is keyed by `(account_id, folder_id)`, so a flat concatenation already
+/// spans every folder of every account with no duplicates.
+fn build_search_pool(cache: &HashMap<(u32, u32), Vec<Message>>) -> Vec<Message> {
+    cache.values().flatten().cloned().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(account_id: u32, folder_id: u32, uid: u32) -> Message {
+        Message {
+            id: uid,
+            account_id,
+            folder_id,
+            uid,
+            from_name: String::new(),
+            from_addr: String::new(),
+            to: String::new(),
+            cc: String::new(),
+            subject: String::new(),
+            preview: String::new(),
+            body: String::new(),
+            date: String::new(),
+            timestamp: 0,
+            unread: false,
+            starred: false,
+            has_attachment: false,
+            message_id: String::new(),
+            references: String::new(),
+        }
+    }
+
+    #[test]
+    fn search_pool_spans_every_folder_and_account() {
+        let mut cache: HashMap<(u32, u32), Vec<Message>> = HashMap::new();
+        cache.insert((1, 10), vec![msg(1, 10, 1), msg(1, 10, 2)]); // acct 1, inbox
+        cache.insert((1, 11), vec![msg(1, 11, 3)]); // acct 1, archive
+        cache.insert((2, 20), vec![msg(2, 20, 4), msg(2, 20, 5)]); // acct 2, inbox
+
+        let pool = build_search_pool(&cache);
+        assert_eq!(pool.len(), 5, "pool must include every folder's messages");
+
+        let folders: std::collections::HashSet<(u32, u32)> =
+            pool.iter().map(|m| (m.account_id, m.folder_id)).collect();
+        assert_eq!(folders.len(), 3, "pool must span all three folders");
+    }
+
+    #[test]
+    fn search_pool_is_empty_when_nothing_indexed() {
+        assert!(build_search_pool(&HashMap::new()).is_empty());
     }
 }
