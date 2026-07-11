@@ -337,7 +337,12 @@ impl SimpleComponent for AppModel {
                         // Thin handle so the panes sit flush (just a 1px divider),
                         // no wide-handle gap between them.
                         set_wide_handle: false,
-                        set_position: 360,
+                        // Launch at the list's minimum width. `shrink_start_child`
+                        // is false, so GtkPaned clamps this up to the start child's
+                        // natural minimum — exactly wide enough for a row's Actions
+                        // Palette to fit — instead of a hardcoded, slightly-too-wide
+                        // value. The reader (end child) absorbs the remaining width.
+                        set_position: 1,
                         // The list keeps its width as the window resizes (the
                         // reader absorbs the change), and can't be dragged
                         // narrower than its natural minimum — which is exactly the
@@ -475,14 +480,9 @@ impl SimpleComponent for AppModel {
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleStar),
                                 },
-                                pack_end = &gtk::Button {
-                                    set_icon_name: "user-trash-symbolic",
-                                    set_tooltip_text: Some("Delete"),
-                                    add_css_class: "flat",
-                                    #[watch]
-                                    set_sensitive: model.current.is_some(),
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::Delete),
-                                },
+                                // pack_end fills right-to-left, so these are declared
+                                // in reverse of their visual order. Left to right:
+                                // Archive, Delete, Spam, View Source.
                                 pack_end = &gtk::Button {
                                     set_icon_name: "background-app-ghost-symbolic",
                                     set_tooltip_text: Some("View Source"),
@@ -498,6 +498,14 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::MarkSpam),
+                                },
+                                pack_end = &gtk::Button {
+                                    set_icon_name: "user-trash-symbolic",
+                                    set_tooltip_text: Some("Delete"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_sensitive: model.current.is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::Delete),
                                 },
                                 pack_end = &gtk::Button {
                                     set_icon_name: "mail-archive-symbolic",
