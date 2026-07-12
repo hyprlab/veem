@@ -609,6 +609,52 @@ pub fn save_window_state(width: i32, height: i32, maximized: bool) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Keyring health check + one-time setup-help flag
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct StateFile {
+    /// Set once the user dismisses the Linux Mint keyring setup tip.
+    #[serde(default)]
+    mint_keyring_help_dismissed: bool,
+}
+
+fn state_path() -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join("veem").join("state.toml"))
+}
+
+fn load_state() -> StateFile {
+    state_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| toml::from_str::<StateFile>(&t).ok())
+        .unwrap_or_default()
+}
+
+fn save_state(state: &StateFile) {
+    let Some(path) = state_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(toml) = toml::to_string_pretty(state) {
+        let _ = std::fs::write(&path, toml);
+    }
+}
+
+/// Whether the one-time Mint keyring setup tip has already been dismissed.
+pub fn mint_keyring_help_dismissed() -> bool {
+    load_state().mint_keyring_help_dismissed
+}
+
+/// Persist that the user dismissed the Mint keyring setup tip ("Don't show again").
+pub fn dismiss_mint_keyring_help() {
+    let mut state = load_state();
+    state.mint_keyring_help_dismissed = true;
+    save_state(&state);
+}
+
 
 #[cfg(test)]
 mod tests {

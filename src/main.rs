@@ -11,6 +11,7 @@ mod goa;
 mod models;
 mod notify;
 mod oauth;
+mod platform;
 mod ui;
 mod worker;
 

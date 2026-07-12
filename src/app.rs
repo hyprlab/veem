@@ -252,6 +252,9 @@ pub enum AppMsg {
     /// Open the accounts window straight to the "add account" form (empty state).
     AddFirstAccount,
     AccountSaved { original_email: Option<String>, account: Box<AccountConfig> },
+    /// Show the keyring / Secret Service setup help. `problem: true` when a save
+    /// actually failed to persist; `false` for the proactive one-time tip.
+    ShowKeyringHelp { problem: bool },
     AccountRemoved { email: String },
     AccountEnabledChanged { email: String, enabled: bool },
     ImportGoaAccount(Box<AccountConfig>),
@@ -856,6 +859,18 @@ impl SimpleComponent for AppModel {
             about_sender.input(AppMsg::OpenAbout);
         }));
         group.register_for_widget(&root);
+
+        // One-time, dismissible keyring setup tip for Linux Mint / Cinnamon, where
+        // the Secret Service often needs configuring so passwords persist and the
+        // keyring auto-unlocks at login. Only shown once the user actually has an
+        // account (so it isn't the very first thing a new user sees), and never
+        // again after "Don't show again".
+        if !model.config.is_empty()
+            && crate::platform::is_mint_cinnamon()
+            && !config::mint_keyring_help_dismissed()
+        {
+            sender.input(AppMsg::ShowKeyringHelp { problem: false });
+        }
 
         ComponentParts { model, widgets }
     }
@@ -1627,6 +1642,11 @@ impl SimpleComponent for AppModel {
 
             AppMsg::AccountSaved { original_email, account } => {
                 let new_email = account.email.clone();
+                // Remember the secret we expect to persist, so we can verify the
+                // keyring actually stored it (a silent keyring failure would
+                // otherwise leave the account unable to log in after a restart).
+                let expected_secret = (!account.password.is_empty())
+                    .then(|| account.password.clone());
                 match original_email {
                     // Editing an existing account (matched by its previous email).
                     Some(orig) => {
@@ -1649,6 +1669,16 @@ impl SimpleComponent for AppModel {
                 }
                 match config::save(&self.config) {
                     Ok(()) => {
+                        // config::save() only logs keyring errors, so confirm the
+                        // password can actually be read back. If not, the Secret
+                        // Service isn't persisting it — tell the user how to fix it
+                        // instead of silently "saving" an account that won't stay
+                        // logged in.
+                        if let Some(secret) = expected_secret {
+                            if config::load_password(&new_email).as_deref() != Some(secret.as_str()) {
+                                sender.input(AppMsg::ShowKeyringHelp { problem: true });
+                            }
+                        }
                         self.save_sidebar_state();
                         self.reconnect_all(&sender);
                     }
@@ -1659,6 +1689,8 @@ impl SimpleComponent for AppModel {
                     }),
                 }
             }
+
+            AppMsg::ShowKeyringHelp { problem } => self.show_keyring_help(problem),
 
             AppMsg::AccountEnabledChanged { email, enabled } => {
                 if let Some(slot) = self.config.iter_mut().find(|c| c.email == email) {
@@ -2836,6 +2868,80 @@ impl AppModel {
         self.unified_by_account
             .get(&account_id)
             .and_then(|msgs| msgs.iter().find(|m| m.id == id).cloned())
+    }
+
+    /// Explain how to set up the system keyring (Secret Service) so passwords
+    /// persist across restarts, and — on Linux Mint / Cinnamon — how to stop the
+    /// keyring asking for an unlock password at every login.
+    ///
+    /// `problem` is true when this is shown because a save actually failed;
+    /// false for the proactive one-time tip (which offers "Don't show again").
+    fn show_keyring_help(&self, problem: bool) {
+        let mint = crate::platform::is_mint_cinnamon();
+
+        let heading = if problem {
+            "Veem couldn’t save your password"
+        } else {
+            "Keyring setup on Linux Mint"
+        };
+
+        let mut body = String::new();
+        if problem {
+            body.push_str(
+                "Veem stores account passwords in the system keyring (the Secret \
+                 Service), never on disk. The keyring didn’t accept the password, so \
+                 this account won’t stay signed in after you close Veem.\n\n",
+            );
+        } else {
+            body.push_str(
+                "Veem keeps your account passwords in the system keyring (the Secret \
+                 Service) rather than on disk. On Linux Mint with Cinnamon the keyring \
+                 sometimes needs a one-time setup so passwords persist — and so it \
+                 doesn’t ask you to unlock it at every login.\n\n",
+            );
+        }
+
+        if mint {
+            body.push_str(
+                "Set it up:\n\
+                 1. Install the keyring tools if needed:\n\
+                 \u{2003}sudo apt install gnome-keyring seahorse\n\
+                 2. Open “Passwords and Keys” (Seahorse) and make sure a keyring named \
+                 “Login” exists and is set as Default (right-click → Set as Default).\n\n\
+                 Stop it asking for a password at each login — pick one:\n\
+                 • Recommended: set the Login keyring’s password to match your user \
+                 login password (right-click the Login keyring → Change Password), and \
+                 log in with your password rather than using automatic login. The \
+                 keyring then unlocks automatically when you log in.\n\
+                 • Or, to remove the prompt entirely even with automatic login: set the \
+                 Login keyring’s password to blank (Change Password → leave the new \
+                 password empty). This is convenient, but your saved passwords are then \
+                 stored unencrypted at rest — only do this on a machine you trust.",
+            );
+            if crate::platform::is_flatpak() {
+                body.push_str(
+                    "\n\nNote: run these steps on the host system (not inside the \
+                     Flatpak) — Veem uses whatever keyring your desktop provides.",
+                );
+            }
+        } else {
+            body.push_str(
+                "Make sure a Secret Service keyring is installed, running, and \
+                 unlocked — for example install “gnome-keyring” and “seahorse” \
+                 (Passwords and Keys), then create a default “Login” keyring and set \
+                 its password to your login password so it unlocks automatically.",
+            );
+        }
+
+        let dialog = adw::MessageDialog::new(Some(&self.window), Some(heading), Some(&body));
+        dialog.add_response("ok", "Got it");
+        dialog.set_default_response(Some("ok"));
+        // The proactive tip is a one-time thing: mark it seen once dismissed (by
+        // any means) so it never nags again. A real save failure always shows.
+        if !problem {
+            dialog.connect_response(None, |_, _| config::dismiss_mint_keyring_help());
+        }
+        dialog.present();
     }
 
     /// Prompt for a new custom folder name and create it under `account_id`.
