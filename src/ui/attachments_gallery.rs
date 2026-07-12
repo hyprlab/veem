@@ -177,7 +177,11 @@ impl Component for AttachmentsGallery {
                                 #[watch]
                                 set_icon_name: model.current().map(|i| icon_for(&i.name)),
                                 set_pixel_size: 96,
-                                add_css_class: "gallery-file-icon",
+                                #[watch]
+                                set_css_classes: &[
+                                    "gallery-file-icon",
+                                    model.current().map(|i| icon_color_class(&i.name)).unwrap_or("ftype-generic"),
+                                ],
                             },
                             gtk::Label {
                                 #[watch]
@@ -508,7 +512,8 @@ fn build_cell(
             let img = gtk::Image::from_icon_name(icon_for(&item.name));
             img.set_pixel_size(56);
             img.set_hexpand(true);
-            img.add_css_class("dim-label");
+            img.add_css_class("gallery-file-icon");
+            img.add_css_class(icon_color_class(&item.name));
             thumb_holder.append(&img);
         }
     }
@@ -647,6 +652,28 @@ fn icon_for(name: &str) -> &'static str {
     }
 }
 
+/// CSS class that tints a type icon by file kind: PDFs red, Word docs blue,
+/// spreadsheets green, and so on (see `styles.css`). Symbolic icons pick up the
+/// class's `color`, so an unthumbnailed attachment reads at a glance.
+fn icon_color_class(name: &str) -> &'static str {
+    let lower = name.to_ascii_lowercase();
+    let ext = lower.rsplit('.').next().unwrap_or("");
+    match ext {
+        "pdf" => "ftype-pdf",
+        "doc" | "docx" | "odt" | "rtf" => "ftype-doc",
+        "xls" | "xlsx" | "ods" | "csv" => "ftype-sheet",
+        "ppt" | "pptx" | "odp" => "ftype-slides",
+        "zip" | "gz" | "tar" | "7z" | "rar" | "xz" | "bz2" => "ftype-archive",
+        "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" => "ftype-audio",
+        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" => "ftype-video",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "heic" | "heif" | "avif" | "ico" => {
+            "ftype-image"
+        }
+        "ics" => "ftype-calendar",
+        _ => "ftype-generic",
+    }
+}
+
 /// Write bytes to a temp file and open it in the default application.
 fn open_bytes(name: &str, data: &[u8]) {
     let safe: String = name
@@ -734,5 +761,25 @@ mod imp {
                 child.allocate(width, height, baseline, None);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::icon_color_class;
+
+    #[test]
+    fn icon_color_class_maps_types() {
+        assert_eq!(icon_color_class("report.pdf"), "ftype-pdf");
+        assert_eq!(icon_color_class("Notes.DOCX"), "ftype-doc"); // case-insensitive
+        assert_eq!(icon_color_class("budget.xlsx"), "ftype-sheet");
+        assert_eq!(icon_color_class("deck.pptx"), "ftype-slides");
+        assert_eq!(icon_color_class("bundle.zip"), "ftype-archive");
+        assert_eq!(icon_color_class("song.mp3"), "ftype-audio");
+        assert_eq!(icon_color_class("clip.mov"), "ftype-video");
+        assert_eq!(icon_color_class("invite.ics"), "ftype-calendar");
+        assert_eq!(icon_color_class("photo.png"), "ftype-image");
+        assert_eq!(icon_color_class("data.bin"), "ftype-generic");
+        assert_eq!(icon_color_class("noext"), "ftype-generic");
     }
 }

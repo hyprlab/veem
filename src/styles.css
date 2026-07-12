@@ -645,8 +645,21 @@ headerbar.rail-header button image {
   font-size: 0.82em;
 }
 .gallery-file-icon {
-  opacity: 0.75;
+  opacity: 0.85;
 }
+
+/* Type-tinted attachment icons (symbolic icons follow `color`). Colours read
+   on both light and dark backgrounds. */
+.ftype-pdf      { color: #e01b24; } /* red    — PDF */
+.ftype-doc      { color: #3584e4; } /* blue   — Word / documents */
+.ftype-sheet    { color: #2ec27e; } /* green  — Excel / spreadsheets */
+.ftype-slides   { color: #ff7800; } /* orange — PowerPoint / presentations */
+.ftype-archive  { color: #e5a50a; } /* amber  — zip / archives */
+.ftype-audio    { color: #9141ac; } /* purple — audio */
+.ftype-video    { color: #e6689e; } /* pink   — video */
+.ftype-calendar { color: #009e8f; } /* teal   — calendar */
+.ftype-image    { color: #1c9bd8; } /* cyan   — images */
+.ftype-generic  { color: #8c8c8c; } /* grey   — everything else */
 
 /* Quick-open button on the thumbnail, revealed on hover. */
 .gallery-open {
