@@ -604,8 +604,12 @@ headerbar.rail-header button image {
 }
 
 /* ---- Attachments gallery ------------------------------------------------- */
+.gallery-toolbar {
+  padding: 10px 18px;
+}
 .gallery-flow {
   padding: 18px;
+  padding-top: 4px;
 }
 .gallery-cell {
   padding: 8px;

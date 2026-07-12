@@ -14,7 +14,13 @@ use relm4::prelude::*;
 use crate::models::GalleryItem;
 
 pub struct AttachmentsGallery {
-    items: Vec<GalleryItem>,
+    /// Full set of attachments, unfiltered — the source for search and sort.
+    all_items: Vec<GalleryItem>,
+    /// Indices into `all_items`, filtered by `query` and ordered by `sort`: the
+    /// list actually shown in the grid and stepped through in the lightbox.
+    items: Vec<usize>,
+    query: String,
+    sort: SortBy,
     /// Index into `items` currently shown in the lightbox, if any.
     preview: Option<usize>,
     loading: bool,
@@ -23,11 +29,50 @@ pub struct AttachmentsGallery {
     menu: gtk::Popover,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum SortBy {
+    #[default]
+    Newest,
+    Oldest,
+    Name,
+    NameDesc,
+    Sender,
+    SenderDesc,
+    Largest,
+    Smallest,
+    Type,
+    TypeDesc,
+}
+
+impl SortBy {
+    /// Map the sort dropdown's selected row to a criterion. The order must match
+    /// the `StringList` built in the view.
+    fn from_index(i: u32) -> SortBy {
+        match i {
+            1 => SortBy::Oldest,
+            2 => SortBy::Name,
+            3 => SortBy::NameDesc,
+            4 => SortBy::Sender,
+            5 => SortBy::SenderDesc,
+            6 => SortBy::Largest,
+            7 => SortBy::Smallest,
+            8 => SortBy::Type,
+            9 => SortBy::TypeDesc,
+            _ => SortBy::Newest,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum GalleryInput {
-    /// Replace the gallery contents (already merged + sorted newest-first).
+    /// Replace the gallery contents (already merged across accounts).
     SetItems(Vec<GalleryItem>),
     SetLoading(bool),
+    /// Filter the grid to items matching this search text (sender, subject,
+    /// filename, folder, and type keywords like "pdf" or "spreadsheet").
+    SetQuery(String),
+    /// Re-sort the grid; the value is the sort dropdown's selected row index.
+    SetSort(u32),
     /// A grid cell was activated (single click) — open the lightbox on that item.
     Activate(u32),
     Prev,
@@ -66,29 +111,73 @@ impl Component for AttachmentsGallery {
         gtk::Overlay {
             add_css_class: "attachments-gallery",
 
-            // Base layer: the scrolling grid (or empty/loading state).
+            // Base layer: a search/sort toolbar above the scrolling grid.
             #[wrap(Some)]
-            set_child = &gtk::Stack {
-                set_transition_type: gtk::StackTransitionType::Crossfade,
-                #[watch]
-                set_visible_child_name: model.page(),
+            set_child = &gtk::Box {
+                set_orientation: gtk::Orientation::Vertical,
 
-                add_named[Some("loading")] = &gtk::Box {
-                    set_halign: gtk::Align::Center,
-                    set_valign: gtk::Align::Center,
-                    set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 14,
-                    gtk::Spinner { set_spinning: true, set_width_request: 36, set_height_request: 36 },
-                    gtk::Label { set_label: "Loading attachments…", add_css_class: "dim-label" },
+                gtk::Box {
+                    add_css_class: "gallery-toolbar",
+                    set_spacing: 8,
+                    #[watch]
+                    set_visible: !model.all_items.is_empty(),
+
+                    gtk::SearchEntry {
+                        set_hexpand: true,
+                        set_placeholder_text: Some("Search by sender, subject, type, filename…"),
+                        connect_search_changed[sender] => move |e| {
+                            sender.input(GalleryInput::SetQuery(e.text().to_string()));
+                        },
+                    },
+                    gtk::DropDown {
+                        set_tooltip_text: Some("Sort"),
+                        #[wrap(Some)]
+                        set_model = &gtk::StringList::new(&[
+                            "Newest first",
+                            "Oldest first",
+                            "Name (A–Z)",
+                            "Name (Z–A)",
+                            "Sender (A–Z)",
+                            "Sender (Z–A)",
+                            "Largest first",
+                            "Smallest first",
+                            "Type (A–Z)",
+                            "Type (Z–A)",
+                        ]),
+                        connect_selected_notify[sender] => move |d| {
+                            sender.input(GalleryInput::SetSort(d.selected()));
+                        },
+                    },
                 },
 
-                add_named[Some("empty")] = &adw::StatusPage {
-                    set_icon_name: Some("mail-attachment-symbolic"),
-                    set_title: "No attachments",
-                    set_description: Some("Attachments from your inboxes will appear here."),
-                },
+                gtk::Stack {
+                    set_vexpand: true,
+                    set_transition_type: gtk::StackTransitionType::Crossfade,
+                    #[watch]
+                    set_visible_child_name: model.page(),
 
-                add_named[Some("grid")] = &gtk::ScrolledWindow {
+                    add_named[Some("loading")] = &gtk::Box {
+                        set_halign: gtk::Align::Center,
+                        set_valign: gtk::Align::Center,
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_spacing: 14,
+                        gtk::Spinner { set_spinning: true, set_width_request: 36, set_height_request: 36 },
+                        gtk::Label { set_label: "Loading attachments…", add_css_class: "dim-label" },
+                    },
+
+                    add_named[Some("empty")] = &adw::StatusPage {
+                        set_icon_name: Some("mail-attachment-symbolic"),
+                        set_title: "No attachments",
+                        set_description: Some("Attachments from your inboxes will appear here."),
+                    },
+
+                    add_named[Some("noresults")] = &adw::StatusPage {
+                        set_icon_name: Some("system-search-symbolic"),
+                        set_title: "No matching attachments",
+                        set_description: Some("Try a different search or clear the filter."),
+                    },
+
+                    add_named[Some("grid")] = &gtk::ScrolledWindow {
                     set_hscrollbar_policy: gtk::PolicyType::Never,
                     set_vexpand: true,
 
@@ -106,6 +195,7 @@ impl Component for AttachmentsGallery {
                         connect_child_activated[sender] => move |_, child| {
                             sender.input(GalleryInput::Activate(child.index() as u32));
                         },
+                    },
                     },
                 },
             },
@@ -246,7 +336,10 @@ impl Component for AttachmentsGallery {
         menu.set_position(gtk::PositionType::Bottom);
         menu.add_css_class("menu");
         let model = AttachmentsGallery {
+            all_items: Vec::new(),
             items: Vec::new(),
+            query: String::new(),
+            sort: SortBy::default(),
             preview: None,
             loading: false,
             flow: gtk::FlowBox::new(),
@@ -284,9 +377,22 @@ impl Component for AttachmentsGallery {
     ) {
         match msg {
             GalleryInput::SetItems(items) => {
-                self.items = items;
+                self.all_items = items;
                 self.loading = false;
                 self.preview = None;
+                self.apply();
+                self.rebuild_grid(&sender);
+            }
+            GalleryInput::SetQuery(q) => {
+                self.query = q;
+                self.preview = None;
+                self.apply();
+                self.rebuild_grid(&sender);
+            }
+            GalleryInput::SetSort(i) => {
+                self.sort = SortBy::from_index(i);
+                self.preview = None;
+                self.apply();
                 self.rebuild_grid(&sender);
             }
             GalleryInput::SetLoading(on) => self.loading = on,
@@ -327,17 +433,47 @@ impl Component for AttachmentsGallery {
 
 impl AttachmentsGallery {
     fn page(&self) -> &'static str {
-        if self.loading && self.items.is_empty() {
+        if self.loading && self.all_items.is_empty() {
             "loading"
-        } else if self.items.is_empty() {
+        } else if self.all_items.is_empty() {
             "empty"
+        } else if self.items.is_empty() {
+            "noresults"
         } else {
             "grid"
         }
     }
 
+    /// Recompute the displayed `items` (indices into `all_items`) from the
+    /// current search `query` and `sort`.
+    fn apply(&mut self) {
+        let query = self.query.to_ascii_lowercase();
+        let tokens: Vec<&str> = query.split_whitespace().collect();
+        let mut items: Vec<usize> = self
+            .all_items
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| {
+                if tokens.is_empty() {
+                    return true;
+                }
+                let hay = item_haystack(it);
+                tokens.iter().all(|t| hay.contains(t))
+            })
+            .map(|(i, _)| i)
+            .collect();
+        sort_indices(&mut items, &self.all_items, self.sort);
+        self.items = items;
+    }
+
+    /// The `GalleryItem` at display position `display` (mapping through the
+    /// filtered/sorted `items` into `all_items`).
+    fn item_at(&self, display: usize) -> Option<&GalleryItem> {
+        self.items.get(display).and_then(|&i| self.all_items.get(i))
+    }
+
     fn current(&self) -> Option<&GalleryItem> {
-        self.preview.and_then(|i| self.items.get(i))
+        self.preview.and_then(|i| self.item_at(i))
     }
 
     fn step(&mut self, delta: i32, widgets: &mut AttachmentsGalleryWidgets) {
@@ -372,14 +508,16 @@ impl AttachmentsGallery {
             }
             child = next;
         }
-        for (i, item) in self.items.iter().enumerate() {
-            self.flow.append(&build_cell(i, item, sender));
+        for display in 0..self.items.len() {
+            if let Some(item) = self.item_at(display) {
+                self.flow.append(&build_cell(display, item, sender));
+            }
         }
     }
 
     /// Open item `index` in its default application (if its bytes are cached).
     fn open_item(&self, index: usize) {
-        if let Some(item) = self.items.get(index) {
+        if let Some(item) = self.item_at(index) {
             if let Some(data) = &item.data {
                 open_bytes(&item.name, data);
             }
@@ -388,7 +526,7 @@ impl AttachmentsGallery {
 
     /// Save item `index` to a file the user chooses.
     fn download_item(&self, index: usize) {
-        let Some(item) = self.items.get(index) else { return };
+        let Some(item) = self.item_at(index) else { return };
         let Some(data) = item.data.clone() else { return };
         let dialog = gtk::FileDialog::builder()
             .title("Save Attachment")
@@ -408,7 +546,7 @@ impl AttachmentsGallery {
     }
 
     fn goto_item(&mut self, index: usize, sender: &ComponentSender<Self>) {
-        if let Some(item) = self.items.get(index) {
+        if let Some(item) = self.item_at(index) {
             let _ = sender.output(GalleryOutput::OpenMessage {
                 account_id: item.account_id,
                 folder_path: item.folder_path.clone(),
@@ -422,7 +560,7 @@ impl AttachmentsGallery {
     /// point `(x, y)` (relative to cell `index`). Download/Open are only enabled
     /// when the file's bytes are cached.
     fn show_context_menu(&self, index: usize, x: f64, y: f64, sender: &ComponentSender<Self>) {
-        let Some(item) = self.items.get(index) else { return };
+        let Some(item) = self.item_at(index) else { return };
         let has_data = item.data.is_some();
 
         let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -572,11 +710,13 @@ fn build_cell(
         cell.append(&subj);
     }
 
-    let sub = gtk::Label::new(Some(&format!(
-        "{} · {}",
-        folder_label(&item.folder_path),
-        item.human_size()
-    )));
+    let mut meta = vec![folder_label(&item.folder_path)];
+    let date = item.date_label();
+    if !date.is_empty() {
+        meta.push(date);
+    }
+    meta.push(item.human_size());
+    let sub = gtk::Label::new(Some(&meta.join(" · ")));
     sub.set_ellipsize(gtk::pango::EllipsizeMode::End);
     sub.set_max_width_chars(18);
     sub.add_css_class("gallery-size");
@@ -612,19 +752,84 @@ fn build_cell(
 
 fn caption(item: &GalleryItem) -> String {
     let who = if item.from_name.trim().is_empty() { "Unknown" } else { item.from_name.trim() };
-    let folder = folder_label(&item.folder_path);
     let subject = item.subject.trim();
-    if subject.is_empty() {
-        format!("{who} · {folder} · {}", item.human_size())
-    } else {
-        format!("{who} · {subject} · {folder} · {}", item.human_size())
+    let mut parts = vec![who.to_string()];
+    if !subject.is_empty() {
+        parts.push(subject.to_string());
     }
+    parts.push(folder_label(&item.folder_path));
+    let date = item.date_label();
+    if !date.is_empty() {
+        parts.push(date);
+    }
+    parts.push(item.human_size());
+    parts.join(" · ")
 }
 
 /// A friendly folder name from a mailbox path (the last path segment).
 fn folder_label(path: &str) -> String {
     let name = path.rsplit(['/', '.']).next().unwrap_or(path);
     if name.eq_ignore_ascii_case("inbox") { "Inbox".to_string() } else { name.to_string() }
+}
+
+/// The lowercase extension of a filename (empty when there is none).
+fn ext_of(name: &str) -> String {
+    name.rsplit('.').next().unwrap_or("").to_ascii_lowercase()
+}
+
+/// Searchable category words for a file, keyed off its extension, so a query
+/// like "image" or "spreadsheet" matches even when the word isn't in the name.
+fn type_keywords(name: &str) -> &'static str {
+    match ext_of(name).as_str() {
+        "pdf" => "pdf document",
+        "doc" | "docx" | "odt" | "rtf" => "word document",
+        "xls" | "xlsx" | "ods" | "csv" => "excel spreadsheet",
+        "ppt" | "pptx" | "odp" => "powerpoint presentation slides",
+        "zip" | "gz" | "tar" | "7z" | "rar" | "xz" | "bz2" => "archive compressed",
+        "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" => "audio music sound",
+        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" => "video movie",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "heic" | "heif" | "avif" | "ico" => {
+            "image photo picture"
+        }
+        "ics" => "calendar event",
+        "txt" | "md" => "text document",
+        _ => "file",
+    }
+}
+
+/// Lowercase text blob a search query is matched against: filename, sender,
+/// subject, folder, and type keywords.
+fn item_haystack(item: &GalleryItem) -> String {
+    format!(
+        "{} {} {} {} {}",
+        item.name,
+        item.from_name,
+        item.subject,
+        folder_label(&item.folder_path),
+        type_keywords(&item.name),
+    )
+    .to_ascii_lowercase()
+}
+
+/// Order the display indices (into `all`) by the chosen criterion.
+fn sort_indices(idx: &mut [usize], all: &[GalleryItem], sort: SortBy) {
+    use std::cmp::Reverse;
+    match sort {
+        SortBy::Newest => idx.sort_by_key(|&a| Reverse(all[a].timestamp)),
+        SortBy::Oldest => idx.sort_by_key(|&a| all[a].timestamp),
+        SortBy::Largest => idx.sort_by_key(|&a| Reverse(all[a].size)),
+        SortBy::Smallest => idx.sort_by_key(|&a| all[a].size),
+        SortBy::Name => idx.sort_by_key(|&a| all[a].name.to_ascii_lowercase()),
+        SortBy::NameDesc => idx.sort_by_key(|&a| Reverse(all[a].name.to_ascii_lowercase())),
+        SortBy::Sender => idx.sort_by_key(|&a| all[a].from_name.to_ascii_lowercase()),
+        SortBy::SenderDesc => idx.sort_by_key(|&a| Reverse(all[a].from_name.to_ascii_lowercase())),
+        SortBy::Type => {
+            idx.sort_by_key(|&a| (ext_of(&all[a].name), all[a].name.to_ascii_lowercase()))
+        }
+        SortBy::TypeDesc => {
+            idx.sort_by_key(|&a| Reverse((ext_of(&all[a].name), all[a].name.to_ascii_lowercase())))
+        }
+    }
 }
 
 /// A `gdk::Texture` from raw image bytes, or `None` if the format isn't loadable.
@@ -766,7 +971,76 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::icon_color_class;
+    use super::*;
+
+    fn item(name: &str, from: &str, subject: &str, folder: &str, ts: i64, size: u64) -> GalleryItem {
+        GalleryItem {
+            account_id: 1,
+            folder_path: folder.into(),
+            uid: 1,
+            name: name.into(),
+            size,
+            from_name: from.into(),
+            subject: subject.into(),
+            timestamp: ts,
+            data: None,
+        }
+    }
+
+    #[test]
+    fn haystack_matches_sender_subject_folder_and_type() {
+        let it = item("Budget.XLSX", "Bob Jones", "Q3 numbers", "Archive", 1, 10);
+        let hay = item_haystack(&it);
+        // filename, sender, subject, folder — all lowercased and searchable.
+        for needle in ["budget", "xlsx", "bob", "jones", "q3", "numbers", "archive"] {
+            assert!(hay.contains(needle), "haystack missing {needle}: {hay}");
+        }
+        // type keywords derived from the extension.
+        assert!(hay.contains("spreadsheet"));
+        assert!(hay.contains("excel"));
+        assert!(!hay.contains("image"));
+    }
+
+    #[test]
+    fn type_keywords_cover_common_kinds() {
+        assert!(type_keywords("a.pdf").contains("document"));
+        assert!(type_keywords("a.png").contains("image"));
+        assert!(type_keywords("a.mp3").contains("audio"));
+        assert!(type_keywords("a.ics").contains("calendar"));
+    }
+
+    #[test]
+    fn sort_indices_orders_each_criterion() {
+        // c: oldest/smallest, name "a"; a: newest, name "c"; b: middle, name "b", largest.
+        let all = vec![
+            item("c.txt", "Zed", "s", "INBOX", 300, 5),   // 0
+            item("b.txt", "Amy", "s", "INBOX", 200, 90),  // 1
+            item("a.txt", "Mel", "s", "INBOX", 100, 5),   // 2
+        ];
+        let mut idx = vec![0, 1, 2];
+
+        sort_indices(&mut idx, &all, SortBy::Newest);
+        assert_eq!(idx, vec![0, 1, 2]); // ts 300, 200, 100
+        sort_indices(&mut idx, &all, SortBy::Oldest);
+        assert_eq!(idx, vec![2, 1, 0]);
+        sort_indices(&mut idx, &all, SortBy::Name);
+        assert_eq!(idx, vec![2, 1, 0]); // a, b, c
+        sort_indices(&mut idx, &all, SortBy::NameDesc);
+        assert_eq!(idx, vec![0, 1, 2]); // c, b, a
+        sort_indices(&mut idx, &all, SortBy::Largest);
+        assert_eq!(idx[0], 1); // b is 90 bytes
+        sort_indices(&mut idx, &all, SortBy::Smallest);
+        assert_eq!(idx.last(), Some(&1)); // b (90 bytes) is largest → last
+        sort_indices(&mut idx, &all, SortBy::Sender);
+        assert_eq!(idx, vec![1, 2, 0]); // Amy, Mel, Zed
+        sort_indices(&mut idx, &all, SortBy::SenderDesc);
+        assert_eq!(idx, vec![0, 2, 1]); // Zed, Mel, Amy
+        // All .txt here, so type ties and falls back to name order.
+        sort_indices(&mut idx, &all, SortBy::Type);
+        assert_eq!(idx, vec![2, 1, 0]); // a, b, c
+        sort_indices(&mut idx, &all, SortBy::TypeDesc);
+        assert_eq!(idx, vec![0, 1, 2]); // c, b, a
+    }
 
     #[test]
     fn icon_color_class_maps_types() {

@@ -157,6 +157,23 @@ impl GalleryItem {
     pub fn human_size(&self) -> String {
         human_size(self.size)
     }
+
+    /// Compact date of the source message for the gallery meta, e.g. "Jul 12"
+    /// (or "Jul 12, 2025" if not this year). Empty when the date is unknown.
+    pub fn date_label(&self) -> String {
+        use chrono::{Datelike, TimeZone};
+        if self.timestamp <= 0 {
+            return String::new();
+        }
+        let Some(local) = chrono::Local.timestamp_opt(self.timestamp, 0).single() else {
+            return String::new();
+        };
+        if local.year() == chrono::Local::now().year() {
+            local.format("%b %-d").to_string()
+        } else {
+            local.format("%b %-d, %Y").to_string()
+        }
+    }
 }
 
 impl Message {

@@ -2,7 +2,10 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.3.3
+## What's new in 1.3.4
+- The attachments gallery can now be searched and sorted. Search by sender, subject, filename, folder, or file type (like "pdf" or "image"), and sort by date, name, sender, size, or type — each ascending or descending. Every attachment also shows its message's date alongside the folder and size.
+
+## In 1.3.3
 - Attachment icons in the gallery are now colour-coded by type — PDFs red, Word docs blue, spreadsheets green, presentations orange, archives amber, and more — so you can spot the file you want at a glance.
 
 ## In 1.3.2
