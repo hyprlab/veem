@@ -94,19 +94,19 @@ fn build_toolbar(webview: &webkit6::WebView) -> gtk::Box {
 
     // (icon, tooltip, execCommand snippet)
     let commands: &[(&str, &str, &str)] = &[
-        ("format-text-bold-symbolic", "Bold", "document.execCommand('bold')"),
-        ("format-text-italic-symbolic", "Italic", "document.execCommand('italic')"),
-        ("format-text-underline-symbolic", "Underline", "document.execCommand('underline')"),
-        ("format-text-strikethrough-symbolic", "Strikethrough", "document.execCommand('strikeThrough')"),
+        ("com.getveem.Veem-format-text-bold-symbolic", "Bold", "document.execCommand('bold')"),
+        ("com.getveem.Veem-format-text-italic-symbolic", "Italic", "document.execCommand('italic')"),
+        ("com.getveem.Veem-format-text-underline-symbolic", "Underline", "document.execCommand('underline')"),
+        ("com.getveem.Veem-format-text-strikethrough-symbolic", "Strikethrough", "document.execCommand('strikeThrough')"),
         ("SEP", "", ""),
-        ("view-list-bullet-symbolic", "Bulleted list", "document.execCommand('insertUnorderedList')"),
-        ("view-list-ordered-symbolic", "Numbered list", "document.execCommand('insertOrderedList')"),
+        ("com.getveem.Veem-view-list-bullet-symbolic", "Bulleted list", "document.execCommand('insertUnorderedList')"),
+        ("com.getveem.Veem-view-list-ordered-symbolic", "Numbered list", "document.execCommand('insertOrderedList')"),
         // Adwaita has no blockquote glyph; the indent icon reads as "quote".
-        ("format-indent-more-symbolic", "Quote", "document.execCommand('formatBlock',false,'blockquote')"),
+        ("com.getveem.Veem-format-indent-more-symbolic", "Quote", "document.execCommand('formatBlock',false,'blockquote')"),
         // `LINK` is a sentinel command (handled specially); the icon is real.
-        ("insert-link-symbolic", "Insert link", "LINK"),
+        ("com.getveem.Veem-insert-link-symbolic", "Insert link", "LINK"),
         ("SEP", "", ""),
-        ("edit-clear-symbolic", "Clear formatting", "document.execCommand('removeFormat')"),
+        ("com.getveem.Veem-edit-clear-symbolic", "Clear formatting", "document.execCommand('removeFormat')"),
     ];
 
     for (icon, tip, cmd) in commands {

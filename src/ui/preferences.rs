@@ -61,7 +61,7 @@ impl FactoryComponent for SenderRow {
         adw::ActionRow {
             set_title: &self.addr,
             add_suffix = &gtk::Button {
-                set_icon_name: "user-trash-symbolic",
+                set_icon_name: "com.getveem.Veem-user-trash-symbolic",
                 set_valign: gtk::Align::Center,
                 set_tooltip_text: Some("Remove"),
                 add_css_class: "flat",

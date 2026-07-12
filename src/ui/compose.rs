@@ -161,12 +161,12 @@ impl Component for Compose {
                         connect_clicked => ComposeInput::Send,
                     },
                     pack_end = &gtk::Button {
-                        set_icon_name: "mail-attachment-symbolic",
+                        set_icon_name: "com.getveem.Veem-mail-attachment-symbolic",
                         set_tooltip_text: Some("Attach files"),
                         connect_clicked => ComposeInput::AttachFiles,
                     },
                     pack_end = &gtk::Button {
-                        set_icon_name: "x-office-address-book-symbolic",
+                        set_icon_name: "com.getveem.Veem-x-office-address-book-symbolic",
                         set_tooltip_text: Some("Open Contacts"),
                         connect_clicked => ComposeInput::OpenContacts,
                     },
@@ -660,9 +660,9 @@ impl Compose {
             item.set_margin_bottom(3);
             // Mark where the suggestion came from: address book vs. mail history.
             let icon = gtk::Image::from_icon_name(if sug.from_contacts {
-                "avatar-default-symbolic"
+                "com.getveem.Veem-avatar-default-symbolic"
             } else {
-                "document-open-recent-symbolic"
+                "com.getveem.Veem-document-open-recent-symbolic"
             });
             icon.set_valign(gtk::Align::Center);
             icon.add_css_class("dim-label");
@@ -725,12 +725,12 @@ impl Compose {
 
             let chip = gtk::Box::new(gtk::Orientation::Horizontal, 4);
             chip.add_css_class("attach-chip");
-            chip.append(&gtk::Image::from_icon_name("mail-attachment-symbolic"));
+            chip.append(&gtk::Image::from_icon_name("com.getveem.Veem-mail-attachment-symbolic"));
             let lbl = gtk::Label::new(Some(&name));
             lbl.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
             lbl.set_max_width_chars(22);
             chip.append(&lbl);
-            let rm = gtk::Button::from_icon_name("window-close-symbolic");
+            let rm = gtk::Button::from_icon_name("com.getveem.Veem-window-close-symbolic");
             rm.add_css_class("flat");
             rm.set_valign(gtk::Align::Center);
             let s = sender.input_sender().clone();

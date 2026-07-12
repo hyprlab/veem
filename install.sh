@@ -23,11 +23,8 @@ for size in 256x256 512x512; do
     install -Dm644 "$ROOT/data/icons/hicolor/$size/apps/$APP_ID.png" \
         "$PREFIX/share/icons/hicolor/$size/apps/$APP_ID.png"
 done
-# Bundled symbolic icons (not in all icon themes).
-for sym in "$ROOT"/data/icons/hicolor/scalable/actions/*-symbolic.svg; do
-    [ -e "$sym" ] || continue
-    install -Dm644 "$sym" "$PREFIX/share/icons/hicolor/scalable/actions/$(basename "$sym")"
-done
+# (Symbolic UI icons are embedded in the binary as a GResource, so nothing to
+# install here — they render identically regardless of the host icon theme.)
 
 echo "==> Installing desktop entry"
 install -Dm644 "$ROOT/data/$APP_ID.desktop" \

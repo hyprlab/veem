@@ -340,13 +340,13 @@ impl SimpleComponent for AppModel {
                                 add_css_class: "app-title",
                             },
                             pack_start = &gtk::Button {
-                                set_icon_name: "mail-message-new-symbolic",
+                                set_icon_name: "com.getveem.Veem-mail-message-new-symbolic",
                                 set_tooltip_text: Some("Compose"),
                                 add_css_class: "suggested-action",
                                 connect_clicked[sender] => move |_| sender.input(AppMsg::Compose),
                             },
                             pack_end = &gtk::MenuButton {
-                                set_icon_name: "open-menu-symbolic",
+                                set_icon_name: "com.getveem.Veem-open-menu-symbolic",
                                 set_tooltip_text: Some("Main Menu"),
                                 add_css_class: "flat",
                                 set_menu_model: Some(&model.menu),
@@ -409,9 +409,9 @@ impl SimpleComponent for AppModel {
                                         gtk::Image {
                                             #[watch]
                                             set_icon_name: Some(if model.notify_count > 0 {
-                                                "dialog-warning-symbolic"
+                                                "com.getveem.Veem-dialog-warning-symbolic"
                                             } else {
-                                                "preferences-system-notifications-symbolic"
+                                                "com.getveem.Veem-preferences-system-notifications-symbolic"
                                             }),
                                             #[watch]
                                             set_css_classes: if model.notify_count > 0 {
@@ -430,7 +430,7 @@ impl SimpleComponent for AppModel {
                                     },
                                 },
                                 pack_start = &gtk::Button {
-                                    set_icon_name: "x-office-address-book-symbolic",
+                                    set_icon_name: "com.getveem.Veem-x-office-address-book-symbolic",
                                     set_tooltip_text: Some("Open Contacts"),
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::OpenContacts),
@@ -442,7 +442,7 @@ impl SimpleComponent for AppModel {
                                     gtk::Stack {
                                         set_transition_type: gtk::StackTransitionType::Crossfade,
                                         add_named[Some("icon")] = &gtk::Image {
-                                            set_icon_name: Some("view-refresh-symbolic"),
+                                            set_icon_name: Some("com.getveem.Veem-view-refresh-symbolic"),
                                         },
                                         add_named[Some("spinner")] = &gtk::Spinner {
                                             #[watch]
@@ -468,7 +468,7 @@ impl SimpleComponent for AppModel {
                                     set_label: "",
                                 },
                                 pack_start = &gtk::Button {
-                                    set_icon_name: "mail-reply-sender-symbolic",
+                                    set_icon_name: "com.getveem.Veem-mail-reply-sender-symbolic",
                                     set_tooltip_text: Some("Reply"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -476,7 +476,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Reply),
                                 },
                                 pack_start = &gtk::Button {
-                                    set_icon_name: "mail-reply-all-symbolic",
+                                    set_icon_name: "com.getveem.Veem-mail-reply-all-symbolic",
                                     set_tooltip_text: Some("Reply All"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -484,7 +484,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ReplyAll),
                                 },
                                 pack_start = &gtk::Button {
-                                    set_icon_name: "mail-forward-symbolic",
+                                    set_icon_name: "com.getveem.Veem-mail-forward-symbolic",
                                     set_tooltip_text: Some("Forward"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -492,7 +492,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Forward),
                                 },
                                 pack_start = &gtk::Button {
-                                    set_icon_name: "contact-new-symbolic",
+                                    set_icon_name: "com.getveem.Veem-contact-new-symbolic",
                                     set_tooltip_text: Some("Add sender to Contacts"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -504,9 +504,9 @@ impl SimpleComponent for AppModel {
                                     add_css_class: "flat",
                                     #[watch]
                                     set_icon_name: if model.current.as_ref().is_some_and(|m| m.starred) {
-                                        "starred-symbolic"
+                                        "com.getveem.Veem-starred-symbolic"
                                     } else {
-                                        "non-starred-symbolic"
+                                        "com.getveem.Veem-non-starred-symbolic"
                                     },
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
@@ -516,7 +516,7 @@ impl SimpleComponent for AppModel {
                                 // in reverse of their visual order. Left to right:
                                 // Archive, Delete, Spam, View Source.
                                 pack_end = &gtk::Button {
-                                    set_icon_name: "background-app-ghost-symbolic",
+                                    set_icon_name: "com.getveem.Veem-background-app-ghost-symbolic",
                                     set_tooltip_text: Some("View Source"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -524,7 +524,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ViewSource),
                                 },
                                 pack_end = &gtk::Button {
-                                    set_icon_name: "mail-mark-junk-symbolic",
+                                    set_icon_name: "com.getveem.Veem-mail-mark-junk-symbolic",
                                     set_tooltip_text: Some("Mark as Spam"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -532,7 +532,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::MarkSpam),
                                 },
                                 pack_end = &gtk::Button {
-                                    set_icon_name: "user-trash-symbolic",
+                                    set_icon_name: "com.getveem.Veem-user-trash-symbolic",
                                     set_tooltip_text: Some("Delete"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -540,7 +540,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Delete),
                                 },
                                 pack_end = &gtk::Button {
-                                    set_icon_name: "mail-archive-symbolic",
+                                    set_icon_name: "com.getveem.Veem-mail-archive-symbolic",
                                     set_tooltip_text: Some("Archive"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -558,7 +558,7 @@ impl SimpleComponent for AppModel {
                                 // Shown for messages whose attachments weren't
                                 // pre-downloaded — load them only when asked.
                                 pack_end = &gtk::Button {
-                                    set_icon_name: "folder-download-symbolic",
+                                    set_icon_name: "com.getveem.Veem-folder-download-symbolic",
                                     set_tooltip_text: Some("Load attachments from server"),
                                     add_css_class: "flat",
                                     add_css_class: "attach-present",
@@ -567,7 +567,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::LoadAttachmentsNow),
                                 },
                                 pack_end = &gtk::MenuButton {
-                                    set_icon_name: "mail-attachment-symbolic",
+                                    set_icon_name: "com.getveem.Veem-mail-attachment-symbolic",
                                     set_tooltip_text: Some("Attachments"),
                                     add_css_class: "flat",
                                     add_css_class: "attach-present",
@@ -3194,7 +3194,7 @@ impl AppModel {
             .subtitle(format!("What's new in {}", env!("CARGO_PKG_VERSION")))
             .activatable(true)
             .build();
-        notes_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+        notes_row.add_suffix(&gtk::Image::from_icon_name("com.getveem.Veem-go-next-symbolic"));
         {
             let nav = nav.clone();
             notes_row.connect_activated(move |_| nav.push_by_tag("notes"));
@@ -3206,7 +3206,7 @@ impl AppModel {
             .subtitle("Full version history")
             .activatable(true)
             .build();
-        changelog_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+        changelog_row.add_suffix(&gtk::Image::from_icon_name("com.getveem.Veem-go-next-symbolic"));
         {
             let nav = nav.clone();
             changelog_row.connect_activated(move |_| nav.push_by_tag("changelog"));
@@ -3228,7 +3228,7 @@ impl AppModel {
         let mk_row = |title: &str, url: &str| -> adw::ActionRow {
             let row = adw::ActionRow::builder().title(title).activatable(true).build();
             row.set_tooltip_text(Some(url));
-            row.add_suffix(&gtk::Image::from_icon_name("adw-external-link-symbolic"));
+            row.add_suffix(&gtk::Image::from_icon_name("com.getveem.Veem-adw-external-link-symbolic"));
             let u = url.to_string();
             row.connect_activated(move |_| crate::oauth::open_uri(&u));
             row
@@ -3247,7 +3247,7 @@ impl AppModel {
         let cup = gtk::Label::new(Some("☕"));
         cup.add_css_class("about-coffee");
         coffee.add_prefix(&cup);
-        coffee.add_suffix(&gtk::Image::from_icon_name("adw-external-link-symbolic"));
+        coffee.add_suffix(&gtk::Image::from_icon_name("com.getveem.Veem-adw-external-link-symbolic"));
         coffee.connect_activated(move |_| crate::oauth::open_uri("https://buymeacoffee.com/hyprlab"));
         links.append(&coffee);
         page.append(&links);
@@ -3714,9 +3714,18 @@ fn save_all_attachments(atts: Vec<Attachment>, parent: Option<adw::ApplicationWi
 }
 
 /// Register the app icon so windows and dialogs can find it by name.
+///
+/// Veem's toolbar/list icons are shipped inside the binary as a GResource
+/// (registered in `main`), so they no longer depend on the host icon theme.
+/// GTK auto-adds the bundle's resource path (`/com/getveem/Veem/icons`) to the
+/// default theme; we add it explicitly too, so lookups work even if that
+/// convention ever changes.
 fn register_icons() {
     if let Some(display) = gtk::gdk::Display::default() {
         let theme = gtk::IconTheme::for_display(&display);
+        theme.add_resource_path("/com/getveem/Veem/icons");
+        // Dev-only: lets the window/about app icon resolve when running from the
+        // source tree (uninstalled). Silently ignored on installed systems.
         theme.add_search_path(concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons"));
     }
     gtk::Window::set_default_icon_name(crate::APP_ID);

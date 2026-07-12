@@ -167,12 +167,12 @@ impl FactoryComponent for MessageRow {
                         set_css_classes: &sender_classes(&self.msg),
                     },
                     gtk::Image {
-                        set_icon_name: Some("mail-attachment-symbolic"),
+                        set_icon_name: Some("com.getveem.Veem-mail-attachment-symbolic"),
                         set_visible: self.msg.has_attachment,
                         add_css_class: "dim-icon",
                     },
                     gtk::Image {
-                        set_icon_name: Some("starred-symbolic"),
+                        set_icon_name: Some("com.getveem.Veem-starred-symbolic"),
                         #[watch]
                         set_visible: self.msg.starred,
                         add_css_class: "star-icon",
@@ -191,7 +191,7 @@ impl FactoryComponent for MessageRow {
                     },
                     gtk::Button {
                         set_visible: self.thread_count > 1,
-                        set_icon_name: if self.thread_expanded { "pan-down-symbolic" } else { "pan-end-symbolic" },
+                        set_icon_name: if self.thread_expanded { "com.getveem.Veem-pan-down-symbolic" } else { "com.getveem.Veem-pan-end-symbolic" },
                         set_tooltip_text: Some("Show conversation"),
                         add_css_class: "flat",
                         add_css_class: "thread-toggle",
@@ -219,7 +219,7 @@ impl FactoryComponent for MessageRow {
                     // consumed before the row's selection gesture).
                     gtk::Button {
                         #[watch]
-                        set_icon_name: if self.palette_open { "pan-start-symbolic" } else { "pan-end-symbolic" },
+                        set_icon_name: if self.palette_open { "com.getveem.Veem-pan-start-symbolic" } else { "com.getveem.Veem-pan-end-symbolic" },
                         // Hidden until the row is hovered (or the palette is open);
                         // the .revealed class fades it in via a CSS transition.
                         #[watch]
@@ -248,26 +248,26 @@ impl FactoryComponent for MessageRow {
                             },
 
                             gtk::Button {
-                                set_icon_name: "mail-reply-sender-symbolic",
+                                set_icon_name: "com.getveem.Veem-mail-reply-sender-symbolic",
                                 set_tooltip_text: Some("Reply"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Reply)),
                             },
                             gtk::Button {
-                                set_icon_name: "mail-reply-all-symbolic",
+                                set_icon_name: "com.getveem.Veem-mail-reply-all-symbolic",
                                 set_tooltip_text: Some("Reply All"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ReplyAll)),
                             },
                             gtk::Button {
-                                set_icon_name: "mail-forward-symbolic",
+                                set_icon_name: "com.getveem.Veem-mail-forward-symbolic",
                                 set_tooltip_text: Some("Forward"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Forward)),
                             },
                             gtk::Button {
                                 #[watch]
-                                set_icon_name: if self.msg.starred { "starred-symbolic" } else { "non-starred-symbolic" },
+                                set_icon_name: if self.msg.starred { "com.getveem.Veem-starred-symbolic" } else { "com.getveem.Veem-non-starred-symbolic" },
                                 #[watch]
                                 set_tooltip_text: Some(if self.msg.starred { "Remove star" } else { "Star" }),
                                 add_css_class: "flat",
@@ -275,32 +275,32 @@ impl FactoryComponent for MessageRow {
                             },
                             gtk::Button {
                                 #[watch]
-                                set_icon_name: if self.msg.unread { "mail-read-symbolic" } else { "mail-unread-symbolic" },
+                                set_icon_name: if self.msg.unread { "com.getveem.Veem-mail-read-symbolic" } else { "com.getveem.Veem-mail-unread-symbolic" },
                                 #[watch]
                                 set_tooltip_text: Some(if self.msg.unread { "Mark as read" } else { "Mark as unread" }),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleRead)),
                             },
                             gtk::Button {
-                                set_icon_name: "mail-mark-junk-symbolic",
+                                set_icon_name: "com.getveem.Veem-mail-mark-junk-symbolic",
                                 set_tooltip_text: Some("Mark as spam"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Spam)),
                             },
                             gtk::Button {
-                                set_icon_name: "mail-archive-symbolic",
+                                set_icon_name: "com.getveem.Veem-mail-archive-symbolic",
                                 set_tooltip_text: Some("Archive"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Archive)),
                             },
                             gtk::Button {
-                                set_icon_name: "user-trash-symbolic",
+                                set_icon_name: "com.getveem.Veem-user-trash-symbolic",
                                 set_tooltip_text: Some("Delete"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Delete)),
                             },
                             gtk::Button {
-                                set_icon_name: "background-app-ghost-symbolic",
+                                set_icon_name: "com.getveem.Veem-background-app-ghost-symbolic",
                                 set_tooltip_text: Some("View source"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ViewSource)),
@@ -846,7 +846,7 @@ impl SimpleComponent for MessageList {
                     },
                     #[name = "sort_btn"]
                     gtk::MenuButton {
-                        set_icon_name: "view-sort-descending-symbolic",
+                        set_icon_name: "com.getveem.Veem-view-sort-descending-symbolic",
                         set_tooltip_text: Some("Sort messages"),
                         set_valign: gtk::Align::Center,
                         add_css_class: "flat",
@@ -903,37 +903,37 @@ impl SimpleComponent for MessageList {
                         add_css_class: "bulk-count",
                     },
                     gtk::Button {
-                        set_icon_name: "mail-read-symbolic",
+                        set_icon_name: "com.getveem.Veem-mail-read-symbolic",
                         set_tooltip_text: Some("Mark as Read"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::MarkRead),
                     },
                     gtk::Button {
-                        set_icon_name: "mail-unread-symbolic",
+                        set_icon_name: "com.getveem.Veem-mail-unread-symbolic",
                         set_tooltip_text: Some("Mark as Unread"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::MarkUnread),
                     },
                     gtk::Button {
-                        set_icon_name: "starred-symbolic",
+                        set_icon_name: "com.getveem.Veem-starred-symbolic",
                         set_tooltip_text: Some("Flag"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::Flag),
                     },
                     gtk::Button {
-                        set_icon_name: "mail-archive-symbolic",
+                        set_icon_name: "com.getveem.Veem-mail-archive-symbolic",
                         set_tooltip_text: Some("Archive"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::Archive),
                     },
                     gtk::Button {
-                        set_icon_name: "mail-mark-junk-symbolic",
+                        set_icon_name: "com.getveem.Veem-mail-mark-junk-symbolic",
                         set_tooltip_text: Some("Mark as Spam"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::Spam),
                     },
                     gtk::Button {
-                        set_icon_name: "user-trash-symbolic",
+                        set_icon_name: "com.getveem.Veem-user-trash-symbolic",
                         set_tooltip_text: Some("Delete"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::Delete),
@@ -942,7 +942,7 @@ impl SimpleComponent for MessageList {
                         set_orientation: gtk::Orientation::Vertical,
                     },
                     gtk::Button {
-                        set_icon_name: "edit-clear-symbolic",
+                        set_icon_name: "com.getveem.Veem-edit-clear-symbolic",
                         set_tooltip_text: Some("Clear selection"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::ClearSelection,

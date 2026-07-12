@@ -2,7 +2,10 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.3.5
+## What's new in 1.3.6
+- Veem's icons now look the same on every Linux distribution. They're built into the app itself, so they no longer change appearance or go missing depending on your system's icon theme (something that happened on distributions like Zorin).
+
+## In 1.3.5
 - Sidebar folder lists stay tidy: your essential folders (Inbox, Sent, Archive, Trash, and the like) are always shown, while custom folders collapse under a "Folders" section that you can reveal when you want it. Each account remembers whether it's expanded, between restarts.
 - Attachment thumbnails now offer Download and Go to Message on hover, next to Open.
 

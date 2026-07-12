@@ -48,7 +48,7 @@ impl FactoryComponent for NotificationCard {
             add_css_class: "toast-card",
 
             gtk::Image {
-                set_icon_name: Some("dialog-warning-symbolic"),
+                set_icon_name: Some("com.getveem.Veem-dialog-warning-symbolic"),
                 set_valign: gtk::Align::Start,
                 add_css_class: "toast-card-icon",
             },
@@ -62,7 +62,7 @@ impl FactoryComponent for NotificationCard {
             },
 
             gtk::Button {
-                set_icon_name: "window-close-symbolic",
+                set_icon_name: "com.getveem.Veem-window-close-symbolic",
                 set_valign: gtk::Align::Start,
                 add_css_class: "flat",
                 add_css_class: "circular",
@@ -164,7 +164,7 @@ impl SimpleComponent for NotificationCenter {
 
                         gtk::Button {
                             #[watch]
-                            set_icon_name: if model.panel_open { "pan-up-symbolic" } else { "pan-down-symbolic" },
+                            set_icon_name: if model.panel_open { "com.getveem.Veem-pan-up-symbolic" } else { "com.getveem.Veem-pan-down-symbolic" },
                             set_tooltip_text: Some("Collapse"),
                             add_css_class: "flat",
                             connect_clicked => NotifyInput::TogglePanel,
@@ -346,9 +346,9 @@ impl NotificationCenter {
 
     fn bar_icon(&self) -> &'static str {
         if self.is_error_state() {
-            "dialog-warning-symbolic"
+            "com.getveem.Veem-dialog-warning-symbolic"
         } else {
-            "dialog-information-symbolic"
+            "com.getveem.Veem-dialog-information-symbolic"
         }
     }
 

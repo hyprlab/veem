@@ -98,7 +98,7 @@ impl Component for MessageView {
             set_transition_type: gtk::StackTransitionType::Crossfade,
 
             add_named[Some("empty")] = &adw::StatusPage {
-                set_icon_name: Some("mail-read-symbolic"),
+                set_icon_name: Some("com.getveem.Veem-mail-read-symbolic"),
                 set_title: "No message selected",
                 set_description: Some("Choose a message from the list to read it here."),
             },
@@ -116,7 +116,7 @@ impl Component for MessageView {
                         add_css_class: "remote-alert",
                         set_spacing: 8,
 
-                        gtk::Image { set_icon_name: Some("security-high-symbolic") },
+                        gtk::Image { set_icon_name: Some("com.getveem.Veem-security-high-symbolic") },
                         gtk::Label {
                             set_label: "Remote content (images, trackers) was blocked to protect your privacy.",
                             set_hexpand: true,

@@ -1021,6 +1021,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "glib-build-tools"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7029c2651d9b5d5a3eea93ec8a1995665c6d3a69ce9bf6042ad9064d134736d8"
+dependencies = [
+ "gio",
+]
+
+[[package]]
 name = "glib-macros"
 version = "0.20.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2932,13 +2941,14 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "veem"
-version = "1.3.5"
+version = "1.3.6"
 dependencies = [
  "async-imap",
  "async-native-tls",
  "chrono",
  "dirs",
  "futures",
+ "glib-build-tools",
  "gtk4",
  "keyring",
  "lettre",

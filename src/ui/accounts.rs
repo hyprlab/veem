@@ -965,7 +965,7 @@ impl AccountsWindow {
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
             hbox.add_css_class("account-list-row");
 
-            let handle = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+            let handle = gtk::Image::from_icon_name("com.getveem.Veem-list-drag-handle-symbolic");
             handle.add_css_class("dim-label");
             hbox.append(&handle);
 
@@ -1012,7 +1012,7 @@ impl AccountsWindow {
             });
             hbox.append(&toggle);
 
-            let next = gtk::Image::from_icon_name("go-next-symbolic");
+            let next = gtk::Image::from_icon_name("com.getveem.Veem-go-next-symbolic");
             next.add_css_class("dim-label");
             hbox.append(&next);
 
