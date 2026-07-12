@@ -3402,8 +3402,18 @@ fn bytes_to_string(b: &[u8]) -> String {
 }
 
 /// Decode a header value that may be RFC 2047 encoded ("=?UTF-8?…?=").
-fn decode_header(raw: &[u8]) -> String {
-    match rfc2047_decoder::decode(raw) {
+///
+/// Some senders (notably Mailchimp) emit a single encoded-word far longer than
+/// RFC 2047's 75-character limit — e.g. The Marginalian's newsletter subjects.
+/// The decoder aborts on over-long words by default, which would leave the raw
+/// `=?utf-8?Q?…?=` gibberish in the UI; we ask it to decode them anyway, as
+/// Apple Mail and Thunderbird do.
+pub(crate) fn decode_header(raw: &[u8]) -> String {
+    use rfc2047_decoder::{Decoder, RecoverStrategy};
+    match Decoder::new()
+        .too_long_encoded_word_strategy(RecoverStrategy::Decode)
+        .decode(raw)
+    {
         Ok(s) => s,
         Err(_) => String::from_utf8_lossy(raw).into_owned(),
     }
@@ -3657,6 +3667,26 @@ fn wrap_fragment(inner: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_header_handles_over_long_encoded_word() {
+        // The Marginalian (Mailchimp) sends the entire subject as one Q-encoded
+        // word ~250 chars long — far past RFC 2047's 75-char limit. Earlier
+        // builds aborted and left the raw `=?utf-8?Q?…?=` in the UI; we now
+        // decode it as Apple Mail and Thunderbird do.
+        let raw = b"=?utf-8?Q?92=2Dyear=2Dold=20artist=20Sheila=20Hicks=20on=20the=20key=20to=20creative=20vitality=2C=20how=20to=20manage=20heartbreak=20like=20Frida=20Kahlo=2C=20the=20elusive=20science=20of=20the=20present=20moment?=";
+        assert_eq!(
+            decode_header(raw),
+            "92-year-old artist Sheila Hicks on the key to creative vitality, \
+             how to manage heartbreak like Frida Kahlo, the elusive science of \
+             the present moment"
+        );
+    }
+
+    #[test]
+    fn decode_header_leaves_plain_text_untouched() {
+        assert_eq!(decode_header(b"Just a normal subject"), "Just a normal subject");
+    }
 
     #[test]
     fn linkify_wraps_http_and_https() {

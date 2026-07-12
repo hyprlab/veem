@@ -548,6 +548,25 @@ fn build_cell(
     name.add_css_class("gallery-name");
     cell.append(&name);
 
+    let from = item.from_name.trim();
+    if !from.is_empty() {
+        let sender = gtk::Label::new(Some(from));
+        sender.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        sender.set_max_width_chars(18);
+        sender.add_css_class("gallery-from");
+        cell.append(&sender);
+    }
+
+    let subject = item.subject.trim();
+    if !subject.is_empty() {
+        let subj = gtk::Label::new(Some(subject));
+        subj.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        subj.set_max_width_chars(18);
+        subj.add_css_class("gallery-subject");
+        subj.add_css_class("dim-label");
+        cell.append(&subj);
+    }
+
     let sub = gtk::Label::new(Some(&format!(
         "{} · {}",
         folder_label(&item.folder_path),

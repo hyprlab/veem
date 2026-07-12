@@ -73,7 +73,9 @@ CREATE TABLE IF NOT EXISTS attachments_checked (
 /// Bump when the table layout changes; older rows are dropped on open.
 /// v8: bodies are re-rendered with clickable links, so cached bodies (which
 /// `LoadBody` serves without re-fetching) must be dropped and rebuilt on open.
-const SCHEMA_VERSION: i64 = 8;
+/// v9: re-decode subjects cached as raw RFC 2047 encoded-words by builds that
+/// aborted on over-long encoded-words (e.g. Mailchimp newsletters).
+const SCHEMA_VERSION: i64 = 9;
 
 /// The first version whose table *layout* matches the current `SCHEMA`. At or
 /// above this, an upgrade only needs to drop the derived caches, not the
@@ -96,6 +98,9 @@ impl Cache {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap_or(0);
+        // Upgrading in place (layout current, message index preserved) rather
+        // than wiping and re-syncing the whole mailbox.
+        let upgrading_index = (LAYOUT_VERSION..SCHEMA_VERSION).contains(&version);
         if version < LAYOUT_VERSION {
             let _ = conn.execute_batch(
                 "DROP TABLE IF EXISTS folders;\
@@ -112,6 +117,9 @@ impl Cache {
             let _ = conn.execute_batch("DROP TABLE IF EXISTS bodies;");
         }
         conn.execute_batch(SCHEMA)?;
+        if upgrading_index {
+            Self::redecode_encoded_subjects(&conn);
+        }
         let _ = conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"));
 
         // Concurrency: multiple account workers share this file.
@@ -119,6 +127,38 @@ impl Cache {
         let _ = conn.busy_timeout(Duration::from_secs(5));
 
         Ok(Cache { conn })
+    }
+
+    /// One-time upgrade fix: earlier builds cached a message's subject verbatim
+    /// when the RFC 2047 decoder aborted on an over-long encoded-word (a single
+    /// `=?utf-8?Q?…?=` far past the 75-char limit, as Mailchimp emits). Now that
+    /// [`crate::worker::decode_header`] decodes those, re-decode any subject
+    /// still stored as a raw encoded-word — in place, so no re-sync is needed.
+    fn redecode_encoded_subjects(conn: &Connection) {
+        let rows: Vec<(u32, String, u32, String)> = {
+            let Ok(mut stmt) = conn.prepare(
+                "SELECT account_id, folder_path, uid, subject FROM messages \
+                 WHERE subject LIKE '%=?%?=%'",
+            ) else {
+                return;
+            };
+            let Ok(mapped) = stmt.query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            }) else {
+                return;
+            };
+            mapped.flatten().collect()
+        };
+        for (account_id, folder_path, uid, subject) in rows {
+            let decoded = crate::worker::decode_header(subject.as_bytes());
+            if decoded != subject {
+                let _ = conn.execute(
+                    "UPDATE messages SET subject = ?1 \
+                     WHERE account_id = ?2 AND folder_path = ?3 AND uid = ?4",
+                    params![decoded, account_id, folder_path, uid],
+                );
+            }
+        }
     }
 
     pub fn load_folders(&self, account_id: u32) -> Vec<Folder> {
@@ -627,6 +667,33 @@ mod tests {
         assert_eq!(items[1].name, "a.png");
         assert_eq!(items[1].folder_path, "INBOX");
         assert_eq!(items[1].data.as_deref(), Some(&[0u8; 4][..]));
+    }
+
+    #[test]
+    fn redecode_encoded_subjects_fixes_raw_encoded_words_in_place() {
+        let c = Cache::in_memory();
+        add_folder(&c, "INBOX", FolderKind::Inbox);
+        // A subject an older build stored raw after aborting on the over-long word.
+        let raw = "=?utf-8?Q?92=2Dyear=2Dold=20artist=20Sheila=20Hicks?=";
+        add_msg(&c, "INBOX", 1, "Popova", raw, 100);
+        add_msg(&c, "INBOX", 2, "Plain", "Already fine", 200);
+
+        Cache::redecode_encoded_subjects(&c.conn);
+
+        let subj: String = c
+            .conn
+            .query_row(
+                "SELECT subject FROM messages WHERE uid = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(subj, "92-year-old artist Sheila Hicks");
+        let plain: String = c
+            .conn
+            .query_row("SELECT subject FROM messages WHERE uid = 2", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(plain, "Already fine");
     }
 
     #[test]
