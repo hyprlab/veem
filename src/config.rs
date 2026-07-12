@@ -496,6 +496,9 @@ struct SidebarFile {
     /// Account emails whose folder list is collapsed.
     #[serde(default)]
     collapsed: Vec<String>,
+    /// Account emails whose custom-folders section is expanded (default hidden).
+    #[serde(default)]
+    folders_expanded: Vec<String>,
     /// Whether the whole sidebar is in icon-only (collapsed) mode.
     #[serde(default)]
     icon_only: bool,
@@ -505,20 +508,37 @@ fn sidebar_path() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("veem").join("sidebar.toml"))
 }
 
-/// Returns `(order, collapsed, icon_only)` sidebar state.
-pub fn load_sidebar_state() -> (Vec<String>, Vec<String>, bool) {
-    let Some(path) = sidebar_path() else {
-        return (Vec::new(), Vec::new(), false);
-    };
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return (Vec::new(), Vec::new(), false);
-    };
-    toml::from_str::<SidebarFile>(&text)
-        .map(|s| (s.order, s.collapsed, s.icon_only))
-        .unwrap_or((Vec::new(), Vec::new(), false))
+/// Sidebar state persisted across restarts.
+#[derive(Debug, Default)]
+pub struct SidebarState {
+    /// Account emails in display order.
+    pub order: Vec<String>,
+    /// Account emails whose folder list is collapsed.
+    pub collapsed: Vec<String>,
+    /// Account emails whose custom-folders section is expanded (default hidden).
+    pub folders_expanded: Vec<String>,
+    /// Whether the sidebar is in icon-only mode.
+    pub icon_only: bool,
 }
 
-pub fn save_sidebar_state(order: &[String], collapsed: &[String], icon_only: bool) {
+pub fn load_sidebar_state() -> SidebarState {
+    let Some(path) = sidebar_path() else {
+        return SidebarState::default();
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return SidebarState::default();
+    };
+    toml::from_str::<SidebarFile>(&text)
+        .map(|s| SidebarState {
+            order: s.order,
+            collapsed: s.collapsed,
+            folders_expanded: s.folders_expanded,
+            icon_only: s.icon_only,
+        })
+        .unwrap_or_default()
+}
+
+pub fn save_sidebar_state(state: &SidebarState) {
     let Some(path) = sidebar_path() else {
         return;
     };
@@ -526,9 +546,10 @@ pub fn save_sidebar_state(order: &[String], collapsed: &[String], icon_only: boo
         let _ = std::fs::create_dir_all(dir);
     }
     let file = SidebarFile {
-        order: order.to_vec(),
-        collapsed: collapsed.to_vec(),
-        icon_only,
+        order: state.order.clone(),
+        collapsed: state.collapsed.clone(),
+        folders_expanded: state.folders_expanded.clone(),
+        icon_only: state.icon_only,
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {

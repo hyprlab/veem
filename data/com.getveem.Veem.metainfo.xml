@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.3.5" date="2026-07-12" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.5</url>
+      <description>
+        <p>Custom sidebar folders collapse under a per-account "Folders" section, and attachment thumbnails gain Download and Go to Message hover actions.</p>
+      </description>
+    </release>
     <release version="1.3.4" date="2026-07-12" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.4</url>
       <description>

@@ -664,25 +664,42 @@ fn build_cell(
     aspect.set_width_request(230);
     aspect.set_hexpand(true);
 
-    // Overlay a quick "Open" button at the thumbnail's bottom-right corner; it
-    // fades in on hover (via CSS) and opens the file externally. Only for files
-    // whose bytes are cached.
+    // Overlay quick-action buttons at the thumbnail's bottom-right corner; they
+    // fade in on hover (via CSS). Download and Open need the file's bytes cached;
+    // "Go to Message" always works, so it shows even for uncached attachments.
     let thumb_overlay = gtk::Overlay::new();
     thumb_overlay.set_child(Some(&aspect));
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    actions.set_halign(gtk::Align::End);
+    actions.set_valign(gtk::Align::End);
+    actions.set_margin_end(6);
+    actions.set_margin_bottom(6);
+    let action_btn = |icon: &str, tip: &str| {
+        let b = gtk::Button::from_icon_name(icon);
+        b.add_css_class("gallery-open");
+        b.add_css_class("circular");
+        b.add_css_class("osd");
+        b.set_tooltip_text(Some(tip));
+        b
+    };
     if item.data.is_some() {
-        let open_btn = gtk::Button::from_icon_name("document-open-symbolic");
-        open_btn.add_css_class("gallery-open");
-        open_btn.add_css_class("circular");
-        open_btn.add_css_class("osd");
-        open_btn.set_halign(gtk::Align::End);
-        open_btn.set_valign(gtk::Align::End);
-        open_btn.set_margin_end(6);
-        open_btn.set_margin_bottom(6);
-        open_btn.set_tooltip_text(Some("Open"));
+        let download = action_btn("folder-download-symbolic", "Download");
         let s = sender.clone();
-        open_btn.connect_clicked(move |_| s.input(GalleryInput::OpenItem(index)));
-        thumb_overlay.add_overlay(&open_btn);
+        download.connect_clicked(move |_| s.input(GalleryInput::DownloadItem(index)));
+        actions.append(&download);
+
+        let open = action_btn("document-open-symbolic", "Open");
+        let s = sender.clone();
+        open.connect_clicked(move |_| s.input(GalleryInput::OpenItem(index)));
+        actions.append(&open);
     }
+    let goto = action_btn("mail-unread-symbolic", "Go to Message");
+    let s = sender.clone();
+    goto.connect_clicked(move |_| s.input(GalleryInput::GoToItem(index)));
+    actions.append(&goto);
+    thumb_overlay.add_overlay(&actions);
+
     cell.append(&thumb_overlay);
 
     let name = gtk::Label::new(Some(&item.name));

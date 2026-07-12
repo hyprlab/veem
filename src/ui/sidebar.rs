@@ -30,6 +30,8 @@ pub struct SectionData {
     pub account: Account,
     pub folders: Vec<Folder>,
     pub collapsed: bool,
+    /// Whether this account's custom-folders section is expanded (default hidden).
+    pub custom_expanded: bool,
     /// Resolved avatar background colour ("#rrggbb").
     pub color: String,
     /// Avatar emoji; when absent, account-name initials are shown.
@@ -57,6 +59,13 @@ pub struct Sidebar {
     revealers: HashMap<u32, gtk::Revealer>,
     chevrons: HashMap<u32, gtk::Image>,
     folder_lists: HashMap<u32, gtk::ListBox>,
+    /// Per-account list box holding just the custom (user-created) folders, shown
+    /// under a collapsible "Folders" section. Selection indices into these are
+    /// offset past the account's essential folders.
+    custom_folder_lists: HashMap<u32, gtk::ListBox>,
+    /// The "Folders" section revealer and its chevron, per account.
+    custom_revealers: HashMap<u32, gtk::Revealer>,
+    custom_chevrons: HashMap<u32, gtk::Image>,
     /// The unified-row list box (one row), when shown.
     unified_list: Option<gtk::ListBox>,
     /// The "Attachments" row list box (one row), when shown.
@@ -99,6 +108,8 @@ pub enum SidebarInput {
     /// Toggle the "All Inboxes" per-account inbox sub-list.
     ToggleUnifiedExpand,
     ToggleCollapseLocal(u32),
+    /// Toggle the collapsible "Folders" (custom folders) section for an account.
+    ToggleCustomFoldersLocal(u32),
     ToggleCollapsed,
     /// Update unread badges in place without rebuilding the sidebar.
     SetUnread {
@@ -123,6 +134,8 @@ pub enum SidebarOutput {
         path: String,
     },
     ToggleCollapse(u32),
+    /// The user toggled the collapsible custom-folders section for an account.
+    ToggleCustomFolders(u32),
     /// The user toggled icon-only mode; `true` means collapsed.
     CollapsedChanged(bool),
     /// The empty-state "Add first account" button was clicked.
@@ -211,6 +224,9 @@ impl Component for Sidebar {
             revealers: HashMap::new(),
             chevrons: HashMap::new(),
             folder_lists: HashMap::new(),
+            custom_folder_lists: HashMap::new(),
+            custom_revealers: HashMap::new(),
+            custom_chevrons: HashMap::new(),
             unified_list: None,
             attachments_list: None,
             color_provider,
@@ -244,7 +260,13 @@ impl Component for Sidebar {
         _root: &Self::Root,
     ) {
         match msg {
-            SidebarInput::SetContents { sections, show_unified, unified_unread } => {
+            SidebarInput::SetContents { mut sections, show_unified, unified_unread } => {
+                // Order each account's folders essential-first, then custom, so
+                // the essential/custom split lines up with row indices (the main
+                // list holds indices 0..E, the custom list E..).
+                for s in &mut sections {
+                    s.folders.sort_by_key(|f| f.kind == FolderKind::Custom);
+                }
                 self.sections = sections;
                 self.show_unified = show_unified;
                 self.unified_unread = unified_unread;
@@ -385,6 +407,24 @@ impl Component for Sidebar {
                 }
             }
 
+            SidebarInput::ToggleCustomFoldersLocal(id) => {
+                if let Some(rev) = self.custom_revealers.get(&id) {
+                    let expanded = !rev.reveals_child();
+                    rev.set_reveal_child(expanded);
+                    if let Some(ch) = self.custom_chevrons.get(&id) {
+                        ch.set_icon_name(Some(if expanded {
+                            "pan-down-symbolic"
+                        } else {
+                            "pan-end-symbolic"
+                        }));
+                    }
+                    if let Some(s) = self.sections.iter_mut().find(|s| s.account.id == id) {
+                        s.custom_expanded = expanded;
+                    }
+                    let _ = sender.output(SidebarOutput::ToggleCustomFolders(id));
+                }
+            }
+
             SidebarInput::ExpandForDrop(id) => {
                 // Expand a collapsed account so its folders become drop targets.
                 if let Some(rev) = self.revealers.get(&id) {
@@ -443,6 +483,9 @@ impl Sidebar {
         self.revealers.clear();
         self.chevrons.clear();
         self.folder_lists.clear();
+        self.custom_folder_lists.clear();
+        self.custom_revealers.clear();
+        self.custom_chevrons.clear();
         self.unified_list = None;
         self.attachments_list = None;
         self.folder_badges.clear();
@@ -843,30 +886,28 @@ impl Sidebar {
             revealer.set_transition_duration(200);
             revealer.set_reveal_child(!section.collapsed);
 
+            // Split folders: essential (Inbox/Sent/Trash/Archive/…) are always
+            // shown; user-created "custom" folders are tucked under a collapsible
+            // "Folders" section. `section.folders` is already essential-first, so
+            // the essential list holds row indices 0..E and the custom list E..
+            let essential: Vec<&Folder> = section
+                .folders
+                .iter()
+                .filter(|f| f.kind != FolderKind::Custom)
+                .collect();
+            let custom: Vec<&Folder> = section
+                .folders
+                .iter()
+                .filter(|f| f.kind == FolderKind::Custom)
+                .collect();
+            let e = essential.len() as i32;
+
             let list = gtk::ListBox::new();
             list.set_selection_mode(gtk::SelectionMode::Single);
             list.add_css_class("navigation-sidebar");
-            for folder in &section.folders {
+            for folder in &essential {
                 let (row, badge) = build_folder_row(folder, self.collapsed);
-                // Accept a dropped message → move it into this folder.
-                let drop = gtk::DropTarget::new(
-                    gtk::glib::types::Type::STRING,
-                    gtk::gdk::DragAction::MOVE,
-                );
-                let ds = sender.input_sender().clone();
-                let dest_path = folder.path.clone();
-                drop.connect_drop(move |_, value, _, _| {
-                    if let Ok(payload) = value.get::<String>() {
-                        let _ = ds.send(SidebarInput::DropOnFolder {
-                            account_id: id,
-                            path: dest_path.clone(),
-                            payload,
-                        });
-                        return true;
-                    }
-                    false
-                });
-                row.add_controller(drop);
+                row.add_controller(folder_drop_target(id, folder.path.clone(), sender));
                 list.append(&row);
                 if let Some(badge) = badge {
                     self.folder_badges.insert((id, folder.id), badge);
@@ -881,39 +922,76 @@ impl Sidebar {
                     });
                 }
             });
-            // Right-click a folder: act on that folder.
-            let click = gtk::GestureClick::new();
-            click.set_button(gtk::gdk::BUTTON_SECONDARY);
-            let cs = sender.clone();
-            let list_w = list.clone();
-            let folders = section.folders.clone();
-            click.connect_pressed(move |_, _, x, y| {
-                if let Some(f) = list_w
-                    .row_at_y(y as i32)
-                    .and_then(|row| folders.get(row.index() as usize))
-                {
-                    let mut items = vec![
-                        ("Mark as Read", CtxAction::MarkFolderRead {
-                            account_id: id,
-                            folder_id: f.id,
-                        }),
-                        ("Refresh", CtxAction::RefreshFolder {
-                            account_id: id,
-                            folder_id: f.id,
-                        }),
-                    ];
-                    // Only user-created folders can be deleted.
-                    if f.kind == FolderKind::Custom {
-                        items.push(("Delete Folder…", CtxAction::DeleteFolder {
-                            account_id: id,
-                            name: f.name.clone(),
-                            path: f.path.clone(),
-                        }));
-                    }
-                    show_sidebar_menu(&list_w, x, y, items, &cs);
-                }
+            attach_folder_context_menu(
+                &list,
+                id,
+                essential.iter().map(|f| (*f).clone()).collect(),
+                sender,
+            );
+
+            // The collapsible custom-folders list + its "Folders" toggle header.
+            let custom_list = gtk::ListBox::new();
+            custom_list.set_selection_mode(gtk::SelectionMode::Single);
+            custom_list.add_css_class("navigation-sidebar");
+            let custom_revealer = gtk::Revealer::new();
+            let custom_chevron = gtk::Image::from_icon_name(if section.custom_expanded {
+                "pan-down-symbolic"
+            } else {
+                "pan-end-symbolic"
             });
-            list.add_controller(click);
+            let folders_toggle = gtk::Button::new();
+            if !custom.is_empty() {
+                for folder in &custom {
+                    let (row, badge) = build_folder_row(folder, self.collapsed);
+                    row.add_controller(folder_drop_target(id, folder.path.clone(), sender));
+                    custom_list.append(&row);
+                    if let Some(badge) = badge {
+                        self.folder_badges.insert((id, folder.id), badge);
+                    }
+                }
+                let s3 = sender.input_sender().clone();
+                custom_list.connect_row_selected(move |_, row| {
+                    if let Some(row) = row {
+                        // Offset past the essential folders into `section.folders`.
+                        let _ = s3.send(SidebarInput::FolderRowSelected {
+                            account_id: id,
+                            index: e + row.index(),
+                        });
+                    }
+                });
+                attach_folder_context_menu(
+                    &custom_list,
+                    id,
+                    custom.iter().map(|f| (*f).clone()).collect(),
+                    sender,
+                );
+
+                custom_revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+                custom_revealer.set_transition_duration(200);
+                custom_revealer.set_reveal_child(section.custom_expanded);
+                custom_revealer.set_child(Some(&custom_list));
+
+                folders_toggle.add_css_class("flat");
+                folders_toggle.add_css_class("folders-toggle");
+                let hb = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                hb.add_css_class("folder-row");
+                if self.collapsed {
+                    hb.set_halign(gtk::Align::Center);
+                    hb.append(&gtk::Image::from_icon_name("folder-symbolic"));
+                    folders_toggle.set_tooltip_text(Some("Folders"));
+                } else {
+                    hb.append(&custom_chevron);
+                    let lbl = gtk::Label::new(Some(&format!("Folders ({})", custom.len())));
+                    lbl.set_halign(gtk::Align::Start);
+                    lbl.set_hexpand(true);
+                    hb.append(&lbl);
+                }
+                folders_toggle.set_child(Some(&hb));
+                let st = sender.input_sender().clone();
+                folders_toggle.connect_clicked(move |_| {
+                    let _ = st.send(SidebarInput::ToggleCustomFoldersLocal(id));
+                });
+            }
 
             // "+ Add Folder" button at the bottom of the list for quick creation.
             let add_btn = gtk::Button::new();
@@ -939,6 +1017,10 @@ impl Sidebar {
 
             let wrap = gtk::Box::new(gtk::Orientation::Vertical, 0);
             wrap.append(&list);
+            if !custom.is_empty() {
+                wrap.append(&folders_toggle);
+                wrap.append(&custom_revealer);
+            }
             wrap.append(&add_btn);
             revealer.set_child(Some(&wrap));
             container.append(&revealer);
@@ -946,6 +1028,9 @@ impl Sidebar {
             self.revealers.insert(id, revealer);
             self.chevrons.insert(id, chevron);
             self.folder_lists.insert(id, list);
+            self.custom_folder_lists.insert(id, custom_list);
+            self.custom_revealers.insert(id, custom_revealer);
+            self.custom_chevrons.insert(id, custom_chevron);
         }
 
         // Per-account avatar colours (background + readable text).
@@ -981,8 +1066,23 @@ impl Sidebar {
                 l.unselect_all();
             }
         }
+        // A folder selection lives in exactly one of the two lists (essential or
+        // custom) of one account; unselect every other list, including the
+        // sibling list of the same account.
+        let keep_is_custom = if let Sel::Folder(kaid, kpath) = &keep {
+            self.folder_kind(*kaid, kpath) == Some(FolderKind::Custom)
+        } else {
+            false
+        };
         for (aid, lb) in &self.folder_lists {
-            if !matches!(&keep, Sel::Folder(kaid, _) if kaid == aid) {
+            let keep_here = matches!(&keep, Sel::Folder(kaid, _) if kaid == aid) && !keep_is_custom;
+            if !keep_here {
+                lb.unselect_all();
+            }
+        }
+        for (aid, lb) in &self.custom_folder_lists {
+            let keep_here = matches!(&keep, Sel::Folder(kaid, _) if kaid == aid) && keep_is_custom;
+            if !keep_here {
                 lb.unselect_all();
             }
         }
@@ -1051,12 +1151,96 @@ impl Sidebar {
     }
 
     fn select_folder_index(&self, account_id: u32, idx: usize) {
-        if let Some(list) = self.folder_lists.get(&account_id) {
-            if let Some(row) = list.row_at_index(idx as i32) {
+        // Essential folders live in the main list (rows 0..E); custom folders in
+        // the collapsible list (rows E..). Route to the right one.
+        let e = self.essential_count(account_id);
+        let (list, row_idx) = if idx < e {
+            (self.folder_lists.get(&account_id), idx)
+        } else {
+            (self.custom_folder_lists.get(&account_id), idx - e)
+        };
+        if let Some(list) = list {
+            if let Some(row) = list.row_at_index(row_idx as i32) {
                 list.select_row(Some(&row));
             }
         }
     }
+
+    /// Number of essential (non-custom) folders for an account — the boundary
+    /// between the main and custom folder lists in `section.folders`.
+    fn essential_count(&self, account_id: u32) -> usize {
+        self.sections
+            .iter()
+            .find(|s| s.account.id == account_id)
+            .map(|s| s.folders.iter().filter(|f| f.kind != FolderKind::Custom).count())
+            .unwrap_or(0)
+    }
+
+    /// The kind of the folder at `path` in `account_id`, if known.
+    fn folder_kind(&self, account_id: u32, path: &str) -> Option<FolderKind> {
+        self.sections
+            .iter()
+            .find(|s| s.account.id == account_id)
+            .and_then(|s| s.folders.iter().find(|f| f.path == path))
+            .map(|f| f.kind)
+    }
+}
+
+/// A drop target that moves a dragged message into `dest_path` on account `id`.
+fn folder_drop_target(
+    id: u32,
+    dest_path: String,
+    sender: &ComponentSender<Sidebar>,
+) -> gtk::DropTarget {
+    let drop = gtk::DropTarget::new(gtk::glib::types::Type::STRING, gtk::gdk::DragAction::MOVE);
+    let ds = sender.input_sender().clone();
+    drop.connect_drop(move |_, value, _, _| {
+        if let Ok(payload) = value.get::<String>() {
+            let _ = ds.send(SidebarInput::DropOnFolder {
+                account_id: id,
+                path: dest_path.clone(),
+                payload,
+            });
+            return true;
+        }
+        false
+    });
+    drop
+}
+
+/// Wire a right-click menu (Mark as Read / Refresh / Delete) onto a folder list;
+/// `folders` maps the list's row indices to their folders.
+fn attach_folder_context_menu(
+    list: &gtk::ListBox,
+    id: u32,
+    folders: Vec<Folder>,
+    sender: &ComponentSender<Sidebar>,
+) {
+    let click = gtk::GestureClick::new();
+    click.set_button(gtk::gdk::BUTTON_SECONDARY);
+    let cs = sender.clone();
+    let list_w = list.clone();
+    click.connect_pressed(move |_, _, x, y| {
+        if let Some(f) = list_w
+            .row_at_y(y as i32)
+            .and_then(|row| folders.get(row.index() as usize))
+        {
+            let mut items = vec![
+                ("Mark as Read", CtxAction::MarkFolderRead { account_id: id, folder_id: f.id }),
+                ("Refresh", CtxAction::RefreshFolder { account_id: id, folder_id: f.id }),
+            ];
+            // Only user-created folders can be deleted.
+            if f.kind == FolderKind::Custom {
+                items.push(("Delete Folder…", CtxAction::DeleteFolder {
+                    account_id: id,
+                    name: f.name.clone(),
+                    path: f.path.clone(),
+                }));
+            }
+            show_sidebar_menu(&list_w, x, y, items, &cs);
+        }
+    });
+    list.add_controller(click);
 }
 
 fn account_initials(name: &str, email: &str) -> String {

@@ -240,6 +240,19 @@ headerbar.rail-header button image {
   opacity: 0.6;
 }
 
+/* Collapsible "Folders" (custom folders) section header. */
+.folders-toggle {
+  margin: 0 6px;
+  border-radius: 9px;
+}
+.folders-toggle label {
+  font-weight: 600;
+  opacity: 0.65;
+}
+.folders-toggle image {
+  opacity: 0.6;
+}
+
 /* Unread count: a perfect circle for a single digit that grows horizontally
    into a pill for larger numbers, but never taller. */
 .unread-badge {

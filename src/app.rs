@@ -66,6 +66,8 @@ pub struct AppModel {
     account_order: Vec<String>,
     /// Accounts whose folder list is collapsed in the sidebar (by email).
     collapsed: Vec<String>,
+    /// Accounts whose custom-folders section is expanded in the sidebar (by email).
+    folders_expanded: Vec<String>,
     selected: Option<SelectedFolder>,
     /// Attachments of the currently-open message (for the reader toolbar button).
     attachments: Vec<Attachment>,
@@ -172,6 +174,7 @@ pub enum AppMsg {
     OpenAttachmentMessage { account_id: u32, folder_path: String, uid: u32 },
     FolderSelected { account_id: u32, folder_id: u32, name: String, path: String },
     ToggleCollapse(u32),
+    ToggleCustomFolders(u32),
     SidebarCollapsed(bool),
     SidebarContext(CtxAction),
     /// A message was dropped on a sidebar folder — move it there.
@@ -599,7 +602,8 @@ impl SimpleComponent for AppModel {
         relm4::set_global_css(include_str!("styles.css"));
         register_icons();
 
-        let (mut order, mut collapsed, icon_only) = config::load_sidebar_state();
+        let mut sidebar_state = config::load_sidebar_state();
+        let icon_only = sidebar_state.icon_only;
 
         // Load accounts, then drop any imported GOA account that GNOME Online
         // Accounts no longer has (removed or Mail-disabled there). Reconciliation
@@ -611,11 +615,15 @@ impl SimpleComponent for AppModel {
             for email in &goa_removed {
                 config::delete_password(email);
             }
-            order.retain(|e| !goa_removed.contains(e));
-            collapsed.retain(|e| !goa_removed.contains(e));
+            sidebar_state.order.retain(|e| !goa_removed.contains(e));
+            sidebar_state.collapsed.retain(|e| !goa_removed.contains(e));
+            sidebar_state.folders_expanded.retain(|e| !goa_removed.contains(e));
             let _ = config::save(&config);
-            config::save_sidebar_state(&order, &collapsed, icon_only);
+            config::save_sidebar_state(&sidebar_state);
         }
+        let order = sidebar_state.order;
+        let collapsed = sidebar_state.collapsed;
+        let folders_expanded = sidebar_state.folders_expanded;
 
         let sidebar = Sidebar::builder()
             .launch(icon_only)
@@ -626,6 +634,7 @@ impl SimpleComponent for AppModel {
                     AppMsg::FolderSelected { account_id, folder_id, name, path }
                 }
                 SidebarOutput::ToggleCollapse(id) => AppMsg::ToggleCollapse(id),
+                SidebarOutput::ToggleCustomFolders(id) => AppMsg::ToggleCustomFolders(id),
                 SidebarOutput::CollapsedChanged(collapsed) => AppMsg::SidebarCollapsed(collapsed),
                 SidebarOutput::AddAccount => AppMsg::AddFirstAccount,
                 SidebarOutput::Context(action) => AppMsg::SidebarContext(action),
@@ -694,6 +703,7 @@ impl SimpleComponent for AppModel {
             folders: HashMap::new(),
             account_order: order,
             collapsed,
+            folders_expanded,
             selected: None,
             attachments: Vec::new(),
             attachments_loading: false,
@@ -952,7 +962,21 @@ impl SimpleComponent for AppModel {
                     } else {
                         self.collapsed.push(email);
                     }
-                    config::save_sidebar_state(&self.account_order, &self.collapsed, self.sidebar_collapsed);
+                    self.save_sidebar_state();
+                }
+            }
+
+            AppMsg::ToggleCustomFolders(account_id) => {
+                // The sidebar animated the toggle locally; record the new state
+                // (the "folders_expanded" list holds accounts whose custom
+                // folders are revealed; absence means hidden, the default).
+                if let Some(email) = self.email_of(account_id) {
+                    if let Some(pos) = self.folders_expanded.iter().position(|e| *e == email) {
+                        self.folders_expanded.remove(pos);
+                    } else {
+                        self.folders_expanded.push(email);
+                    }
+                    self.save_sidebar_state();
                 }
             }
 
@@ -965,7 +989,7 @@ impl SimpleComponent for AppModel {
                 if let Some(header) = &self.sidebar_header {
                     set_sidebar_header_compact(header, collapsed);
                 }
-                config::save_sidebar_state(&self.account_order, &self.collapsed, collapsed);
+                self.save_sidebar_state();
             }
 
             AppMsg::SidebarContext(action) => match action {
@@ -1059,7 +1083,7 @@ impl SimpleComponent for AppModel {
                 // Display order only (by email) — no reconnect needed.
                 if !emails.is_empty() {
                     self.account_order = emails;
-                    config::save_sidebar_state(&self.account_order, &self.collapsed, self.sidebar_collapsed);
+                    self.save_sidebar_state();
                     self.rebuild_sidebar();
                 }
             }
@@ -1625,7 +1649,7 @@ impl SimpleComponent for AppModel {
                 }
                 match config::save(&self.config) {
                     Ok(()) => {
-                        config::save_sidebar_state(&self.account_order, &self.collapsed, self.sidebar_collapsed);
+                        self.save_sidebar_state();
                         self.reconnect_all(&sender);
                     }
                     Err(e) => self.notifications.emit(NotifyInput::Push {
@@ -1680,7 +1704,7 @@ impl SimpleComponent for AppModel {
                 if let Err(e) = config::save(&self.config) {
                     tracing::error!("could not save config: {e}");
                 }
-                config::save_sidebar_state(&self.account_order, &self.collapsed, self.sidebar_collapsed);
+                self.save_sidebar_state();
                 self.reconnect_all(&sender);
             }
 
@@ -1694,15 +1718,12 @@ impl SimpleComponent for AppModel {
                         config::delete_password(email);
                         self.account_order.retain(|e| e != email);
                         self.collapsed.retain(|e| e != email);
+                        self.folders_expanded.retain(|e| e != email);
                     }
                     if let Err(e) = config::save(&self.config) {
                         tracing::error!("could not save config after GOA change: {e}");
                     }
-                    config::save_sidebar_state(
-                        &self.account_order,
-                        &self.collapsed,
-                        self.sidebar_collapsed,
-                    );
+                    self.save_sidebar_state();
                     self.reconnect_all(&sender);
                 }
             }
@@ -2246,6 +2267,17 @@ impl AppModel {
             .map(|a| a.email.clone())
     }
 
+    /// Persist the sidebar's per-account state (order, collapse, custom-folders
+    /// expansion, and icon-only mode).
+    fn save_sidebar_state(&self) {
+        config::save_sidebar_state(&config::SidebarState {
+            order: self.account_order.clone(),
+            collapsed: self.collapsed.clone(),
+            folders_expanded: self.folders_expanded.clone(),
+            icon_only: self.sidebar_collapsed,
+        });
+    }
+
     /// Account emails in display order: those listed in `account_order` first
     /// (in that order), then any remaining accounts by id.
     fn ordered_emails(&self) -> Vec<String> {
@@ -2338,6 +2370,7 @@ impl AppModel {
                 let emoji = self.account_emoji(account.id);
                 Some(SectionData {
                     collapsed: self.collapsed.contains(email),
+                    custom_expanded: self.folders_expanded.contains(email),
                     color,
                     emoji,
                     account,
