@@ -19,6 +19,8 @@ pub struct AttachmentsGallery {
     preview: Option<usize>,
     loading: bool,
     flow: gtk::FlowBox,
+    /// Reusable right-click context menu, parented to the grid.
+    menu: gtk::Popover,
 }
 
 #[derive(Debug)]
@@ -26,15 +28,25 @@ pub enum GalleryInput {
     /// Replace the gallery contents (already merged + sorted newest-first).
     SetItems(Vec<GalleryItem>),
     SetLoading(bool),
-    /// A grid cell was activated — open the lightbox on that item.
+    /// A grid cell was activated (single click) — open the lightbox on that item.
     Activate(u32),
     Prev,
     Next,
     ClosePreview,
-    /// Open the current item's file in its default application.
+    /// Open the current (previewed) item's file in its default application.
     OpenCurrent,
-    /// Jump to the current item's source message.
+    /// Jump to the current (previewed) item's source message.
     GoToCurrent,
+    /// Open item `index` externally (double-click / context menu / lightbox).
+    OpenItem(usize),
+    /// Save item `index` to a file the user picks.
+    DownloadItem(usize),
+    /// Jump to item `index`'s source message.
+    GoToItem(usize),
+    /// A cell was double-clicked: open it externally, closing any preview.
+    OpenExternal(usize),
+    /// Right-click on cell `index` at `(x, y)` (cell-relative) — show its menu there.
+    ContextMenu { index: usize, x: f64, y: f64 },
 }
 
 #[derive(Debug)]
@@ -83,8 +95,8 @@ impl Component for AttachmentsGallery {
                     #[local_ref]
                     flow -> gtk::FlowBox {
                         set_valign: gtk::Align::Start,
-                        set_max_children_per_line: 12,
-                        set_min_children_per_line: 2,
+                        set_max_children_per_line: 8,
+                        set_min_children_per_line: 3,
                         set_row_spacing: 14,
                         set_column_spacing: 14,
                         set_homogeneous: true,
@@ -225,14 +237,22 @@ impl Component for AttachmentsGallery {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
+        let menu = gtk::Popover::new();
+        menu.set_has_arrow(false);
+        menu.set_position(gtk::PositionType::Bottom);
+        menu.add_css_class("menu");
         let model = AttachmentsGallery {
             items: Vec::new(),
             preview: None,
             loading: false,
             flow: gtk::FlowBox::new(),
+            menu,
         };
         let flow = &model.flow;
         let widgets = view_output!();
+        // Parent the context menu to the gallery root (not the FlowBox, whose
+        // children must be FlowBoxChild and which we clear on every rebuild).
+        model.menu.set_parent(&root);
 
         // Arrow keys navigate the lightbox; Escape closes it.
         let key = gtk::EventControllerKey::new();
@@ -276,21 +296,25 @@ impl Component for AttachmentsGallery {
             GalleryInput::Next => self.step(1, widgets),
             GalleryInput::ClosePreview => self.preview = None,
             GalleryInput::OpenCurrent => {
-                if let Some(item) = self.current() {
-                    if let Some(data) = &item.data {
-                        open_bytes(&item.name, data);
-                    }
+                if let Some(i) = self.preview {
+                    self.open_item(i);
                 }
             }
             GalleryInput::GoToCurrent => {
-                if let Some(item) = self.current() {
-                    let _ = sender.output(GalleryOutput::OpenMessage {
-                        account_id: item.account_id,
-                        folder_path: item.folder_path.clone(),
-                        uid: item.uid,
-                    });
-                    self.preview = None;
+                if let Some(i) = self.preview {
+                    self.goto_item(i, &sender);
                 }
+            }
+            GalleryInput::OpenItem(i) => self.open_item(i),
+            GalleryInput::DownloadItem(i) => self.download_item(i),
+            GalleryInput::GoToItem(i) => self.goto_item(i, &sender),
+            GalleryInput::OpenExternal(i) => {
+                // Double-click: skip/close the preview and open the file directly.
+                self.preview = None;
+                self.open_item(i);
+            }
+            GalleryInput::ContextMenu { index, x, y } => {
+                self.show_context_menu(index, x, y, &sender)
             }
         }
         self.update_view(widgets, sender);
@@ -334,26 +358,137 @@ impl AttachmentsGallery {
     }
 
     fn rebuild_grid(&mut self, sender: &ComponentSender<Self>) {
-        while let Some(child) = self.flow.first_child() {
-            self.flow.remove(&child);
+        // Remove existing cells; only FlowBoxChild children (not, say, a popover
+        // that happens to be parented nearby).
+        let mut child = self.flow.first_child();
+        while let Some(c) = child {
+            let next = c.next_sibling();
+            if c.downcast_ref::<gtk::FlowBoxChild>().is_some() {
+                self.flow.remove(&c);
+            }
+            child = next;
         }
-        for item in &self.items {
-            self.flow.append(&build_cell(item, sender));
+        for (i, item) in self.items.iter().enumerate() {
+            self.flow.append(&build_cell(i, item, sender));
         }
+    }
+
+    /// Open item `index` in its default application (if its bytes are cached).
+    fn open_item(&self, index: usize) {
+        if let Some(item) = self.items.get(index) {
+            if let Some(data) = &item.data {
+                open_bytes(&item.name, data);
+            }
+        }
+    }
+
+    /// Save item `index` to a file the user chooses.
+    fn download_item(&self, index: usize) {
+        let Some(item) = self.items.get(index) else { return };
+        let Some(data) = item.data.clone() else { return };
+        let dialog = gtk::FileDialog::builder()
+            .title("Save Attachment")
+            .initial_name(&item.name)
+            .modal(true)
+            .build();
+        let parent = self.flow.root().and_downcast::<gtk::Window>();
+        dialog.save(parent.as_ref(), gtk::gio::Cancellable::NONE, move |res| {
+            if let Ok(file) = res {
+                if let Some(path) = file.path() {
+                    if let Err(e) = std::fs::write(&path, &data) {
+                        tracing::warn!("could not save attachment: {e}");
+                    }
+                }
+            }
+        });
+    }
+
+    fn goto_item(&mut self, index: usize, sender: &ComponentSender<Self>) {
+        if let Some(item) = self.items.get(index) {
+            let _ = sender.output(GalleryOutput::OpenMessage {
+                account_id: item.account_id,
+                folder_path: item.folder_path.clone(),
+                uid: item.uid,
+            });
+            self.preview = None;
+        }
+    }
+
+    /// Pop up the right-click menu (Download / Open / Go to Message) at the click
+    /// point `(x, y)` (relative to cell `index`). Download/Open are only enabled
+    /// when the file's bytes are cached.
+    fn show_context_menu(&self, index: usize, x: f64, y: f64, sender: &ComponentSender<Self>) {
+        let Some(item) = self.items.get(index) else { return };
+        let has_data = item.data.is_some();
+
+        let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let item_btn = |label: &str, enabled: bool| {
+            let b = gtk::Button::with_label(label);
+            b.add_css_class("flat");
+            b.set_sensitive(enabled);
+            let child = b.child().and_downcast::<gtk::Label>();
+            if let Some(l) = child {
+                l.set_xalign(0.0);
+                l.set_halign(gtk::Align::Start);
+            }
+            b
+        };
+
+        let download = item_btn("Download…", has_data);
+        let open = item_btn("Open", has_data);
+        let goto = item_btn("Go to Message", true);
+        for b in [&download, &open, &goto] {
+            menu.append(b);
+        }
+        let s = sender.clone();
+        download.connect_clicked(move |_| s.input(GalleryInput::DownloadItem(index)));
+        let s = sender.clone();
+        open.connect_clicked(move |_| s.input(GalleryInput::OpenItem(index)));
+        let s = sender.clone();
+        goto.connect_clicked(move |_| s.input(GalleryInput::GoToItem(index)));
+        // Close the popover on any choice.
+        let pop = self.menu.clone();
+        for b in [&download, &open, &goto] {
+            let p = pop.clone();
+            b.connect_clicked(move |_| p.popdown());
+        }
+
+        self.menu.set_child(Some(&menu));
+        // Point at the click position, translated from the cell into the menu
+        // parent's coordinate space, so the menu opens under the pointer.
+        if let (Some(child), Some(parent)) =
+            (self.flow.child_at_index(index as i32), self.menu.parent())
+        {
+            let point = gtk::graphene::Point::new(x as f32, y as f32);
+            if let Some(p) = child.compute_point(&parent, &point) {
+                self.menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+                    p.x() as i32,
+                    p.y() as i32,
+                    1,
+                    1,
+                )));
+            }
+        }
+        self.menu.popup();
     }
 }
 
 /// One grid cell: a thumbnail (image) or type icon, plus name + size.
-fn build_cell(item: &GalleryItem, _sender: &ComponentSender<AttachmentsGallery>) -> gtk::Widget {
+fn build_cell(
+    index: usize,
+    item: &GalleryItem,
+    sender: &ComponentSender<AttachmentsGallery>,
+) -> gtk::Widget {
     let cell = gtk::Box::new(gtk::Orientation::Vertical, 6);
     cell.add_css_class("gallery-cell");
+    cell.set_hexpand(true);
+    cell.set_halign(gtk::Align::Fill);
     cell.set_tooltip_text(Some(&format!("{} — {}", item.name, item.human_size())));
 
     let thumb_holder = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     thumb_holder.add_css_class("gallery-thumb");
-    thumb_holder.set_size_request(150, 150);
     thumb_holder.set_halign(gtk::Align::Fill);
-    thumb_holder.set_valign(gtk::Align::Center);
+    thumb_holder.set_valign(gtk::Align::Fill);
 
     let thumb = item
         .is_image()
@@ -377,7 +512,35 @@ fn build_cell(item: &GalleryItem, _sender: &ComponentSender<AttachmentsGallery>)
             thumb_holder.append(&img);
         }
     }
-    cell.append(&thumb_holder);
+
+    // Lock the thumbnail section to a 4:3 aspect ratio; its width tracks the
+    // (responsive) column width and the height follows, filling the cell.
+    let aspect = RatioBox::new(&thumb_holder);
+    // Preferred column width — the FlowBox packs at least 3 of these per row and
+    // adds more as the window widens (up to max-children-per-line).
+    aspect.set_width_request(230);
+    aspect.set_hexpand(true);
+
+    // Overlay a quick "Open" button at the thumbnail's bottom-right corner; it
+    // fades in on hover (via CSS) and opens the file externally. Only for files
+    // whose bytes are cached.
+    let thumb_overlay = gtk::Overlay::new();
+    thumb_overlay.set_child(Some(&aspect));
+    if item.data.is_some() {
+        let open_btn = gtk::Button::from_icon_name("document-open-symbolic");
+        open_btn.add_css_class("gallery-open");
+        open_btn.add_css_class("circular");
+        open_btn.add_css_class("osd");
+        open_btn.set_halign(gtk::Align::End);
+        open_btn.set_valign(gtk::Align::End);
+        open_btn.set_margin_end(6);
+        open_btn.set_margin_bottom(6);
+        open_btn.set_tooltip_text(Some("Open"));
+        let s = sender.clone();
+        open_btn.connect_clicked(move |_| s.input(GalleryInput::OpenItem(index)));
+        thumb_overlay.add_overlay(&open_btn);
+    }
+    cell.append(&thumb_overlay);
 
     let name = gtk::Label::new(Some(&item.name));
     name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
@@ -385,24 +548,59 @@ fn build_cell(item: &GalleryItem, _sender: &ComponentSender<AttachmentsGallery>)
     name.add_css_class("gallery-name");
     cell.append(&name);
 
-    let sub = gtk::Label::new(Some(&item.human_size()));
+    let sub = gtk::Label::new(Some(&format!(
+        "{} · {}",
+        folder_label(&item.folder_path),
+        item.human_size()
+    )));
+    sub.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    sub.set_max_width_chars(18);
     sub.add_css_class("gallery-size");
     sub.add_css_class("dim-label");
     cell.append(&sub);
 
     let child = gtk::FlowBoxChild::new();
     child.set_child(Some(&cell));
+
+    // Right-click → context menu at the click point.
+    let right = gtk::GestureClick::new();
+    right.set_button(gtk::gdk::BUTTON_SECONDARY);
+    let s = sender.clone();
+    right.connect_pressed(move |_, _, x, y| {
+        s.input(GalleryInput::ContextMenu { index, x, y });
+    });
+    child.add_controller(right);
+
+    // Double-click (primary) → open externally. Single click keeps the FlowBox's
+    // built-in activation (which opens the preview).
+    let dbl = gtk::GestureClick::new();
+    dbl.set_button(gtk::gdk::BUTTON_PRIMARY);
+    let s = sender.clone();
+    dbl.connect_pressed(move |_, n, _, _| {
+        if n == 2 {
+            s.input(GalleryInput::OpenExternal(index));
+        }
+    });
+    child.add_controller(dbl);
+
     child.upcast()
 }
 
 fn caption(item: &GalleryItem) -> String {
     let who = if item.from_name.trim().is_empty() { "Unknown" } else { item.from_name.trim() };
+    let folder = folder_label(&item.folder_path);
     let subject = item.subject.trim();
     if subject.is_empty() {
-        format!("{who} · {}", item.human_size())
+        format!("{who} · {folder} · {}", item.human_size())
     } else {
-        format!("{who} · {subject} · {}", item.human_size())
+        format!("{who} · {subject} · {folder} · {}", item.human_size())
     }
+}
+
+/// A friendly folder name from a mailbox path (the last path segment).
+fn folder_label(path: &str) -> String {
+    let name = path.rsplit(['/', '.']).next().unwrap_or(path);
+    if name.eq_ignore_ascii_case("inbox") { "Inbox".to_string() } else { name.to_string() }
 }
 
 /// A `gdk::Texture` from raw image bytes, or `None` if the format isn't loadable.
@@ -442,5 +640,80 @@ fn open_bytes(name: &str, data: &[u8]) {
     if std::fs::write(&path, data).is_ok() {
         let uri = format!("file://{}", path.to_string_lossy());
         let _ = gtk::gio::AppInfo::launch_default_for_uri(&uri, gtk::gio::AppLaunchContext::NONE);
+    }
+}
+
+glib::wrapper! {
+    /// A single-child container that forces a fixed 4:3 (width:height) aspect
+    /// ratio via true height-for-width sizing, so the thumbnail fills the
+    /// (responsive) column width and its height follows — no centred gaps and
+    /// no continuous frame-clock ticking.
+    pub struct RatioBox(ObjectSubclass<imp::RatioBox>) @extends gtk::Widget;
+}
+
+impl RatioBox {
+    fn new(child: &impl IsA<gtk::Widget>) -> Self {
+        let obj: Self = glib::Object::new();
+        child.set_parent(&obj);
+        obj
+    }
+}
+
+mod imp {
+    use gtk::glib;
+    use gtk::prelude::*;
+    use gtk::subclass::prelude::*;
+
+    /// Height as a fraction of width — 3/4 gives a 4:3 landscape thumbnail.
+    const HEIGHT_OVER_WIDTH_NUM: i32 = 3;
+    const HEIGHT_OVER_WIDTH_DEN: i32 = 4;
+
+    #[derive(Default)]
+    pub struct RatioBox;
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for RatioBox {
+        const NAME: &'static str = "VeemRatioBox";
+        type Type = super::RatioBox;
+        type ParentType = gtk::Widget;
+    }
+
+    impl ObjectImpl for RatioBox {
+        fn dispose(&self) {
+            while let Some(child) = self.obj().first_child() {
+                child.unparent();
+            }
+        }
+    }
+
+    impl WidgetImpl for RatioBox {
+        fn request_mode(&self) -> gtk::SizeRequestMode {
+            gtk::SizeRequestMode::HeightForWidth
+        }
+
+        fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
+            match orientation {
+                gtk::Orientation::Vertical => {
+                    // Height follows the allocated width. Until the width is
+                    // known (for_size < 0) request nothing and let the parent
+                    // stretch us horizontally first.
+                    let h = if for_size > 0 {
+                        for_size * HEIGHT_OVER_WIDTH_NUM / HEIGHT_OVER_WIDTH_DEN
+                    } else {
+                        0
+                    };
+                    (h, h, -1, -1)
+                }
+                // Width is driven by the parent (hexpand + width-request); ask
+                // for nothing intrinsic so we fill whatever the column offers.
+                _ => (0, 0, -1, -1),
+            }
+        }
+
+        fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
+            if let Some(child) = self.obj().first_child() {
+                child.allocate(width, height, baseline, None);
+            }
+        }
     }
 }

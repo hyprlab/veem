@@ -767,10 +767,21 @@ impl SimpleComponent for AppModel {
 
         let attach_list = &model.attach_list;
         let widgets = view_output!();
-        // The attachments gallery is the content stack's second page.
-        widgets
-            .content_stack
-            .add_named(model.gallery.widget(), Some("gallery"));
+        // The attachments gallery is the content stack's second page. Wrap it in a
+        // ToolbarView + HeaderBar so it keeps the window controls (close/minimize)
+        // that otherwise live only on the reader pane's header.
+        {
+            use gtk::prelude::*;
+            let gallery_tv = adw::ToolbarView::new();
+            let gallery_hb = adw::HeaderBar::new();
+            gallery_hb.add_css_class("flat");
+            let title = gtk::Label::new(Some("Attachments"));
+            title.add_css_class("pane-title");
+            gallery_hb.set_title_widget(Some(&title));
+            gallery_tv.add_top_bar(&gallery_hb);
+            gallery_tv.set_content(Some(model.gallery.widget()));
+            widgets.content_stack.add_named(&gallery_tv, Some("gallery"));
+        }
         // Desktop-notification click actions: raise the window (error alerts) and
         // raise + open a specific message (new-mail alerts). Registered here rather
         // than in `notify` because opening a message needs the app's channel.
@@ -846,14 +857,11 @@ impl SimpleComponent for AppModel {
                 self.gallery_by_account.clear();
                 self.gallery.emit(GalleryInput::SetLoading(true));
                 self.gallery.emit(GalleryInput::SetItems(Vec::new()));
-                // Load each account's inbox attachments from the cache.
-                let reqs: Vec<(u32, String)> = self
-                    .accounts
-                    .iter()
-                    .filter_map(|a| self.inbox_of(a.id).map(|f| (a.id, f.path.clone())))
-                    .collect();
-                for (account_id, path) in reqs {
-                    self.send_to(account_id, MailRequest::LoadGallery { path });
+                // Load each account's attachments (across all gallery folders)
+                // from the cache.
+                let ids: Vec<u32> = self.accounts.iter().map(|a| a.id).collect();
+                for account_id in ids {
+                    self.send_to(account_id, MailRequest::LoadGallery);
                 }
             }
 

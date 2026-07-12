@@ -291,35 +291,40 @@ impl Cache {
         }
     }
 
-    /// Every cached attachment in a folder (newest message first), for the
-    /// attachments gallery. Data is loaded only for files under `data_cap` bytes
-    /// (so thumbnails/previews are instant); larger files carry `None` and are
-    /// fetched on demand. Capped to `limit` rows.
+    /// Every cached attachment across an account's folders (newest message
+    /// first), for the attachments gallery — excluding Drafts, Junk and Trash.
+    /// Data is loaded only for files under `data_cap` bytes (so thumbnails/
+    /// previews are instant); larger files carry `None` and are fetched on
+    /// demand. Capped to `limit` rows.
     pub fn gallery_items(
         &self,
         account_id: u32,
-        folder_path: &str,
         data_cap: u64,
         limit: u32,
     ) -> Vec<crate::models::GalleryItem> {
+        // Drafts(3), Junk(5), Trash(6) — see `kind_to_i64`.
+        let drafts = kind_to_i64(FolderKind::Drafts);
+        let junk = kind_to_i64(FolderKind::Junk);
+        let trash = kind_to_i64(FolderKind::Trash);
         let run = || -> rusqlite::Result<Vec<crate::models::GalleryItem>> {
             let mut stmt = self.conn.prepare(
                 "SELECT a.uid, a.name, length(a.data), \
-                        CASE WHEN length(a.data) <= ?3 THEN a.data ELSE NULL END, \
-                        COALESCE(m.from_name, ''), COALESCE(m.subject, ''), COALESCE(m.ts, 0) \
+                        CASE WHEN length(a.data) <= ?2 THEN a.data ELSE NULL END, \
+                        COALESCE(m.from_name, ''), COALESCE(m.subject, ''), COALESCE(m.ts, 0), \
+                        a.folder_path \
                  FROM attachments a \
+                 JOIN folders f ON f.account_id = a.account_id AND f.path = a.folder_path \
                  LEFT JOIN messages m \
                    ON m.account_id = a.account_id AND m.folder_path = a.folder_path AND m.uid = a.uid \
-                 WHERE a.account_id = ?1 AND a.folder_path = ?2 \
+                 WHERE a.account_id = ?1 AND f.kind NOT IN (?3, ?4, ?5) \
                  ORDER BY m.ts DESC, a.uid DESC, a.idx ASC \
-                 LIMIT ?4",
+                 LIMIT ?6",
             )?;
             let rows = stmt.query_map(
-                params![account_id, folder_path, data_cap as i64, limit],
+                params![account_id, data_cap as i64, drafts, junk, trash, limit],
                 |row| {
                     Ok(crate::models::GalleryItem {
                         account_id,
-                        folder_path: folder_path.to_string(),
                         uid: row.get(0)?,
                         name: row.get(1)?,
                         size: row.get::<_, i64>(2)? as u64,
@@ -327,6 +332,7 @@ impl Cache {
                         from_name: row.get(4)?,
                         subject: row.get(5)?,
                         timestamp: row.get(6)?,
+                        folder_path: row.get(7)?,
                     })
                 },
             )?;
@@ -591,36 +597,46 @@ mod tests {
             params![folder, uid, idx, name, data],
         ).unwrap();
     }
+    fn add_folder(c: &Cache, path: &str, kind: FolderKind) {
+        c.conn.execute(
+            "INSERT INTO folders (account_id, path, name, kind, unread, ord) VALUES (1, ?1, ?1, ?2, 0, 0)",
+            params![path, kind_to_i64(kind)],
+        ).unwrap();
+    }
 
     #[test]
-    fn gallery_items_inbox_only_sorted_with_size_gated_data() {
+    fn gallery_items_spans_folders_excluding_trash_junk_drafts() {
         let c = Cache::in_memory();
+        add_folder(&c, "INBOX", FolderKind::Inbox);
+        add_folder(&c, "Archive", FolderKind::Archive);
+        add_folder(&c, "Trash", FolderKind::Trash);
         add_msg(&c, "INBOX", 1, "Alice", "Hi", 100);
-        add_msg(&c, "INBOX", 2, "Bob", "Report", 200);
-        add_msg(&c, "Archive", 3, "Carol", "Old", 300);
+        add_msg(&c, "Archive", 2, "Bob", "Report", 200);
+        add_msg(&c, "Trash", 3, "Carol", "Old", 300);
         add_att(&c, "INBOX", 1, 0, "a.png", &[0u8; 4]); // small → data kept
-        add_att(&c, "INBOX", 2, 0, "big.bin", &[0u8; 20]); // over cap → data dropped
-        add_att(&c, "Archive", 3, 0, "x.pdf", &[0u8; 4]); // wrong folder → excluded
+        add_att(&c, "Archive", 2, 0, "big.bin", &[0u8; 20]); // over cap → data dropped
+        add_att(&c, "Trash", 3, 0, "x.pdf", &[0u8; 4]); // Trash → excluded
 
-        let items = c.gallery_items(1, "INBOX", 10, 50);
-        assert_eq!(items.len(), 2, "inbox only");
-        // Newest message first (ts DESC): Bob (200) before Alice (100).
+        let items = c.gallery_items(1, 10, 50);
+        assert_eq!(items.len(), 2, "inbox + archive, not trash");
+        // Newest message first (ts DESC): Archive/Bob (200) before Inbox/Alice (100).
         assert_eq!(items[0].name, "big.bin");
+        assert_eq!(items[0].folder_path, "Archive");
         assert_eq!(items[0].from_name, "Bob");
-        assert_eq!(items[0].size, 20);
         assert!(items[0].data.is_none(), "over the cap → no bytes");
         assert_eq!(items[1].name, "a.png");
-        assert_eq!(items[1].from_name, "Alice");
+        assert_eq!(items[1].folder_path, "INBOX");
         assert_eq!(items[1].data.as_deref(), Some(&[0u8; 4][..]));
     }
 
     #[test]
     fn gallery_items_respects_limit() {
         let c = Cache::in_memory();
+        add_folder(&c, "INBOX", FolderKind::Inbox);
         for uid in 1..=5 {
             add_msg(&c, "INBOX", uid, "X", "S", uid as i64);
             add_att(&c, "INBOX", uid, 0, "f.png", &[0u8; 2]);
         }
-        assert_eq!(c.gallery_items(1, "INBOX", 10, 3).len(), 3);
+        assert_eq!(c.gallery_items(1, 10, 3).len(), 3);
     }
 }

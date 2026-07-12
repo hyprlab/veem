@@ -59,8 +59,8 @@ const PREFETCH_BODY_LIMIT: usize = 50;
 pub enum MailRequest {
     /// Load the message summaries for a folder.
     LoadMessages { folder_id: u32, path: String },
-    /// Load cached attachments for an inbox, for the attachments gallery.
-    LoadGallery { path: String },
+    /// Load cached attachments across the account's folders, for the gallery.
+    LoadGallery,
     /// Load the full body of a single message.
     LoadBody {
         message_id: u32,
@@ -339,6 +339,7 @@ async fn run_imap(
         if backfill_seen.insert(f.path.clone()) {
             backfill.push_back(Backfill {
                 folder_id: f.id,
+                gallery: gallery_folder(f.kind),
                 path: f.path,
                 remaining: None,
             });
@@ -396,6 +397,7 @@ async fn run_imap(
                             &account,
                             account_id,
                             cache.as_ref(),
+                            &mut prefetch,
                             &mut use_envelope,
                             &emit,
                         )
@@ -491,9 +493,9 @@ async fn run_imap(
                     }
                 }
             }
-            MailRequest::LoadGallery { path } => {
+            MailRequest::LoadGallery => {
                 if let Some(c) = cache.as_ref() {
-                    let items = c.gallery_items(account_id, path, GALLERY_DATA_CAP, GALLERY_LIMIT);
+                    let items = c.gallery_items(account_id, GALLERY_DATA_CAP, GALLERY_LIMIT);
                     emit(WorkerEvent::Gallery { items });
                 }
                 continue; // cache-only, never hits the network
@@ -550,7 +552,7 @@ async fn run_imap(
 
         match req {
             // Served from cache before this network match; never reached here.
-            MailRequest::LoadGallery { .. } => {}
+            MailRequest::LoadGallery => {}
             MailRequest::LoadMessages { folder_id, path } => {
                 emit(WorkerEvent::Status("Syncing…".into()));
                 // Fast first page (or a recent-window refresh over the cached
@@ -579,6 +581,7 @@ async fn run_imap(
                         if backfill_seen.insert(path.clone()) {
                             backfill.push_back(Backfill {
                                 folder_id,
+                                gallery: folder_is_gallery(cache.as_ref(), account_id, &path),
                                 path: path.clone(),
                                 remaining: None,
                             });
@@ -1192,6 +1195,27 @@ fn queue_body_prefetch(
 
 /// Queue the newest messages that have attachments (not already cached) for
 /// background attachment pre-download, so new mail's attachments are ready too.
+/// Whether a folder's attachments feed the gallery (so its mail is worth
+/// prefetching): everything except Trash, Junk and Drafts.
+fn gallery_folder(kind: crate::models::FolderKind) -> bool {
+    use crate::models::FolderKind::*;
+    !matches!(kind, Trash | Junk | Drafts)
+}
+
+/// Gallery eligibility of a folder by path, looked up from the cached folder list.
+/// Unknown folders default to eligible.
+fn folder_is_gallery(cache: Option<&Cache>, account_id: u32, path: &str) -> bool {
+    cache
+        .map(|c| {
+            c.load_folders(account_id)
+                .iter()
+                .find(|f| f.path == path)
+                .map(|f| gallery_folder(f.kind))
+                .unwrap_or(true)
+        })
+        .unwrap_or(true)
+}
+
 fn queue_attachment_prefetch(
     queue: &mut std::collections::VecDeque<(String, u32)>,
     path: &str,
@@ -2292,6 +2316,9 @@ struct Backfill {
     folder_id: u32,
     path: String,
     remaining: Option<Vec<u32>>,
+    /// Whether this folder feeds the attachments gallery (not Trash/Junk/Drafts);
+    /// if so, its backfilled messages' attachments are prefetched too.
+    gallery: bool,
 }
 
 /// Determine which UIDs still need indexing: everything on the server not already
@@ -2355,12 +2382,14 @@ async fn fetch_summaries_by_uid(
 /// upserts them into the cache, and emits them as an append to the UI's index.
 /// Requeues the job (at the back) if more remain. Reconnects and, if needed,
 /// disables ENVELOPE parsing (iCloud) on a parse failure.
+#[allow(clippy::too_many_arguments)]
 async fn run_one_backfill(
     queue: &mut std::collections::VecDeque<Backfill>,
     session: &mut Option<ImapSession>,
     account: &AccountConfig,
     account_id: u32,
     cache: Option<&Cache>,
+    prefetch: &mut std::collections::VecDeque<(String, u32)>,
     use_envelope: &mut bool,
     emit: &impl Fn(WorkerEvent),
 ) {
@@ -2412,6 +2441,11 @@ async fn run_one_backfill(
         Ok(msgs) => {
             if let Some(c) = cache {
                 c.upsert_messages(account_id, &job.path, &msgs);
+            }
+            // Gallery folders: queue this chunk's attachments for background
+            // download so they appear in the attachments gallery.
+            if job.gallery {
+                queue_attachment_prefetch(prefetch, &job.path, &msgs, cache, account_id);
             }
             emit(WorkerEvent::MessagesAppend {
                 folder_id: job.folder_id,
@@ -2965,9 +2999,9 @@ async fn run_pop3(
 
     while let Some(req) = rx.recv().await {
         match req {
-            MailRequest::LoadGallery { path } => {
+            MailRequest::LoadGallery => {
                 if let Some(c) = cache.as_ref() {
-                    let items = c.gallery_items(account_id, &path, GALLERY_DATA_CAP, GALLERY_LIMIT);
+                    let items = c.gallery_items(account_id, GALLERY_DATA_CAP, GALLERY_LIMIT);
                     emit(WorkerEvent::Gallery { items });
                 }
             }
@@ -3232,7 +3266,7 @@ async fn run_mock(
     while let Some(req) = rx.recv().await {
         match req {
             // The mock backend has no attachment cache.
-            MailRequest::LoadGallery { .. } => {
+            MailRequest::LoadGallery => {
                 emit(WorkerEvent::Gallery { items: Vec::new() });
             }
             MailRequest::LoadMessages { folder_id, .. } => {

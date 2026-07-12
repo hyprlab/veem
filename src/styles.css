@@ -642,6 +642,19 @@ headerbar.rail-header button image {
   opacity: 0.75;
 }
 
+/* Quick-open button on the thumbnail, revealed on hover. */
+.gallery-open {
+  opacity: 0;
+  transition: opacity 120ms ease;
+  min-width: 0;
+  min-height: 0;
+  padding: 5px;
+}
+.gallery-cell:hover .gallery-open,
+.gallery-open:hover {
+  opacity: 1;
+}
+
 /* Lightbox preview overlay. */
 .gallery-lightbox {
   background: alpha(black, 0.82);
