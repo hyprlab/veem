@@ -1462,7 +1462,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::OpenAbout => {
-                self.open_about();
+                self.open_about(&sender);
             }
 
             AppMsg::AllowSender(addr) | AppMsg::AddSender(addr) => {
@@ -3243,7 +3243,7 @@ impl AppModel {
     /// A custom, scrollable About window: app identity up top (icon, name, a
     /// version chip, and a one-line description under it), then the feature
     /// sections laid out on the page itself, and project links.
-    fn open_about(&self) {
+    fn open_about(&self, sender: &ComponentSender<Self>) {
         let win = adw::Window::builder()
             .transient_for(&self.window)
             .modal(false)
@@ -3318,6 +3318,23 @@ impl AppModel {
             changelog_row.connect_activated(move |_| nav.push_by_tag("changelog"));
         }
         info.append(&changelog_row);
+
+        // Linux Mint (Cinnamon): re-open the one-time keyring setup tip. Shown only
+        // where that tip applies, so Mint users who dismissed it can find it again.
+        if crate::platform::is_mint_cinnamon() {
+            let keyring_row = adw::ActionRow::builder()
+                .title("Keyring Setup Help")
+                .subtitle("Make account passwords persist on Linux Mint")
+                .activatable(true)
+                .build();
+            keyring_row.add_suffix(&gtk::Image::from_icon_name("com.getveem.Veem-go-next-symbolic"));
+            let sender = sender.clone();
+            keyring_row.connect_activated(move |_| {
+                sender.input(AppMsg::ShowKeyringHelp { problem: false });
+            });
+            info.append(&keyring_row);
+        }
+
         page.append(&info);
 
         // Project links. Each row shows its URL as a hover tooltip.

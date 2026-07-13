@@ -2,7 +2,10 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.3.7
+## What's new in 1.3.8
+- On Linux Mint, the About window now has a "Keyring Setup Help" entry, so you can reopen the keyring setup guide any time — handy if you closed it the first time it appeared.
+
+## In 1.3.7
 - Veem now tells you when your account password can't be saved to the system keyring, instead of silently failing and forgetting it after a restart. On Linux Mint (Cinnamon), it also shows a one-time setup tip explaining how to get the keyring working — and how to stop it asking for an unlock password every time you log in.
 
 ## In 1.3.6
