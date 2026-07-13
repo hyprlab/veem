@@ -2,7 +2,10 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.3.8
+## What's new in 1.3.9
+- Fixed Veem not fetching new mail after your computer wakes from sleep. Putting the machine to sleep silently drops the connection to your mail servers, and previously nothing noticed on wake — so no new mail arrived (and even the Refresh button couldn't recover) until you restarted the app. Veem now detects resume from sleep and reconnects immediately, so new mail shows up right away.
+
+## In 1.3.8
 - On Linux Mint, the About window now has a "Keyring Setup Help" entry, so you can reopen the keyring setup guide any time — handy if you closed it the first time it appeared.
 
 ## In 1.3.7

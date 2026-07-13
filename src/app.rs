@@ -261,6 +261,9 @@ pub enum AppMsg {
     /// GNOME Online Accounts changed on the session bus — re-reconcile and drop
     /// any imported account whose GOA account was removed.
     GoaChanged,
+    /// The system resumed from sleep — worker IMAP sockets are stale, so
+    /// reconnect every account and reload the visible folder.
+    SystemResumed,
     CloseAccounts,
     OpenPreferences,
     ClosePreferences,
@@ -757,6 +760,15 @@ impl SimpleComponent for AppModel {
             let s = sender.input_sender().clone();
             move || {
                 let _ = s.send(AppMsg::GoaChanged);
+            }
+        });
+        // Watch for resume-from-sleep: suspended IMAP sockets die silently, so
+        // on wake we reconnect every worker and refresh, otherwise no new mail
+        // arrives until the app is restarted.
+        crate::power::watch_resume({
+            let s = sender.input_sender().clone();
+            move || {
+                let _ = s.send(AppMsg::SystemResumed);
             }
         });
         // With no accounts, no worker events will populate the sidebar, so render
@@ -1758,6 +1770,21 @@ impl SimpleComponent for AppModel {
                     self.save_sidebar_state();
                     self.reconnect_all(&sender);
                 }
+            }
+
+            AppMsg::SystemResumed => {
+                // Sockets left open across suspend are dead. Reconnect drops the
+                // stale session, logs in fresh and re-arms IMAP IDLE — and it
+                // unsticks any worker parked inside an IDLE wait, since the
+                // request breaks its select loop. Then reload the visible folder
+                // so new mail appears without waiting for the next auto-fetch.
+                for w in self.workers.values() {
+                    let _ = w.send(MailRequest::Reconnect);
+                }
+                sender.input(AppMsg::Refresh);
+                // Realign the auto-fetch timer to now; its monotonic countdown
+                // did not advance during sleep.
+                self.arm_auto_fetch(&sender);
             }
 
             AppMsg::CloseAccounts => self.accounts_win = None,

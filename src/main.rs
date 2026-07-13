@@ -12,6 +12,7 @@ mod models;
 mod notify;
 mod oauth;
 mod platform;
+mod power;
 mod ui;
 mod worker;
 
