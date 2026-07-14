@@ -618,6 +618,11 @@ struct StateFile {
     /// Set once the user dismisses the Linux Mint keyring setup tip.
     #[serde(default)]
     mint_keyring_help_dismissed: bool,
+    /// In-message attachment drawer: collapsed (showing only its header). This is
+    /// the only drawer setting we remember — height and thumbnail size always
+    /// start at their defaults.
+    #[serde(default)]
+    drawer_collapsed: bool,
 }
 
 fn state_path() -> Option<PathBuf> {
@@ -653,6 +658,36 @@ pub fn dismiss_mint_keyring_help() {
     let mut state = load_state();
     state.mint_keyring_help_dismissed = true;
     save_state(&state);
+}
+
+/// Persisted state of the in-message attachment drawer.
+#[derive(Debug, Clone, Copy)]
+pub struct DrawerState {
+    /// Expanded content height in px.
+    pub height: i32,
+    /// Whether the drawer is collapsed to just its header.
+    pub collapsed: bool,
+    /// Thumbnail edge in px.
+    pub thumb: i32,
+}
+
+impl Default for DrawerState {
+    fn default() -> Self {
+        Self { height: 160, collapsed: false, thumb: 56 }
+    }
+}
+
+/// Load the attachment drawer's remembered state. Only the collapsed flag is
+/// persisted; height and thumbnail size always start at their defaults.
+pub fn load_drawer_state() -> DrawerState {
+    DrawerState { collapsed: load_state().drawer_collapsed, ..DrawerState::default() }
+}
+
+/// Persist whether the attachment drawer is collapsed.
+pub fn save_drawer_collapsed(collapsed: bool) {
+    let mut s = load_state();
+    s.drawer_collapsed = collapsed;
+    save_state(&s);
 }
 
 

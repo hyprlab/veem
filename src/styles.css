@@ -200,6 +200,15 @@ headerbar.rail-header button image {
 /* Reader attachment popover rows. */
 .attach-row {
   padding: 4px 6px;
+  border-radius: 8px;
+}
+.attach-row:hover {
+  background: alpha(currentColor, 0.06);
+}
+/* Image thumbnail preview in a popover row. */
+.attach-thumb {
+  border-radius: 6px;
+  background: alpha(currentColor, 0.05);
 }
 
 /* Tint the attachments button with the GNOME accent when present. */
@@ -707,4 +716,63 @@ headerbar.rail-header button image {
 }
 .gallery-lightbox-bar .dim-label {
   color: alpha(white, 0.7);
+}
+
+/* In-message attachment drawer (footer beneath the reader body). */
+.attachment-drawer {
+  background: alpha(currentColor, 0.03);
+}
+/* Top drag grip: a slim strip with a centred handle, resizes the drawer. */
+.drawer-resize-handle {
+  border-top: 1px solid alpha(currentColor, 0.08);
+  background:
+    linear-gradient(alpha(currentColor, 0.28), alpha(currentColor, 0.28))
+    no-repeat center / 36px 3px;
+}
+.drawer-resize-handle:hover {
+  background:
+    linear-gradient(@accent_color, @accent_color)
+    no-repeat center / 44px 3px;
+}
+.attachment-drawer-header {
+  padding: 4px 8px;
+}
+.attachment-drawer-flow {
+  background: transparent;
+}
+.drawer-cell {
+  padding: 6px;
+  border-radius: 12px;
+  transition: background 120ms ease;
+}
+.attachment-drawer-flow > flowboxchild {
+  border-radius: 12px;
+  padding: 0;
+}
+.attachment-drawer-flow > flowboxchild:hover .drawer-cell {
+  background: alpha(currentColor, 0.06);
+}
+.attachment-drawer-flow > flowboxchild:focus:focus-visible {
+  outline: 2px solid @accent_color;
+  outline-offset: -2px;
+}
+.drawer-thumb {
+  border-radius: 10px;
+  background: alpha(currentColor, 0.05);
+}
+.drawer-filename {
+  font-size: 0.82em;
+}
+/* Reveal the hover quick-actions on drawer cells too. */
+.drawer-cell:hover .gallery-open {
+  opacity: 1;
+}
+/* Drawer hover quick-actions are ~25% smaller than the gallery's. */
+.drawer-action {
+  padding: 3px;
+  min-width: 0;
+  min-height: 0;
+}
+.drawer-action image {
+  -gtk-icon-size: 12px;
 }

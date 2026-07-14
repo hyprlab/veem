@@ -850,12 +850,12 @@ fn sort_indices(idx: &mut [usize], all: &[GalleryItem], sort: SortBy) {
 }
 
 /// A `gdk::Texture` from raw image bytes, or `None` if the format isn't loadable.
-fn texture_from(data: &[u8]) -> Option<gdk::Texture> {
+pub(crate) fn texture_from(data: &[u8]) -> Option<gdk::Texture> {
     gdk::Texture::from_bytes(&glib::Bytes::from(data)).ok()
 }
 
 /// A symbolic icon name for a filename by extension.
-fn icon_for(name: &str) -> &'static str {
+pub(crate) fn icon_for(name: &str) -> &'static str {
     let lower = name.to_ascii_lowercase();
     let ext = lower.rsplit('.').next().unwrap_or("");
     match ext {
@@ -877,7 +877,7 @@ fn icon_for(name: &str) -> &'static str {
 /// CSS class that tints a type icon by file kind: PDFs red, Word docs blue,
 /// spreadsheets green, and so on (see `styles.css`). Symbolic icons pick up the
 /// class's `color`, so an unthumbnailed attachment reads at a glance.
-fn icon_color_class(name: &str) -> &'static str {
+pub(crate) fn icon_color_class(name: &str) -> &'static str {
     let lower = name.to_ascii_lowercase();
     let ext = lower.rsplit('.').next().unwrap_or("");
     match ext {
@@ -897,7 +897,7 @@ fn icon_color_class(name: &str) -> &'static str {
 }
 
 /// Write bytes to a temp file and open it in the default application.
-fn open_bytes(name: &str, data: &[u8]) {
+pub(crate) fn open_bytes(name: &str, data: &[u8]) {
     let safe: String = name
         .chars()
         .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })

@@ -2,7 +2,12 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.3.9
+## What's new in 1.4.0
+- New in-message attachment drawer. Open a message with attachments and a footer appears beneath it, showing every attachment as a thumbnail — images as picture previews, other files as colour-coded type icons — with the filename under each. Drag the divider to resize it, or collapse it to a slim header with the chevron; a slider adjusts how big the thumbnails are.
+- Click an image thumbnail for a full lightbox (step through images with the arrow keys, Esc to close), or use the hover/right-click actions to Download or Open any attachment.
+- The attachments dropdown in the reader header now shows image thumbnails too, with Preview, Open, and Download for each file — so you can see what a picture is before opening it.
+
+## In 1.3.9
 - Fixed Veem not fetching new mail after your computer wakes from sleep. Putting the machine to sleep silently drops the connection to your mail servers, and previously nothing noticed on wake — so no new mail arrived (and even the Refresh button couldn't recover) until you restarted the app. Veem now detects resume from sleep and reconnects immediately, so new mail shows up right away.
 
 ## In 1.3.8

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0 — 2026-07-14
+- Added an in-message attachment drawer: a resizable footer beneath the reader body that shows every attachment on the open message as a wrapping grid of square (1:1) thumbnails — images as cover-cropped previews, everything else as colour-coded type icons — each with its filename beneath it. New module `src/ui/attachment_drawer.rs`.
+- The drawer owns a vertical `GtkPaned` whose top pane is the reader body and bottom pane is the drawer, so the divider is a smooth native resize grip and the reader shrinks rather than the window growing. A collapse/expand chevron in the drawer header hides the grid to just the header; a size slider scales the thumbnails (thumbnail size and height do not affect each other). Only the collapsed/expanded state is remembered across launches (via `state.toml`); height defaults to 160px and thumbnails to the slider minimum each session.
+- Thumbnails use a fixed-size `SquareBox` widget so images can't blow the cell out to their native pixel width; the grid flows left-to-right and wraps. Hovering a cell reveals Download/Open quick actions (matching the gallery, ~25% smaller); right-click gives an Open/Download menu; single-clicking an image opens a modal lightbox (prev/next, ←/→, Esc), and clicking a non-image opens it in its default app.
+- The reader header's attachments dropdown now shows an image thumbnail (or type icon) per row and Preview / Open / Download actions. Preview reuses the drawer's lightbox and Download reuses its file chooser.
+- Reused the attachments gallery's thumbnail/icon/open helpers (`texture_from`, `icon_for`, `icon_color_class`, `open_bytes`) — now `pub(crate)` — across the drawer and popover.
+
 ## 1.3.9 — 2026-07-13
 - Fixed the app not pulling new mail after the system resumes from sleep. IMAP worker sessions are long-lived (one persistent connection per account, plus a parked ~29-minute IMAP IDLE when push is enabled); suspending the machine silently kills those sockets, and previously nothing detected the resume — so no new mail arrived, and even the Refresh button couldn't help because a `LoadMessages` request could sit behind a worker parked in an IDLE wait, until the app was restarted.
 - Added a systemd-logind watcher (`src/power.rs`, new `power` module) that subscribes to `PrepareForSleep` on the **system** D-Bus (Flatpak-safe) and fires `AppMsg::SystemResumed` on the resume edge (`start == false`), modeled on `goa::watch_removals`. It no-ops silently if logind/the system bus is unavailable.

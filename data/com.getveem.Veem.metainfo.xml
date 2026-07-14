@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.4.0" date="2026-07-14" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.0</url>
+      <description>
+        <p>New in-message attachment drawer: a resizable, collapsible footer showing every attachment as a thumbnail grid, with a lightbox, quick Download/Open actions, and adjustable thumbnail size. The reader's attachments dropdown now shows image thumbnails with Preview / Open / Download.</p>
+      </description>
+    </release>
     <release version="1.3.9" date="2026-07-13" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.9</url>
       <description>

@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod attachment_drawer;
 pub mod attachments_gallery;
 pub mod compose;
 pub mod contacts_browser;

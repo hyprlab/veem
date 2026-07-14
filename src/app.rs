@@ -30,6 +30,7 @@ use crate::ui::message_list::{
 use crate::ui::attachments_gallery::{
     AttachmentsGallery, GalleryInput, GalleryOutput,
 };
+use crate::ui::attachment_drawer::{AttachmentDrawer, AttachmentDrawerInput};
 use crate::ui::message_view::{MessageView, MessageViewInput, MessageViewOutput};
 use crate::ui::message_window::{
     MessageWindow, MessageWindowInit, MessageWindowInput, MessageWindowOutput,
@@ -136,6 +137,8 @@ pub struct AppModel {
     sidebar: Controller<Sidebar>,
     message_list: Controller<MessageList>,
     message_view: Controller<MessageView>,
+    /// In-message attachment thumbnail drawer, docked below the reader body.
+    attachment_drawer: Controller<AttachmentDrawer>,
     gallery: Controller<AttachmentsGallery>,
     /// True when the attachments gallery replaces the mail panes.
     showing_gallery: bool,
@@ -585,13 +588,17 @@ impl SimpleComponent for AppModel {
                                         attach_list -> gtk::Box {
                                             set_orientation: gtk::Orientation::Vertical,
                                             set_spacing: 4,
-                                            set_width_request: 260,
+                                            set_width_request: 340,
                                         },
                                     },
                                 },
                             },
+                            // The drawer's widget is a Paned that already contains
+                            // the reader body as its top pane and docks the
+                            // attachment footer below it (collapsing away when the
+                            // message has no attachments).
                             #[wrap(Some)]
-                            set_content = model.message_view.widget(),
+                            set_content = model.attachment_drawer.widget(),
                         },
                     },
                     },
@@ -676,6 +683,15 @@ impl SimpleComponent for AppModel {
                     MessageViewOutput::OpenWindow(m) => AppMsg::OpenMessageWindow(*m),
                 });
 
+        // The drawer owns a Paned whose top pane is the reader body, so hand it
+        // the message-view widget to dock beneath.
+        let attachment_drawer = AttachmentDrawer::builder()
+            .launch(crate::ui::attachment_drawer::DrawerInit {
+                state: config::load_drawer_state(),
+                reader: message_view.widget().clone().upcast(),
+            })
+            .detach();
+
         let gallery =
             AttachmentsGallery::builder()
                 .launch(())
@@ -749,6 +765,7 @@ impl SimpleComponent for AppModel {
             sidebar,
             message_list,
             message_view,
+            attachment_drawer,
             gallery,
             showing_gallery: false,
             gallery_by_account: HashMap::new(),
@@ -938,6 +955,7 @@ impl SimpleComponent for AppModel {
                 self.attachments.clear();
                 self.attachments_loading = false;
                 self.attachments_available = false;
+                self.sync_attachment_drawer();
                 self.show_message(None, false);
                 self.unified_by_account.clear();
                 self.message_list.emit(MessageListInput::SetSelected(None));
@@ -1121,6 +1139,7 @@ impl SimpleComponent for AppModel {
                 self.attachments.clear();
                 self.attachments_loading = false;
                 self.attachments_available = false;
+                self.sync_attachment_drawer();
                 self.show_message(None, false);
             }
             AppMsg::SearchActive(active) => {
@@ -1152,6 +1171,7 @@ impl SimpleComponent for AppModel {
                 self.attachments.clear();
                 self.attachments_loading = false;
                 self.attachments_available = false;
+                self.sync_attachment_drawer();
                 let account_id = m.account_id;
                 let folder_path = self.resolve_folder_path(&m);
                 // Use an already-fetched body if we have one (on the message or in
@@ -2244,6 +2264,7 @@ impl AppModel {
         self.message_cache.clear();
         self.body_cache.clear();
         self.attachments.clear();
+        self.sync_attachment_drawer();
         self.attachments_loading = false;
         self.attachments_available = false;
         self.attachment_cache.clear();
@@ -2462,19 +2483,51 @@ impl AppModel {
 
     /// Rebuild the attachments popover (a row per attachment + "Save All").
     fn rebuild_attach_popover(&self, sender: &ComponentSender<Self>) {
+        use crate::models::is_image_name;
+        use crate::ui::attachments_gallery::{icon_color_class, icon_for, texture_from};
+
         while let Some(child) = self.attach_list.first_child() {
             self.attach_list.remove(&child);
         }
+
+        // So the action buttons can dismiss the popover before opening a dialog
+        // or the lightbox.
+        let popover = self
+            .attach_list
+            .ancestor(gtk::Popover::static_type())
+            .and_downcast::<gtk::Popover>();
+
         for (i, att) in self.attachments.iter().enumerate() {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             row.add_css_class("attach-row");
 
+            // Image attachments show a thumbnail; everything else a type icon.
+            let thumb = is_image_name(&att.name)
+                .then(|| texture_from(&att.data))
+                .flatten();
+            match &thumb {
+                Some(tex) => {
+                    let img = gtk::Image::from_paintable(Some(tex));
+                    img.set_pixel_size(36);
+                    img.add_css_class("attach-thumb");
+                    row.append(&img);
+                }
+                None => {
+                    let img = gtk::Image::from_icon_name(icon_for(&att.name));
+                    img.set_pixel_size(28);
+                    img.add_css_class("gallery-file-icon");
+                    img.add_css_class(icon_color_class(&att.name));
+                    row.append(&img);
+                }
+            }
+
             let info = gtk::Box::new(gtk::Orientation::Vertical, 0);
             info.set_hexpand(true);
+            info.set_valign(gtk::Align::Center);
             let name = gtk::Label::new(Some(&att.name));
             name.set_halign(gtk::Align::Start);
             name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-            name.set_max_width_chars(28);
+            name.set_max_width_chars(22);
             let size = gtk::Label::new(Some(&att.human_size()));
             size.set_halign(gtk::Align::Start);
             size.add_css_class("dim-label");
@@ -2483,14 +2536,51 @@ impl AppModel {
             info.append(&size);
             row.append(&info);
 
-            let open = gtk::Button::with_label("Open");
-            open.add_css_class("flat");
-            open.set_valign(gtk::Align::Center);
+            let action = |icon: &str, tip: &str| {
+                let b = gtk::Button::from_icon_name(icon);
+                b.add_css_class("flat");
+                b.set_valign(gtk::Align::Center);
+                b.set_tooltip_text(Some(tip));
+                b
+            };
+
+            // Preview (images only) reuses the drawer's lightbox; Download reuses
+            // its file chooser; Open launches the default app.
+            if thumb.is_some() {
+                let preview = action("com.getveem.Veem-system-search-symbolic", "Preview");
+                let d = self.attachment_drawer.sender().clone();
+                let pop = popover.clone();
+                preview.connect_clicked(move |_| {
+                    if let Some(p) = &pop {
+                        p.popdown();
+                    }
+                    let _ = d.send(AttachmentDrawerInput::Activate(i));
+                });
+                row.append(&preview);
+            }
+
+            let open = action("com.getveem.Veem-document-open-symbolic", "Open");
             let s = sender.input_sender().clone();
+            let pop = popover.clone();
             open.connect_clicked(move |_| {
+                if let Some(p) = &pop {
+                    p.popdown();
+                }
                 let _ = s.send(AppMsg::OpenAttachment(i));
             });
             row.append(&open);
+
+            let download = action("com.getveem.Veem-folder-download-symbolic", "Download");
+            let d = self.attachment_drawer.sender().clone();
+            let pop = popover.clone();
+            download.connect_clicked(move |_| {
+                if let Some(p) = &pop {
+                    p.popdown();
+                }
+                let _ = d.send(AttachmentDrawerInput::Download(i));
+            });
+            row.append(&download);
+
             self.attach_list.append(&row);
         }
         if !self.attachments.is_empty() {
@@ -2504,6 +2594,15 @@ impl AppModel {
             });
             self.attach_list.append(&save);
         }
+        self.sync_attachment_drawer();
+    }
+
+    /// Push the current attachments into the in-message thumbnail drawer (which
+    /// hides itself when the list is empty). Called wherever `self.attachments`
+    /// changes so the drawer always mirrors the open message.
+    fn sync_attachment_drawer(&self) {
+        self.attachment_drawer
+            .emit(AttachmentDrawerInput::SetItems(self.attachments.clone()));
     }
 
     /// Present a read-only window showing raw message source (monospace).
@@ -2546,6 +2645,7 @@ impl AppModel {
         self.showing_gallery = false;
         self.unified = false;
         self.attachments.clear();
+        self.sync_attachment_drawer();
         self.attachments_loading = false;
         self.attachments_available = false;
         self.message_list.emit(MessageListInput::SetSelected(None));
@@ -3576,6 +3676,7 @@ impl AppModel {
             self.current = None;
             self.current_thread.clear();
             self.attachments.clear();
+            self.sync_attachment_drawer();
             self.attachments_loading = false;
             self.attachments_available = false;
         }
