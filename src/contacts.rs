@@ -94,12 +94,28 @@ pub struct Book {
     pub name: String,
 }
 
+// Inside a Flatpak sandbox `dirs::{data,cache,config}_dir()` are redirected into
+// ~/.var/app/<app-id>/, but EDS's books live in the *host's* real XDG dirs (made
+// visible by the `--filesystem=xdg-{data,cache,config}/evolution:ro` grants). So
+// under Flatpak resolve them from the real home instead of the redirected XDG env.
+fn host_xdg(sandbox: fn() -> Option<PathBuf>, subdir: &str) -> Option<PathBuf> {
+    if crate::platform::is_flatpak() {
+        dirs::home_dir().map(|h| h.join(subdir))
+    } else {
+        sandbox()
+    }
+}
+
 fn data_dir() -> Option<PathBuf> {
-    dirs::data_dir().map(|d| d.join("evolution/addressbook"))
+    host_xdg(dirs::data_dir, ".local/share").map(|d| d.join("evolution/addressbook"))
 }
 
 fn cache_dir() -> Option<PathBuf> {
-    dirs::cache_dir().map(|d| d.join("evolution/addressbook"))
+    host_xdg(dirs::cache_dir, ".cache").map(|d| d.join("evolution/addressbook"))
+}
+
+fn config_dir() -> Option<PathBuf> {
+    host_xdg(dirs::config_dir, ".config").map(|d| d.join("evolution"))
 }
 
 /// Read every address email from the local + cached (CardDAV) EDS books.
@@ -149,14 +165,31 @@ fn find_dbs(root: &std::path::Path, file: &str) -> Vec<PathBuf> {
 
 fn read_book_db(path: &std::path::Path, query: &str, out: &mut Vec<Contact>, seen: &mut HashSet<String>) {
     use rusqlite::OpenFlags;
-    let Ok(conn) = rusqlite::Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-    ) else {
-        return;
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI;
+    // Under Flatpak the book DB lives on a read-only host mount; a WAL database
+    // can't be opened read-only there (it needs to touch the -shm/-wal files), so
+    // open it `immutable=1` to read the committed snapshot without any locking.
+    let conn = if crate::platform::is_flatpak() {
+        rusqlite::Connection::open_with_flags(
+            format!("file:{}?immutable=1", path.to_string_lossy()),
+            flags,
+        )
+    } else {
+        rusqlite::Connection::open_with_flags(path, flags)
     };
-    let Ok(mut stmt) = conn.prepare(query) else {
-        return;
+    let conn = match conn {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("contacts: cannot open {}: {e}", path.display());
+            return;
+        }
+    };
+    let mut stmt = match conn.prepare(query) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("contacts: query failed on {}: {e}", path.display());
+            return;
+        }
     };
     let rows = stmt.query_map([], |row| {
         let name: Option<String> = row.get(0).ok();
@@ -212,7 +245,7 @@ pub fn writable_books() -> Vec<Book> {
 
 /// Best-effort display name from the EDS source file for a book UID.
 fn source_display_name(uid: &str) -> Option<String> {
-    let path = dirs::config_dir()?.join(format!("evolution/sources/{uid}.source"));
+    let path = config_dir()?.join(format!("sources/{uid}.source"));
     let text = std::fs::read_to_string(path).ok()?;
     text.lines()
         .find_map(|l| l.strip_prefix("DisplayName="))

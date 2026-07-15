@@ -107,6 +107,18 @@ pub fn present(parent: &impl IsA<gtk::Window>, on_choose: impl Fn(Contact) + 'st
 
 /// Launch the GNOME Contacts application via the desktop session.
 pub fn launch_gnome_contacts() {
+    // Inside a Flatpak sandbox `gnome-contacts` isn't on the path, so a plain
+    // exec fails. Reach the host app by D-Bus-activating it (it's a
+    // DBusActivatable GApplication), falling back to spawning it on the host.
+    if crate::platform::is_flatpak() {
+        if activate_host_contacts().is_ok() {
+            return;
+        }
+        let _ = std::process::Command::new("flatpak-spawn")
+            .args(["--host", "gnome-contacts"])
+            .spawn();
+        return;
+    }
     if let Ok(app) = gtk::gio::AppInfo::create_from_commandline(
         "gnome-contacts",
         Some("Contacts"),
@@ -114,4 +126,20 @@ pub fn launch_gnome_contacts() {
     ) {
         let _ = app.launch(&[], gtk::gio::AppLaunchContext::NONE);
     }
+}
+
+/// Activate the host `org.gnome.Contacts` service over the session bus (the
+/// standard `org.freedesktop.Application.Activate` a GApplication exposes).
+fn activate_host_contacts() -> Result<(), Box<dyn std::error::Error>> {
+    let conn = zbus::blocking::Connection::session()?;
+    let platform_data: std::collections::HashMap<String, zbus::zvariant::Value> =
+        std::collections::HashMap::new();
+    conn.call_method(
+        Some("org.gnome.Contacts"),
+        "/org/gnome/Contacts",
+        Some("org.freedesktop.Application"),
+        "Activate",
+        &(platform_data,),
+    )?;
+    Ok(())
 }

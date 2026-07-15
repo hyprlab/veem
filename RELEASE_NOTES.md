@@ -2,7 +2,10 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.4.1
+## What's new in 1.4.2
+- Fixed GNOME Contacts on the Flatpak build: the contacts browser was showing an empty list and the "Open GNOME Contacts" button wasn't launching the app. Your contacts now appear, and the button opens GNOME Contacts. (After updating, this needs the new permissions that ship with this version — a normal `flatpak update` applies them.)
+
+## In 1.4.1
 - Fixed the paperclip showing on some iCloud messages that don't actually have attachments (typically newsletters and other HTML mail). Veem now clears the false indicator as soon as it has looked at the message, and remembers the correction.
 
 ## In 1.4.0

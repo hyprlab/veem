@@ -27,6 +27,13 @@ finish-args:
   - --talk-name=org.gnome.OnlineAccounts          # import GNOME Online Accounts
   - --talk-name=org.gnome.Settings                 # "Open Online Accounts" button
   - --talk-name=org.gnome.evolution.dataserver.*  # GNOME Contacts (Evolution Data Server)
+  - --talk-name=org.gnome.Contacts                 # "Open GNOME Contacts" button (D-Bus activation)
+  - --talk-name=org.freedesktop.Flatpak            # flatpak-spawn --host fallback for GNOME Contacts
+  # Read the host's Evolution Data Server address books (contacts list is read
+  # from these SQLite caches; the sandbox's own XDG dirs are empty).
+  - --filesystem=xdg-data/evolution:ro
+  - --filesystem=xdg-cache/evolution:ro
+  - --filesystem=xdg-config/evolution:ro
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
