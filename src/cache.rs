@@ -243,10 +243,48 @@ impl Cache {
             })?;
             rows.collect()
         };
-        run().unwrap_or_else(|e| {
+        let mut messages = run().unwrap_or_else(|e| {
             tracing::warn!("cache load_messages failed: {e}");
             Vec::new()
-        })
+        });
+        // Correct false "has attachment" flags: a message we've already fetched
+        // and found to hold no real attachments (e.g. iCloud marketing mail that
+        // is multipart/mixed but only wraps inline `cid:` images) should not show
+        // the paperclip, even though its summary flag said otherwise.
+        let attachmentless = self.attachmentless_uids(account_id, folder_path);
+        if !attachmentless.is_empty() {
+            for m in messages.iter_mut() {
+                if m.has_attachment && attachmentless.contains(&m.uid) {
+                    m.has_attachment = false;
+                }
+            }
+        }
+        messages
+    }
+
+    /// UIDs whose attachments have been fetched (`attachments_checked`) but which
+    /// turned out to hold no real attachments — used to correct false "has
+    /// attachment" summary flags.
+    pub fn attachmentless_uids(
+        &self,
+        account_id: u32,
+        folder_path: &str,
+    ) -> std::collections::HashSet<u32> {
+        let run = || -> rusqlite::Result<std::collections::HashSet<u32>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT ac.uid FROM attachments_checked ac
+                 WHERE ac.account_id = ?1 AND ac.folder_path = ?2
+                   AND NOT EXISTS (
+                       SELECT 1 FROM attachments a
+                       WHERE a.account_id = ac.account_id
+                         AND a.folder_path = ac.folder_path
+                         AND a.uid = ac.uid
+                   )",
+            )?;
+            let rows = stmt.query_map(params![account_id, folder_path], |row| row.get::<_, u32>(0))?;
+            rows.collect()
+        };
+        run().unwrap_or_default()
     }
 
     pub fn save_messages(&self, account_id: u32, folder_path: &str, messages: &[Message]) {

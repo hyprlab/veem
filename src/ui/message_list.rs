@@ -74,6 +74,7 @@ pub struct MessageRow {
 pub enum MessageRowInput {
     SetRead(bool),
     SetStarred(bool),
+    SetHasAttachment(bool),
     /// The pointer entered/left the row — fade the chevron in/out.
     SetRowHover(bool),
     /// The chevron was clicked — slide the Actions Palette open or shut.
@@ -168,6 +169,7 @@ impl FactoryComponent for MessageRow {
                     },
                     gtk::Image {
                         set_icon_name: Some("com.getveem.Veem-mail-attachment-symbolic"),
+                        #[watch]
                         set_visible: self.msg.has_attachment,
                         add_css_class: "dim-icon",
                     },
@@ -374,6 +376,7 @@ impl FactoryComponent for MessageRow {
         match msg {
             MessageRowInput::SetRead(read) => self.msg.unread = !read,
             MessageRowInput::SetStarred(starred) => self.msg.starred = starred,
+            MessageRowInput::SetHasAttachment(has) => self.msg.has_attachment = has,
             MessageRowInput::SetRowHover(over) => self.row_hovered = over,
             MessageRowInput::TogglePalette => {
                 if self.palette_open {
@@ -768,6 +771,8 @@ pub enum MessageListInput {
     /// A hover-palette action for a specific message (forwarded to the app).
     RowAction { action: RowAction, message: Box<Message> },
     SetStarred { id: u32, starred: bool },
+    /// Update a message's attachment indicator (e.g. clearing a false paperclip).
+    SetHasAttachment { id: u32, has: bool },
     Remove(u32),
     /// Remove many messages in a single batch (bulk archive/delete/spam), so the
     /// list updates in one render pass instead of one per message.
@@ -1371,6 +1376,15 @@ impl SimpleComponent for MessageList {
                 if let Some(idx) = self.shown.iter().position(|m| m.id == id) {
                     self.shown[idx].starred = starred;
                     self.rows.send(idx, MessageRowInput::SetStarred(starred));
+                }
+            }
+            MessageListInput::SetHasAttachment { id, has } => {
+                if let Some(m) = self.all.iter_mut().find(|m| m.id == id) {
+                    m.has_attachment = has;
+                }
+                if let Some(idx) = self.shown.iter().position(|m| m.id == id) {
+                    self.shown[idx].has_attachment = has;
+                    self.rows.send(idx, MessageRowInput::SetHasAttachment(has));
                 }
             }
             MessageListInput::Remove(id) => {

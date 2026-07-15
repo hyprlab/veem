@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.1 — 2026-07-14
+- Fixed false attachment indicators (the paperclip) on iCloud messages that have no real attachments — typically marketing/HTML mail (e.g. TheraPlatform, Atlas Arts). iCloud sends non-compliant BODYSTRUCTURE, so Veem falls back to a header-only path that guessed "has attachment" from a top-level `Content-Type: multipart/mixed` — which is also how newsletters wrap their HTML plus inline `cid:` images, so they were wrongly flagged even though `extract_attachments` (which the drawer uses) correctly skips inline parts.
+- Added `Cache::attachmentless_uids` (messages in `attachments_checked` with zero stored attachments) and reconcile the `has_attachment` flag against it in `cache::load_messages` and after a fresh server fetch (`worker::reconcile_attachment_flags`). This is robust against re-sync re-deriving the flag and can never hide a real attachment (a message is only reconciled once its full body has been extracted).
+- Added a live correction: background prefetch now emits `WorkerEvent::NoAttachments` when a flagged message turns out to hold no real attachments, and the message row drops its paperclip immediately (the indicator is now `#[watch]`ed) — no refresh needed.
+
 ## 1.4.0 — 2026-07-14
 - Added an in-message attachment drawer: a resizable footer beneath the reader body that shows every attachment on the open message as a wrapping grid of square (1:1) thumbnails — images as cover-cropped previews, everything else as colour-coded type icons — each with its filename beneath it. New module `src/ui/attachment_drawer.rs`.
 - The drawer owns a vertical `GtkPaned` whose top pane is the reader body and bottom pane is the drawer, so the divider is a smooth native resize grip and the reader shrinks rather than the window growing. A collapse/expand chevron in the drawer header hides the grid to just the header; a size slider scales the thumbnails (thumbnail size and height do not affect each other). Only the collapsed/expanded state is remembered across launches (via `state.toml`); height defaults to 160px and thumbnails to the slider minimum each session.

@@ -283,6 +283,8 @@ pub enum AppMsg {
     Source { text: String },
     Attachments { account_id: u32, message_id: u32, items: Vec<Attachment> },
     AttachmentsPending { account_id: u32, message_id: u32 },
+    /// A flagged message turned out to have no real attachments — drop its paperclip.
+    NoAttachments { account_id: u32, message_id: u32 },
     Sent { account_id: u32 },
     Status { account_id: u32, text: String },
     Error { account_id: u32, text: String, connectivity: bool },
@@ -2087,6 +2089,26 @@ impl SimpleComponent for AppModel {
                 if let Some(p) = self.popouts.get(&(account_id, message_id)) {
                     p.controller.emit(MessageWindowInput::AttachmentsPending);
                 }
+            }
+
+            AppMsg::NoAttachments { account_id, message_id } => {
+                // Clear a false paperclip live. Update every cached folder for the
+                // account (a UID is per-folder, but the same message copied across
+                // folders shares its attachment status) and the visible row.
+                for ((aid, _), msgs) in self.message_cache.iter_mut() {
+                    if *aid == account_id {
+                        for m in msgs.iter_mut().filter(|m| m.id == message_id) {
+                            m.has_attachment = false;
+                        }
+                    }
+                }
+                if let Some(c) = self.current.as_mut() {
+                    if c.id == message_id && c.account_id == account_id {
+                        c.has_attachment = false;
+                    }
+                }
+                self.message_list
+                    .emit(MessageListInput::SetHasAttachment { id: message_id, has: false });
             }
 
             AppMsg::LoadAttachmentsNow => {
@@ -4005,6 +4027,9 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
         }
         WorkerEvent::AttachmentsPending { message_id } => {
             AppMsg::AttachmentsPending { account_id, message_id }
+        }
+        WorkerEvent::NoAttachments { message_id } => {
+            AppMsg::NoAttachments { account_id, message_id }
         }
         WorkerEvent::Sent => AppMsg::Sent { account_id },
         WorkerEvent::DraftSaved => AppMsg::DraftSaved,

@@ -173,6 +173,10 @@ pub enum WorkerEvent {
     /// The message has attachments that aren't cached; the UI should offer to
     /// download them rather than fetching automatically.
     AttachmentsPending { message_id: u32 },
+    /// A message flagged as having an attachment turned out to have none once its
+    /// body was fetched (e.g. iCloud marketing mail whose only extra parts are
+    /// inline `cid:` images). The UI should drop its paperclip.
+    NoAttachments { message_id: u32 },
     Sent,
     /// A draft was saved to the Drafts folder.
     DraftSaved,
@@ -1153,12 +1157,19 @@ async fn run_one_prefetch(
             .unwrap_or(false);
         if !already {
             if let Ok(raw) = load_raw_retry(session, account, &path, uid).await {
+                let attachments = extract_attachments(&raw);
                 if let Some(c) = cache {
                     c.save_body(account_id, &path, uid, &extract_body(&raw));
-                    c.save_attachments(account_id, &path, uid, &extract_attachments(&raw));
+                    c.save_attachments(account_id, &path, uid, &attachments);
                     // Mark as fetched so it's never re-downloaded to re-check,
                     // even if it had no attachments after all.
                     c.mark_attachments_checked(account_id, &path, uid);
+                }
+                // Correct a false paperclip live: a message flagged as having an
+                // attachment but with none once fetched (iCloud multipart/mixed
+                // wrapping only inline images).
+                if attachments.is_empty() {
+                    emit(WorkerEvent::NoAttachments { message_id: uid });
                 }
             }
         }
@@ -2110,7 +2121,10 @@ async fn load_messages(
         .map(|c| c.load_messages(account_id, path, folder_id))
         .unwrap_or_default();
     if cached.is_empty() {
-        fetch_window(account_id, session, folder_id, total, FIRST_PAGE, use_envelope).await
+        let mut messages =
+            fetch_window(account_id, session, folder_id, total, FIRST_PAGE, use_envelope).await?;
+        reconcile_attachment_flags(cache, account_id, path, &mut messages);
+        Ok(messages)
     } else {
         let recent =
             fetch_window(account_id, session, folder_id, total, PAGE_SIZE, use_envelope).await?;
@@ -2126,7 +2140,33 @@ async fn load_messages(
             }
         }
         merged.retain(|m| server.contains(&m.uid));
+        reconcile_attachment_flags(cache, account_id, path, &mut merged);
         Ok(merged)
+    }
+}
+
+/// Clear the "has attachment" flag on freshly-fetched summaries whose bodies we
+/// already downloaded and found to contain no real attachments. Server summary
+/// flags (especially iCloud's header-only `multipart/mixed` guess) over-report
+/// attachments for HTML mail whose only extra parts are inline `cid:` images.
+fn reconcile_attachment_flags(
+    cache: Option<&Cache>,
+    account_id: u32,
+    path: &str,
+    messages: &mut [Message],
+) {
+    let Some(c) = cache else { return };
+    if messages.iter().all(|m| !m.has_attachment) {
+        return;
+    }
+    let attachmentless = c.attachmentless_uids(account_id, path);
+    if attachmentless.is_empty() {
+        return;
+    }
+    for m in messages.iter_mut() {
+        if m.has_attachment && attachmentless.contains(&m.uid) {
+            m.has_attachment = false;
+        }
     }
 }
 
