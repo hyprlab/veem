@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.4.3 — 2026-07-15
+- Fixed contact names in the contacts browser displaying in all lowercase. EDS stores each book's `full_name` column case-folded for search (e.g. `aaron arnwine`); the properly-cased name lives only in the vCard's `FN` property. The reader now selects the vCard column (`ECacheOBJ` for CardDAV caches, `vcard` for the local book) and parses `FN` — preserving the original capitalisation — via a new `vcard_display_name()` that handles line folding, property parameters, and text escapes, falling back to the email when `FN` is empty. Covered by unit tests.
+
 ## 1.4.2 — 2026-07-15
 - Fixed GNOME Contacts integration under Flatpak: the contacts browser showed an empty list and the "Open GNOME Contacts" button did nothing. Both were sandbox-only (native builds were unaffected).
 - Empty list: inside the sandbox `dirs::{data,cache,config}_dir()` are redirected into `~/.var/app/com.getveem.Veem/`, so the Evolution Data Server SQLite books were never found. Under Flatpak the reader now resolves the EDS address-book dirs from the real home (`~/.local/share`, `~/.cache`, `~/.config`) and opens the books with `immutable=1` (a read-only host mount can't service a WAL database otherwise). Added `--filesystem=xdg-{data,cache,config}/evolution:ro` so the caches are visible, and `read_book_db` now logs failures instead of silently returning empty. This also fixes book enumeration for "Add to Contacts".

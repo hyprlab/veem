@@ -123,12 +123,14 @@ pub fn read_contacts() -> Vec<Contact> {
     let mut out = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
-    // Local books: table `folder_id` + `folder_id_email_list`.
+    // Local books: table `folder_id` + `folder_id_email_list`. Read the vCard
+    // (not `full_name`, which EDS stores case-folded for search) so the display
+    // name keeps its original capitalisation.
     if let Some(dir) = data_dir() {
         for db in find_dbs(&dir, "contacts.db") {
             read_book_db(
                 &db,
-                "SELECT f.full_name, e.value FROM folder_id f \
+                "SELECT f.vcard, e.value FROM folder_id f \
                  JOIN folder_id_email_list e ON f.uid = e.uid",
                 &mut out,
                 &mut seen,
@@ -140,7 +142,7 @@ pub fn read_contacts() -> Vec<Contact> {
         for db in find_dbs(&dir, "cache.db") {
             read_book_db(
                 &db,
-                "SELECT o.full_name, e.value FROM ECacheObjects o \
+                "SELECT o.ECacheOBJ, e.value FROM ECacheObjects o \
                  JOIN attrlist_email_list e ON o.ECacheUID = e.uid",
                 &mut out,
                 &mut seen,
@@ -161,6 +163,52 @@ fn find_dbs(root: &std::path::Path, file: &str) -> Vec<PathBuf> {
         }
     }
     dbs
+}
+
+/// Extract the display name (`FN`) from a vCard, preserving its capitalisation.
+/// Handles line folding (a CRLF/LF followed by a space or tab continues the
+/// previous line) and the standard text escapes.
+fn vcard_display_name(vcard: &str) -> Option<String> {
+    let unfolded = vcard
+        .replace("\r\n ", "")
+        .replace("\r\n\t", "")
+        .replace("\n ", "")
+        .replace("\n\t", "");
+    for line in unfolded.lines() {
+        let Some((prop, value)) = line.split_once(':') else {
+            continue;
+        };
+        // The property name is everything before the first ';' (which begins any
+        // parameters), e.g. `FN` or `FN;PID=1.1`.
+        let name = prop.split(';').next().unwrap_or("").trim();
+        if name.eq_ignore_ascii_case("FN") {
+            let value = unescape_vcard_text(value);
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Unescape a vCard TEXT value: `\n`/`\N` → newline, `\,` → `,`, `\;` → `;`,
+/// `\\` → `\`.
+fn unescape_vcard_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') | Some('N') => out.push('\n'),
+                Some(other) => out.push(other),
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn read_book_db(path: &std::path::Path, query: &str, out: &mut Vec<Contact>, seen: &mut HashSet<String>) {
@@ -192,9 +240,10 @@ fn read_book_db(path: &std::path::Path, query: &str, out: &mut Vec<Contact>, see
         }
     };
     let rows = stmt.query_map([], |row| {
-        let name: Option<String> = row.get(0).ok();
+        let vcard: Option<String> = row.get(0).ok();
         let email: String = row.get(1)?;
-        Ok((name.unwrap_or_default(), email))
+        let name = vcard.as_deref().and_then(vcard_display_name).unwrap_or_default();
+        Ok((name, email))
     });
     if let Ok(rows) = rows {
         for (name, email) in rows.flatten() {
@@ -415,4 +464,40 @@ fn vcard_for(name: &str, email: &str) -> String {
         "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:{name}\r\nN:;{name};;;\r\n\
          EMAIL;TYPE=INTERNET:{email}\r\nEND:VCARD\r\n"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::vcard_display_name;
+
+    #[test]
+    fn fn_preserves_case() {
+        let v = "BEGIN:VCARD\r\nVERSION:3.0\r\nN:Arnwine;Aaron;;;\r\nFN:Aaron Arnwine\r\nEND:VCARD\r\n";
+        assert_eq!(vcard_display_name(v).as_deref(), Some("Aaron Arnwine"));
+    }
+
+    #[test]
+    fn fn_with_parameters() {
+        let v = "FN;PID=1.1:Jane O'Brien\r\n";
+        assert_eq!(vcard_display_name(v).as_deref(), Some("Jane O'Brien"));
+    }
+
+    #[test]
+    fn fn_line_folded() {
+        // A folded FN value continues on the next line after a leading space.
+        let v = "FN:Reallylongfirst\r\n Lastname\r\n";
+        assert_eq!(vcard_display_name(v).as_deref(), Some("ReallylongfirstLastname"));
+    }
+
+    #[test]
+    fn fn_escaped_comma() {
+        let v = "FN:Smith\\, John\r\n";
+        assert_eq!(vcard_display_name(v).as_deref(), Some("Smith, John"));
+    }
+
+    #[test]
+    fn empty_or_missing_fn() {
+        assert_eq!(vcard_display_name("FN:\r\nN:x;;;;\r\n"), None);
+        assert_eq!(vcard_display_name("N:Doe;John;;;\r\n"), None);
+    }
 }
