@@ -2192,7 +2192,7 @@ async fn fetch_window(
     // header block — opaque to the IMAP parser — and parse it with mail-parser.
     let mut messages: Vec<Message> = if use_envelope {
         let fetches: Vec<Fetch> = session
-            .fetch(&range, "(UID ENVELOPE FLAGS BODYSTRUCTURE)")
+            .fetch(&range, "(UID ENVELOPE FLAGS BODYSTRUCTURE INTERNALDATE)")
             .await?
             .try_collect()
             .await?;
@@ -2202,7 +2202,7 @@ async fn fetch_window(
             .collect()
     } else {
         let fetches: Vec<Fetch> = session
-            .fetch(&range, "(UID FLAGS BODY.PEEK[HEADER])")
+            .fetch(&range, "(UID FLAGS BODY.PEEK[HEADER] INTERNALDATE)")
             .await?
             .try_collect()
             .await?;
@@ -2265,7 +2265,8 @@ fn summary_from_headers(account_id: u32, fetch: &Fetch, folder_id: u32) -> Messa
             let ts = d.to_timestamp();
             (format_timestamp(ts), ts)
         })
-        .unwrap_or_default();
+        .filter(|(_, ts)| *ts > 0)
+        .unwrap_or_else(|| internal_date_summary(fetch));
     let to = parsed.as_ref().map(|p| mp_list(p.to())).unwrap_or_default();
     let cc = parsed.as_ref().map(|p| mp_list(p.cc())).unwrap_or_default();
 
@@ -2401,9 +2402,9 @@ async fn fetch_summaries_by_uid(
     session.select(path).await?;
     let set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
     let items = if use_envelope {
-        "(UID ENVELOPE FLAGS BODYSTRUCTURE)"
+        "(UID ENVELOPE FLAGS BODYSTRUCTURE INTERNALDATE)"
     } else {
-        "(UID FLAGS BODY.PEEK[HEADER])"
+        "(UID FLAGS BODY.PEEK[HEADER] INTERNALDATE)"
     };
     let fetches: Vec<Fetch> = session.uid_fetch(set, items).await?.try_collect().await?;
     Ok(fetches
@@ -2667,7 +2668,8 @@ fn build_summary(account_id: u32, fetch: &Fetch, folder_id: u32) -> Message {
     let (date, timestamp) = env
         .and_then(|e| e.date.as_deref())
         .map(format_date)
-        .unwrap_or_default();
+        .filter(|(_, ts)| *ts > 0)
+        .unwrap_or_else(|| internal_date_summary(fetch));
     let to = address_list(env.and_then(|e| e.to.as_ref()));
     let cc = address_list(env.and_then(|e| e.cc.as_ref()));
 
@@ -3475,6 +3477,21 @@ fn format_timestamp(ts: i64) -> String {
         local.format("%b %-d").to_string()
     } else {
         local.format("%b %-d, %Y").to_string()
+    }
+}
+
+/// Fall back to the server's `INTERNALDATE` (the delivery date) when a message
+/// carries no parseable `Date:` header. Some senders omit `Date:` entirely,
+/// which would otherwise leave the row with a blank date label and a zero sort
+/// timestamp (sinking it to the bottom of the list). Returns `("", 0)` if the
+/// server didn't supply an INTERNALDATE either.
+fn internal_date_summary(fetch: &Fetch) -> (String, i64) {
+    match fetch.internal_date() {
+        Some(dt) => {
+            let ts = dt.timestamp();
+            (format_timestamp(ts), ts)
+        }
+        None => (String::new(), 0),
     }
 }
 

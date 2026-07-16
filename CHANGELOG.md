@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.4 — 2026-07-16
+- Fixed messages showing a blank date in the message list and the reader header when the sender omits (or sends an unparseable) `Date:` header. Some bulk mailers — e.g. the "Trusted Servants Pro" notifications delivered to `public@dccma.com` — emit no `Date:` line at all, so Veem derived an empty label and a `0` sort timestamp, leaving those rows dateless and sinking them to the bottom of the list.
+- Veem now falls back to the IMAP `INTERNALDATE` (the server's delivery date — i.e. the date of receipt) whenever the `Date:` header is missing or fails to parse. `INTERNALDATE` was added to the four summary FETCH item lists (the structured-`ENVELOPE` and raw-header paths in both `fetch_window` and `fetch_summaries_by_uid`), and a new `internal_date_summary()` helper feeds the fallback in `build_summary` and `summary_from_headers`. Both the list row and the opened-message header key off the same `timestamp`, so populating it fixes both places and restores correct sort order. Existing cached rows self-correct on the next folder sync (summaries are written with `INSERT OR REPLACE`).
+
 ## 1.4.3 — 2026-07-15
 - Fixed contact names in the contacts browser displaying in all lowercase. EDS stores each book's `full_name` column case-folded for search (e.g. `aaron arnwine`); the properly-cased name lives only in the vCard's `FN` property. The reader now selects the vCard column (`ECacheOBJ` for CardDAV caches, `vcard` for the local book) and parses `FN` — preserving the original capitalisation — via a new `vcard_display_name()` that handles line folding, property parameters, and text escapes, falling back to the email when `FN` is empty. Covered by unit tests.
 

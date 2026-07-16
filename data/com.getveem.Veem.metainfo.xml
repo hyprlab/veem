@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.4.4" date="2026-07-16" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.4</url>
+      <description>
+        <p>Fixed messages with no Date header showing a blank date; Veem now falls back to the server's delivery date (INTERNALDATE).</p>
+      </description>
+    </release>
     <release version="1.4.3" date="2026-07-15" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.3</url>
       <description>
