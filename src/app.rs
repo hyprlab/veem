@@ -23,7 +23,9 @@ relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
 use crate::config::{self, AccountConfig};
 use crate::models::{Account, Attachment, Folder, FolderKind, Message};
 use crate::ui::accounts::{AccountsOutput, AccountsWindow};
-use crate::ui::compose::{Compose, ComposeAccount, ComposeInit, ComposeOutput, ComposePrefill};
+use crate::ui::compose::{
+    Compose, ComposeAccount, ComposeInit, ComposeInput, ComposeOutput, ComposePrefill,
+};
 use crate::ui::message_list::{
     BulkAction, MessageList, MessageListInput, MessageListOutput, RowAction,
 };
@@ -49,6 +51,27 @@ struct SelectedFolder {
     path: String,
 }
 
+/// A standalone compose window (New Message, compose-to, edit-draft, or a
+/// popped-out reply) and its component. Both refs must stay alive: the window
+/// holds the content, the controller holds the component root.
+struct ComposeHost {
+    id: u32,
+    /// Held only to keep the component (and its widget tree) alive for the
+    /// window's lifetime; dropped when the host is removed.
+    #[allow(dead_code)]
+    controller: Controller<Compose>,
+    window: adw::Window,
+}
+
+/// The reader's inline reply/forward composer. `window` is `Some` only while the
+/// pane has been promoted to a floating window (else it lives in the reader's
+/// drop-down revealer).
+struct ReaderCompose {
+    id: u32,
+    controller: Controller<Compose>,
+    window: Option<adw::Window>,
+}
+
 pub struct AppModel {
     /// One mail worker per account (account_id → request sender).
     workers: HashMap<u32, UnboundedSender<MailRequest>>,
@@ -56,8 +79,16 @@ pub struct AppModel {
     window: adw::ApplicationWindow,
     prefs: Option<Controller<Preferences>>,
     accounts_win: Option<Controller<AccountsWindow>>,
-    /// Open compose windows (multiple allowed at once). Pruned as they close.
-    composers: Vec<Controller<Compose>>,
+    /// Standalone compose windows (multiple allowed at once). Pruned as they close.
+    composers: Vec<ComposeHost>,
+    /// The reader's inline reply/forward composer, if open.
+    reader_compose: Option<ReaderCompose>,
+    /// Superseded inline composers still finishing a save-if-dirty before closing.
+    draining_composers: Vec<(u32, Controller<Compose>)>,
+    /// SlideDown revealer under the reader toolbar that hosts the inline pane.
+    reader_compose_revealer: gtk::Revealer,
+    /// Monotonic id source for composers.
+    next_compose_id: u32,
     menu: gtk::gio::Menu,
     /// All known accounts, ordered by id.
     accounts: Vec<Account>,
@@ -249,7 +280,10 @@ pub enum AppMsg {
     SendMessage(Box<OutgoingMessage>),
     SaveDraftMessage(Box<OutgoingMessage>),
     DraftSaved,
-    CloseCompose,
+    /// A composer (id) finished — tear down its host (window or inline revealer).
+    ComposeClosed(u32),
+    /// Promote/demote the reader's inline composer (id) between inline and window.
+    ComposeToggleWindow(u32),
     Refresh,
     OpenAccounts,
     /// Open the accounts window straight to the "add account" form (empty state).
@@ -595,12 +629,17 @@ impl SimpleComponent for AppModel {
                                     },
                                 },
                             },
-                            // The drawer's widget is a Paned that already contains
-                            // the reader body as its top pane and docks the
-                            // attachment footer below it (collapsing away when the
-                            // message has no attachments).
+                            // Reader content: the inline reply/forward pane drops
+                            // down (SlideDown revealer) above the message body,
+                            // pushing it down to make room. The revealer is
+                            // prepended in `init`. The drawer's widget is a Paned
+                            // that holds the reader body + attachment footer.
                             #[wrap(Some)]
-                            set_content = model.attachment_drawer.widget(),
+                            #[name = "reader_content_box"]
+                            set_content = &gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                append: model.attachment_drawer.widget(),
+                            },
                         },
                     },
                     },
@@ -722,6 +761,16 @@ impl SimpleComponent for AppModel {
             prefs: None,
             accounts_win: None,
             composers: Vec::new(),
+            reader_compose: None,
+            draining_composers: Vec::new(),
+            reader_compose_revealer: {
+                let r = gtk::Revealer::new();
+                r.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+                r.set_transition_duration(200);
+                r.set_reveal_child(false);
+                r
+            },
+            next_compose_id: 1,
             menu,
             accounts: Vec::new(),
             folders: HashMap::new(),
@@ -811,6 +860,11 @@ impl SimpleComponent for AppModel {
 
         let attach_list = &model.attach_list;
         let widgets = view_output!();
+        // The inline reply/forward pane sits above the reader body (top of the
+        // content box), sliding down over it when revealed.
+        widgets
+            .reader_content_box
+            .prepend(&model.reader_compose_revealer);
         // The attachments gallery is the content stack's second page. Wrap it in a
         // ToolbarView + HeaderBar so it keeps the window controls (close/minimize)
         // that otherwise live only on the reader pane's header.
@@ -1165,6 +1219,9 @@ impl SimpleComponent for AppModel {
                 }
             }
             AppMsg::MessageSelected { message: m, thread } => {
+                // Navigating away releases any inline reply (save-if-dirty, or keep
+                // it as an independent window if it was popped out).
+                self.release_reader_compose();
                 // Clicking a draft opens it in the compose editor, not the reader.
                 if self.is_drafts_folder(m.account_id, m.folder_id) {
                     self.open_draft(m, &sender);
@@ -1447,20 +1504,24 @@ impl SimpleComponent for AppModel {
 
             AppMsg::Reply => {
                 if let Some(m) = self.current.clone() {
-                    self.open_compose(m.account_id, reply_prefill(&m), &sender);
+                    self.open_inline_reply(m.account_id, reply_prefill(&m), &sender);
                 }
             }
 
             AppMsg::ReplyAll => {
                 if let Some(m) = self.current.clone() {
                     let self_email = self.email_of(m.account_id).unwrap_or_default();
-                    self.open_compose(m.account_id, reply_all_prefill(&m, &self_email), &sender);
+                    self.open_inline_reply(
+                        m.account_id,
+                        reply_all_prefill(&m, &self_email),
+                        &sender,
+                    );
                 }
             }
 
             AppMsg::Forward => {
                 if let Some(m) = self.current.clone() {
-                    self.open_compose(m.account_id, forward_prefill(&m), &sender);
+                    self.open_inline_reply(m.account_id, forward_prefill(&m), &sender);
                 }
             }
 
@@ -1646,10 +1707,9 @@ impl SimpleComponent for AppModel {
                 // compose window has closed. No notification (mirrors silent send).
             }
 
-            AppMsg::CloseCompose => {
-                // Drop the window(s) that were closed (they're no longer visible).
-                self.composers.retain(|c| c.widget().is_visible());
-            }
+            AppMsg::ComposeClosed(id) => self.close_compose(id),
+
+            AppMsg::ComposeToggleWindow(id) => self.toggle_compose_window(id, &sender),
 
             AppMsg::Sent { account_id } => {
                 // No success notification — only send failures are surfaced (via
@@ -2886,12 +2946,15 @@ impl AppModel {
         self.open_compose(m.account_id, prefill, sender);
     }
 
-    fn open_compose(
+    /// Assemble the `ComposeInit` for a composer (from-accounts + signatures,
+    /// autocomplete suggestions, a fresh id, host mode).
+    fn build_compose_init(
         &mut self,
         account_id: u32,
         prefill: ComposePrefill,
-        sender: &ComponentSender<Self>,
-    ) {
+        windowed: bool,
+        can_toggle: bool,
+    ) -> (u32, ComposeInit) {
         // Selectable "from" accounts, in display order, with their signatures.
         let accounts: Vec<ComposeAccount> = self
             .ordered_emails()
@@ -2915,23 +2978,167 @@ impl AppModel {
 
         // Exclude the user's own addresses from recipient suggestions.
         let own: Vec<String> = self.accounts.iter().map(|a| a.email.clone()).collect();
+        let id = self.next_compose_id;
+        self.next_compose_id += 1;
         let init = ComposeInit {
+            compose_id: id,
             prefill,
             accounts,
             selected,
             suggestions: crate::contacts::suggestions(&own),
+            windowed,
+            can_toggle,
         };
-        let compose = Compose::builder()
-            .transient_for(&self.window)
+        (id, init)
+    }
+
+    /// Launch a `Compose` component, forwarding its outputs into `AppMsg`.
+    fn spawn_compose(
+        &self,
+        init: ComposeInit,
+        sender: &ComponentSender<Self>,
+    ) -> Controller<Compose> {
+        Compose::builder()
             .launch(init)
             .forward(sender.input_sender(), |out| match out {
                 ComposeOutput::Send(msg) => AppMsg::SendMessage(msg),
                 ComposeOutput::SaveDraft(msg) => AppMsg::SaveDraftMessage(msg),
-                ComposeOutput::Closed => AppMsg::CloseCompose,
-            });
-        compose.widget().present();
-        // Keep every open compose window alive; closed ones are pruned below.
-        self.composers.push(compose);
+                ComposeOutput::ToggleWindow(id) => AppMsg::ComposeToggleWindow(id),
+                ComposeOutput::Close(id) => AppMsg::ComposeClosed(id),
+            })
+    }
+
+    /// Host a compose pane in a fresh standalone window, transient for the app.
+    fn compose_window_host(
+        &self,
+        content: &impl IsA<gtk::Widget>,
+        id: u32,
+        sender: &ComponentSender<Self>,
+    ) -> adw::Window {
+        let win = adw::Window::builder()
+            .modal(false)
+            .default_width(660)
+            .default_height(760)
+            .title("New Message")
+            .transient_for(&self.window)
+            .build();
+        win.set_content(Some(content));
+        let s = sender.input_sender().clone();
+        win.connect_close_request(move |_| {
+            let _ = s.send(AppMsg::ComposeClosed(id));
+            gtk::glib::Propagation::Proceed
+        });
+        win.present();
+        win
+    }
+
+    /// Open a standalone compose window (New Message, compose-to, edit-draft).
+    fn open_compose(
+        &mut self,
+        account_id: u32,
+        prefill: ComposePrefill,
+        sender: &ComponentSender<Self>,
+    ) {
+        let (id, init) = self.build_compose_init(account_id, prefill, true, false);
+        let controller = self.spawn_compose(init, sender);
+        let window = self.compose_window_host(controller.widget(), id, sender);
+        self.composers.push(ComposeHost { id, controller, window });
+    }
+
+    /// Open (or replace) the reader's inline reply/forward drop-down pane.
+    fn open_inline_reply(
+        &mut self,
+        account_id: u32,
+        prefill: ComposePrefill,
+        sender: &ComponentSender<Self>,
+    ) {
+        // Supersede any composer already in the reader slot first.
+        self.release_reader_compose();
+        let (id, init) = self.build_compose_init(account_id, prefill, false, true);
+        let controller = self.spawn_compose(init, sender);
+        let widget = controller.widget();
+        self.reader_compose_revealer.set_child(Some(widget));
+        self.reader_compose_revealer.set_reveal_child(true);
+        controller.emit(ComposeInput::FocusEditor);
+        self.reader_compose = Some(ReaderCompose { id, controller, window: None });
+    }
+
+    /// Detach the reader's inline composer from the reader slot. If it was popped
+    /// out to a window it lives on independently; if inline, ask it to save-if-
+    /// dirty and let it drain closed.
+    fn release_reader_compose(&mut self) {
+        let Some(r) = self.reader_compose.take() else {
+            return;
+        };
+        match r.window {
+            Some(window) => {
+                self.composers.push(ComposeHost { id: r.id, controller: r.controller, window });
+            }
+            None => {
+                self.reader_compose_revealer.set_reveal_child(false);
+                self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
+                r.controller.emit(ComposeInput::SaveDraftIfDirty);
+                self.draining_composers.push((r.id, r.controller));
+            }
+        }
+    }
+
+    /// Promote the reader's inline pane to a window, or collapse a window back
+    /// inline — reparenting the live pane so the editor state survives the move.
+    fn toggle_compose_window(&mut self, id: u32, sender: &ComponentSender<Self>) {
+        let Some(mut r) = self.reader_compose.take() else {
+            return;
+        };
+        if r.id != id {
+            self.reader_compose = Some(r);
+            return;
+        }
+        let widget = r.controller.widget().clone();
+        match r.window.take() {
+            None => {
+                // inline → window: unparent from the revealer, then host in a window.
+                self.reader_compose_revealer.set_reveal_child(false);
+                self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
+                let window = self.compose_window_host(&widget, id, sender);
+                r.window = Some(window);
+                r.controller.emit(ComposeInput::SetWindowed(true));
+            }
+            Some(window) => {
+                // window → inline: unparent from the window, drop it back in place.
+                window.set_content(None::<&gtk::Widget>);
+                window.destroy();
+                self.reader_compose_revealer.set_child(Some(&widget));
+                self.reader_compose_revealer.set_reveal_child(true);
+                r.controller.emit(ComposeInput::SetWindowed(false));
+            }
+        }
+        r.controller.emit(ComposeInput::FocusEditor);
+        self.reader_compose = Some(r);
+    }
+
+    /// Tear down a composer by id (from a Close output or a window's close-request).
+    fn close_compose(&mut self, id: u32) {
+        if let Some(pos) = self.composers.iter().position(|h| h.id == id) {
+            let host = self.composers.remove(pos);
+            host.window.set_content(None::<&gtk::Widget>);
+            host.window.destroy();
+            return;
+        }
+        if self.reader_compose.as_ref().is_some_and(|r| r.id == id) {
+            let r = self.reader_compose.take().unwrap();
+            match r.window {
+                Some(window) => {
+                    window.set_content(None::<&gtk::Widget>);
+                    window.destroy();
+                }
+                None => {
+                    self.reader_compose_revealer.set_reveal_child(false);
+                    self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
+                }
+            }
+            return;
+        }
+        self.draining_composers.retain(|(cid, _)| *cid != id);
     }
 
     /// Move a message to its account's folder of `kind` (archive/delete).

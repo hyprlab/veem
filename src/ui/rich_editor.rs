@@ -53,6 +53,19 @@ impl RichEditor {
         exec(&self.webview, js);
     }
 
+    /// Whether the body has been edited since it was loaded (async read of a JS
+    /// flag set on the first `input` event). Used to avoid saving a pristine,
+    /// quote-only reply to Drafts when the reader navigates away.
+    pub fn is_dirty(&self, cb: impl FnOnce(bool) + 'static) {
+        self.webview.evaluate_javascript(
+            "String(!!window.__veemDirty)",
+            None,
+            None,
+            gtk::gio::Cancellable::NONE,
+            move |res| cb(res.map(|v| v.to_str() == "true").unwrap_or(false)),
+        );
+    }
+
     /// Read the current body HTML asynchronously.
     pub fn extract_html(&self, cb: impl FnOnce(String) + 'static) {
         self.webview.evaluate_javascript(
@@ -208,7 +221,10 @@ fn document(content: &str, dark: bool) -> String {
            .veem-quote-attr{{opacity:0.7;margin:10px 0 4px;}}\
            .veem-sig{{opacity:0.85;}}\
            a{{color:#3584e4;}}\
-         </style>{script}</head>\
+         </style>{script}\
+         <script>window.__veemDirty=false;\
+           document.addEventListener('input',function(){{window.__veemDirty=true;}},true);\
+         </script></head>\
          <body contenteditable=\"true\">{content}</body></html>"
     )
 }

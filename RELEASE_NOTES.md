@@ -2,7 +2,12 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.4.3
+## What's new in 1.5.0
+- Reply, Reply All and Forward now open right in the reader: a compose panel drops down over the message showing just your reply — no separate window to manage. Type and send without leaving the message.
+- Want the full editor with recipient and subject fields? Click the expand button to pop the reply out into a compose window — and collapse it back inline when you're done. Your draft carries across intact, cursor position and all.
+- Switch to another message mid-reply and Veem saves your unsent draft to Drafts automatically (a reply you never touched is simply discarded). "New message" still opens its own window.
+
+## In 1.4.3
 - Fixed contact names showing in all lowercase in the contacts browser — they now display with their proper capitalisation.
 
 ## In 1.4.2
@@ -111,7 +116,7 @@ Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita 
 - Attachments are pre-fetched for instant opening, with a download-on-demand fallback and save-to-disk.
 - Pop any message out into its own window.
 - Per-sender allow and block lists, with automatic deletion of blocklisted senders.
-- The Actions Palette: a per-row chevron slides in quick actions (reply, star, mark read, archive, spam, delete) so you can act on a message without opening it.
+- The Actions Palette: a per-row ⋯ button slides in quick actions (reply, star, mark read, archive, spam, delete) so you can act on a message without opening it.
 - No telemetry and no analytics, ever.
 
 ## Desktop integration

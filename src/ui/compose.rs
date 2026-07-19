@@ -23,6 +23,32 @@ fn sig_html(sig: &str) -> String {
     format!("<div class=\"veem-sig\"><br>-- <br>{body}</div>")
 }
 
+/// Fixed height (px) of the editor area when the pane is shown inline in the
+/// reader. Inline the body scrolls internally at this height; windowed, the
+/// editor fills the window instead.
+const INLINE_EDITOR_HEIGHT: i32 = 300;
+
+/// Size the pane for its host: inline it must NOT vexpand (nothing imposes a
+/// definite height in the reader's drop-down, so an expanding editor would grab
+/// the whole window), so pin the editor to a fixed height and let it scroll.
+/// Windowed, restore vexpand so the editor fills the window.
+fn size_for_host(root: &adw::ToolbarView, editor_holder: &gtk::Box, windowed: bool) {
+    root.set_vexpand(windowed);
+    editor_holder.set_vexpand(windowed);
+    editor_holder.set_height_request(if windowed { -1 } else { INLINE_EDITOR_HEIGHT });
+}
+
+/// Set the inline/window toggle button's icon + tooltip for the current host.
+fn set_toggle_icon(btn: &gtk::Button, windowed: bool) {
+    if windowed {
+        btn.set_icon_name("com.getveem.Veem-view-restore-symbolic");
+        btn.set_tooltip_text(Some("Collapse into reader"));
+    } else {
+        btn.set_icon_name("com.getveem.Veem-view-fullscreen-symbolic");
+        btn.set_tooltip_text(Some("Open in window"));
+    }
+}
+
 /// Replace the recipient currently being typed (after the last comma) with the
 /// chosen suggestion, leaving a trailing ", " ready for the next recipient.
 fn complete_field(row: &adw::EntryRow, sug: &Suggestion) {
@@ -54,15 +80,21 @@ pub struct ComposePrefill {
     pub draft_origin: Option<DraftOrigin>,
 }
 
-/// Everything the compose window needs to open.
+/// Everything the compose pane needs to open.
 #[derive(Debug)]
 pub struct ComposeInit {
+    /// Stable id so the app can track this composer across inline/window moves.
+    pub compose_id: u32,
     pub prefill: ComposePrefill,
     pub accounts: Vec<ComposeAccount>,
     /// Index into `accounts` of the account to send from by default.
     pub selected: usize,
     /// Recipient autocomplete suggestions (Contacts + mail history).
     pub suggestions: Vec<Suggestion>,
+    /// Whether the pane starts hosted in a standalone window (vs. inline).
+    pub windowed: bool,
+    /// Whether the inline/window toggle button is offered (reply/forward only).
+    pub can_toggle: bool,
 }
 
 pub struct Compose {
@@ -86,6 +118,15 @@ pub struct Compose {
     completion_open: std::rc::Rc<std::cell::Cell<bool>>,
     /// When editing an existing draft, its origin (replaced on save/send).
     draft_origin: Option<DraftOrigin>,
+    /// Stable id the app uses to track this composer across host moves.
+    compose_id: u32,
+    /// Currently shown as a standalone window (drives the toggle-button icon).
+    windowed: bool,
+    /// Whether this composer offers the inline/window toggle at all.
+    can_toggle: bool,
+    /// A recipient/subject field was edited since open (body edits are tracked
+    /// separately by the editor itself). Used for save-if-dirty.
+    fields_dirty: bool,
 }
 
 #[derive(Debug)]
@@ -98,6 +139,16 @@ pub enum ComposeInput {
     /// The editor content came back — finish saving the draft.
     SaveDraftBody { html: String, text: String, to: String, cc: String, bcc: String, subject: String, from_account_id: u32 },
     Cancel,
+    /// The user clicked the inline/window toggle button.
+    ToggleWindowed,
+    /// The app moved this pane between inline and window; sync the button icon.
+    SetWindowed(bool),
+    /// Re-grab keyboard focus into the editor (after a host move).
+    FocusEditor,
+    /// A recipient/subject field changed — mark dirty.
+    MarkFieldsDirty,
+    /// Save to Drafts only if edited, then close (used when superseded / on nav).
+    SaveDraftIfDirty,
     AccountChanged,
     AttachFiles,
     AddAttachments(Vec<std::path::PathBuf>),
@@ -118,7 +169,11 @@ pub enum ComposeOutput {
     Send(Box<OutgoingMessage>),
     /// Save the message to the Drafts folder (no send).
     SaveDraft(Box<OutgoingMessage>),
-    Closed,
+    /// Ask the app to promote/demote this pane (inline ↔ window). Carries the id.
+    ToggleWindow(u32),
+    /// This pane is done (cancelled / sent / draft-saved / superseded). Carries
+    /// the id so the app tears down the right host.
+    Close(u32),
 }
 
 #[relm4::component(pub)]
@@ -129,19 +184,10 @@ impl Component for Compose {
     type CommandOutput = ();
 
     view! {
-        adw::Window {
-            set_modal: false,
-            set_default_width: 660,
-            set_default_height: 760,
-            set_title: Some("New Message"),
-
-            connect_close_request[sender] => move |_| {
-                let _ = sender.output(ComposeOutput::Closed);
-                gtk::glib::Propagation::Proceed
-            },
-
-            #[wrap(Some)]
-            set_content = &adw::ToolbarView {
+        // Host-agnostic root: the same pane is shown inline (in a reader Revealer)
+        // or set as the content of an app-owned window. Hosting/close is the app's
+        // job (see ComposeOutput::ToggleWindow / Close).
+        adw::ToolbarView {
                 add_top_bar = &adw::HeaderBar {
                     set_show_start_title_buttons: false,
                     set_show_end_title_buttons: false,
@@ -170,6 +216,13 @@ impl Component for Compose {
                         set_tooltip_text: Some("Open Contacts"),
                         connect_clicked => ComposeInput::OpenContacts,
                     },
+                    // Promote inline reply → window, or collapse window → inline.
+                    // Icon/visibility set in `init` and on SetWindowed.
+                    #[name = "toggle_btn"]
+                    pack_end = &gtk::Button {
+                        set_tooltip_text: Some("Open in window"),
+                        connect_clicked => ComposeInput::ToggleWindowed,
+                    },
                 },
 
                 #[wrap(Some)]
@@ -178,6 +231,11 @@ impl Component for Compose {
                     set_spacing: 12,
                     add_css_class: "compose-pane",
 
+                    // The recipient/subject fields are shown only in the windowed
+                    // host; inline, only the reply body is offered (expand to a
+                    // window to edit From/To/Cc/Bcc/Subject). Visibility is set in
+                    // `init` and toggled on SetWindowed.
+                    #[name = "fields_list"]
                     gtk::ListBox {
                         add_css_class: "boxed-list",
                         add_css_class: "compose-fields",
@@ -226,7 +284,6 @@ impl Component for Compose {
                         set_vexpand: true,
                     },
                 },
-            },
         }
     }
 
@@ -235,7 +292,15 @@ impl Component for Compose {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let ComposeInit { prefill, accounts, selected, suggestions } = init;
+        let ComposeInit {
+            compose_id,
+            prefill,
+            accounts,
+            selected,
+            suggestions,
+            windowed,
+            can_toggle,
+        } = init;
         let draft_origin = prefill.draft_origin.clone();
         let current_sig = accounts.get(selected).map(|a| a.signature.clone()).unwrap_or_default();
 
@@ -270,9 +335,22 @@ impl Component for Compose {
             completion_count: 0,
             completion_open: std::rc::Rc::new(std::cell::Cell::new(false)),
             draft_origin,
+            compose_id,
+            windowed,
+            can_toggle,
+            fields_dirty: false,
         };
         let widgets = view_output!();
         widgets.editor_holder.append(&model.editor.widget);
+
+        // The inline/window toggle: only reply/forward panes can toggle. Its icon
+        // reflects the current host (fullscreen = "expand to window", restore =
+        // "collapse back inline").
+        widgets.toggle_btn.set_visible(model.can_toggle);
+        set_toggle_icon(&widgets.toggle_btn, model.windowed);
+        // Inline shows only the reply body; the fields appear when windowed.
+        widgets.fields_list.set_visible(model.windowed);
+        size_for_host(&root, &widgets.editor_holder, model.windowed);
 
         // Populate the From dropdown.
         let labels: Vec<&str> = model.accounts.iter().map(|a| a.label.as_str()).collect();
@@ -315,7 +393,10 @@ impl Component for Compose {
             (&widgets.bcc_row, Field::Bcc),
         ] {
             let s = sender.clone();
-            row.connect_changed(move |_| s.input(ComposeInput::Suggest(field)));
+            row.connect_changed(move |_| {
+                s.input(ComposeInput::Suggest(field));
+                s.input(ComposeInput::MarkFieldsDirty);
+            });
 
             // Close the popover when the field loses focus.
             let focus = gtk::EventControllerFocus::new();
@@ -323,6 +404,11 @@ impl Component for Compose {
             focus.connect_leave(move |_| s.input(ComposeInput::CompletionClose));
             row.add_controller(focus);
         }
+        // Subject edits also count as dirtying the draft.
+        let s = sender.clone();
+        widgets
+            .subject_row
+            .connect_changed(move |_| s.input(ComposeInput::MarkFieldsDirty));
 
         // Drive the suggestion list from a single capture-phase key handler on
         // the window — the toplevel sees every key first, regardless of focus.
@@ -371,12 +457,50 @@ impl Component for Compose {
         root: &Self::Root,
     ) {
         match message {
-            ComposeInput::Cancel => root.close(),
+            ComposeInput::Cancel => {
+                let _ = sender.output(ComposeOutput::Close(self.compose_id));
+            }
+
+            ComposeInput::ToggleWindowed => {
+                let _ = sender.output(ComposeOutput::ToggleWindow(self.compose_id));
+            }
+
+            ComposeInput::SetWindowed(windowed) => {
+                self.windowed = windowed;
+                set_toggle_icon(&widgets.toggle_btn, windowed);
+                widgets.fields_list.set_visible(windowed);
+                size_for_host(root, &widgets.editor_holder, windowed);
+            }
+
+            ComposeInput::FocusEditor => self.editor.grab_focus(),
+
+            ComposeInput::MarkFieldsDirty => self.fields_dirty = true,
+
+            ComposeInput::SaveDraftIfDirty => {
+                // Save only if the user actually edited something, so navigating
+                // away from a pristine quote-only reply doesn't litter Drafts.
+                if self.fields_dirty {
+                    sender.input(ComposeInput::SaveDraft);
+                } else {
+                    let s = sender.clone();
+                    let id = self.compose_id;
+                    self.editor.is_dirty(move |body_dirty| {
+                        if body_dirty {
+                            s.input(ComposeInput::SaveDraft);
+                        } else {
+                            let _ = s.output(ComposeOutput::Close(id));
+                        }
+                    });
+                }
+            }
 
             ComposeInput::OpenContacts => {
                 // Browse contacts; the chosen one is appended to the To field.
+                let Some(win) = root.root().and_downcast::<gtk::Window>() else {
+                    return;
+                };
                 let to_row = widgets.to_row.clone();
-                crate::ui::contacts_browser::present(root, move |contact| {
+                crate::ui::contacts_browser::present(&win, move |contact| {
                     let display = if contact.name.trim().is_empty()
                         || contact.name == contact.email
                     {
@@ -401,9 +525,10 @@ impl Component for Compose {
             ComposeInput::AttachFiles => {
                 let dialog = gtk::FileDialog::new();
                 dialog.set_title("Attach Files");
+                let parent = root.root().and_downcast::<gtk::Window>();
                 let s = sender.input_sender().clone();
                 dialog.open_multiple(
-                    Some(root),
+                    parent.as_ref(),
                     gtk::gio::Cancellable::NONE,
                     move |res| {
                         if let Ok(model) = res {
@@ -537,7 +662,7 @@ impl Component for Compose {
             ComposeInput::SendBody { html, text, to, cc, bcc, subject, from_account_id } => {
                 let out = self.build_outgoing(from_account_id, to, cc, bcc, subject, text, html);
                 let _ = sender.output(ComposeOutput::Send(Box::new(out)));
-                root.close();
+                let _ = sender.output(ComposeOutput::Close(self.compose_id));
             }
 
             ComposeInput::SaveDraft => {
@@ -565,7 +690,7 @@ impl Component for Compose {
             ComposeInput::SaveDraftBody { html, text, to, cc, bcc, subject, from_account_id } => {
                 let out = self.build_outgoing(from_account_id, to, cc, bcc, subject, text, html);
                 let _ = sender.output(ComposeOutput::SaveDraft(Box::new(out)));
-                root.close();
+                let _ = sender.output(ComposeOutput::Close(self.compose_id));
             }
         }
     }

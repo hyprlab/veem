@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.5.0" date="2026-07-19" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.5.0</url>
+      <description>
+        <p>Reply and forward now open an inline panel that drops down in the reader instead of a separate window, with a button to expand it to a full compose window and collapse it back.</p>
+      </description>
+    </release>
     <release version="1.4.6" date="2026-07-19" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.6</url>
       <description>
