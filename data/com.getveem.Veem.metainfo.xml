@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.4.6" date="2026-07-19" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.6</url>
+      <description>
+        <p>The message-list Actions Palette now opens from a horizontal ellipsis (⋯) button instead of a chevron.</p>
+      </description>
+    </release>
     <release version="1.4.5" date="2026-07-19" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.5</url>
       <description>

@@ -210,18 +210,17 @@ impl FactoryComponent for MessageRow {
                     set_css_classes: &subject_classes(&self.msg),
                 },
 
-                // Bottom line: a chevron that slides the Actions Palette in from the
+                // Bottom line: a ⋯ button that slides the Actions Palette in from the
                 // left, over the preview text (so the row height doesn't change).
                 gtk::Box {
                     set_spacing: 2,
                     set_valign: gtk::Align::Center,
 
-                    // Chevron toggle. Clicking it opens/closes the palette but does
-                    // NOT select or open the message (it's a button, so the click is
-                    // consumed before the row's selection gesture).
+                    // Actions toggle (⋯). Clicking it opens/closes the palette but
+                    // does NOT select or open the message (it's a button, so the
+                    // click is consumed before the row's selection gesture).
                     gtk::Button {
-                        #[watch]
-                        set_icon_name: if self.palette_open { "com.getveem.Veem-pan-start-symbolic" } else { "com.getveem.Veem-pan-end-symbolic" },
+                        set_icon_name: "com.getveem.Veem-view-more-horizontal-symbolic",
                         // Hidden until the row is hovered (or the palette is open);
                         // the .revealed class fades it in via a CSS transition.
                         #[watch]
