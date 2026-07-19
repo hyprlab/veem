@@ -1367,6 +1367,15 @@ async fn idle_wait(
                     queue_body_prefetch(body_prefetch, path, &messages, body_emitted);
                     queue_attachment_prefetch(att_prefetch, path, &messages, cache, account_id);
                     emit(WorkerEvent::Messages { folder_id, messages });
+                    // Refresh the true unread count too. IDLE only re-synced the
+                    // message list; without this the sidebar chip never moves when
+                    // new mail lands in a background (unfocused) inbox — it would
+                    // take an explicit reload / "All Inboxes" refresh to appear.
+                    if let Some(sess) = session.as_mut() {
+                        if let Some(unread) = selected_unseen(sess).await {
+                            emit(WorkerEvent::FolderUnread { folder_id, unread });
+                        }
+                    }
                 }
             }
             IdleOutcome::Refreshed

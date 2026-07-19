@@ -90,6 +90,10 @@ pub struct Sidebar {
     unified_inboxes: Vec<InboxRef>,
     /// Unread badges for the sub-list rows, by (account_id, inbox folder_id).
     unified_inbox_badges: HashMap<(u32, u32), gtk::Label>,
+    /// Inbox unread badge overlaid on each account's avatar circle, shown only
+    /// while that account's section is collapsed (its Inbox row — and normal
+    /// chip — is then hidden inside the revealer). Keyed by account_id.
+    account_circle_badges: HashMap<u32, gtk::Label>,
 }
 
 #[derive(Debug)]
@@ -241,6 +245,7 @@ impl Component for Sidebar {
             unified_inbox_list: None,
             unified_inboxes: Vec::new(),
             unified_inbox_badges: HashMap::new(),
+            account_circle_badges: HashMap::new(),
         };
 
         let widgets = view_output!();
@@ -356,6 +361,22 @@ impl Component for Sidebar {
                     label.set_text(&unified.to_string());
                     label.set_visible(unified > 0);
                 }
+                // Keep the avatar-circle badges in sync too. They only show while
+                // the account is collapsed (toggled live in ToggleCollapseLocal),
+                // so we just refresh the number and re-apply that visibility rule.
+                for section in &self.sections {
+                    if let Some(label) = self.account_circle_badges.get(&section.account.id) {
+                        let n = section
+                            .folders
+                            .iter()
+                            .find(|f| f.kind == FolderKind::Inbox)
+                            .and_then(|f| folders.get(&(section.account.id, f.id)))
+                            .copied()
+                            .unwrap_or(0);
+                        label.set_text(&n.to_string());
+                        label.set_visible(section.collapsed && n > 0);
+                    }
+                }
                 self.unified_unread = unified;
                 // Persist the fresh counts into `sections` as well. Otherwise the
                 // next rebuild_normal (e.g. toggling the sidebar collapse) recreates
@@ -402,6 +423,19 @@ impl Component for Sidebar {
                     }
                     if let Some(s) = self.sections.iter_mut().find(|s| s.account.id == id) {
                         s.collapsed = !expanded;
+                    }
+                    // The Inbox chip lives inside the folder list we just hid/shown,
+                    // so mirror it onto the avatar: visible only while collapsed.
+                    if let Some(label) = self.account_circle_badges.get(&id) {
+                        let n = self
+                            .sections
+                            .iter()
+                            .find(|s| s.account.id == id)
+                            .and_then(|s| s.folders.iter().find(|f| f.kind == FolderKind::Inbox))
+                            .map(|f| f.unread)
+                            .unwrap_or(0);
+                        label.set_text(&n.to_string());
+                        label.set_visible(!expanded && n > 0);
                     }
                     let _ = sender.output(SidebarOutput::ToggleCollapse(id));
                 }
@@ -495,6 +529,7 @@ impl Sidebar {
         self.unified_inbox_list = None;
         self.unified_inboxes.clear();
         self.unified_inbox_badges.clear();
+        self.account_circle_badges.clear();
 
         // No accounts yet: show a prompt to add the first one instead of an empty
         // sidebar (the app is blank in this state).
@@ -787,7 +822,22 @@ impl Sidebar {
                 _ => glyph.set_text(&account_initials(&name_str, &section.account.email)),
             }
             circle.append(&glyph);
-            hbox.append(&circle);
+            // While this account's section is collapsed its Inbox row (and the
+            // chip on it) is hidden inside the revealer, so surface the inbox
+            // unread count on the avatar instead — mirroring how the collapsed
+            // "All Inboxes" rail badges its icon.
+            let inbox_unread = section
+                .folders
+                .iter()
+                .find(|f| f.kind == FolderKind::Inbox)
+                .map(|f| f.unread)
+                .unwrap_or(0);
+            let (circle_overlay, circle_badge) = with_unread_overlay(&circle, inbox_unread);
+            circle_overlay.set_halign(gtk::Align::Center);
+            circle_overlay.set_hexpand(false);
+            circle_badge.set_visible(section.collapsed && inbox_unread > 0);
+            self.account_circle_badges.insert(id, circle_badge);
+            hbox.append(&circle_overlay);
 
             // Chevron is tracked even when collapsed so per-account toggles still
             // update an icon; it's only shown in the expanded layout.

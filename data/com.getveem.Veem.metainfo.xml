@@ -52,6 +52,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.4.5" date="2026-07-19" type="stable">
+      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.5</url>
+      <description>
+        <p>Sidebar unread badges now update on their own when new mail arrives in a background account, and a collapsed account shows its inbox unread count on its avatar circle.</p>
+      </description>
+    </release>
     <release version="1.4.4" date="2026-07-16" type="stable">
       <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.4</url>
       <description>
