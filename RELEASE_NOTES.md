@@ -2,7 +2,11 @@
 
 Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.5.0
+## What's new in 1.5.1
+- Conversations with unread replies no longer look "read" when collapsed. The thread's top row now keeps its unread dot — with an extra-strong highlight — until you've read every message in the conversation, so unread replies tucked under a collapsed thread can't slip past you. Read them by expanding the thread, or mark them read from the row's actions; the highlight clears the instant the last one is read.
+- New setting under Settings → Message List: "Expand conversations by default". Choose whether conversations start collapsed to their newest message (as before) or fully expanded in the list. The per-conversation arrow still works either way.
+
+## In 1.5.0
 - Reply, Reply All and Forward now open right in the reader: a compose panel drops down over the message showing just your reply — no separate window to manage. Type and send without leaving the message.
 - Want the full editor with recipient and subject fields? Click the expand button to pop the reply out into a compose window — and collapse it back inline when you're done. Your draft carries across intact, cursor position and all.
 - Switch to another message mid-reply and Veem saves your unsent draft to Drafts automatically (a reply you never touched is simply discarded). "New message" still opens its own window.

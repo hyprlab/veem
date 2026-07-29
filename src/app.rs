@@ -157,6 +157,8 @@ pub struct AppModel {
     notifications_enabled: bool,
     /// Whether messages are grouped into conversation threads.
     threading: bool,
+    /// Whether conversation threads start expanded in the message list.
+    threads_expanded: bool,
     /// How email content is themed (message content only, not the app UI).
     message_theme: config::MessageTheme,
     /// The repeating auto-fetch timer, if armed.
@@ -260,6 +262,7 @@ pub enum AppMsg {
     MarkSpam,
     SetGravatar(bool),
     SetThreading(bool),
+    SetThreadsExpanded(bool),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -808,6 +811,7 @@ impl SimpleComponent for AppModel {
             push: config::load_push(),
             notifications_enabled: config::load_notifications(),
             threading: config::load_threading(),
+            threads_expanded: config::load_threads_expanded(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
             notifications,
@@ -850,6 +854,9 @@ impl SimpleComponent for AppModel {
         model
             .message_list
             .emit(MessageListInput::SetThreading(model.threading));
+        model
+            .message_list
+            .emit(MessageListInput::SetThreadsExpanded(model.threads_expanded));
         model
             .message_list
             .emit(MessageListInput::SetPaletteCollapse(model.palette_collapse_secs));
@@ -1635,6 +1642,14 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetThreadsExpanded(on) => {
+                if self.threads_expanded != on {
+                    self.threads_expanded = on;
+                    self.save_settings();
+                    self.message_list.emit(MessageListInput::SetThreadsExpanded(on));
+                }
+            }
+
             AppMsg::SetPaletteCollapse(secs) => {
                 if self.palette_collapse_secs != secs {
                     self.palette_collapse_secs = secs;
@@ -1885,6 +1900,7 @@ impl SimpleComponent for AppModel {
                     blacklist: self.blacklist.clone(),
                     palette_collapse_secs: self.palette_collapse_secs,
                     threading: self.threading,
+                    threads_expanded: self.threads_expanded,
                     message_theme: self.message_theme,
                     notifications: self.notifications_enabled,
                 };
@@ -1898,6 +1914,7 @@ impl SimpleComponent for AppModel {
                         PrefOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
                         PrefOutput::SetGravatar(on) => AppMsg::SetGravatar(on),
                         PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
+                        PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                         PrefOutput::SetPush(on) => AppMsg::SetPush(on),
                         PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
@@ -2240,6 +2257,7 @@ impl AppModel {
             &self.blacklist,
             self.palette_collapse_secs,
             self.threading,
+            self.threads_expanded,
             self.message_theme,
             self.notifications_enabled,
         );

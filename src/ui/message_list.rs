@@ -43,6 +43,9 @@ pub struct RowInit {
     pub thread_expanded: bool,
     /// The conversation key, set on a thread head so its chevron can toggle it.
     pub thread_key: Option<(u32, String)>,
+    /// Any message in this conversation is unread (thread heads only) — keeps
+    /// the head marked unread while unread replies are hidden beneath it.
+    pub thread_unread: bool,
 }
 
 /// One message summary row.
@@ -68,6 +71,8 @@ pub struct MessageRow {
     thread_expanded: bool,
     /// Conversation key for the head's expand/collapse toggle.
     thread_key: Option<(u32, String)>,
+    /// Any message in this conversation is unread (heads only).
+    thread_unread: bool,
 }
 
 #[derive(Debug)]
@@ -88,6 +93,8 @@ pub enum MessageRowInput {
     Action(RowAction),
     /// The conversation chevron was clicked — expand/collapse the thread.
     ToggleThreadClicked,
+    /// The thread's aggregate unread state changed (a hidden reply was read).
+    SetThreadUnread(bool),
 }
 
 #[derive(Debug)]
@@ -149,7 +156,7 @@ impl FactoryComponent for MessageRow {
                 add_css_class: "unread-dot",
                 set_valign: gtk::Align::Center,
                 #[watch]
-                set_visible: self.msg.unread,
+                set_visible: self.msg.unread || self.thread_unread,
             },
 
             gtk::Box {
@@ -165,7 +172,7 @@ impl FactoryComponent for MessageRow {
                         set_hexpand: true,
                         set_ellipsize: gtk::pango::EllipsizeMode::End,
                         #[watch]
-                        set_css_classes: &sender_classes(&self.msg),
+                        set_css_classes: &self.sender_classes(),
                     },
                     gtk::Image {
                         set_icon_name: Some("com.getveem.Veem-mail-attachment-symbolic"),
@@ -207,7 +214,7 @@ impl FactoryComponent for MessageRow {
                     set_halign: gtk::Align::Start,
                     set_ellipsize: gtk::pango::EllipsizeMode::End,
                     #[watch]
-                    set_css_classes: &subject_classes(&self.msg),
+                    set_css_classes: &self.subject_classes(),
                 },
 
                 // Bottom line: a ⋯ button that slides the Actions Palette in from the
@@ -338,6 +345,7 @@ impl FactoryComponent for MessageRow {
             is_thread_child,
             thread_expanded,
             thread_key,
+            thread_unread,
         } = init;
         let mut model = Self {
             msg,
@@ -352,6 +360,7 @@ impl FactoryComponent for MessageRow {
             is_thread_child,
             thread_expanded,
             thread_key,
+            thread_unread,
         };
 
         if model.gravatar {
@@ -408,6 +417,7 @@ impl FactoryComponent for MessageRow {
                     let _ = sender.output(MessageRowOutput::ToggleThread(key));
                 }
             }
+            MessageRowInput::SetThreadUnread(unread) => self.thread_unread = unread,
         }
     }
 
@@ -474,12 +484,39 @@ impl MessageRow {
     }
 
     /// Row classes: unread highlight plus a `thread-child` indent for replies.
+    /// A thread head with unread messages anywhere in its conversation gets the
+    /// heavier `thread-unread` highlight until every one of them is read.
     fn row_css(&self) -> Vec<&'static str> {
         let mut v = row_classes(&self.msg);
+        if self.thread_unread {
+            v.push("thread-unread");
+        }
         if self.is_thread_child {
             v.push("thread-child");
         }
         v
+    }
+
+    /// Unread for display purposes: the message itself, or (on a thread head)
+    /// any message hidden in its conversation.
+    fn display_unread(&self) -> bool {
+        self.msg.unread || self.thread_unread
+    }
+
+    fn sender_classes(&self) -> Vec<&'static str> {
+        if self.display_unread() {
+            vec!["message-sender", "unread"]
+        } else {
+            vec!["message-sender"]
+        }
+    }
+
+    fn subject_classes(&self) -> Vec<&'static str> {
+        if self.display_unread() {
+            vec!["message-subject", "unread"]
+        } else {
+            vec!["message-subject"]
+        }
     }
 }
 
@@ -604,22 +641,6 @@ fn row_classes(m: &Message) -> Vec<&'static str> {
     }
 }
 
-fn sender_classes(m: &Message) -> Vec<&'static str> {
-    if m.unread {
-        vec!["message-sender", "unread"]
-    } else {
-        vec!["message-sender"]
-    }
-}
-
-fn subject_classes(m: &Message) -> Vec<&'static str> {
-    if m.unread {
-        vec!["message-subject", "unread"]
-    } else {
-        vec!["message-subject"]
-    }
-}
-
 pub struct MessageList {
     rows: FactoryVecDeque<MessageRow>,
     /// All messages for the current folder (full searchable index).
@@ -658,8 +679,16 @@ pub struct MessageList {
     selected_ids: Vec<(u32, u32)>,
     /// How many rows are currently selected (drives the bulk-action bar).
     selection_count: usize,
-    /// Conversation keys whose threads are expanded (collapsed by default).
+    /// Conversation keys the user has toggled away from the default state
+    /// (expanded when the default is collapsed, and vice versa).
     expanded_threads: std::collections::HashSet<(u32, String)>,
+    /// Whether conversations start expanded (user preference; collapsed default).
+    default_expanded: bool,
+    /// Rendered thread membership: message key → conversation key, rebuilt with
+    /// the rows. Lets a read-state change on a hidden reply refresh its head.
+    msg_thread: std::collections::HashMap<(u32, u32), (u32, String)>,
+    /// Conversation key → member message keys (multi-message threads only).
+    thread_members: std::collections::HashMap<(u32, String), Vec<(u32, u32)>>,
     /// Messages actually rendered (after the render limit), independent of how
     /// many rows are visible once threads are collapsed.
     rendered_count: usize,
@@ -742,6 +771,8 @@ pub enum MessageListInput {
     AppendMessages { messages: Vec<Message> },
     SetLoading { title: String },
     SetThreading(bool),
+    /// Whether conversations start expanded (true) or collapsed (false).
+    SetThreadsExpanded(bool),
     SetGravatar(bool),
     SetColorize(bool),
     /// The local day rolled over — re-render rows so "Today" stays accurate.
@@ -1084,6 +1115,9 @@ impl SimpleComponent for MessageList {
             selected_ids: Vec::new(),
             selection_count: 0,
             expanded_threads: std::collections::HashSet::new(),
+            default_expanded: false,
+            msg_thread: std::collections::HashMap::new(),
+            thread_members: std::collections::HashMap::new(),
             rendered_count: 0,
             scroller: None,
             sort: SortOrder::DateNewest,
@@ -1223,6 +1257,15 @@ impl SimpleComponent for MessageList {
                     self.rebuild();
                 }
             }
+            MessageListInput::SetThreadsExpanded(on) => {
+                if self.default_expanded != on {
+                    self.default_expanded = on;
+                    // Per-thread toggles were exceptions to the old default;
+                    // drop them so everything follows the new one.
+                    self.expanded_threads.clear();
+                    self.rebuild();
+                }
+            }
             MessageListInput::SetGravatar(on) => {
                 if self.gravatar != on {
                     self.gravatar = on;
@@ -1358,6 +1401,7 @@ impl SimpleComponent for MessageList {
                     self.shown[idx].unread = false;
                     self.rows.send(idx, MessageRowInput::SetRead(true));
                 }
+                self.refresh_thread_unread(id);
             }
             MessageListInput::SetRead { id, read } => {
                 if let Some(m) = self.all.iter_mut().find(|m| m.id == id) {
@@ -1367,6 +1411,7 @@ impl SimpleComponent for MessageList {
                     self.shown[idx].unread = !read;
                     self.rows.send(idx, MessageRowInput::SetRead(read));
                 }
+                self.refresh_thread_unread(id);
             }
             MessageListInput::SetStarred { id, starred } => {
                 if let Some(m) = self.all.iter_mut().find(|m| m.id == id) {
@@ -1648,6 +1693,37 @@ impl MessageList {
         }
     }
 
+    /// A message's read state changed: recompute its conversation's aggregate
+    /// unread flag and push it to the head row, so a collapsed thread's heavy
+    /// highlight clears exactly when its last unread message is read.
+    fn refresh_thread_unread(&mut self, id: u32) {
+        let Some(key) = self
+            .all
+            .iter()
+            .find(|m| m.id == id)
+            .map(|m| (m.account_id, m.id))
+        else {
+            return;
+        };
+        let Some(tkey) = self.msg_thread.get(&key) else {
+            return;
+        };
+        let Some(members) = self.thread_members.get(tkey).cloned() else {
+            return;
+        };
+        let any_unread = members
+            .iter()
+            .any(|k| self.all.iter().any(|m| (m.account_id, m.id) == *k && m.unread));
+        // The head is the first (and, when collapsed, only) member in `shown`.
+        if let Some(idx) = self
+            .shown
+            .iter()
+            .position(|m| members.contains(&(m.account_id, m.id)))
+        {
+            self.rows.send(idx, MessageRowInput::SetThreadUnread(any_unread));
+        }
+    }
+
     /// Whether a search is currently active (the query is non-empty).
     fn searching(&self) -> bool {
         !self.query.trim().is_empty()
@@ -1740,13 +1816,27 @@ impl MessageList {
             is_child: bool,
             expanded: bool,
             key: Option<(u32, String)>,
+            unread: bool,
         }
         let mut shown: Vec<Message> = Vec::new();
         let mut metas: Vec<RowMeta> = Vec::new();
+        self.msg_thread.clear();
+        self.thread_members.clear();
         for key in &order {
             let msgs = groups.remove(key).unwrap();
             let count = msgs.len();
-            let expanded = count > 1 && self.expanded_threads.contains(key);
+            // `expanded_threads` stores toggles away from the default state.
+            let expanded = count > 1 && (self.expanded_threads.contains(key) != self.default_expanded);
+            // The head stays marked unread while ANY message in its
+            // conversation is unread — hidden replies included.
+            let any_unread = count > 1 && msgs.iter().any(|m| m.unread);
+            if count > 1 {
+                let members: Vec<(u32, u32)> = msgs.iter().map(|m| (m.account_id, m.id)).collect();
+                for k in &members {
+                    self.msg_thread.insert(*k, key.clone());
+                }
+                self.thread_members.insert(key.clone(), members);
+            }
             let mut it = msgs.into_iter();
             let head = it.next().unwrap();
             shown.push(head);
@@ -1755,11 +1845,18 @@ impl MessageList {
                 is_child: false,
                 expanded,
                 key: if count > 1 { Some(key.clone()) } else { None },
+                unread: any_unread,
             });
             if expanded {
                 for child in it {
                     shown.push(child);
-                    metas.push(RowMeta { count: 0, is_child: true, expanded: false, key: None });
+                    metas.push(RowMeta {
+                        count: 0,
+                        is_child: true,
+                        expanded: false,
+                        key: None,
+                        unread: false,
+                    });
                 }
             }
         }
@@ -1783,6 +1880,7 @@ impl MessageList {
                     is_thread_child: meta.is_child,
                     thread_expanded: meta.expanded,
                     thread_key: meta.key,
+                    thread_unread: meta.unread,
                 });
             }
         }

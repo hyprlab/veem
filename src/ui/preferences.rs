@@ -18,6 +18,7 @@ pub struct PrefInit {
     pub blacklist: Vec<String>,
     pub palette_collapse_secs: u64,
     pub threading: bool,
+    pub threads_expanded: bool,
     pub message_theme: MessageTheme,
     pub notifications: bool,
 }
@@ -94,6 +95,7 @@ pub enum PrefInput {
     RemoveBlacklistRow(String),
     ToggleGravatar(bool),
     ToggleThreading(bool),
+    ToggleThreadsExpanded(bool),
     ChangeFetchInterval(u32),
     TogglePush(bool),
     ToggleNotifications(bool),
@@ -109,6 +111,7 @@ pub enum PrefOutput {
     RemoveBlacklist(String),
     SetGravatar(bool),
     SetThreading(bool),
+    SetThreadsExpanded(bool),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -181,6 +184,17 @@ impl Component for Preferences {
                             set_subtitle: "Collapse replies into a single threaded conversation.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleThreading(row.is_active()));
+                            },
+                        },
+
+                        #[name = "threads_expanded_row"]
+                        adw::SwitchRow {
+                            set_title: "Expand conversations by default",
+                            set_subtitle: "Show every message of a conversation in the list. \
+                                           When off, conversations start collapsed to their \
+                                           newest message.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleThreadsExpanded(row.is_active()));
                             },
                         },
 
@@ -333,6 +347,7 @@ impl Component for Preferences {
         widgets.push_row.set_active(init.push);
         widgets.notifications_row.set_active(init.notifications);
         widgets.threading_row.set_active(init.threading);
+        widgets.threads_expanded_row.set_active(init.threads_expanded);
 
         // Message-content appearance combo.
         let theme_labels: Vec<&str> = MESSAGE_THEMES.iter().map(|(l, _)| *l).collect();
@@ -360,6 +375,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleThreading(on) => {
                 let _ = sender.output(PrefOutput::SetThreading(on));
+            }
+            PrefInput::ToggleThreadsExpanded(on) => {
+                let _ = sender.output(PrefOutput::SetThreadsExpanded(on));
             }
             PrefInput::ChangeFetchInterval(index) => {
                 let secs = FETCH_INTERVALS

@@ -345,6 +345,17 @@ headerbar.rail-header button image {
   background-color: alpha(@accent_bg_color, 0.2);
 }
 
+/* A conversation with unread messages anywhere in it: a heavier accent than a
+   single unread message, so unread replies hidden under a collapsed head can't
+   be missed. Cleared once every message in the thread is read. */
+.message-listbox > row.thread-unread:not(:selected) {
+  background-color: alpha(@accent_bg_color, 0.28);
+}
+
+.message-listbox > row.thread-unread:hover:not(:selected) {
+  background-color: alpha(@accent_bg_color, 0.36);
+}
+
 /* Selected (currently-viewed) message: stronger accent tint than libadwaita's
    default 25%. The hover/active variants are overridden too so the highlight
    stays uniform when the cursor passes over the selected row. */

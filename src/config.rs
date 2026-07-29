@@ -341,6 +341,10 @@ struct PrivacyFile {
     /// Group messages into conversation threads in the list.
     #[serde(default = "default_threading")]
     threading: bool,
+    /// Whether conversation threads start expanded in the message list
+    /// (collapsed to their newest message by default).
+    #[serde(default)]
+    threads_expanded: bool,
     /// How email content is themed (independent of the app UI theme).
     #[serde(default)]
     message_theme: MessageTheme,
@@ -379,6 +383,7 @@ impl Default for PrivacyFile {
             blacklist: Vec::new(),
             palette_collapse_secs: default_palette_collapse(),
             threading: default_threading(),
+            threads_expanded: false,
             message_theme: MessageTheme::default(),
             notifications: default_notifications(),
         }
@@ -434,6 +439,11 @@ pub fn load_threading() -> bool {
     load_privacy().threading
 }
 
+/// Whether conversation threads start expanded (collapsed by default).
+pub fn load_threads_expanded() -> bool {
+    load_privacy().threads_expanded
+}
+
 /// How email message content is themed.
 pub fn load_message_theme() -> MessageTheme {
     load_privacy().message_theme
@@ -454,6 +464,7 @@ pub fn save_privacy(
     blacklist: &[String],
     palette_collapse_secs: u64,
     threading: bool,
+    threads_expanded: bool,
     message_theme: MessageTheme,
     notifications: bool,
 ) {
@@ -471,6 +482,7 @@ pub fn save_privacy(
         blacklist: blacklist.to_vec(),
         palette_collapse_secs,
         threading,
+        threads_expanded,
         message_theme,
         notifications,
     };
