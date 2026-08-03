@@ -13,3 +13,6 @@ cargo-sources.json
 
 # Self-hosted Flatpak distribution (signed repo, private GPG key)
 /dist/
+
+# Native package build output (tools/build-packages.sh)
+/packaging/out/

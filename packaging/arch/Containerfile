@@ -1,0 +1,7 @@
+# Build environment for the Arch package (used by tools/build-packages.sh).
+# Rebuild with --no-cache now and then so the toolchain tracks Arch rolling:
+#   podman build --no-cache -t veem-arch-builder -f packaging/arch/Containerfile
+FROM docker.io/library/archlinux:latest
+RUN pacman -Syu --noconfirm --needed base-devel rust pkgconf gtk4 libadwaita webkitgtk-6.0 openssl \
+    && useradd -m builder \
+    && pacman -Scc --noconfirm

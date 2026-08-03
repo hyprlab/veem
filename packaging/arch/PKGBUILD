@@ -1,0 +1,41 @@
+# Maintainer: Hyprlab <hyprlab@proton.me>
+#
+# Built from source inside an Arch container by tools/build-packages.sh so the
+# binary links against Arch's own libraries. Also usable standalone: makepkg
+# will download the release tarball from GitHub.
+
+pkgname=veem
+pkgver=1.5.1
+pkgrel=1
+pkgdesc="A clean, fast GNOME-native email client"
+arch=('x86_64')
+url="https://getveem.com"
+license=('AGPL-3.0-or-later')
+# makepkg's default GCC -flto on the C deps (ring) emits GIMPLE bitcode that
+# rust's lld linker can't read -> "undefined symbol" at link time
+options=('!lto' '!debug')
+depends=('gtk4' 'libadwaita' 'webkitgtk-6.0' 'openssl')
+makedepends=('rust' 'pkgconf')
+optdepends=('gnome-keyring: Secret Service provider to store passwords and OAuth tokens')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/hyprlab/veem/archive/refs/tags/v$pkgver.tar.gz")
+# tools/build-packages.sh injects a locally generated tarball (git archive),
+# whose checksum differs from GitHub's, so the sum is not pinned here.
+sha256sums=('SKIP')
+
+build() {
+    cd "$pkgname-$pkgver"
+    cargo build --release --locked
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    local appid=com.getveem.Veem
+    install -Dm755 target/release/veem "$pkgdir/usr/bin/veem"
+    install -Dm644 "data/$appid.desktop" "$pkgdir/usr/share/applications/$appid.desktop"
+    install -Dm644 "data/$appid.metainfo.xml" "$pkgdir/usr/share/metainfo/$appid.metainfo.xml"
+    for size in 256x256 512x512; do
+        install -Dm644 "data/icons/hicolor/$size/apps/$appid.png" \
+            "$pkgdir/usr/share/icons/hicolor/$size/apps/$appid.png"
+    done
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

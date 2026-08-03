@@ -1,0 +1,43 @@
+%global appid com.getveem.Veem
+# The payload is a binary built outside rpmbuild (tools/build-packages.sh),
+# so there is nothing to extract debuginfo from.
+%global debug_package %{nil}
+
+Name:           veem
+Version:        1.5.1
+Release:        1%{?dist}
+Summary:        A clean, fast GNOME-native email client
+License:        AGPL-3.0-or-later
+URL:            https://getveem.com
+Source0:        %{name}-%{version}-bin.tar
+
+# Passwords and OAuth tokens are stored via the Secret Service D-Bus API
+Recommends:     gnome-keyring
+
+%description
+Veem is a desktop email client for Wayland that feels at home in GNOME. It
+talks IMAP/SMTP directly, keeps your mail and credentials on your machine,
+and blocks trackers by default - no telemetry, no analytics.
+
+%prep
+%setup -q -n %{name}-%{version}-bin
+
+%install
+install -Dm755 veem %{buildroot}%{_bindir}/veem
+install -Dm644 %{appid}.desktop %{buildroot}%{_datadir}/applications/%{appid}.desktop
+install -Dm644 %{appid}.metainfo.xml %{buildroot}%{_datadir}/metainfo/%{appid}.metainfo.xml
+for size in 256x256 512x512; do
+    install -Dm644 icons/$size/%{appid}.png \
+        %{buildroot}%{_datadir}/icons/hicolor/$size/apps/%{appid}.png
+done
+
+%files
+%license LICENSE
+%{_bindir}/veem
+%{_datadir}/applications/%{appid}.desktop
+%{_datadir}/metainfo/%{appid}.metainfo.xml
+%{_datadir}/icons/hicolor/*/apps/%{appid}.png
+
+%changelog
+* Mon Aug 03 2026 Hyprlab <hyprlab@proton.me> - 1.5.1-1
+- Native RPM packaging (built from the prebuilt release binary)

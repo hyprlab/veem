@@ -38,6 +38,33 @@ trackers by default — no telemetry, no analytics.
 
 See **[RELEASE_NOTES.md](RELEASE_NOTES.md)** for the full list.
 
+## Installing
+
+**Flatpak (recommended)** — works on any distribution; see
+[getveem.com](https://getveem.com) for the signed Flatpak repo.
+
+**Fedora** — download the `.rpm` from the
+[latest release](https://github.com/hyprlab/veem/releases/latest) and:
+
+```sh
+sudo dnf install ./veem-*.x86_64.rpm
+```
+
+**Arch Linux** — download the `.pkg.tar.zst` from the
+[latest release](https://github.com/hyprlab/veem/releases/latest) and:
+
+```sh
+sudo pacman -U ./veem-*-x86_64.pkg.tar.zst
+```
+
+You can also build the Arch package yourself with `makepkg` from
+[`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD).
+
+The native packages target current distro releases (Fedora 44+, up-to-date
+Arch). On anything older, use the Flatpak or build from source. A Secret
+Service provider (e.g. gnome-keyring, preinstalled on GNOME) is needed at
+runtime for password storage.
+
 ## Building from source
 
 Veem needs the Rust toolchain and the GTK 4 / libadwaita / WebKitGTK 6
