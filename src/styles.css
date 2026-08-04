@@ -1,4 +1,4 @@
-/* Veem — clean, calm styling layered on top of libadwaita defaults. */
+/* Vireo — clean, calm styling layered on top of libadwaita defaults. */
 
 .app-title {
   font-weight: 700;
@@ -156,7 +156,7 @@ headerbar.rail-header button image {
   padding: 14px 12px;
 }
 
-/* Badge marking where an account comes from (GNOME Online Accounts vs Veem). */
+/* Badge marking where an account comes from (GNOME Online Accounts vs Vireo). */
 .account-source-badge {
   font-size: 0.72em;
   font-weight: 700;

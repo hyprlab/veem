@@ -129,7 +129,7 @@ impl FactoryComponent for MessageRow {
             add_controller = gtk::DragSource {
                 set_actions: gtk::gdk::DragAction::MOVE,
                 connect_prepare[aid = self.msg.account_id, fid = self.msg.folder_id, uid = self.msg.uid, id = self.msg.id] => move |_, _, _| {
-                    let payload = format!("veem-move\t{aid}\t{fid}\t{uid}\t{id}");
+                    let payload = format!("vireo-move\t{aid}\t{fid}\t{uid}\t{id}");
                     Some(gtk::gdk::ContentProvider::for_value(&payload.to_value()))
                 },
             },
@@ -175,13 +175,13 @@ impl FactoryComponent for MessageRow {
                         set_css_classes: &self.sender_classes(),
                     },
                     gtk::Image {
-                        set_icon_name: Some("com.getveem.Veem-mail-attachment-symbolic"),
+                        set_icon_name: Some("co.hyprlab.Vireo-mail-attachment-symbolic"),
                         #[watch]
                         set_visible: self.msg.has_attachment,
                         add_css_class: "dim-icon",
                     },
                     gtk::Image {
-                        set_icon_name: Some("com.getveem.Veem-starred-symbolic"),
+                        set_icon_name: Some("co.hyprlab.Vireo-starred-symbolic"),
                         #[watch]
                         set_visible: self.msg.starred,
                         add_css_class: "star-icon",
@@ -200,7 +200,7 @@ impl FactoryComponent for MessageRow {
                     },
                     gtk::Button {
                         set_visible: self.thread_count > 1,
-                        set_icon_name: if self.thread_expanded { "com.getveem.Veem-pan-down-symbolic" } else { "com.getveem.Veem-pan-end-symbolic" },
+                        set_icon_name: if self.thread_expanded { "co.hyprlab.Vireo-pan-down-symbolic" } else { "co.hyprlab.Vireo-pan-end-symbolic" },
                         set_tooltip_text: Some("Show conversation"),
                         add_css_class: "flat",
                         add_css_class: "thread-toggle",
@@ -227,7 +227,7 @@ impl FactoryComponent for MessageRow {
                     // does NOT select or open the message (it's a button, so the
                     // click is consumed before the row's selection gesture).
                     gtk::Button {
-                        set_icon_name: "com.getveem.Veem-view-more-horizontal-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-view-more-horizontal-symbolic",
                         // Hidden until the row is hovered (or the palette is open);
                         // the .revealed class fades it in via a CSS transition.
                         #[watch]
@@ -256,26 +256,26 @@ impl FactoryComponent for MessageRow {
                             },
 
                             gtk::Button {
-                                set_icon_name: "com.getveem.Veem-mail-reply-sender-symbolic",
+                                set_icon_name: "co.hyprlab.Vireo-mail-reply-sender-symbolic",
                                 set_tooltip_text: Some("Reply"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Reply)),
                             },
                             gtk::Button {
-                                set_icon_name: "com.getveem.Veem-mail-reply-all-symbolic",
+                                set_icon_name: "co.hyprlab.Vireo-mail-reply-all-symbolic",
                                 set_tooltip_text: Some("Reply All"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ReplyAll)),
                             },
                             gtk::Button {
-                                set_icon_name: "com.getveem.Veem-mail-forward-symbolic",
+                                set_icon_name: "co.hyprlab.Vireo-mail-forward-symbolic",
                                 set_tooltip_text: Some("Forward"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Forward)),
                             },
                             gtk::Button {
                                 #[watch]
-                                set_icon_name: if self.msg.starred { "com.getveem.Veem-starred-symbolic" } else { "com.getveem.Veem-non-starred-symbolic" },
+                                set_icon_name: if self.msg.starred { "co.hyprlab.Vireo-starred-symbolic" } else { "co.hyprlab.Vireo-non-starred-symbolic" },
                                 #[watch]
                                 set_tooltip_text: Some(if self.msg.starred { "Remove star" } else { "Star" }),
                                 add_css_class: "flat",
@@ -283,32 +283,32 @@ impl FactoryComponent for MessageRow {
                             },
                             gtk::Button {
                                 #[watch]
-                                set_icon_name: if self.msg.unread { "com.getveem.Veem-mail-read-symbolic" } else { "com.getveem.Veem-mail-unread-symbolic" },
+                                set_icon_name: if self.msg.unread { "co.hyprlab.Vireo-mail-read-symbolic" } else { "co.hyprlab.Vireo-mail-unread-symbolic" },
                                 #[watch]
                                 set_tooltip_text: Some(if self.msg.unread { "Mark as read" } else { "Mark as unread" }),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleRead)),
                             },
                             gtk::Button {
-                                set_icon_name: "com.getveem.Veem-mail-mark-junk-symbolic",
+                                set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
                                 set_tooltip_text: Some("Mark as spam"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Spam)),
                             },
                             gtk::Button {
-                                set_icon_name: "com.getveem.Veem-mail-archive-symbolic",
+                                set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
                                 set_tooltip_text: Some("Archive"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Archive)),
                             },
                             gtk::Button {
-                                set_icon_name: "com.getveem.Veem-user-trash-symbolic",
+                                set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
                                 set_tooltip_text: Some("Delete"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Delete)),
                             },
                             gtk::Button {
-                                set_icon_name: "com.getveem.Veem-background-app-ghost-symbolic",
+                                set_icon_name: "co.hyprlab.Vireo-background-app-ghost-symbolic",
                                 set_tooltip_text: Some("View source"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ViewSource)),
@@ -881,7 +881,7 @@ impl SimpleComponent for MessageList {
                     },
                     #[name = "sort_btn"]
                     gtk::MenuButton {
-                        set_icon_name: "com.getveem.Veem-view-sort-descending-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-view-sort-descending-symbolic",
                         set_tooltip_text: Some("Sort messages"),
                         set_valign: gtk::Align::Center,
                         add_css_class: "flat",
@@ -938,37 +938,37 @@ impl SimpleComponent for MessageList {
                         add_css_class: "bulk-count",
                     },
                     gtk::Button {
-                        set_icon_name: "com.getveem.Veem-mail-read-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-mail-read-symbolic",
                         set_tooltip_text: Some("Mark as Read"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::MarkRead),
                     },
                     gtk::Button {
-                        set_icon_name: "com.getveem.Veem-mail-unread-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-mail-unread-symbolic",
                         set_tooltip_text: Some("Mark as Unread"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::MarkUnread),
                     },
                     gtk::Button {
-                        set_icon_name: "com.getveem.Veem-starred-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-starred-symbolic",
                         set_tooltip_text: Some("Flag"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::Flag),
                     },
                     gtk::Button {
-                        set_icon_name: "com.getveem.Veem-mail-archive-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
                         set_tooltip_text: Some("Archive"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::Archive),
                     },
                     gtk::Button {
-                        set_icon_name: "com.getveem.Veem-mail-mark-junk-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
                         set_tooltip_text: Some("Mark as Spam"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::Spam),
                     },
                     gtk::Button {
-                        set_icon_name: "com.getveem.Veem-user-trash-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
                         set_tooltip_text: Some("Delete"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::Delete),
@@ -977,7 +977,7 @@ impl SimpleComponent for MessageList {
                         set_orientation: gtk::Orientation::Vertical,
                     },
                     gtk::Button {
-                        set_icon_name: "com.getveem.Veem-edit-clear-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-edit-clear-symbolic",
                         set_tooltip_text: Some("Clear selection"),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::ClearSelection,
@@ -1867,7 +1867,7 @@ impl MessageList {
             guard.clear();
             for (m, meta) in self.shown.iter().zip(metas.into_iter()) {
                 let ring_class = if self.colorize && self.account_colors.contains_key(&m.account_id) {
-                    Some(format!("veem-acct-ring-{}", m.account_id))
+                    Some(format!("vireo-acct-ring-{}", m.account_id))
                 } else {
                     None
                 };
@@ -1947,7 +1947,7 @@ impl MessageList {
         let mut css = String::new();
         for (id, color) in &self.account_colors {
             css.push_str(&format!(
-                ".veem-acct-ring-{0} {{ border-radius: 9999px; box-shadow: 0 0 0 3px {1}; }}\n",
+                ".vireo-acct-ring-{0} {{ border-radius: 9999px; box-shadow: 0 0 0 3px {1}; }}\n",
                 id, color
             ));
         }

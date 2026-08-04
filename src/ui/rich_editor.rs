@@ -21,7 +21,7 @@ impl RichEditor {
         settings.set_enable_developer_extras(false);
         webview.set_settings(&settings);
         let dark = adw::StyleManager::default().is_dark();
-        webview.load_html(&document(initial_html, dark), Some("https://veem.localhost/editor"));
+        webview.load_html(&document(initial_html, dark), Some("https://vireo.localhost/editor"));
 
         let toolbar = build_toolbar(&webview);
 
@@ -40,7 +40,7 @@ impl RichEditor {
     pub fn set_html(&self, content: &str) {
         let dark = adw::StyleManager::default().is_dark();
         self.webview
-            .load_html(&document(content, dark), Some("https://veem.localhost/editor"));
+            .load_html(&document(content, dark), Some("https://vireo.localhost/editor"));
     }
 
     pub fn grab_focus(&self) {
@@ -58,7 +58,7 @@ impl RichEditor {
     /// quote-only reply to Drafts when the reader navigates away.
     pub fn is_dirty(&self, cb: impl FnOnce(bool) + 'static) {
         self.webview.evaluate_javascript(
-            "String(!!window.__veemDirty)",
+            "String(!!window.__vireoDirty)",
             None,
             None,
             gtk::gio::Cancellable::NONE,
@@ -107,19 +107,19 @@ fn build_toolbar(webview: &webkit6::WebView) -> gtk::Box {
 
     // (icon, tooltip, execCommand snippet)
     let commands: &[(&str, &str, &str)] = &[
-        ("com.getveem.Veem-format-text-bold-symbolic", "Bold", "document.execCommand('bold')"),
-        ("com.getveem.Veem-format-text-italic-symbolic", "Italic", "document.execCommand('italic')"),
-        ("com.getveem.Veem-format-text-underline-symbolic", "Underline", "document.execCommand('underline')"),
-        ("com.getveem.Veem-format-text-strikethrough-symbolic", "Strikethrough", "document.execCommand('strikeThrough')"),
+        ("co.hyprlab.Vireo-format-text-bold-symbolic", "Bold", "document.execCommand('bold')"),
+        ("co.hyprlab.Vireo-format-text-italic-symbolic", "Italic", "document.execCommand('italic')"),
+        ("co.hyprlab.Vireo-format-text-underline-symbolic", "Underline", "document.execCommand('underline')"),
+        ("co.hyprlab.Vireo-format-text-strikethrough-symbolic", "Strikethrough", "document.execCommand('strikeThrough')"),
         ("SEP", "", ""),
-        ("com.getveem.Veem-view-list-bullet-symbolic", "Bulleted list", "document.execCommand('insertUnorderedList')"),
-        ("com.getveem.Veem-view-list-ordered-symbolic", "Numbered list", "document.execCommand('insertOrderedList')"),
+        ("co.hyprlab.Vireo-view-list-bullet-symbolic", "Bulleted list", "document.execCommand('insertUnorderedList')"),
+        ("co.hyprlab.Vireo-view-list-ordered-symbolic", "Numbered list", "document.execCommand('insertOrderedList')"),
         // Adwaita has no blockquote glyph; the indent icon reads as "quote".
-        ("com.getveem.Veem-format-indent-more-symbolic", "Quote", "document.execCommand('formatBlock',false,'blockquote')"),
+        ("co.hyprlab.Vireo-format-indent-more-symbolic", "Quote", "document.execCommand('formatBlock',false,'blockquote')"),
         // `LINK` is a sentinel command (handled specially); the icon is real.
-        ("com.getveem.Veem-insert-link-symbolic", "Insert link", "LINK"),
+        ("co.hyprlab.Vireo-insert-link-symbolic", "Insert link", "LINK"),
         ("SEP", "", ""),
-        ("com.getveem.Veem-edit-clear-symbolic", "Clear formatting", "document.execCommand('removeFormat')"),
+        ("co.hyprlab.Vireo-edit-clear-symbolic", "Clear formatting", "document.execCommand('removeFormat')"),
     ];
 
     for (icon, tip, cmd) in commands {
@@ -218,12 +218,12 @@ fn document(content: &str, dark: bool) -> String {
            body{{margin:0;padding:12px;font:14px/1.55 system-ui,sans-serif;outline:none;}}\
            blockquote{{margin:0 0 0 8px;padding-left:10px;\
              border-left:3px solid rgba(128,128,128,0.4);}}\
-           .veem-quote-attr{{opacity:0.7;margin:10px 0 4px;}}\
-           .veem-sig{{opacity:0.85;}}\
+           .vireo-quote-attr{{opacity:0.7;margin:10px 0 4px;}}\
+           .vireo-sig{{opacity:0.85;}}\
            a{{color:#3584e4;}}\
          </style>{script}\
-         <script>window.__veemDirty=false;\
-           document.addEventListener('input',function(){{window.__veemDirty=true;}},true);\
+         <script>window.__vireoDirty=false;\
+           document.addEventListener('input',function(){{window.__vireoDirty=true;}},true);\
          </script></head>\
          <body contenteditable=\"true\">{content}</body></html>"
     )

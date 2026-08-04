@@ -1,12 +1,12 @@
 [Desktop Entry]
-Name=Veem
+Name=Vireo
 GenericName=Email Client
 Comment=A clean, fast GNOME-native email client
-Exec=veem
-Icon=com.getveem.Veem
+Exec=vireo
+Icon=co.hyprlab.Vireo
 Terminal=false
 Type=Application
 Categories=GNOME;GTK;Network;Email;
 Keywords=Email;Mail;IMAP;
 StartupNotify=true
-StartupWMClass=com.getveem.Veem
+StartupWMClass=co.hyprlab.Vireo

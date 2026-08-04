@@ -1,16 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Copyright 2026 Hyprlab -->
 <component type="desktop-application">
-  <id>com.getveem.Veem</id>
+  <id>co.hyprlab.Vireo</id>
+  <!-- Vireo was called Veem through v1.5.1 -->
+  <replaces>
+    <id>com.getveem.Veem</id>
+  </replaces>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>AGPL-3.0-or-later</project_license>
 
-  <name>Veem</name>
+  <name>Vireo</name>
   <summary>Private, GNOME-native email client</summary>
 
   <description>
     <p>
-      Veem is a desktop email client for Wayland that feels at home in GNOME. It
+      Vireo is a desktop email client for Wayland that feels at home in GNOME. It
       talks IMAP and SMTP directly, keeps your mail and credentials on your
       machine, and blocks trackers by default — no telemetry, no analytics.
     </p>
@@ -26,7 +30,7 @@
     </ul>
   </description>
 
-  <launchable type="desktop-id">com.getveem.Veem.desktop</launchable>
+  <launchable type="desktop-id">co.hyprlab.Vireo.desktop</launchable>
 
   <branding>
     <color type="primary" scheme_preference="light">#99c1f1</color>
@@ -35,16 +39,16 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/hyprlab/veem/main/docs/screenshot.png</image>
+      <image>https://raw.githubusercontent.com/hyprlab/vireo/main/docs/screenshot.png</image>
       <caption>The unified inbox in light mode</caption>
     </screenshot>
   </screenshots>
 
-  <url type="homepage">https://getveem.com</url>
-  <url type="bugtracker">https://github.com/hyprlab/veem/issues</url>
-  <url type="vcs-browser">https://github.com/hyprlab/veem</url>
+  <url type="homepage">https://vireo.hyprlab.co</url>
+  <url type="bugtracker">https://github.com/hyprlab/vireo/issues</url>
+  <url type="vcs-browser">https://github.com/hyprlab/vireo</url>
 
-  <developer id="com.getveem">
+  <developer id="co.hyprlab">
     <name>Hyprlab</name>
   </developer>
   <update_contact>hyprlab@proton.me</update_contact>
@@ -52,224 +56,230 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.6.0" date="2026-08-03" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.6.0</url>
+      <description>
+        <p>Veem is now Vireo. New name, new icon, same app — renamed to avoid confusion with similarly named products. Native Fedora and Arch packages are now published alongside the Flatpak.</p>
+      </description>
+    </release>
     <release version="1.5.1" date="2026-07-28" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.5.1</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.5.1</url>
       <description>
         <p>A collapsed conversation now keeps a strong unread highlight and dot until every message in it is read, and a new setting chooses whether conversations start collapsed or expanded.</p>
       </description>
     </release>
     <release version="1.5.0" date="2026-07-19" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.5.0</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.5.0</url>
       <description>
         <p>Reply and forward now open an inline panel that drops down in the reader instead of a separate window, with a button to expand it to a full compose window and collapse it back.</p>
       </description>
     </release>
     <release version="1.4.6" date="2026-07-19" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.6</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.4.6</url>
       <description>
         <p>The message-list Actions Palette now opens from a horizontal ellipsis (⋯) button instead of a chevron.</p>
       </description>
     </release>
     <release version="1.4.5" date="2026-07-19" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.5</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.4.5</url>
       <description>
         <p>Sidebar unread badges now update on their own when new mail arrives in a background account, and a collapsed account shows its inbox unread count on its avatar circle.</p>
       </description>
     </release>
     <release version="1.4.4" date="2026-07-16" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.4</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.4.4</url>
       <description>
-        <p>Fixed messages with no Date header showing a blank date; Veem now falls back to the server's delivery date (INTERNALDATE).</p>
+        <p>Fixed messages with no Date header showing a blank date; Vireo now falls back to the server's delivery date (INTERNALDATE).</p>
       </description>
     </release>
     <release version="1.4.3" date="2026-07-15" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.3</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.4.3</url>
       <description>
         <p>Fixed contact names showing in all lowercase in the contacts browser; they now keep their proper capitalisation.</p>
       </description>
     </release>
     <release version="1.4.2" date="2026-07-15" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.2</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.4.2</url>
       <description>
         <p>Fixed GNOME Contacts integration in the Flatpak build: the contacts list is no longer empty and the "Open GNOME Contacts" button now launches the app.</p>
       </description>
     </release>
     <release version="1.4.1" date="2026-07-14" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.1</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.4.1</url>
       <description>
         <p>Fixed false attachment paperclips on iCloud newsletters and other HTML mail that have no real attachments.</p>
       </description>
     </release>
     <release version="1.4.0" date="2026-07-14" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.4.0</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.4.0</url>
       <description>
         <p>New in-message attachment drawer: a resizable, collapsible footer showing every attachment as a thumbnail grid, with a lightbox, quick Download/Open actions, and adjustable thumbnail size. The reader's attachments dropdown now shows image thumbnails with Preview / Open / Download.</p>
       </description>
     </release>
     <release version="1.3.9" date="2026-07-13" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.9</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.3.9</url>
       <description>
-        <p>Fixed the app not fetching new mail after the computer wakes from sleep — Veem now detects resume and reconnects to your mail servers immediately.</p>
+        <p>Fixed the app not fetching new mail after the computer wakes from sleep — Vireo now detects resume and reconnects to your mail servers immediately.</p>
       </description>
     </release>
     <release version="1.3.8" date="2026-07-12" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.8</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.3.8</url>
       <description>
         <p>Added a "Keyring Setup Help" entry to the About window on Linux Mint, so the keyring setup tip can be reopened after it's dismissed.</p>
       </description>
     </release>
     <release version="1.3.7" date="2026-07-12" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.7</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.3.7</url>
       <description>
         <p>Keyring save failures are now surfaced instead of silent, with a Linux Mint / Cinnamon setup tip covering how to make passwords persist and stop the keyring prompting at every login.</p>
       </description>
     </release>
     <release version="1.3.6" date="2026-07-12" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.6</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.3.6</url>
       <description>
         <p>UI icons are now embedded in the app, so they look identical on every distribution instead of changing or going missing with the host icon theme.</p>
       </description>
     </release>
     <release version="1.3.5" date="2026-07-12" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.5</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.3.5</url>
       <description>
         <p>Custom sidebar folders collapse under a per-account "Folders" section, and attachment thumbnails gain Download and Go to Message hover actions.</p>
       </description>
     </release>
     <release version="1.3.4" date="2026-07-12" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.4</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.3.4</url>
       <description>
         <p>Search and sort the attachments gallery, and see each attachment's date in its meta.</p>
       </description>
     </release>
     <release version="1.3.3" date="2026-07-12" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.3</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.3.3</url>
       <description>
         <p>Attachment gallery icons are now colour-coded by file type — PDFs red, documents blue, spreadsheets green, and more.</p>
       </description>
     </release>
     <release version="1.3.2" date="2026-07-12" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.2</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.3.2</url>
       <description>
         <p>Fixes newsletter subjects that showed as raw encoded text and stretched the window controls off-screen.</p>
       </description>
     </release>
     <release version="1.3.1" date="2026-07-12" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.1</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.3.1</url>
       <description>
         <p>The Attachments gallery now spans every folder with a responsive 4:3 grid, right-click and double-click actions, and a hover Open button.</p>
       </description>
     </release>
     <release version="1.3.0" date="2026-07-11" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.3.0</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.3.0</url>
       <description>
         <p>New Attachments gallery: browse every attachment across your inboxes in a grid, with thumbnails and a full-size preview.</p>
       </description>
     </release>
     <release version="1.2.3" date="2026-07-11" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.2.3</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.2.3</url>
       <description>
         <p>Add Account now has a provider dropdown that auto-fills sign-in and server settings for iCloud, Yahoo, Proton, Google, Microsoft and more.</p>
       </description>
     </release>
     <release version="1.2.2" date="2026-07-11" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.2.2</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.2.2</url>
       <description>
         <p>Desktop notifications for new mail and error alerts, with click-to-open and a toggle in Preferences.</p>
       </description>
     </release>
     <release version="1.2.1" date="2026-07-11" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.2.1</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.2.1</url>
       <description>
         <p>Clickable links in plain-text emails, Delete/Backspace to delete in the message list, and an account-settings shortcut in the All Inboxes context menu.</p>
       </description>
     </release>
     <release version="1.2.0" date="2026-07-11" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.2.0</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.2.0</url>
       <description>
         <p>Search now spans every folder of every account, with a selector to narrow it back to the current folder.</p>
       </description>
     </release>
     <release version="1.1.5" date="2026-07-11" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.1.5</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.1.5</url>
       <description>
         <p>Reordered the reader's message-action buttons and tightened the message list to its minimum width.</p>
       </description>
     </release>
     <release version="1.1.4" date="2026-07-10" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.1.4</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.1.4</url>
       <description>
         <p>Refreshes cached message renderings on upgrade, so mail read under an earlier version picks up the 1.1.3 body fixes.</p>
       </description>
     </release>
     <release version="1.1.3" date="2026-07-10" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.1.3</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.1.3</url>
       <description>
         <p>Photos emailed from an iPhone now render inline and appear as attachments, instead of arriving as a blank message.</p>
       </description>
     </release>
     <release version="1.1.2" date="2026-07-08" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.1.2</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.1.2</url>
       <description>
         <p>Fast, reliable mass delete/archive with correct Gmail Trash routing, plus live GNOME Online Accounts sync.</p>
       </description>
     </release>
     <release version="1.1.1" date="2026-07-07" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.1.1</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.1.1</url>
       <description>
         <p>Fixed unreliable sidebar unread badges: stale counts after collapsing the sidebar, and inaccurate STATUS-based counts for inboxes on connect.</p>
       </description>
     </release>
     <release version="1.1.0" date="2026-07-06" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.1.0</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.1.0</url>
       <description>
         <p>Compact sidebar: unread badges on inbox icons, per-account inboxes stay available when collapsed, and a narrower rail.</p>
       </description>
     </release>
     <release version="1.0.9" date="2026-07-05" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.9</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.0.9</url>
       <description>
         <p>Added a Changelog section to the About window.</p>
       </description>
     </release>
     <release version="1.0.8" date="2026-07-05" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.8</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.0.8</url>
       <description>
         <p>Quit cleanly when closing the window, fixing a spurious crash notification after the app had been running for a while.</p>
       </description>
     </release>
     <release version="1.0.7" date="2026-07-05" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.7</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.0.7</url>
       <description>
         <p>Housekeeping: tidy up in-app links and bundled sample content.</p>
       </description>
     </release>
     <release version="1.0.6" date="2026-07-05" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.6</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.0.6</url>
       <description>
         <p>First public release.</p>
       </description>
     </release>
     <release version="1.0.4" date="2026-07-05" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.4</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.0.4</url>
       <description>
         <p>Manage GNOME Online Accounts from the account editor (enable/disable instead of remove), mark each account's source in the list, and route Google sign-in through GNOME Online Accounts.</p>
       </description>
     </release>
     <release version="1.0.3" date="2026-07-05" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.3</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.0.3</url>
       <description>
         <p>Guide Google sign-in to GNOME Online Accounts from the account editor. Microsoft sign-in works out of the box.</p>
       </description>
     </release>
     <release version="1.0.2" date="2026-07-05" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.2</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.0.2</url>
       <description>
         <p>Open sign-in and links through the desktop portal, so OAuth works inside the Flatpak sandbox. Flatpak packaging.</p>
       </description>
     </release>
     <release version="1.0.1" date="2026-07-04" type="stable">
-      <url type="details">https://github.com/hyprlab/veem/releases/tag/v1.0.1</url>
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.0.1</url>
       <description>
         <p>
           First stable release: multi-account IMAP/POP with OAuth, a unified

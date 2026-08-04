@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.0 — 2026-08-03
+- **Veem is now Vireo.** The app has been renamed to avoid confusion with similarly named products (Veeam Software, Veem payments). Same app, same code, new name and a new icon.
+- App ID renamed `com.getveem.Veem` → `co.hyprlab.Vireo`; the binary is now `vireo`, and the GitHub repository moved to `hyprlab/vireo` (old URLs redirect). Distribution moved from getveem.com to https://vireo.hyprlab.co.
+- Existing data migrates automatically on native installs: `~/.config/veem` and `~/.cache/veem` are moved to their `vireo` counterparts on first launch, and keyring entries stored under the old service name are read via a fallback and moved to the new service on first use — accounts stay signed in.
+- **Flatpak installs do not carry over** (a Flatpak app's identity is its app ID): install Vireo fresh from https://vireo.hyprlab.co and remove the old Veem app. Accounts need to be re-added there (sandboxed data can't cross app IDs).
+- The `VEEM_GOOGLE_CLIENT_ID`/`VEEM_GOOGLE_CLIENT_SECRET`/`VEEM_MICROSOFT_CLIENT_ID`/`VEEM_MICROSOFT_CLIENT_SECRET` build/env overrides are now `VIREO_*`.
+- Embedded symbolic icons re-prefixed `co.hyprlab.Vireo-*` (gresource path `/co/hyprlab/Vireo`); `resources/veem.gresource.xml` → `resources/vireo.gresource.xml`.
+- Fedora RPM and Arch package (added after 1.5.1) are named `vireo` and published on the GitHub release alongside the Flatpak.
+
 ## 1.5.1 — 2026-07-28
 - A collapsed conversation now stays marked unread until every message in it is read. The thread head row carries a new aggregate `thread_unread` flag (any member unread), which keeps the unread dot and bold sender/subject visible and adds a heavier `thread-unread` accent highlight (28% vs the normal 12% for a single unread message) so unread replies hidden under a collapsed head can't be missed. Previously the head reflected only its own read state, so once the newest message was read the thread looked fully read while unread replies sat hidden beneath it.
 - The flag updates in place: the message list now records rendered thread membership (message → conversation key → members) during each rebuild, and any read-state change (`MarkRead`/`SetRead`) recomputes the conversation's aggregate unread state and pushes it to the head row — so the heavy highlight clears the moment the last unread reply is read, with no list rebuild. Opening a thread still marks only the message you opened as read; hidden replies keep their unread state until individually read (expand + select, palette, context menu, or bulk actions).

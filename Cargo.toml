@@ -1,11 +1,11 @@
 [package]
-name = "veem"
-version = "1.5.1"
+name = "vireo"
+version = "1.6.0"
 edition = "2021"
 description = "A clean, fast GNOME-native email client"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/hyprlab/veem"
-homepage = "https://getveem.com"
+repository = "https://github.com/hyprlab/vireo"
+homepage = "https://vireo.hyprlab.co"
 
 [dependencies]
 gtk = { package = "gtk4", version = "0.9", features = ["v4_10"] }

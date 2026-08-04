@@ -210,7 +210,7 @@ pub fn spawn(
     let (tx, rx) = mpsc::unbounded_channel();
 
     std::thread::Builder::new()
-        .name(format!("veem-mail-{account_id}"))
+        .name(format!("vireo-mail-{account_id}"))
         .spawn(move || {
             let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -3558,7 +3558,7 @@ fn extract_body(raw: &[u8]) -> String {
         match &part.body {
             PartType::Html(html) => inner.push_str(html),
             PartType::Text(text) if !text.trim().is_empty() => {
-                inner.push_str("<div class=\"veem-plain\">");
+                inner.push_str("<div class=\"vireo-plain\">");
                 inner.push_str(&linkify(text));
                 inner.push_str("</div>");
             }
@@ -3570,7 +3570,7 @@ fn extract_body(raw: &[u8]) -> String {
                     if let Some(left) = budget.checked_sub(bytes.len()) {
                         budget = left;
                         inner.push_str(&format!(
-                            "<img class=\"veem-inline\" src=\"data:{mime};base64,{}\">",
+                            "<img class=\"vireo-inline\" src=\"data:{mime};base64,{}\">",
                             crate::oauth::base64_encode(bytes)
                         ));
                     }
@@ -3723,8 +3723,8 @@ fn wrap_fragment(inner: &str) -> String {
         "<!doctype html><html><head><meta charset=\"utf-8\"><style>\
          body{{margin:0;padding:16px;box-sizing:border-box;\
          font:14px/1.5 system-ui,sans-serif}}\
-         .veem-plain{{white-space:pre-wrap;word-wrap:break-word}}\
-         .veem-inline{{display:block;max-width:100%;height:auto;\
+         .vireo-plain{{white-space:pre-wrap;word-wrap:break-word}}\
+         .vireo-inline{{display:block;max-width:100%;height:auto;\
          margin:12px 0;border-radius:6px}}\
          </style></head><body>{inner}</body></html>"
     )

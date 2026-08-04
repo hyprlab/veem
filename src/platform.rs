@@ -8,7 +8,7 @@
 
 use std::fs;
 
-/// Whether Veem is running inside a Flatpak sandbox.
+/// Whether Vireo is running inside a Flatpak sandbox.
 pub fn is_flatpak() -> bool {
     std::path::Path::new("/.flatpak-info").exists()
 }

@@ -1,7 +1,7 @@
 //! Account configuration.
 //!
 //! Account metadata (name, email, servers, username) lives in
-//! `~/.config/veem/accounts.toml`. Passwords are kept in the system keyring
+//! `~/.config/vireo/accounts.toml`. Passwords are kept in the system keyring
 //! (secret-service, e.g. gnome-keyring) — never written to disk. The `password`
 //! field is read from the TOML if present (older configs / manual setup) and
 //! migrated into the keyring on first use, then stripped from the file.
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// Service name used for keyring entries; password items are keyed by email.
-const KEYRING_SERVICE: &str = "com.getveem.Veem";
+const KEYRING_SERVICE: &str = "co.hyprlab.Vireo";
 
 /// Incoming-mail protocol for an account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
@@ -78,7 +78,7 @@ pub struct AccountConfig {
     #[serde(default)]
     pub goa_id: Option<String>,
     /// Authenticate with OAuth2 (XOAUTH2) instead of a stored password. The token
-    /// comes from GOA (`goa_id`) or, for accounts added directly in Veem, from
+    /// comes from GOA (`goa_id`) or, for accounts added directly in Vireo, from
     /// refreshing `oauth_settings` with the keyring-stored refresh token.
     #[serde(default)]
     pub oauth: bool,
@@ -91,7 +91,7 @@ pub struct AccountConfig {
     pub oauth_refresh: String,
 }
 
-/// OAuth2 client configuration for an account added directly in Veem.
+/// OAuth2 client configuration for an account added directly in Vireo.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct OAuthSettings {
     pub auth_url: String,
@@ -131,9 +131,9 @@ struct ConfigFile {
     accounts: Vec<AccountConfig>,
 }
 
-/// Path to the accounts config file (`~/.config/veem/accounts.toml`).
+/// Path to the accounts config file (`~/.config/vireo/accounts.toml`).
 pub fn path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("veem").join("accounts.toml"))
+    Some(dirs::config_dir()?.join("vireo").join("accounts.toml"))
 }
 
 /// Returns the configured accounts, or `None` if there is no usable config
@@ -265,12 +265,28 @@ pub fn load_smtp_password(email: &str) -> Option<String> {
 fn load_key(key: &str) -> Option<String> {
     match keyring_entry(key).and_then(|e| e.get_password()) {
         Ok(password) => Some(password),
-        Err(keyring::Error::NoEntry) => None,
+        Err(keyring::Error::NoEntry) => load_legacy_key(key),
         Err(e) => {
             tracing::warn!("could not read keyring entry for {key}: {e}");
             None
         }
     }
+}
+
+/// Keyring service name used before the 1.6.0 rename (Veem → Vireo).
+const LEGACY_KEYRING_SERVICE: &str = "com.getveem.Veem";
+
+/// Fall back to an entry stored under the pre-rename service, moving it to the
+/// current service so accounts added as Veem keep working after the rename.
+fn load_legacy_key(key: &str) -> Option<String> {
+    let old = keyring::Entry::new(LEGACY_KEYRING_SERVICE, key).ok()?;
+    let password = old.get_password().ok()?;
+    if let Ok(new) = keyring_entry(key) {
+        if new.set_password(&password).is_ok() {
+            let _ = old.delete_credential();
+        }
+    }
+    Some(password)
 }
 
 pub fn delete_password(email: &str) {
@@ -391,7 +407,7 @@ impl Default for PrivacyFile {
 }
 
 fn privacy_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("veem").join("privacy.toml"))
+    Some(dirs::config_dir()?.join("vireo").join("privacy.toml"))
 }
 
 fn load_privacy() -> PrivacyFile {
@@ -517,7 +533,7 @@ struct SidebarFile {
 }
 
 fn sidebar_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("veem").join("sidebar.toml"))
+    Some(dirs::config_dir()?.join("vireo").join("sidebar.toml"))
 }
 
 /// Sidebar state persisted across restarts.
@@ -593,7 +609,7 @@ impl Default for WindowFile {
 }
 
 fn window_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("veem").join("window.toml"))
+    Some(dirs::config_dir()?.join("vireo").join("window.toml"))
 }
 
 /// Returns the saved `(width, height, maximized)`, or sensible defaults.
@@ -638,7 +654,7 @@ struct StateFile {
 }
 
 fn state_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("veem").join("state.toml"))
+    Some(dirs::config_dir()?.join("vireo").join("state.toml"))
 }
 
 fn load_state() -> StateFile {

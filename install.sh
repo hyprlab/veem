@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install Veem for the current user: builds the release binary and installs it
+# Install Vireo for the current user: builds the release binary and installs it
 # along with the app icon and desktop entry into the XDG user prefix, so it
 # appears (with its icon) in the GNOME dash, overview, and alt-tab.
 #
@@ -8,15 +8,15 @@
 #         PREFIX=/usr ./install.sh   # system-wide (run with sudo)
 set -euo pipefail
 
-APP_ID="com.getveem.Veem"
+APP_ID="co.hyprlab.Vireo"
 PREFIX="${PREFIX:-$HOME/.local}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 echo "==> Building release binary"
 ( cd "$ROOT" && cargo build --release )
 
-echo "==> Installing binary to $PREFIX/bin/veem"
-install -Dm755 "$ROOT/target/release/veem" "$PREFIX/bin/veem"
+echo "==> Installing binary to $PREFIX/bin/vireo"
+install -Dm755 "$ROOT/target/release/vireo" "$PREFIX/bin/vireo"
 
 echo "==> Installing icons"
 for size in 256x256 512x512; do
@@ -34,4 +34,4 @@ echo "==> Updating caches"
 gtk-update-icon-cache -f -t "$PREFIX/share/icons/hicolor" 2>/dev/null || true
 update-desktop-database "$PREFIX/share/applications" 2>/dev/null || true
 
-echo "==> Done. Launch 'veem' (you may need to log out/in for the shell icon)."
+echo "==> Done. Launch 'vireo' (you may need to log out/in for the shell icon)."

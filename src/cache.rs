@@ -87,11 +87,11 @@ pub struct Cache {
 }
 
 impl Cache {
-    /// Open (creating if needed) the cache DB at `~/.local/share/veem/cache.db`.
+    /// Open (creating if needed) the cache DB at `~/.local/share/vireo/cache.db`.
     pub fn open() -> rusqlite::Result<Cache> {
         let path = dirs::data_dir()
             .unwrap_or_else(std::env::temp_dir)
-            .join("veem");
+            .join("vireo");
         let _ = std::fs::create_dir_all(&path);
         let conn = Connection::open(path.join("cache.db"))?;
 

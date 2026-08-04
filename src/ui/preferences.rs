@@ -62,7 +62,7 @@ impl FactoryComponent for SenderRow {
         adw::ActionRow {
             set_title: &self.addr,
             add_suffix = &gtk::Button {
-                set_icon_name: "com.getveem.Veem-user-trash-symbolic",
+                set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
                 set_valign: gtk::Align::Center,
                 set_tooltip_text: Some("Remove"),
                 add_css_class: "flat",
@@ -168,7 +168,7 @@ impl Component for Preferences {
                         #[name = "notifications_row"]
                         adw::SwitchRow {
                             set_title: "Desktop notifications",
-                            set_subtitle: "Show system notifications for new mail and error alerts when Veem isn't focused.",
+                            set_subtitle: "Show system notifications for new mail and error alerts when Vireo isn't focused.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleNotifications(row.is_active()));
                             },
@@ -224,7 +224,7 @@ impl Component for Preferences {
                     add = &adw::PreferencesGroup {
                         set_title: "Privacy",
                         set_description: Some(
-                            "Veem collects no telemetry and sends no analytics. Remote \
+                            "Vireo collects no telemetry and sends no analytics. Remote \
                              content (images, trackers) is blocked by default; you can allow \
                              it per message, or trust a sender to always load it."
                         ),

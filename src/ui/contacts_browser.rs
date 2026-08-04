@@ -22,7 +22,7 @@ pub fn present(parent: &impl IsA<gtk::Window>, on_choose: impl Fn(Contact) + 'st
 
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
-    let open_btn = gtk::Button::from_icon_name("com.getveem.Veem-x-office-address-book-symbolic");
+    let open_btn = gtk::Button::from_icon_name("co.hyprlab.Vireo-x-office-address-book-symbolic");
     open_btn.set_tooltip_text(Some("Open in GNOME Contacts"));
     open_btn.connect_clicked(|_| launch_gnome_contacts());
     header.pack_end(&open_btn);
@@ -44,7 +44,7 @@ pub fn present(parent: &impl IsA<gtk::Window>, on_choose: impl Fn(Contact) + 'st
 
     if contacts.is_empty() {
         let empty = adw::StatusPage::builder()
-            .icon_name("com.getveem.Veem-x-office-address-book-symbolic")
+            .icon_name("co.hyprlab.Vireo-x-office-address-book-symbolic")
             .title("No Contacts")
             .description("Add contacts in GNOME Contacts to see them here.")
             .build();

@@ -7,8 +7,8 @@
 #   tools/build-packages.sh arch       # Arch package only
 #
 # Output lands in packaging/out/:
-#   veem-<ver>-1.fc44.x86_64.rpm       - packaged from the host (Fedora) cargo build
-#   veem-<ver>-1-x86_64.pkg.tar.zst    - built from source in an Arch container (podman)
+#   vireo-<ver>-1.fc44.x86_64.rpm       - packaged from the host (Fedora) cargo build
+#   vireo-<ver>-1-x86_64.pkg.tar.zst    - built from source in an Arch container (podman)
 #
 # The RPM wraps the host-built release binary; the Arch package compiles from a
 # `git archive HEAD` tarball inside an Arch container so it links Arch's libs —
@@ -16,7 +16,7 @@
 # include uncommitted changes.
 set -euo pipefail
 
-APP_ID="com.getveem.Veem"
+APP_ID="co.hyprlab.Vireo"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/packaging/out"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
@@ -26,7 +26,7 @@ WHAT="${1:-all}"
 mkdir -p "$OUT"
 
 # Keep the version in the packaging files in lockstep with Cargo.toml
-sed -i "s/^Version:.*/Version:        $VERSION/" "$ROOT/packaging/fedora/veem.spec"
+sed -i "s/^Version:.*/Version:        $VERSION/" "$ROOT/packaging/fedora/vireo.spec"
 sed -i "s/^pkgver=.*/pkgver=$VERSION/" "$ROOT/packaging/arch/PKGBUILD"
 
 build_rpm() {
@@ -36,9 +36,9 @@ build_rpm() {
     echo "==> Staging RPM payload"
     local work stage
     work="$(mktemp -d)"
-    stage="$work/veem-$VERSION-bin"
+    stage="$work/vireo-$VERSION-bin"
     mkdir -p "$stage/icons/256x256" "$stage/icons/512x512"
-    cp "$ROOT/target/release/veem"              "$stage/veem"
+    cp "$ROOT/target/release/vireo"              "$stage/vireo"
     cp "$ROOT/LICENSE"                          "$stage/LICENSE"
     cp "$ROOT/data/$APP_ID.desktop"             "$stage/$APP_ID.desktop"
     cp "$ROOT/data/$APP_ID.metainfo.xml"        "$stage/$APP_ID.metainfo.xml"
@@ -46,28 +46,28 @@ build_rpm() {
         cp "$ROOT/data/icons/hicolor/$size/apps/$APP_ID.png" "$stage/icons/$size/$APP_ID.png"
     done
     mkdir -p "$work/rpmbuild/SOURCES"
-    tar -C "$work" -cf "$work/rpmbuild/SOURCES/veem-$VERSION-bin.tar" "veem-$VERSION-bin"
+    tar -C "$work" -cf "$work/rpmbuild/SOURCES/vireo-$VERSION-bin.tar" "vireo-$VERSION-bin"
 
     echo "==> rpmbuild"
-    rpmbuild -bb --define "_topdir $work/rpmbuild" "$ROOT/packaging/fedora/veem.spec"
-    cp "$work/rpmbuild/RPMS/x86_64/"veem-*.rpm "$OUT/"
+    rpmbuild -bb --define "_topdir $work/rpmbuild" "$ROOT/packaging/fedora/vireo.spec"
+    cp "$work/rpmbuild/RPMS/x86_64/"vireo-*.rpm "$OUT/"
     rm -rf "$work"
     echo "==> RPM done"
 }
 
 build_arch() {
-    local image=localhost/veem-arch-builder
+    local image=localhost/vireo-arch-builder
     if ! podman image exists "$image"; then
         echo "==> Building Arch builder image (one-time; refresh with podman build --no-cache)"
-        podman build -t veem-arch-builder -f "$ROOT/packaging/arch/Containerfile" "$ROOT/packaging/arch"
+        podman build -t vireo-arch-builder -f "$ROOT/packaging/arch/Containerfile" "$ROOT/packaging/arch"
     fi
 
     echo "==> Staging Arch source build"
     local work
     work="$(mktemp -d)"
     cp "$ROOT/packaging/arch/PKGBUILD" "$work/"
-    ( cd "$ROOT" && git archive --format=tar.gz --prefix="veem-$VERSION/" \
-        -o "$work/veem-$VERSION.tar.gz" HEAD )
+    ( cd "$ROOT" && git archive --format=tar.gz --prefix="vireo-$VERSION/" \
+        -o "$work/vireo-$VERSION.tar.gz" HEAD )
 
     echo "==> makepkg in Arch container (compiles from source; takes a while)"
     podman run --rm -v "$work:/build:Z" "$image" bash -c '
@@ -78,7 +78,7 @@ build_arch() {
         # Rootless podman: give the artifacts back to the host user
         chown -R 0:0 /build
     '
-    cp "$work/"veem-*.pkg.tar.zst "$OUT/"
+    cp "$work/"vireo-*.pkg.tar.zst "$OUT/"
     rm -rf "$work"
     echo "==> Arch package done"
 }

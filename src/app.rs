@@ -131,7 +131,7 @@ pub struct AppModel {
     folder_unread: HashMap<(u32, u32), u32>,
     /// The account-list split view, narrowed to icon-only width when collapsed.
     sidebar_split: Option<adw::OverlaySplitView>,
-    /// The "Veem" title label, hidden while the sidebar is collapsed.
+    /// The "Vireo" title label, hidden while the sidebar is collapsed.
     app_title: Option<gtk::Label>,
     /// Sidebar header. In the icon-only rail its window-control buttons are
     /// hidden so the header stops forcing a minimum width wider than the rail.
@@ -338,9 +338,9 @@ impl SimpleComponent for AppModel {
 
     view! {
         adw::ApplicationWindow {
-            set_title: Some("Veem"),
+            set_title: Some("Vireo"),
             set_icon_name: Some(crate::APP_ID),
-            add_css_class: "veem",
+            add_css_class: "vireo",
 
             // Persist the window size + maximized state on close. (Position and
             // which monitor can't be restored on Wayland — the compositor owns
@@ -384,17 +384,17 @@ impl SimpleComponent for AppModel {
                             #[wrap(Some)]
                             #[name = "app_title"]
                             set_title_widget = &gtk::Label {
-                                set_label: "Veem",
+                                set_label: "Vireo",
                                 add_css_class: "app-title",
                             },
                             pack_start = &gtk::Button {
-                                set_icon_name: "com.getveem.Veem-mail-message-new-symbolic",
+                                set_icon_name: "co.hyprlab.Vireo-mail-message-new-symbolic",
                                 set_tooltip_text: Some("Compose"),
                                 add_css_class: "suggested-action",
                                 connect_clicked[sender] => move |_| sender.input(AppMsg::Compose),
                             },
                             pack_end = &gtk::MenuButton {
-                                set_icon_name: "com.getveem.Veem-open-menu-symbolic",
+                                set_icon_name: "co.hyprlab.Vireo-open-menu-symbolic",
                                 set_tooltip_text: Some("Main Menu"),
                                 add_css_class: "flat",
                                 set_menu_model: Some(&model.menu),
@@ -457,9 +457,9 @@ impl SimpleComponent for AppModel {
                                         gtk::Image {
                                             #[watch]
                                             set_icon_name: Some(if model.notify_count > 0 {
-                                                "com.getveem.Veem-dialog-warning-symbolic"
+                                                "co.hyprlab.Vireo-dialog-warning-symbolic"
                                             } else {
-                                                "com.getveem.Veem-preferences-system-notifications-symbolic"
+                                                "co.hyprlab.Vireo-preferences-system-notifications-symbolic"
                                             }),
                                             #[watch]
                                             set_css_classes: if model.notify_count > 0 {
@@ -478,7 +478,7 @@ impl SimpleComponent for AppModel {
                                     },
                                 },
                                 pack_start = &gtk::Button {
-                                    set_icon_name: "com.getveem.Veem-x-office-address-book-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
                                     set_tooltip_text: Some("Open Contacts"),
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::OpenContacts),
@@ -490,7 +490,7 @@ impl SimpleComponent for AppModel {
                                     gtk::Stack {
                                         set_transition_type: gtk::StackTransitionType::Crossfade,
                                         add_named[Some("icon")] = &gtk::Image {
-                                            set_icon_name: Some("com.getveem.Veem-view-refresh-symbolic"),
+                                            set_icon_name: Some("co.hyprlab.Vireo-view-refresh-symbolic"),
                                         },
                                         add_named[Some("spinner")] = &gtk::Spinner {
                                             #[watch]
@@ -509,14 +509,14 @@ impl SimpleComponent for AppModel {
                         set_end_child = &adw::ToolbarView {
                             add_top_bar = &adw::HeaderBar {
                                 add_css_class: "flat",
-                                // Empty title so the window's "Veem" title isn't
+                                // Empty title so the window's "Vireo" title isn't
                                 // shown here; the app title lives above the sidebar.
                                 #[wrap(Some)]
                                 set_title_widget = &gtk::Label {
                                     set_label: "",
                                 },
                                 pack_start = &gtk::Button {
-                                    set_icon_name: "com.getveem.Veem-mail-reply-sender-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-mail-reply-sender-symbolic",
                                     set_tooltip_text: Some("Reply"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -524,7 +524,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Reply),
                                 },
                                 pack_start = &gtk::Button {
-                                    set_icon_name: "com.getveem.Veem-mail-reply-all-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-mail-reply-all-symbolic",
                                     set_tooltip_text: Some("Reply All"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -532,7 +532,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ReplyAll),
                                 },
                                 pack_start = &gtk::Button {
-                                    set_icon_name: "com.getveem.Veem-mail-forward-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-mail-forward-symbolic",
                                     set_tooltip_text: Some("Forward"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -540,7 +540,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Forward),
                                 },
                                 pack_start = &gtk::Button {
-                                    set_icon_name: "com.getveem.Veem-contact-new-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-contact-new-symbolic",
                                     set_tooltip_text: Some("Add sender to Contacts"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -552,9 +552,9 @@ impl SimpleComponent for AppModel {
                                     add_css_class: "flat",
                                     #[watch]
                                     set_icon_name: if model.current.as_ref().is_some_and(|m| m.starred) {
-                                        "com.getveem.Veem-starred-symbolic"
+                                        "co.hyprlab.Vireo-starred-symbolic"
                                     } else {
-                                        "com.getveem.Veem-non-starred-symbolic"
+                                        "co.hyprlab.Vireo-non-starred-symbolic"
                                     },
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
@@ -564,7 +564,7 @@ impl SimpleComponent for AppModel {
                                 // in reverse of their visual order. Left to right:
                                 // Archive, Delete, Spam, View Source.
                                 pack_end = &gtk::Button {
-                                    set_icon_name: "com.getveem.Veem-background-app-ghost-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-background-app-ghost-symbolic",
                                     set_tooltip_text: Some("View Source"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -572,7 +572,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ViewSource),
                                 },
                                 pack_end = &gtk::Button {
-                                    set_icon_name: "com.getveem.Veem-mail-mark-junk-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
                                     set_tooltip_text: Some("Mark as Spam"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -580,7 +580,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::MarkSpam),
                                 },
                                 pack_end = &gtk::Button {
-                                    set_icon_name: "com.getveem.Veem-user-trash-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
                                     set_tooltip_text: Some("Delete"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -588,7 +588,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Delete),
                                 },
                                 pack_end = &gtk::Button {
-                                    set_icon_name: "com.getveem.Veem-mail-archive-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
                                     set_tooltip_text: Some("Archive"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -606,7 +606,7 @@ impl SimpleComponent for AppModel {
                                 // Shown for messages whose attachments weren't
                                 // pre-downloaded — load them only when asked.
                                 pack_end = &gtk::Button {
-                                    set_icon_name: "com.getveem.Veem-folder-download-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-folder-download-symbolic",
                                     set_tooltip_text: Some("Load attachments from server"),
                                     add_css_class: "flat",
                                     add_css_class: "attach-present",
@@ -615,7 +615,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::LoadAttachmentsNow),
                                 },
                                 pack_end = &gtk::MenuButton {
-                                    set_icon_name: "com.getveem.Veem-mail-attachment-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-mail-attachment-symbolic",
                                     set_tooltip_text: Some("Attachments"),
                                     add_css_class: "flat",
                                     add_css_class: "attach-present",
@@ -755,7 +755,7 @@ impl SimpleComponent for AppModel {
         let menu = gtk::gio::Menu::new();
         menu.append(Some("Accounts"), Some("win.accounts"));
         menu.append(Some("Preferences"), Some("win.preferences"));
-        menu.append(Some("About Veem"), Some("win.about"));
+        menu.append(Some("About Vireo"), Some("win.about"));
 
         let mut model = AppModel {
             workers: HashMap::new(),
@@ -827,7 +827,7 @@ impl SimpleComponent for AppModel {
         };
         model.spawn_workers(&sender);
         // Watch GNOME Online Accounts so an account removed there disappears from
-        // Veem live (no restart needed); reconciliation happens on GoaChanged.
+        // Vireo live (no restart needed); reconciliation happens on GoaChanged.
         crate::goa::watch_removals({
             let s = sender.input_sender().clone();
             move || {
@@ -1819,7 +1819,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ImportGoaAccount(account) => {
-                // Enable a GNOME Online Account in Veem (or re-enable if already
+                // Enable a GNOME Online Account in Vireo (or re-enable if already
                 // imported). Its password came from GOA and is stored in the keyring.
                 let email = account.email.clone();
                 if let Some(slot) = self.config.iter_mut().find(|c| c.email == email) {
@@ -1979,7 +1979,7 @@ impl SimpleComponent for AppModel {
                 } else {
                     None
                 };
-                // Desktop-notify for genuinely new inbox mail. Only when Veem
+                // Desktop-notify for genuinely new inbox mail. Only when Vireo
                 // isn't the active window (no point notifying about mail you're
                 // watching arrive), only for the Inbox, and never on the first load
                 // of a folder (no prior cache) — that would fire for every existing
@@ -2323,7 +2323,7 @@ impl AppModel {
         // every account's slot but only spawn a worker for enabled ones — disabled
         // accounts simply have no worker (no sync, no sidebar presence). With no
         // accounts configured, the app is blank — the sample/demo data only appears
-        // when explicitly requested via VEEM_DEMO (so removing all real accounts
+        // when explicitly requested via VIREO_DEMO (so removing all real accounts
         // doesn't fall back to fake content).
         if self.config.is_empty() {
             if demo_mode() {
@@ -2647,7 +2647,7 @@ impl AppModel {
             // Preview (images only) reuses the drawer's lightbox; Download reuses
             // its file chooser; Open launches the default app.
             if thumb.is_some() {
-                let preview = action("com.getveem.Veem-system-search-symbolic", "Preview");
+                let preview = action("co.hyprlab.Vireo-system-search-symbolic", "Preview");
                 let d = self.attachment_drawer.sender().clone();
                 let pop = popover.clone();
                 preview.connect_clicked(move |_| {
@@ -2659,7 +2659,7 @@ impl AppModel {
                 row.append(&preview);
             }
 
-            let open = action("com.getveem.Veem-document-open-symbolic", "Open");
+            let open = action("co.hyprlab.Vireo-document-open-symbolic", "Open");
             let s = sender.input_sender().clone();
             let pop = popover.clone();
             open.connect_clicked(move |_| {
@@ -2670,7 +2670,7 @@ impl AppModel {
             });
             row.append(&open);
 
-            let download = action("com.getveem.Veem-folder-download-symbolic", "Download");
+            let download = action("co.hyprlab.Vireo-folder-download-symbolic", "Download");
             let d = self.attachment_drawer.sender().clone();
             let pop = popover.clone();
             download.connect_clicked(move |_| {
@@ -3254,7 +3254,7 @@ impl AppModel {
         let mint = crate::platform::is_mint_cinnamon();
 
         let heading = if problem {
-            "Veem couldn’t save your password"
+            "Vireo couldn’t save your password"
         } else {
             "Keyring setup on Linux Mint"
         };
@@ -3262,13 +3262,13 @@ impl AppModel {
         let mut body = String::new();
         if problem {
             body.push_str(
-                "Veem stores account passwords in the system keyring (the Secret \
+                "Vireo stores account passwords in the system keyring (the Secret \
                  Service), never on disk. The keyring didn’t accept the password, so \
-                 this account won’t stay signed in after you close Veem.\n\n",
+                 this account won’t stay signed in after you close Vireo.\n\n",
             );
         } else {
             body.push_str(
-                "Veem keeps your account passwords in the system keyring (the Secret \
+                "Vireo keeps your account passwords in the system keyring (the Secret \
                  Service) rather than on disk. On Linux Mint with Cinnamon the keyring \
                  sometimes needs a one-time setup so passwords persist — and so it \
                  doesn’t ask you to unlock it at every login.\n\n",
@@ -3295,7 +3295,7 @@ impl AppModel {
             if crate::platform::is_flatpak() {
                 body.push_str(
                     "\n\nNote: run these steps on the host system (not inside the \
-                     Flatpak) — Veem uses whatever keyring your desktop provides.",
+                     Flatpak) — Vireo uses whatever keyring your desktop provides.",
                 );
             }
         } else {
@@ -3596,7 +3596,7 @@ impl AppModel {
             Some(&self.window),
             Some("Remove Account?"),
             Some(&format!(
-                "Remove {label} from Veem? Its saved password is deleted. \
+                "Remove {label} from Vireo? Its saved password is deleted. \
                  Mail on the server is not affected."
             )),
         );
@@ -3621,7 +3621,7 @@ impl AppModel {
         let win = adw::Window::builder()
             .transient_for(&self.window)
             .modal(false)
-            .title("About Veem")
+            .title("About Vireo")
             .default_width(460)
             .default_height(640)
             .build();
@@ -3645,7 +3645,7 @@ impl AppModel {
         icon.set_margin_bottom(10);
         page.append(&icon);
 
-        let name = gtk::Label::new(Some("Veem"));
+        let name = gtk::Label::new(Some("Vireo"));
         name.add_css_class("title-1");
         page.append(&name);
 
@@ -3674,7 +3674,7 @@ impl AppModel {
             .subtitle(format!("What's new in {}", env!("CARGO_PKG_VERSION")))
             .activatable(true)
             .build();
-        notes_row.add_suffix(&gtk::Image::from_icon_name("com.getveem.Veem-go-next-symbolic"));
+        notes_row.add_suffix(&gtk::Image::from_icon_name("co.hyprlab.Vireo-go-next-symbolic"));
         {
             let nav = nav.clone();
             notes_row.connect_activated(move |_| nav.push_by_tag("notes"));
@@ -3686,7 +3686,7 @@ impl AppModel {
             .subtitle("Full version history")
             .activatable(true)
             .build();
-        changelog_row.add_suffix(&gtk::Image::from_icon_name("com.getveem.Veem-go-next-symbolic"));
+        changelog_row.add_suffix(&gtk::Image::from_icon_name("co.hyprlab.Vireo-go-next-symbolic"));
         {
             let nav = nav.clone();
             changelog_row.connect_activated(move |_| nav.push_by_tag("changelog"));
@@ -3701,7 +3701,7 @@ impl AppModel {
                 .subtitle("Make account passwords persist on Linux Mint")
                 .activatable(true)
                 .build();
-            keyring_row.add_suffix(&gtk::Image::from_icon_name("com.getveem.Veem-go-next-symbolic"));
+            keyring_row.add_suffix(&gtk::Image::from_icon_name("co.hyprlab.Vireo-go-next-symbolic"));
             let sender = sender.clone();
             keyring_row.connect_activated(move |_| {
                 sender.input(AppMsg::ShowKeyringHelp { problem: false });
@@ -3725,14 +3725,14 @@ impl AppModel {
         let mk_row = |title: &str, url: &str| -> adw::ActionRow {
             let row = adw::ActionRow::builder().title(title).activatable(true).build();
             row.set_tooltip_text(Some(url));
-            row.add_suffix(&gtk::Image::from_icon_name("com.getveem.Veem-adw-external-link-symbolic"));
+            row.add_suffix(&gtk::Image::from_icon_name("co.hyprlab.Vireo-adw-external-link-symbolic"));
             let u = url.to_string();
             row.connect_activated(move |_| crate::oauth::open_uri(&u));
             row
         };
-        links.append(&mk_row("Website", "https://getveem.com"));
+        links.append(&mk_row("Website", "https://vireo.hyprlab.co"));
         links.append(&mk_row("Contact — hyprlab@proton.me", "mailto:hyprlab@proton.me"));
-        links.append(&mk_row("Source Code", "https://github.com/hyprlab/veem"));
+        links.append(&mk_row("Source Code", "https://github.com/hyprlab/vireo"));
         links.append(&mk_row("License (GNU AGPL v3)", "https://www.gnu.org/licenses/agpl-3.0.html"));
 
         // Buy Me a Coffee — with a coffee-cup glyph as its leading icon.
@@ -3744,7 +3744,7 @@ impl AppModel {
         let cup = gtk::Label::new(Some("☕"));
         cup.add_css_class("about-coffee");
         coffee.add_prefix(&cup);
-        coffee.add_suffix(&gtk::Image::from_icon_name("com.getveem.Veem-adw-external-link-symbolic"));
+        coffee.add_suffix(&gtk::Image::from_icon_name("co.hyprlab.Vireo-adw-external-link-symbolic"));
         coffee.connect_activated(move |_| crate::oauth::open_uri("https://buymeacoffee.com/hyprlab"));
         links.append(&coffee);
         page.append(&links);
@@ -3769,7 +3769,7 @@ impl AppModel {
         main_tv.set_content(Some(&scroller));
         nav.add(
             &adw::NavigationPage::builder()
-                .title("About Veem")
+                .title("About Vireo")
                 .tag("main")
                 .child(&main_tv)
                 .build(),
@@ -4129,9 +4129,9 @@ fn notes_page(title: &str, tag: &str, markup: &str) -> adw::NavigationPage {
 }
 
 /// Whether to serve the built-in sample/demo data (for screenshots). Off unless
-/// `VEEM_DEMO` is set, so removing all real accounts leaves the app blank.
+/// `VIREO_DEMO` is set, so removing all real accounts leaves the app blank.
 fn demo_mode() -> bool {
-    std::env::var_os("VEEM_DEMO").is_some()
+    std::env::var_os("VIREO_DEMO").is_some()
 }
 
 /// Drop imported accounts whose GNOME Online Account no longer exists (removed or
@@ -4180,7 +4180,7 @@ fn set_sidebar_header_compact(header: &adw::HeaderBar, compact: bool) {
 }
 
 fn open_attachment(att: &Attachment) {
-    let dir = std::env::temp_dir().join("veem-attachments");
+    let dir = std::env::temp_dir().join("vireo-attachments");
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
@@ -4213,15 +4213,15 @@ fn save_all_attachments(atts: Vec<Attachment>, parent: Option<adw::ApplicationWi
 
 /// Register the app icon so windows and dialogs can find it by name.
 ///
-/// Veem's toolbar/list icons are shipped inside the binary as a GResource
+/// Vireo's toolbar/list icons are shipped inside the binary as a GResource
 /// (registered in `main`), so they no longer depend on the host icon theme.
-/// GTK auto-adds the bundle's resource path (`/com/getveem/Veem/icons`) to the
+/// GTK auto-adds the bundle's resource path (`/co/hyprlab/Vireo/icons`) to the
 /// default theme; we add it explicitly too, so lookups work even if that
 /// convention ever changes.
 fn register_icons() {
     if let Some(display) = gtk::gdk::Display::default() {
         let theme = gtk::IconTheme::for_display(&display);
-        theme.add_resource_path("/com/getveem/Veem/icons");
+        theme.add_resource_path("/co/hyprlab/Vireo/icons");
         // Dev-only: lets the window/about app icon resolve when running from the
         // source tree (uninstalled). Silently ignored on installed systems.
         theme.add_search_path(concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons"));
@@ -4335,7 +4335,7 @@ fn quote_block(attribution: &str, text: &str) -> String {
             .replace('\n', "<br>")
     };
     format!(
-        "<p class=\"veem-quote-attr\">{}</p><blockquote>{}</blockquote>",
+        "<p class=\"vireo-quote-attr\">{}</p><blockquote>{}</blockquote>",
         esc(attribution),
         esc(text)
     )

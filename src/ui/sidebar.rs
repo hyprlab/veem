@@ -198,7 +198,7 @@ impl Component for Sidebar {
 
                 #[name = "collapse_btn"]
                 gtk::Button {
-                    set_icon_name: "com.getveem.Veem-go-previous-symbolic",
+                    set_icon_name: "co.hyprlab.Vireo-go-previous-symbolic",
                     set_tooltip_text: Some("Collapse sidebar"),
                     set_hexpand: true,
                     add_css_class: "flat",
@@ -250,7 +250,7 @@ impl Component for Sidebar {
 
         let widgets = view_output!();
         if init {
-            widgets.collapse_btn.set_icon_name("com.getveem.Veem-go-next-symbolic");
+            widgets.collapse_btn.set_icon_name("co.hyprlab.Vireo-go-next-symbolic");
             widgets.collapse_btn.set_tooltip_text(Some("Expand sidebar"));
         }
 
@@ -321,9 +321,9 @@ impl Component for Sidebar {
                 }
                 if let Some(ch) = &self.unified_chevron {
                     ch.set_icon_name(Some(if self.unified_expanded {
-                        "com.getveem.Veem-pan-down-symbolic"
+                        "co.hyprlab.Vireo-pan-down-symbolic"
                     } else {
-                        "com.getveem.Veem-pan-end-symbolic"
+                        "co.hyprlab.Vireo-pan-end-symbolic"
                     }));
                 }
             }
@@ -396,9 +396,9 @@ impl Component for Sidebar {
             SidebarInput::ToggleCollapsed => {
                 self.collapsed = !self.collapsed;
                 widgets.collapse_btn.set_icon_name(if self.collapsed {
-                    "com.getveem.Veem-go-next-symbolic"
+                    "co.hyprlab.Vireo-go-next-symbolic"
                 } else {
-                    "com.getveem.Veem-go-previous-symbolic"
+                    "co.hyprlab.Vireo-go-previous-symbolic"
                 });
                 widgets.collapse_btn.set_tooltip_text(Some(if self.collapsed {
                     "Expand sidebar"
@@ -416,9 +416,9 @@ impl Component for Sidebar {
                     rev.set_reveal_child(expanded);
                     if let Some(ch) = self.chevrons.get(&id) {
                         ch.set_icon_name(Some(if expanded {
-                            "com.getveem.Veem-pan-down-symbolic"
+                            "co.hyprlab.Vireo-pan-down-symbolic"
                         } else {
-                            "com.getveem.Veem-pan-end-symbolic"
+                            "co.hyprlab.Vireo-pan-end-symbolic"
                         }));
                     }
                     if let Some(s) = self.sections.iter_mut().find(|s| s.account.id == id) {
@@ -447,9 +447,9 @@ impl Component for Sidebar {
                     rev.set_reveal_child(expanded);
                     if let Some(ch) = self.custom_chevrons.get(&id) {
                         ch.set_icon_name(Some(if expanded {
-                            "com.getveem.Veem-pan-down-symbolic"
+                            "co.hyprlab.Vireo-pan-down-symbolic"
                         } else {
-                            "com.getveem.Veem-pan-end-symbolic"
+                            "co.hyprlab.Vireo-pan-end-symbolic"
                         }));
                     }
                     if let Some(s) = self.sections.iter_mut().find(|s| s.account.id == id) {
@@ -465,7 +465,7 @@ impl Component for Sidebar {
                     if !rev.reveals_child() {
                         rev.set_reveal_child(true);
                         if let Some(ch) = self.chevrons.get(&id) {
-                            ch.set_icon_name(Some("com.getveem.Veem-pan-down-symbolic"));
+                            ch.set_icon_name(Some("co.hyprlab.Vireo-pan-down-symbolic"));
                         }
                         if let Some(s) = self.sections.iter_mut().find(|s| s.account.id == id) {
                             s.collapsed = false;
@@ -477,7 +477,7 @@ impl Component for Sidebar {
 
             SidebarInput::DropOnFolder { account_id: dest_account, path: dest, payload } => {
                 let parts: Vec<&str> = payload.split('\t').collect();
-                if parts.len() == 5 && parts[0] == "veem-move" {
+                if parts.len() == 5 && parts[0] == "vireo-move" {
                     if let (Ok(aid), Ok(fid), Ok(uid), Ok(id)) = (
                         parts[1].parse::<u32>(),
                         parts[2].parse::<u32>(),
@@ -544,13 +544,13 @@ impl Sidebar {
                 let _ = s.output(SidebarOutput::AddAccount);
             });
             if self.collapsed {
-                add.set_icon_name("com.getveem.Veem-list-add-symbolic");
+                add.set_icon_name("co.hyprlab.Vireo-list-add-symbolic");
                 add.set_tooltip_text(Some("Add account"));
                 add.set_margin_top(12);
                 container.append(&add);
             } else {
                 let label_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-                label_box.append(&gtk::Image::from_icon_name("com.getveem.Veem-list-add-symbolic"));
+                label_box.append(&gtk::Image::from_icon_name("co.hyprlab.Vireo-list-add-symbolic"));
                 label_box.append(&gtk::Label::new(Some("Add first account")));
                 add.set_child(Some(&label_box));
                 let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -578,7 +578,7 @@ impl Sidebar {
             let row = gtk::ListBoxRow::new();
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
             hbox.add_css_class("folder-row");
-            let img = gtk::Image::from_icon_name("com.getveem.Veem-mail-inbox-symbolic");
+            let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-inbox-symbolic");
             img.add_css_class("folder-icon");
             if self.collapsed {
                 hbox.set_halign(gtk::Align::Center);
@@ -608,9 +608,9 @@ impl Sidebar {
 
                 // Disclosure chevron toggling the per-account inbox sub-list.
                 let chevron = gtk::Image::from_icon_name(if self.unified_expanded {
-                    "com.getveem.Veem-pan-down-symbolic"
+                    "co.hyprlab.Vireo-pan-down-symbolic"
                 } else {
-                    "com.getveem.Veem-pan-end-symbolic"
+                    "co.hyprlab.Vireo-pan-end-symbolic"
                 });
                 let chev_btn = gtk::Button::new();
                 chev_btn.set_child(Some(&chevron));
@@ -666,9 +666,9 @@ impl Sidebar {
                     toggle.set_halign(gtk::Align::Center);
                     toggle.set_tooltip_text(Some("Show each inbox"));
                     let chevron = gtk::Image::from_icon_name(if self.unified_expanded {
-                        "com.getveem.Veem-pan-down-symbolic"
+                        "co.hyprlab.Vireo-pan-down-symbolic"
                     } else {
-                        "com.getveem.Veem-pan-end-symbolic"
+                        "co.hyprlab.Vireo-pan-end-symbolic"
                     });
                     toggle.set_child(Some(&chevron));
                     let cs = sender.input_sender().clone();
@@ -758,7 +758,7 @@ impl Sidebar {
             let row = gtk::ListBoxRow::new();
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
             hbox.add_css_class("folder-row");
-            let img = gtk::Image::from_icon_name("com.getveem.Veem-mail-attachment-symbolic");
+            let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-attachment-symbolic");
             img.add_css_class("folder-icon");
             if self.collapsed {
                 hbox.set_halign(gtk::Align::Center);
@@ -842,9 +842,9 @@ impl Sidebar {
             // Chevron is tracked even when collapsed so per-account toggles still
             // update an icon; it's only shown in the expanded layout.
             let chevron = gtk::Image::from_icon_name(if section.collapsed {
-                "com.getveem.Veem-pan-end-symbolic"
+                "co.hyprlab.Vireo-pan-end-symbolic"
             } else {
-                "com.getveem.Veem-pan-down-symbolic"
+                "co.hyprlab.Vireo-pan-down-symbolic"
             });
             chevron.set_valign(gtk::Align::Center);
 
@@ -985,9 +985,9 @@ impl Sidebar {
             custom_list.add_css_class("navigation-sidebar");
             let custom_revealer = gtk::Revealer::new();
             let custom_chevron = gtk::Image::from_icon_name(if section.custom_expanded {
-                "com.getveem.Veem-pan-down-symbolic"
+                "co.hyprlab.Vireo-pan-down-symbolic"
             } else {
-                "com.getveem.Veem-pan-end-symbolic"
+                "co.hyprlab.Vireo-pan-end-symbolic"
             });
             let folders_toggle = gtk::Button::new();
             if !custom.is_empty() {
@@ -1027,7 +1027,7 @@ impl Sidebar {
                 hb.add_css_class("folder-row");
                 if self.collapsed {
                     hb.set_halign(gtk::Align::Center);
-                    hb.append(&gtk::Image::from_icon_name("com.getveem.Veem-folder-symbolic"));
+                    hb.append(&gtk::Image::from_icon_name("co.hyprlab.Vireo-folder-symbolic"));
                     folders_toggle.set_tooltip_text(Some("Folders"));
                 } else {
                     hb.append(&custom_chevron);
@@ -1049,7 +1049,7 @@ impl Sidebar {
             add_btn.add_css_class("add-folder-btn");
             let add_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             add_box.add_css_class("folder-row");
-            add_box.append(&gtk::Image::from_icon_name("com.getveem.Veem-list-add-symbolic"));
+            add_box.append(&gtk::Image::from_icon_name("co.hyprlab.Vireo-list-add-symbolic"));
             if self.collapsed {
                 add_box.set_halign(gtk::Align::Center);
                 add_btn.set_tooltip_text(Some("Add Folder"));

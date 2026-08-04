@@ -1,8 +1,17 @@
-# Veem
+# Vireo
 
-Veem is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
+Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.5.1
+## What's new in 1.6.0
+
+**Veem is now Vireo.** We've renamed the app — the old name was too easily confused with other products. It's the same app underneath, with a new name and a fresh icon.
+
+- **If you installed the Flatpak:** install Vireo fresh from [vireo.hyprlab.co](https://vireo.hyprlab.co), then remove the old Veem app. Because a Flatpak's identity is its ID, the old install can't be updated in place and your accounts need to be added again there — passwords stay safe in your system keyring, and your mail is on the server.
+- **If you installed the RPM, Arch package, or built from source:** just install the new `vireo` package — your accounts, settings and cached mail move over automatically the first time Vireo starts.
+- Fedora and Arch Linux packages are now published with every release, alongside the Flatpak.
+- The website has moved to [vireo.hyprlab.co](https://vireo.hyprlab.co); getveem.com now redirects there.
+
+## In 1.5.1
 - Conversations with unread replies no longer look "read" when collapsed. The thread's top row now keeps its unread dot — with an extra-strong highlight — until you've read every message in the conversation, so unread replies tucked under a collapsed thread can't slip past you. Read them by expanding the thread, or mark them read from the row's actions; the highlight clears the instant the last one is read.
 - New setting under Settings → Message List: "Expand conversations by default". Choose whether conversations start collapsed to their newest message (as before) or fully expanded in the list. The per-conversation arrow still works either way.
 

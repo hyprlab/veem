@@ -126,25 +126,25 @@ impl Component for MessageWindow {
                         set_ellipsize: gtk::pango::EllipsizeMode::End,
                     },
                     pack_start = &gtk::Button {
-                        set_icon_name: "com.getveem.Veem-mail-reply-sender-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-mail-reply-sender-symbolic",
                         set_tooltip_text: Some("Reply"),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::Reply,
                     },
                     pack_start = &gtk::Button {
-                        set_icon_name: "com.getveem.Veem-mail-reply-all-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-mail-reply-all-symbolic",
                         set_tooltip_text: Some("Reply All"),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::ReplyAll,
                     },
                     pack_start = &gtk::Button {
-                        set_icon_name: "com.getveem.Veem-mail-forward-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-mail-forward-symbolic",
                         set_tooltip_text: Some("Forward"),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::Forward,
                     },
                     pack_start = &gtk::Button {
-                        set_icon_name: "com.getveem.Veem-contact-new-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-contact-new-symbolic",
                         set_tooltip_text: Some("Add sender to Contacts"),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::AddToContacts,
@@ -154,32 +154,32 @@ impl Component for MessageWindow {
                         add_css_class: "flat",
                         #[watch]
                         set_icon_name: if model.msg.starred {
-                            "com.getveem.Veem-starred-symbolic"
+                            "co.hyprlab.Vireo-starred-symbolic"
                         } else {
-                            "com.getveem.Veem-non-starred-symbolic"
+                            "co.hyprlab.Vireo-non-starred-symbolic"
                         },
                         connect_clicked => MessageWindowInput::ToggleStar,
                     },
                     pack_end = &gtk::Button {
-                        set_icon_name: "com.getveem.Veem-user-trash-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
                         set_tooltip_text: Some("Delete"),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::Delete,
                     },
                     pack_end = &gtk::Button {
-                        set_icon_name: "com.getveem.Veem-background-app-ghost-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-background-app-ghost-symbolic",
                         set_tooltip_text: Some("View Source"),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::ViewSource,
                     },
                     pack_end = &gtk::Button {
-                        set_icon_name: "com.getveem.Veem-mail-mark-junk-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
                         set_tooltip_text: Some("Mark as Spam"),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::Spam,
                     },
                     pack_end = &gtk::Button {
-                        set_icon_name: "com.getveem.Veem-mail-archive-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
                         set_tooltip_text: Some("Archive"),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::Archive,
@@ -193,7 +193,7 @@ impl Component for MessageWindow {
                         set_visible: model.attachments_loading,
                     },
                     pack_end = &gtk::Button {
-                        set_icon_name: "com.getveem.Veem-folder-download-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-folder-download-symbolic",
                         set_tooltip_text: Some("Load attachments from server"),
                         add_css_class: "flat",
                         add_css_class: "attach-present",
@@ -202,7 +202,7 @@ impl Component for MessageWindow {
                         connect_clicked => MessageWindowInput::LoadAttachmentsNow,
                     },
                     pack_end = &gtk::MenuButton {
-                        set_icon_name: "com.getveem.Veem-mail-attachment-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-mail-attachment-symbolic",
                         set_tooltip_text: Some("Attachments"),
                         add_css_class: "flat",
                         add_css_class: "attach-present",

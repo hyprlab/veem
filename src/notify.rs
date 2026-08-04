@@ -34,7 +34,7 @@ fn compose_new_mail(from: &str, subject: &str, others: usize) -> (String, String
 /// Notification id for an account's new-mail toast (one per account, so a later
 /// batch replaces the previous rather than stacking).
 fn mail_id(account_id: u32) -> String {
-    format!("veem-mail-{account_id}")
+    format!("vireo-mail-{account_id}")
 }
 
 /// Post (or replace) the new-mail notification for an account. Clicking it opens
@@ -71,7 +71,7 @@ pub fn error(account_id: u32, title: &str, body: &str) {
     }
     n.set_priority(gio::NotificationPriority::High);
     n.set_default_action(&format!("app.{PRESENT_ACTION}"));
-    send(&format!("veem-error-{account_id}"), &n);
+    send(&format!("vireo-error-{account_id}"), &n);
 }
 
 fn send(id: &str, notification: &gio::Notification) {

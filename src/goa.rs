@@ -2,9 +2,9 @@
 //!
 //! Reads mail-capable accounts configured in GNOME Settings → Online Accounts via
 //! the `org.gnome.OnlineAccounts` D-Bus service (session bus), so the user can
-//! enable them in Veem without re-entering server settings. Password-based
+//! enable them in Vireo without re-entering server settings. Password-based
 //! providers (generic IMAP/SMTP) have their password retrieved from GOA and stored
-//! in Veem's keyring on import; OAuth2 providers (Gmail, Microsoft) authenticate
+//! in Vireo's keyring on import; OAuth2 providers (Gmail, Microsoft) authenticate
 //! with a GOA-issued access token (XOAUTH2) fetched fresh at connect time.
 
 use std::collections::HashMap;
@@ -45,7 +45,7 @@ pub struct GoaMailAccount {
 }
 
 impl GoaMailAccount {
-    /// Turn a discovered GOA account into a Veem [`AccountConfig`]. Pass the
+    /// Turn a discovered GOA account into a Vireo [`AccountConfig`]. Pass the
     /// password for password-based providers, or `oauth = true` for OAuth ones
     /// (the token is fetched from GOA at connect time).
     pub fn to_config(&self, password: String, oauth: bool) -> AccountConfig {
@@ -214,7 +214,7 @@ pub fn live_account_ids() -> Option<std::collections::HashSet<String>> {
 
 /// Watch GNOME Online Accounts for account/interface removals, invoking
 /// `on_change` on each. Runs on a dedicated thread; silently no-ops if GOA or the
-/// session bus is unavailable. Lets Veem prune accounts removed in GNOME Settings
+/// session bus is unavailable. Lets Vireo prune accounts removed in GNOME Settings
 /// without a restart.
 pub fn watch_removals<F: Fn() + Send + 'static>(on_change: F) {
     let _ = std::thread::Builder::new()

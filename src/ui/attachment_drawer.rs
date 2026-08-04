@@ -122,9 +122,9 @@ impl SimpleComponent for AttachmentDrawer {
                         set_valign: gtk::Align::Center,
                         #[watch]
                         set_icon_name: if model.collapsed {
-                            "com.getveem.Veem-pan-up-symbolic"
+                            "co.hyprlab.Vireo-pan-up-symbolic"
                         } else {
-                            "com.getveem.Veem-pan-down-symbolic"
+                            "co.hyprlab.Vireo-pan-down-symbolic"
                         },
                         #[watch]
                         set_tooltip_text: Some(if model.collapsed {
@@ -137,7 +137,7 @@ impl SimpleComponent for AttachmentDrawer {
                         },
                     },
                     gtk::Image {
-                        set_icon_name: Some("com.getveem.Veem-mail-attachment-symbolic"),
+                        set_icon_name: Some("co.hyprlab.Vireo-mail-attachment-symbolic"),
                         add_css_class: "dim-label",
                     },
                     gtk::Label {
@@ -151,7 +151,7 @@ impl SimpleComponent for AttachmentDrawer {
                     },
                     gtk::Box { set_hexpand: true },
                     gtk::Image {
-                        set_icon_name: Some("com.getveem.Veem-image-x-generic-symbolic"),
+                        set_icon_name: Some("co.hyprlab.Vireo-image-x-generic-symbolic"),
                         add_css_class: "dim-label",
                         set_pixel_size: 12,
                         // The size slider is meaningless with the grid hidden.
@@ -174,7 +174,7 @@ impl SimpleComponent for AttachmentDrawer {
                         },
                     },
                     gtk::Image {
-                        set_icon_name: Some("com.getveem.Veem-image-x-generic-symbolic"),
+                        set_icon_name: Some("co.hyprlab.Vireo-image-x-generic-symbolic"),
                         add_css_class: "dim-label",
                         set_pixel_size: 22,
                         #[watch]
@@ -419,7 +419,7 @@ impl AttachmentDrawer {
             b
         };
 
-        let open = item("com.getveem.Veem-document-open-symbolic", "Open");
+        let open = item("co.hyprlab.Vireo-document-open-symbolic", "Open");
         let s = sender.clone();
         let menu = self.menu.clone();
         open.connect_clicked(move |_| {
@@ -428,7 +428,7 @@ impl AttachmentDrawer {
         });
         list.append(&open);
 
-        let download = item("com.getveem.Veem-folder-download-symbolic", "Download…");
+        let download = item("co.hyprlab.Vireo-folder-download-symbolic", "Download…");
         let s = sender.clone();
         let menu = self.menu.clone();
         download.connect_clicked(move |_| {
@@ -484,7 +484,7 @@ impl AttachmentDrawer {
         title.add_css_class("gallery-lightbox-title");
         title.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         top.set_center_widget(Some(&title));
-        let close = gtk::Button::from_icon_name("com.getveem.Veem-window-close-symbolic");
+        let close = gtk::Button::from_icon_name("co.hyprlab.Vireo-window-close-symbolic");
         close.add_css_class("flat");
         close.add_css_class("circular");
         close.set_tooltip_text(Some("Close"));
@@ -496,12 +496,12 @@ impl AttachmentDrawer {
         // Middle: prev · picture · next.
         let mid = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         mid.set_vexpand(true);
-        let prev = nav_button("com.getveem.Veem-go-previous-symbolic", "Previous");
+        let prev = nav_button("co.hyprlab.Vireo-go-previous-symbolic", "Previous");
         let picture = gtk::Picture::new();
         picture.set_hexpand(true);
         picture.set_vexpand(true);
         picture.set_content_fit(gtk::ContentFit::Contain);
-        let next = nav_button("com.getveem.Veem-go-next-symbolic", "Next");
+        let next = nav_button("co.hyprlab.Vireo-go-next-symbolic", "Next");
         let multi = images.len() > 1;
         prev.set_visible(multi);
         next.set_visible(multi);
@@ -517,10 +517,10 @@ impl AttachmentDrawer {
         caption.add_css_class("dim-label");
         bottom.set_center_widget(Some(&caption));
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let open_btn = gtk::Button::from_icon_name("com.getveem.Veem-document-open-symbolic");
+        let open_btn = gtk::Button::from_icon_name("co.hyprlab.Vireo-document-open-symbolic");
         open_btn.add_css_class("flat");
         open_btn.set_tooltip_text(Some("Open"));
-        let download_btn = gtk::Button::from_icon_name("com.getveem.Veem-folder-download-symbolic");
+        let download_btn = gtk::Button::from_icon_name("co.hyprlab.Vireo-folder-download-symbolic");
         download_btn.add_css_class("flat");
         download_btn.set_tooltip_text(Some("Download…"));
         actions.append(&open_btn);
@@ -700,11 +700,11 @@ fn build_cell(
         b.set_tooltip_text(Some(tip));
         b
     };
-    let download = action_btn("com.getveem.Veem-folder-download-symbolic", "Download");
+    let download = action_btn("co.hyprlab.Vireo-folder-download-symbolic", "Download");
     let s = sender.clone();
     download.connect_clicked(move |_| s.input(AttachmentDrawerInput::Download(index)));
     actions.append(&download);
-    let open = action_btn("com.getveem.Veem-document-open-symbolic", "Open");
+    let open = action_btn("co.hyprlab.Vireo-document-open-symbolic", "Open");
     let s = sender.clone();
     open.connect_clicked(move |_| s.input(AttachmentDrawerInput::Open(index)));
     actions.append(&open);
@@ -769,7 +769,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for SquareBox {
-        const NAME: &'static str = "VeemSquareBox";
+        const NAME: &'static str = "VireoSquareBox";
         type Type = super::SquareBox;
         type ParentType = gtk::Widget;
     }

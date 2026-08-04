@@ -1,21 +1,21 @@
-# Flatpak manifest for Veem — builds the self-hosted Flatpak distributed from
-# getveem.com. (The GNOME runtime + SDK below come from the flathub *remote* — that
-# is just where the org.gnome.Platform runtime is hosted; Veem itself is not on
+# Flatpak manifest for Vireo — builds the self-hosted Flatpak distributed from
+# vireo.hyprlab.co. (The GNOME runtime + SDK below come from the flathub *remote* — that
+# is just where the org.gnome.Platform runtime is hosted; Vireo itself is not on
 # Flathub.)
 #
 # Local test build (both tools are already installed):
 #   python3 flatpak-cargo-generator.py Cargo.lock -o cargo-sources.json
 #   flatpak install flathub org.gnome.Sdk//50 org.gnome.Platform//50 \
 #       org.freedesktop.Sdk.Extension.rust-stable//25.08
-#   flatpak-builder --user --install --force-clean build-dir com.getveem.Veem.yml
-#   flatpak run com.getveem.Veem
-id: com.getveem.Veem
+#   flatpak-builder --user --install --force-clean build-dir co.hyprlab.Vireo.yml
+#   flatpak run co.hyprlab.Vireo
+id: co.hyprlab.Vireo
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
-command: veem
+command: vireo
 
 finish-args:
   - --share=ipc
@@ -38,25 +38,25 @@ finish-args:
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:
-    CARGO_HOME: /run/build/veem/cargo
+    CARGO_HOME: /run/build/vireo/cargo
     # No Google OAuth client is bundled — Google sign-in goes through GNOME Online
     # Accounts (the account editor guides users there). Microsoft's client ID is
     # built into the source and works out of the box.
 
 modules:
-  - name: veem
+  - name: vireo
     buildsystem: simple
     build-commands:
       - cargo --offline fetch --manifest-path Cargo.toml --verbose
       - cargo --offline build --release --verbose
-      - install -Dm755 target/release/veem /app/bin/veem
-      - install -Dm644 data/com.getveem.Veem.desktop /app/share/applications/com.getveem.Veem.desktop
-      - install -Dm644 data/icons/hicolor/256x256/apps/com.getveem.Veem.png /app/share/icons/hicolor/256x256/apps/com.getveem.Veem.png
-      - install -Dm644 data/icons/hicolor/512x512/apps/com.getveem.Veem.png /app/share/icons/hicolor/512x512/apps/com.getveem.Veem.png
-      - install -Dm644 data/com.getveem.Veem.metainfo.xml /app/share/metainfo/com.getveem.Veem.metainfo.xml
+      - install -Dm755 target/release/vireo /app/bin/vireo
+      - install -Dm644 data/co.hyprlab.Vireo.desktop /app/share/applications/co.hyprlab.Vireo.desktop
+      - install -Dm644 data/icons/hicolor/256x256/apps/co.hyprlab.Vireo.png /app/share/icons/hicolor/256x256/apps/co.hyprlab.Vireo.png
+      - install -Dm644 data/icons/hicolor/512x512/apps/co.hyprlab.Vireo.png /app/share/icons/hicolor/512x512/apps/co.hyprlab.Vireo.png
+      - install -Dm644 data/co.hyprlab.Vireo.metainfo.xml /app/share/metainfo/co.hyprlab.Vireo.metainfo.xml
     sources:
       - type: git
-        url: https://github.com/hyprlab/veem.git
+        url: https://github.com/hyprlab/vireo.git
         tag: v1.5.1
         commit: 7df3cf70c6af72808e0c505e10939702f3d84d52
       # Vendored crate sources for the offline Flatpak build. Generate with:

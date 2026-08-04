@@ -30,14 +30,14 @@ pub enum FolderKind {
 impl FolderKind {
     pub fn icon(self) -> &'static str {
         match self {
-            FolderKind::Inbox => "com.getveem.Veem-mail-inbox-symbolic",
-            FolderKind::Starred => "com.getveem.Veem-starred-symbolic",
-            FolderKind::Sent => "com.getveem.Veem-mail-send-symbolic",
-            FolderKind::Drafts => "com.getveem.Veem-document-edit-symbolic",
-            FolderKind::Archive => "com.getveem.Veem-mail-archive-symbolic",
-            FolderKind::Junk => "com.getveem.Veem-mail-mark-junk-symbolic",
-            FolderKind::Trash => "com.getveem.Veem-user-trash-symbolic",
-            FolderKind::Custom => "com.getveem.Veem-folder-symbolic",
+            FolderKind::Inbox => "co.hyprlab.Vireo-mail-inbox-symbolic",
+            FolderKind::Starred => "co.hyprlab.Vireo-starred-symbolic",
+            FolderKind::Sent => "co.hyprlab.Vireo-mail-send-symbolic",
+            FolderKind::Drafts => "co.hyprlab.Vireo-document-edit-symbolic",
+            FolderKind::Archive => "co.hyprlab.Vireo-mail-archive-symbolic",
+            FolderKind::Junk => "co.hyprlab.Vireo-mail-mark-junk-symbolic",
+            FolderKind::Trash => "co.hyprlab.Vireo-user-trash-symbolic",
+            FolderKind::Custom => "co.hyprlab.Vireo-folder-symbolic",
         }
     }
 }

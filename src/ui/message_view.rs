@@ -98,7 +98,7 @@ impl Component for MessageView {
             set_transition_type: gtk::StackTransitionType::Crossfade,
 
             add_named[Some("empty")] = &adw::StatusPage {
-                set_icon_name: Some("com.getveem.Veem-mail-read-symbolic"),
+                set_icon_name: Some("co.hyprlab.Vireo-mail-read-symbolic"),
                 set_title: "No message selected",
                 set_description: Some("Choose a message from the list to read it here."),
             },
@@ -116,7 +116,7 @@ impl Component for MessageView {
                         add_css_class: "remote-alert",
                         set_spacing: 8,
 
-                        gtk::Image { set_icon_name: Some("com.getveem.Veem-security-high-symbolic") },
+                        gtk::Image { set_icon_name: Some("co.hyprlab.Vireo-security-high-symbolic") },
                         gtk::Label {
                             set_label: "Remote content (images, trackers) was blocked to protect your privacy.",
                             set_hexpand: true,
@@ -152,7 +152,7 @@ impl Component for MessageView {
                             #[watch]
                             set_label: model.account_name.as_deref().unwrap_or_default(),
                             add_css_class: "account-chip",
-                            add_css_class: "veem-account-chip",
+                            add_css_class: "vireo-account-chip",
                         },
                     },
 
@@ -317,7 +317,7 @@ impl Component for MessageView {
         // Double-click on a conversation header → open that message's window.
         if let Some(ucm) = model.webview.user_content_manager() {
             let open_sender = sender.clone();
-            ucm.connect_script_message_received(Some("veem"), move |_ucm, value| {
+            ucm.connect_script_message_received(Some("vireo"), move |_ucm, value| {
                 let key = value.to_str().to_string();
                 if let Some((a, i)) = key.split_once(':') {
                     if let (Ok(account_id), Ok(id)) = (a.parse::<u32>(), i.parse::<u32>()) {
@@ -361,7 +361,7 @@ impl Component for MessageView {
                 self.loading = loading;
                 if let Some(color) = &account_color {
                     let css = format!(
-                        ".veem-account-chip {{ background-color: {}; color: {}; }}",
+                        ".vireo-account-chip {{ background-color: {}; color: {}; }}",
                         crate::color::pale(color, 0.18),
                         color
                     );
@@ -494,7 +494,7 @@ impl MessageView {
         let n = self.seq.get().wrapping_add(1);
         self.seq.set(n);
         self.webview
-            .load_html(&html, Some(&format!("https://veem.localhost/message/{n}")));
+            .load_html(&html, Some(&format!("https://vireo.localhost/message/{n}")));
     }
 
     /// Which body-stack page to show: spinner while fetching, themed cover while
@@ -517,17 +517,17 @@ impl MessageView {
         let mut sections = String::new();
         for m in &self.thread {
             let body = if m.body.trim().is_empty() {
-                "<div class=\"veem-loading\">Loading…</div>".to_string()
+                "<div class=\"vireo-loading\">Loading…</div>".to_string()
             } else {
                 message_frame(&m.body, self.blocked, dark)
             };
             if conversation {
                 sections.push_str(&format!(
-                    "<section class=\"veem-msg\">\
-                       <header class=\"veem-msg-hdr\" data-key=\"{aid}:{id}\" \
+                    "<section class=\"vireo-msg\">\
+                       <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
-                         <span class=\"veem-from\">{from}</span>{addr}\
-                         <span class=\"veem-date\">{date}</span>\
+                         <span class=\"vireo-from\">{from}</span>{addr}\
+                         <span class=\"vireo-date\">{date}</span>\
                        </header>{body}</section>",
                     aid = m.account_id,
                     id = m.id,
@@ -535,7 +535,7 @@ impl MessageView {
                     addr = if m.from_addr.is_empty() {
                         String::new()
                     } else {
-                        format!("<span class=\"veem-addr\">&lt;{}&gt;</span>", attr_escape(&m.from_addr))
+                        format!("<span class=\"vireo-addr\">&lt;{}&gt;</span>", attr_escape(&m.from_addr))
                     },
                     date = attr_escape(&m.datetime_full()),
                     body = body,
@@ -554,14 +554,14 @@ impl MessageView {
              <style>\
                :root{{color-scheme:{scheme};}}\
                body{{margin:0;padding:0;background:{bg};font:14px/1.55 system-ui,sans-serif;}}\
-               iframe.veem-frame{{width:100%;border:0;display:block;background:{bg};}}\
-               .veem-msg{{border-bottom:1px solid rgba(128,128,128,0.25);}}\
-               .veem-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;transition:background 120ms ease;}}\
-               .veem-msg-hdr:hover{{background:rgba(128,128,128,0.16);}}\
-               .veem-from{{font-weight:700;}}\
-               .veem-addr{{opacity:0.55;font-size:0.9em;}}\
-               .veem-date{{margin-left:auto;opacity:0.55;font-size:0.85em;}}\
-               .veem-loading{{opacity:0.5;padding:16px;}}\
+               iframe.vireo-frame{{width:100%;border:0;display:block;background:{bg};}}\
+               .vireo-msg{{border-bottom:1px solid rgba(128,128,128,0.25);}}\
+               .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;transition:background 120ms ease;}}\
+               .vireo-msg-hdr:hover{{background:rgba(128,128,128,0.16);}}\
+               .vireo-from{{font-weight:700;}}\
+               .vireo-addr{{opacity:0.55;font-size:0.9em;}}\
+               .vireo-date{{margin-left:auto;opacity:0.55;font-size:0.85em;}}\
+               .vireo-loading{{opacity:0.5;padding:16px;}}\
              </style>\
              <script>{SIZE_SCRIPT}</script>\
              </head><body>{sections}</body></html>"
@@ -586,7 +586,7 @@ fn new_webview() -> webkit6::WebView {
     // A user-content manager with a script message handler lets the wrapper
     // document notify us (e.g. a double-clicked conversation header).
     let ucm = webkit6::UserContentManager::new();
-    ucm.register_script_message_handler("veem", None);
+    ucm.register_script_message_handler("vireo", None);
     let webview = webkit6::WebView::builder()
         .user_content_manager(&ucm)
         .build();
@@ -723,7 +723,7 @@ fn inject_csp(html: &str, allow_remote: bool, dark: bool) -> String {
         "<meta name=\"color-scheme\" content=\"{supported}\">\
          <style>:root{{color-scheme:{scheme};}}{body_pad}</style>"
     );
-    // `no-referrer` keeps the synthetic `veem.localhost` base URI from leaking as
+    // `no-referrer` keeps the synthetic `vireo.localhost` base URI from leaking as
     // a Referer/Origin header — both for privacy and because hotlink-protected
     // servers (e.g. some DreamHost sites) return 403 to foreign referrers, which
     // otherwise blocks legitimate images even once the sender is trusted.
@@ -770,15 +770,15 @@ var h=Math.max(b?b.scrollHeight:0,e?e.scrollHeight:0,b?b.offsetHeight:0);if(h>0)
 function init(f){s(f);try{var d=f.contentDocument;if(d){if(window.ResizeObserver&&d.body){new ResizeObserver(function(){s(f);}).observe(d.body);}\
 var im=d.images||[];for(var i=0;i<im.length;i++){if(!im[i].complete){im[i].addEventListener('load',function(){s(f);});im[i].addEventListener('error',function(){s(f);});}}}}catch(_){}\
 setTimeout(function(){s(f);},250);setTimeout(function(){s(f);},1000);}\
-function all(){return document.querySelectorAll('iframe.veem-frame');}\
+function all(){return document.querySelectorAll('iframe.vireo-frame');}\
 document.addEventListener('DOMContentLoaded',function(){\
 var fs=all();\
 for(var i=0;i<fs.length;i++){(function(f){\
 if(f.contentDocument&&f.contentDocument.readyState==='complete'){init(f);}\
 f.addEventListener('load',function(){init(f);});})(fs[i]);}\
-var hs=document.querySelectorAll('.veem-msg-hdr');\
+var hs=document.querySelectorAll('.vireo-msg-hdr');\
 for(var j=0;j<hs.length;j++){hs[j].addEventListener('dblclick',function(){\
-try{window.webkit.messageHandlers.veem.postMessage(this.dataset.key);}catch(_){}});}});\
+try{window.webkit.messageHandlers.vireo.postMessage(this.dataset.key);}catch(_){}});}});\
 window.addEventListener('resize',function(){var fs=all();for(var i=0;i<fs.length;i++)s(fs[i]);});";
 
 /// One message body as a sandboxed iframe: its own document (so CSS can't leak to
@@ -792,7 +792,7 @@ fn message_frame(body: &str, blocked: bool, dark: bool) -> String {
         // `allow-same-origin` lets our wrapper script measure the frame height;
         // `allow-popups` lets `_blank` links reach the policy handler (which opens
         // them externally). No `allow-scripts`, so the email's own JS never runs.
-        "<iframe class=\"veem-frame\" sandbox=\"allow-same-origin allow-popups\" srcdoc=\"{}\"></iframe>",
+        "<iframe class=\"vireo-frame\" sandbox=\"allow-same-origin allow-popups\" srcdoc=\"{}\"></iframe>",
         attr_escape(&doc)
     )
 }

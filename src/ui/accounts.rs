@@ -107,7 +107,7 @@ pub struct AccountsWindow {
     /// The email value the label field currently mirrors, so the label auto-fills
     /// from the email until the user customizes it.
     label_synced: String,
-    /// GNOME Online Accounts mail accounts available to import (not yet in Veem).
+    /// GNOME Online Accounts mail accounts available to import (not yet in Vireo).
     goa: Vec<crate::goa::GoaMailAccount>,
     /// Refresh token captured from a successful OAuth sign-in, applied on save.
     pending_oauth_refresh: Option<String>,
@@ -124,7 +124,7 @@ pub enum AccountsInput {
     ToggleEnabled { index: usize, enabled: bool },
     /// Enable/disable the account currently open in the editor (GOA group toggle).
     ToggleCurrentEnabled(bool),
-    /// Import a GNOME Online Account (by index into `goa`) into Veem.
+    /// Import a GNOME Online Account (by index into `goa`) into Vireo.
     ImportGoa(usize),
     /// The provider dropdown changed — adapt the form (servers vs. OAuth).
     ProviderChanged,
@@ -156,7 +156,7 @@ pub enum AccountsOutput {
     Reordered(Vec<String>),
     /// An account was enabled/disabled from the list.
     EnabledChanged { email: String, enabled: bool },
-    /// Import a GNOME Online Account into Veem (with its credentials).
+    /// Import a GNOME Online Account into Vireo (with its credentials).
     ImportGoa(Box<AccountConfig>),
     Closed,
 }
@@ -225,7 +225,7 @@ impl Component for AccountsWindow {
                                 set_title: "GNOME Online Accounts",
                                 set_description: Some(
                                     "Mail accounts from GNOME Settings. Toggle one on to \
-                                     use it in Veem."
+                                     use it in Vireo."
                                 ),
                                 set_visible: false,
 
@@ -366,7 +366,7 @@ impl Component for AccountsWindow {
                                         add_css_class: "dim-label",
                                         set_label: "Google sign-in uses GNOME Online Accounts.\n\n\
                                             1. Open Online Accounts and sign in with Google.\n\
-                                            2. Come back to Veem and reopen this window — your \
+                                            2. Come back to Vireo and reopen this window — your \
                                             Google account then appears under “GNOME Online \
                                             Accounts” at the top of this window. Enable it there.",
                                     },
@@ -470,7 +470,7 @@ impl Component for AccountsWindow {
                             },
 
                             // GOA-imported accounts: you can't meaningfully "remove"
-                            // one from Veem while it still lives in GNOME Online
+                            // one from Vireo while it still lives in GNOME Online
                             // Accounts — so disable it here, or open GOA to change it.
                             #[name = "goa_manage_group"]
                             add = &adw::PreferencesGroup {
@@ -478,13 +478,13 @@ impl Component for AccountsWindow {
                                 set_title: "GNOME Online Account",
                                 set_description: Some(
                                     "This account comes from GNOME Online Accounts. Turn it off \
-                                     to hide it in Veem without touching your system; to edit or \
+                                     to hide it in Vireo without touching your system; to edit or \
                                      remove it, open Online Accounts."
                                 ),
 
                                 #[name = "goa_enabled_row"]
                                 adw::SwitchRow {
-                                    set_title: "Enabled in Veem",
+                                    set_title: "Enabled in Vireo",
                                     connect_active_notify[sender] => move |row| {
                                         sender.input(AccountsInput::ToggleCurrentEnabled(row.is_active()));
                                     },
@@ -530,7 +530,7 @@ impl Component for AccountsWindow {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        // GNOME Online Accounts mail accounts not already configured in Veem.
+        // GNOME Online Accounts mail accounts not already configured in Vireo.
         let goa: Vec<crate::goa::GoaMailAccount> = crate::goa::list_mail_accounts()
             .into_iter()
             .filter(|g| !init.iter().any(|a| a.email.eq_ignore_ascii_case(&g.email)))
@@ -872,7 +872,7 @@ impl Component for AccountsWindow {
                     Some(root),
                     Some("Remove Account?"),
                     Some(&format!(
-                        "Remove {name} from Veem? Its saved password is deleted from \
+                        "Remove {name} from Vireo? Its saved password is deleted from \
                          the keyring. Mail on the server is not affected."
                     )),
                 );
@@ -965,7 +965,7 @@ impl AccountsWindow {
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
             hbox.add_css_class("account-list-row");
 
-            let handle = gtk::Image::from_icon_name("com.getveem.Veem-list-drag-handle-symbolic");
+            let handle = gtk::Image::from_icon_name("co.hyprlab.Vireo-list-drag-handle-symbolic");
             handle.add_css_class("dim-label");
             hbox.append(&handle);
 
@@ -985,16 +985,16 @@ impl AccountsWindow {
             hbox.append(&vbox);
 
             // Source badge: is this account from GNOME Online Accounts, or added
-            // directly in Veem?
+            // directly in Vireo?
             let from_goa = acc.goa_id.is_some();
-            let badge = gtk::Label::new(Some(if from_goa { "Online Account" } else { "Veem" }));
+            let badge = gtk::Label::new(Some(if from_goa { "Online Account" } else { "Vireo" }));
             badge.set_valign(gtk::Align::Center);
             badge.add_css_class("account-source-badge");
             if from_goa {
                 badge.add_css_class("goa");
                 badge.set_tooltip_text(Some("Imported from GNOME Online Accounts"));
             } else {
-                badge.set_tooltip_text(Some("Added directly in Veem"));
+                badge.set_tooltip_text(Some("Added directly in Vireo"));
             }
             hbox.append(&badge);
 
@@ -1012,7 +1012,7 @@ impl AccountsWindow {
             });
             hbox.append(&toggle);
 
-            let next = gtk::Image::from_icon_name("com.getveem.Veem-go-next-symbolic");
+            let next = gtk::Image::from_icon_name("co.hyprlab.Vireo-go-next-symbolic");
             next.add_css_class("dim-label");
             hbox.append(&next);
 
@@ -1069,7 +1069,7 @@ impl AccountsWindow {
             let toggle = gtk::Switch::new();
             toggle.set_valign(gtk::Align::Center);
             toggle.set_active(false);
-            toggle.set_tooltip_text(Some("Use this account in Veem"));
+            toggle.set_tooltip_text(Some("Use this account in Vireo"));
             let ti = sender.input_sender().clone();
             let tpos = pos;
             toggle.connect_state_set(move |_, state| {

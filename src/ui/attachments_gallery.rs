@@ -166,13 +166,13 @@ impl Component for AttachmentsGallery {
                     },
 
                     add_named[Some("empty")] = &adw::StatusPage {
-                        set_icon_name: Some("com.getveem.Veem-mail-attachment-symbolic"),
+                        set_icon_name: Some("co.hyprlab.Vireo-mail-attachment-symbolic"),
                         set_title: "No attachments",
                         set_description: Some("Attachments from your inboxes will appear here."),
                     },
 
                     add_named[Some("noresults")] = &adw::StatusPage {
-                        set_icon_name: Some("com.getveem.Veem-system-search-symbolic"),
+                        set_icon_name: Some("co.hyprlab.Vireo-system-search-symbolic"),
                         set_title: "No matching attachments",
                         set_description: Some("Try a different search or clear the filter."),
                     },
@@ -220,7 +220,7 @@ impl Component for AttachmentsGallery {
                     },
                     #[wrap(Some)]
                     set_end_widget = &gtk::Button {
-                        set_icon_name: "com.getveem.Veem-window-close-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-window-close-symbolic",
                         set_tooltip_text: Some("Close"),
                         add_css_class: "circular",
                         add_css_class: "flat",
@@ -235,7 +235,7 @@ impl Component for AttachmentsGallery {
                     set_spacing: 8,
 
                     gtk::Button {
-                        set_icon_name: "com.getveem.Veem-go-previous-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-go-previous-symbolic",
                         set_tooltip_text: Some("Previous"),
                         set_valign: gtk::Align::Center,
                         add_css_class: "circular",
@@ -283,7 +283,7 @@ impl Component for AttachmentsGallery {
                     },
 
                     gtk::Button {
-                        set_icon_name: "com.getveem.Veem-go-next-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-go-next-symbolic",
                         set_tooltip_text: Some("Next"),
                         set_valign: gtk::Align::Center,
                         add_css_class: "circular",
@@ -684,17 +684,17 @@ fn build_cell(
         b
     };
     if item.data.is_some() {
-        let download = action_btn("com.getveem.Veem-folder-download-symbolic", "Download");
+        let download = action_btn("co.hyprlab.Vireo-folder-download-symbolic", "Download");
         let s = sender.clone();
         download.connect_clicked(move |_| s.input(GalleryInput::DownloadItem(index)));
         actions.append(&download);
 
-        let open = action_btn("com.getveem.Veem-document-open-symbolic", "Open");
+        let open = action_btn("co.hyprlab.Vireo-document-open-symbolic", "Open");
         let s = sender.clone();
         open.connect_clicked(move |_| s.input(GalleryInput::OpenItem(index)));
         actions.append(&open);
     }
-    let goto = action_btn("com.getveem.Veem-mail-unread-symbolic", "Go to Message");
+    let goto = action_btn("co.hyprlab.Vireo-mail-unread-symbolic", "Go to Message");
     let s = sender.clone();
     goto.connect_clicked(move |_| s.input(GalleryInput::GoToItem(index)));
     actions.append(&goto);
@@ -859,18 +859,18 @@ pub(crate) fn icon_for(name: &str) -> &'static str {
     let lower = name.to_ascii_lowercase();
     let ext = lower.rsplit('.').next().unwrap_or("");
     match ext {
-        "pdf" => "com.getveem.Veem-x-office-document-symbolic",
-        "doc" | "docx" | "odt" | "rtf" | "txt" | "md" => "com.getveem.Veem-x-office-document-symbolic",
-        "xls" | "xlsx" | "ods" | "csv" => "com.getveem.Veem-x-office-spreadsheet-symbolic",
-        "ppt" | "pptx" | "odp" => "com.getveem.Veem-x-office-presentation-symbolic",
-        "zip" | "gz" | "tar" | "7z" | "rar" | "xz" | "bz2" => "com.getveem.Veem-package-x-generic-symbolic",
-        "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" => "com.getveem.Veem-audio-x-generic-symbolic",
-        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" => "com.getveem.Veem-video-x-generic-symbolic",
+        "pdf" => "co.hyprlab.Vireo-x-office-document-symbolic",
+        "doc" | "docx" | "odt" | "rtf" | "txt" | "md" => "co.hyprlab.Vireo-x-office-document-symbolic",
+        "xls" | "xlsx" | "ods" | "csv" => "co.hyprlab.Vireo-x-office-spreadsheet-symbolic",
+        "ppt" | "pptx" | "odp" => "co.hyprlab.Vireo-x-office-presentation-symbolic",
+        "zip" | "gz" | "tar" | "7z" | "rar" | "xz" | "bz2" => "co.hyprlab.Vireo-package-x-generic-symbolic",
+        "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" => "co.hyprlab.Vireo-audio-x-generic-symbolic",
+        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" => "co.hyprlab.Vireo-video-x-generic-symbolic",
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "heic" | "heif" | "avif" | "ico" => {
-            "com.getveem.Veem-image-x-generic-symbolic"
+            "co.hyprlab.Vireo-image-x-generic-symbolic"
         }
-        "ics" => "com.getveem.Veem-x-office-calendar-symbolic",
-        _ => "com.getveem.Veem-text-x-generic-symbolic",
+        "ics" => "co.hyprlab.Vireo-x-office-calendar-symbolic",
+        _ => "co.hyprlab.Vireo-text-x-generic-symbolic",
     }
 }
 
@@ -902,7 +902,7 @@ pub(crate) fn open_bytes(name: &str, data: &[u8]) {
         .chars()
         .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
         .collect();
-    let dir = std::env::temp_dir().join("veem-attachments");
+    let dir = std::env::temp_dir().join("vireo-attachments");
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join(if safe.is_empty() { "attachment".into() } else { safe });
     if std::fs::write(&path, data).is_ok() {
@@ -941,7 +941,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for RatioBox {
-        const NAME: &'static str = "VeemRatioBox";
+        const NAME: &'static str = "VireoRatioBox";
         type Type = super::RatioBox;
         type ParentType = gtk::Widget;
     }
