@@ -34,6 +34,9 @@ finish-args:
   - --filesystem=xdg-data/evolution:ro
   - --filesystem=xdg-cache/evolution:ro
   - --filesystem=xdg-config/evolution:ro
+  # Read the old Veem app's sandbox data so accounts, settings and cached mail
+  # migrate automatically on first run (Veem was renamed Vireo in 1.6.0).
+  - --filesystem=~/.var/app/com.getveem.Veem:ro
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin

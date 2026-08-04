@@ -46,6 +46,7 @@ fn main() {
 /// settings and cached mail carry across. Keyring entries migrate lazily in
 /// `config::load_key`.
 fn migrate_legacy_dirs() {
+    // Native installs: the old dirs live under the same XDG prefix — rename.
     for base in [dirs::config_dir(), dirs::cache_dir()] {
         let Some(base) = base else { continue };
         let old = base.join("veem");
@@ -57,6 +58,43 @@ fn migrate_legacy_dirs() {
             }
         }
     }
+    migrate_flatpak_data();
+}
+
+/// Flatpak: the old Veem app's data is a *different* sandbox tree
+/// (`~/.var/app/com.getveem.Veem`), mounted read-only via finish-args — so it
+/// is copied, not renamed, into this app's own dirs on first run.
+fn migrate_flatpak_data() {
+    if !std::path::Path::new("/.flatpak-info").exists() {
+        return;
+    }
+    let Some(home) = dirs::home_dir() else { return };
+    let legacy = home.join(".var/app/com.getveem.Veem");
+    for (sub, base) in [("config", dirs::config_dir()), ("cache", dirs::cache_dir())] {
+        let Some(base) = base else { continue };
+        let old = legacy.join(sub).join("veem");
+        let new = base.join("vireo");
+        if old.is_dir() && !new.exists() {
+            match copy_dir(&old, &new) {
+                Ok(()) => tracing::info!("migrated {} to {}", old.display(), new.display()),
+                Err(e) => tracing::warn!("could not migrate {}: {e}", old.display()),
+            }
+        }
+    }
+}
+
+fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let to = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &to)?;
+        } else {
+            std::fs::copy(entry.path(), &to)?;
+        }
+    }
+    Ok(())
 }
 
 /// Register the embedded GResource holding Vireo's bundled symbolic icons.

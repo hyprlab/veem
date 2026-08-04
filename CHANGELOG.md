@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.6.1 — 2026-08-03
+- Flatpak reinstalls now migrate the old Veem app's data automatically. The manifest grants read-only access to the old sandbox (`--filesystem=~/.var/app/com.getveem.Veem:ro`), and on first run `migrate_flatpak_data()` (main.rs) copies `config/veem` and `cache/veem` from it into Vireo's own sandbox dirs — accounts, settings and cached mail all carry over. Copy, not rename: the legacy mount is read-only, and the old install stays untouched. Runs only under Flatpak (`/.flatpak-info` present) and only when Vireo's dirs don't exist yet; combined with the keyring fallback from 1.6.0, a Flatpak user's first launch of Vireo restores everything without re-adding accounts.
+
 ## 1.6.0 — 2026-08-03
 - **Veem is now Vireo.** The app has been renamed to avoid confusion with similarly named products (Veeam Software, Veem payments). Same app, same code, new name and a new icon.
 - App ID renamed `com.getveem.Veem` → `co.hyprlab.Vireo`; the binary is now `vireo`, and the GitHub repository moved to `hyprlab/vireo` (old URLs redirect). Distribution moved from getveem.com to https://vireo.hyprlab.co.

@@ -2,7 +2,11 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.6.0
+## What's new in 1.6.1
+
+- Switching from Veem to Vireo on Flatpak is now fully automatic: install Vireo, launch it, and your accounts, settings and cached mail from the old Veem app are picked up on first run — nothing to re-add. (You can remove the old Veem app afterwards; its data is left untouched.)
+
+## In 1.6.0
 
 **Veem is now Vireo.** We've renamed the app — the old name was too easily confused with other products. It's the same app underneath, with a new name and a fresh icon.
 

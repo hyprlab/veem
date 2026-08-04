@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.6.1" date="2026-08-03" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.6.1</url>
+      <description>
+        <p>Flatpak installs now migrate the old Veem app's accounts, settings and cached mail automatically on first run.</p>
+      </description>
+    </release>
     <release version="1.6.0" date="2026-08-03" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.6.0</url>
       <description>
