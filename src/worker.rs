@@ -3834,7 +3834,7 @@ mod tests {
     const IPHONE_PHOTO: &str = concat!(
         "Content-Type: multipart/mixed; boundary=Apple-Mail-32B9517E\r\n",
         "Content-Transfer-Encoding: 7bit\r\n",
-        "From: Jason Martin <jasonjmartin@me.com>\r\n",
+        "From: Alex Doe <alex@example.com>\r\n",
         "Subject: Panda\r\n",
         "X-Mailer: iPhone Mail (23F84)\r\n",
         "\r\n",
@@ -3851,7 +3851,7 @@ mod tests {
         "--Apple-Mail-32B9517E\r\n",
         "Content-Type: text/plain;\r\n\tcharset=us-ascii\r\n",
         "Content-Transfer-Encoding: 7bit\r\n\r\n",
-        "\r\n\r\nJason Martin\r\nSent from my iPhone\r\n",
+        "\r\n\r\nAlex Doe\r\nSent from my iPhone\r\n",
         "--Apple-Mail-32B9517E--\r\n",
     );
 
