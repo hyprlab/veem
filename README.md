@@ -150,6 +150,26 @@ Vireo collects no telemetry and sends no analytics. Remote content in messages i
 blocked by default to defeat tracking pixels. Passwords and OAuth refresh tokens
 live in the system keyring (secret-service), never in plain files.
 
+## AI notice
+
+Vireo is built by a human maintainer working with generative AI as a
+development tool:
+
+- **Code** — the large majority of the Rust code in this repository was written
+  with Anthropic's Claude (via Claude Code), working from the maintainer's
+  direction. The maintainer decides what gets built, reviews the results, tests
+  every release, and signs off on everything that ships.
+- **Text** — documentation, release notes, and website copy are largely
+  AI-drafted and human-edited.
+- **Artwork** — the app icon and other visual assets are human-made, without
+  generative AI.
+- **The app itself contains no AI.** Vireo has no AI features, makes no
+  requests to AI services, and never sends your mail or any other data to one —
+  AI was used to *build* the app, not to run it. See [Privacy](#privacy).
+
+Bug reports and pull requests are welcome from humans and their AI tools alike;
+everything merged gets the same human review.
+
 ## Contact & support
 
 - Website — [vireo.hyprlab.co](https://vireo.hyprlab.co)
