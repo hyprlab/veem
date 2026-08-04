@@ -49,6 +49,10 @@ See **[RELEASE_NOTES.md](RELEASE_NOTES.md)** for the full list.
 
 **Flatpak (recommended)** — works on any distribution; see
 [vireo.hyprlab.co](https://vireo.hyprlab.co) for the signed Flatpak repo.
+Prefer a direct download? Grab `Vireo-<version>.flatpak` from the
+[latest release](https://github.com/hyprlab/vireo/releases/latest) and run
+`flatpak install ./Vireo-*.flatpak` — the bundle carries the repo address and
+signing key, so it still receives updates from the official repo.
 
 **Fedora** — download the `.rpm` from the
 [latest release](https://github.com/hyprlab/vireo/releases/latest) and:
