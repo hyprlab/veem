@@ -1,0 +1,30 @@
+#!/usr/bin/make -f
+# Binary-only build driven by tools/build-packages.sh inside the
+# vireo-deb-builder container (rustup toolchain lives in /root/.cargo).
+export PATH := /root/.cargo/bin:$(PATH)
+export CARGO_HOME := /root/.cargo
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+
+override_dh_auto_build:
+	cargo build --release --locked
+
+override_dh_auto_test:
+
+override_dh_auto_clean:
+
+override_dh_auto_install:
+	install -Dm755 target/release/vireo debian/vireo/usr/bin/vireo
+	install -Dm644 data/co.hyprlab.Vireo.desktop debian/vireo/usr/share/applications/co.hyprlab.Vireo.desktop
+	install -Dm644 data/co.hyprlab.Vireo.metainfo.xml debian/vireo/usr/share/metainfo/co.hyprlab.Vireo.metainfo.xml
+	install -Dm644 data/icons/hicolor/256x256/apps/co.hyprlab.Vireo.png debian/vireo/usr/share/icons/hicolor/256x256/apps/co.hyprlab.Vireo.png
+	install -Dm644 data/icons/hicolor/512x512/apps/co.hyprlab.Vireo.png debian/vireo/usr/share/icons/hicolor/512x512/apps/co.hyprlab.Vireo.png
+
+# Rust binaries: skip dwz (chokes on rust debug info) and dbgsym extraction.
+override_dh_dwz:
+
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym

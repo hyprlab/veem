@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.0 — 2026-08-05
+- New **Debian/Ubuntu package** (`vireo_<ver>-1_amd64.deb`), published on each GitHub release. Built from source with `dpkg-buildpackage` in an Ubuntu 24.04 container (`packaging/debian/`), so `Depends:` are computed from the real linked libraries (dpkg-shlibdeps); targets Ubuntu 24.04+/Debian 13+. Uses a rustup toolchain because noble's rustc is older than the GTK4 crate stack's MSRV.
+- New **Snap package** (`vireo_<ver>_amd64.snap`), also on each release. Strict confinement, `base: core24`, GNOME extension, with `network` and `password-manager-service` plugs; built by snapcraft in destructive mode inside the `ghcr.io/canonical/snapcraft:8_core24` container (`packaging/snap/`, SDK snaps unpacked by `prepare-sdk.sh` since the container has no snapd). Install with `snap install --dangerous ./vireo_<ver>_amd64.snap`.
+- `tools/build-packages.sh` grew `deb` and `snap` subcommands (`all` now builds rpm + arch + deb + snap).
+
 ## 1.6.1 — 2026-08-03
 - Flatpak reinstalls now migrate the old Veem app's data automatically. The manifest grants read-only access to the old sandbox (`--filesystem=~/.var/app/com.getveem.Veem:ro`), and on first run `migrate_flatpak_data()` (main.rs) copies `config/veem` and `cache/veem` from it into Vireo's own sandbox dirs — accounts, settings and cached mail all carry over. Copy, not rename: the legacy mount is read-only, and the old install stays untouched. Runs only under Flatpak (`/.flatpak-info` present) and only when Vireo's dirs don't exist yet; combined with the keyring fallback from 1.6.0, a Flatpak user's first launch of Vireo restores everything without re-adding accounts.
 

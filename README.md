@@ -68,6 +68,22 @@ sudo dnf install ./vireo-*.x86_64.rpm
 sudo pacman -U ./vireo-*-x86_64.pkg.tar.zst
 ```
 
+**Debian / Ubuntu** — download the `.deb` (Ubuntu 24.04+, Debian 13+) from the
+[latest release](https://github.com/hyprlab/vireo/releases/latest) and:
+
+```sh
+sudo apt install ./vireo_*_amd64.deb
+```
+
+**Snap** — download the `.snap` from the
+[latest release](https://github.com/hyprlab/vireo/releases/latest) and:
+
+```sh
+sudo snap install --dangerous ./vireo_*_amd64.snap
+```
+
+(`--dangerous` only means "installed from a local file instead of the store".)
+
 You can also build the Arch package yourself with `makepkg` from
 [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD).
 

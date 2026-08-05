@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.7.0" date="2026-08-05" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.7.0</url>
+      <description>
+        <p>New Debian/Ubuntu and Snap packages are published with every release, alongside the Flatpak, RPM and Arch packages.</p>
+      </description>
+    </release>
     <release version="1.6.1" date="2026-08-03" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.6.1</url>
       <description>
