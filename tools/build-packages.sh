@@ -131,6 +131,10 @@ build_snap() {
     echo "==> snapcraft in container (destructive mode; compiles from source)"
     podman run --rm -v "$work:/build:Z" -v "$cache:/cache:Z" --entrypoint bash "$image" -c "
         set -euo pipefail
+        apt-get update -qq
+        apt-get install -y -qq curl >/dev/null
+        curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable >/dev/null
+        export PATH=/root/.cargo/bin:/usr/libexec/snapcraft:\$PATH
         bash /build/prepare-sdk.sh core24 gnome-46-2404-sdk
         cd /build/tree
         snapcraft pack --destructive-mode --output /build/vireo_${VERSION}_amd64.snap
