@@ -3532,8 +3532,13 @@ fn format_date(raw: &[u8]) -> (String, i64) {
 /// every display part in order instead, embedding inline images as `data:` URIs:
 /// the reader's CSP permits those even while remote content is blocked, and the
 /// bytes arrived with the message, so nothing is fetched from the network.
+///
+/// HTML bodies that reference their images as `cid:` (Gmail's `multipart/related`
+/// photo mail, most newsletters) get the same treatment: nothing in the reader can
+/// resolve a `cid:` URL, so each reference is rewritten to the `data:` URI of the
+/// part it names — otherwise the image renders as its broken-image alt text.
 fn extract_body(raw: &[u8]) -> String {
-    use mail_parser::{MessageParser, PartType};
+    use mail_parser::{MessageParser, MimeHeaders, PartType};
 
     /// Total decoded bytes of inline images embedded into one message body.
     const INLINE_IMAGE_BUDGET: usize = 16 * 1024 * 1024;
@@ -3543,26 +3548,54 @@ fn extract_body(raw: &[u8]) -> String {
     };
 
     let bodies: Vec<_> = parsed.html_bodies().collect();
+    let mut budget = INLINE_IMAGE_BUDGET;
+    // Content-IDs rendered in place by `inline_cid_images`, so the loop below
+    // doesn't also append them as standalone images.
+    let mut embedded: Vec<String> = Vec::new();
 
-    // A single HTML part is already a complete document — pass it through untouched
-    // so the sender's own layout and styling survive.
+    // A single HTML part is already a complete document — pass it through with only
+    // its `cid:` references resolved, so the sender's own layout and styling survive.
     if let [only] = bodies.as_slice() {
         if let PartType::Html(html) = &only.body {
-            return html.to_string();
+            return inline_cid_images(html, &parsed.parts, &mut budget, &mut embedded);
         }
     }
 
+    // Resolve every HTML body first: an image part can appear *before* the body
+    // that references it, and the loop below needs to know it was consumed.
+    let rendered: Vec<Option<String>> = bodies
+        .iter()
+        .map(|part| match &part.body {
+            PartType::Html(html) => Some(inline_cid_images(
+                html,
+                &parsed.parts,
+                &mut budget,
+                &mut embedded,
+            )),
+            _ => None,
+        })
+        .collect();
+
     let mut inner = String::new();
-    let mut budget = INLINE_IMAGE_BUDGET;
-    for part in &bodies {
+    for (part, html) in bodies.iter().zip(&rendered) {
+        if let Some(html) = html {
+            inner.push_str(html);
+            continue;
+        }
         match &part.body {
-            PartType::Html(html) => inner.push_str(html),
             PartType::Text(text) if !text.trim().is_empty() => {
                 inner.push_str("<div class=\"vireo-plain\">");
                 inner.push_str(&linkify(text));
                 inner.push_str("</div>");
             }
             PartType::Binary(bytes) | PartType::InlineBinary(bytes) => {
+                // Already rendered where the HTML placed it — don't repeat it.
+                if part
+                    .content_id()
+                    .is_some_and(|id| embedded.iter().any(|e| e == id))
+                {
+                    continue;
+                }
                 // Embedding inflates by ~4/3 and the result is cached on disk, so
                 // stop inlining past a budget. Oversized images are still listed
                 // as attachments and can be opened from there.
@@ -3587,6 +3620,147 @@ fn extract_body(raw: &[u8]) -> String {
         };
     }
     wrap_fragment(&inner)
+}
+
+/// Rewrite `cid:` resource references in `html` to `data:` URIs built from the
+/// message's own parts.
+///
+/// A `cid:` URL names another MIME part of the same message (RFC 2392). WebKit has
+/// no handler for the scheme, so an untouched `<img src="cid:…">` renders as its
+/// alt text — for Gmail photo mail (`multipart/related`) that means the filename
+/// shows where the picture should be. The bytes are already in hand, so swapping in
+/// a `data:` URI costs no network access and needs no change to the reader's CSP.
+///
+/// Only image parts are resolved (the reader can't display anything else inline),
+/// each is charged against `budget` once however many times it's referenced, and
+/// every Content-ID actually embedded is recorded in `embedded`. References that
+/// can't be resolved are left as they are: an unresolved `cid:` is no worse than
+/// before, and a rewrite that guessed wrong would be.
+fn inline_cid_images(
+    html: &str,
+    parts: &[mail_parser::MessagePart<'_>],
+    budget: &mut usize,
+    embedded: &mut Vec<String>,
+) -> String {
+    use mail_parser::{MimeHeaders, PartType};
+
+    let bytes = html.as_bytes();
+    if !bytes.windows(4).any(|w| w.eq_ignore_ascii_case(b"cid:")) {
+        return html.to_string();
+    }
+
+    // A Content-ID matches case-insensitively and with any angle brackets stripped;
+    // senders aren't consistent about either between the header and the reference.
+    let normalize = |id: &str| {
+        id.trim()
+            .trim_start_matches('<')
+            .trim_end_matches('>')
+            .to_ascii_lowercase()
+    };
+    // cid -> data URI, or `None` for one we've already failed to resolve. Built on
+    // first reference so a cid used twice is embedded (and charged) only once.
+    let mut resolved: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+
+    let mut out = String::with_capacity(html.len());
+    let mut i = 0;
+    let mut copied = 0;
+    while i + 4 <= bytes.len() {
+        if !bytes[i..i + 4].eq_ignore_ascii_case(b"cid:") {
+            i += 1;
+            continue;
+        }
+        // Only rewrite in resource position (`src="cid:…"`, `src=cid:…`,
+        // `url(cid:…)`) so prose that happens to mention a cid is left alone, and
+        // never in an `href` — a link is handed to the external browser on click,
+        // where a megabyte-long `data:` URL is worse than a dead `cid:` one.
+        if i == 0 || !matches!(bytes[i - 1], b'"' | b'\'' | b'=' | b'(') || is_href(bytes, i) {
+            i += 1;
+            continue;
+        }
+        // The reference runs to the closing quote/bracket/whitespace. Every
+        // terminator is ASCII, so these stay on `char` boundaries.
+        let start = i + 4;
+        let end = bytes[start..]
+            .iter()
+            .position(|b| matches!(b, b'"' | b'\'' | b'>' | b')' | b' ' | b'\t' | b'\r' | b'\n'))
+            .map_or(html.len(), |n| start + n);
+        let key = normalize(&percent_decode(&html[start..end]));
+        if key.is_empty() {
+            i = end.max(i + 1);
+            continue;
+        }
+
+        let uri = resolved.entry(key.clone()).or_insert_with(|| {
+            let part = parts
+                .iter()
+                .find(|p| p.content_id().is_some_and(|id| normalize(id) == key))?;
+            let data = match &part.body {
+                PartType::Binary(data) | PartType::InlineBinary(data) => data,
+                _ => return None,
+            };
+            let mime = image_mime(part)?;
+            *budget = budget.checked_sub(data.len())?;
+            embedded.push(part.content_id()?.to_string());
+            Some(format!(
+                "data:{mime};base64,{}",
+                crate::oauth::base64_encode(data)
+            ))
+        });
+
+        match uri {
+            Some(uri) => {
+                out.push_str(&html[copied..i]);
+                out.push_str(uri);
+                copied = end;
+                i = end;
+            }
+            // Unresolvable: leave the reference verbatim.
+            None => i = end.max(i + 1),
+        }
+    }
+    out.push_str(&html[copied..]);
+    out
+}
+
+/// Whether the value starting at `at` is the target of an `href=` attribute,
+/// looking back past the quote and any whitespace around the `=`.
+fn is_href(bytes: &[u8], at: usize) -> bool {
+    let mut j = at;
+    while j > 0 && matches!(bytes[j - 1], b'"' | b'\'' | b'=' | b' ' | b'\t' | b'\r' | b'\n') {
+        j -= 1;
+    }
+    j >= 4 && bytes[j - 4..j].eq_ignore_ascii_case(b"href")
+}
+
+/// Decode `%XX` escapes in a URI reference, leaving anything else untouched.
+/// `cid:` values are percent-encoded when they contain URI-reserved characters
+/// (Gmail's ids embed an `@`, which some senders write as `%40`).
+fn percent_decode(s: &str) -> String {
+    if !s.contains('%') {
+        return s.to_string();
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = (i + 2 < bytes.len())
+            .then(|| std::str::from_utf8(&bytes[i + 1..i + 3]).ok())
+            .flatten()
+            .filter(|_| bytes[i] == b'%')
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match hex {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// The `image/<subtype>` MIME type of a part, if it is an image we can inline.
@@ -3889,9 +4063,104 @@ mod tests {
         assert!(!found[0].data.is_empty());
     }
 
+    /// Gmail photo mail: multipart/related wrapping a plain+HTML alternative and
+    /// the picture the HTML references by Content-ID.
+    const GMAIL_RELATED_PHOTO: &str = concat!(
+        "Content-Type: multipart/related; boundary=\"OUT\"\r\n",
+        "Subject: Share A Day NYC\r\n\r\n",
+        "--OUT\r\n",
+        "Content-Type: multipart/alternative; boundary=\"IN\"\r\n\r\n",
+        "--IN\r\n",
+        "Content-Type: text/plain; charset=\"UTF-8\"\r\n\r\n",
+        "[image: SAD_POSTCARD_FRONT.JPEG]\r\n",
+        "--IN\r\n",
+        "Content-Type: text/html; charset=\"UTF-8\"\r\n\r\n",
+        "<div dir=\"ltr\"><img src=\"cid:ii_mslv0bge0\" ",
+        "alt=\"SAD_POSTCARD_FRONT.JPEG\" width=\"420\" height=\"542\"><br></div>\r\n",
+        "--IN--\r\n",
+        "--OUT\r\n",
+        "Content-Type: image/jpeg; name=\"SAD_POSTCARD_FRONT.JPEG\"\r\n",
+        "Content-Disposition: inline; filename=\"SAD_POSTCARD_FRONT.JPEG\"\r\n",
+        "Content-Transfer-Encoding: base64\r\n",
+        "Content-ID: <ii_mslv0bge0>\r\n\r\n",
+        "/9j/4AAQSkZJRg==\r\n",
+        "--OUT--\r\n",
+    );
+
     #[test]
     fn cid_resources_are_not_listed_as_attachments() {
         assert!(extract_attachments(CID_NEWSLETTER.as_bytes()).is_empty());
+    }
+
+    #[test]
+    fn cid_image_is_embedded_in_the_html_body() {
+        let body = extract_body(CID_NEWSLETTER.as_bytes());
+        // Nothing can fetch a `cid:` URL, so the reference must be gone.
+        assert!(!body.contains("cid:logo"), "body was: {body}");
+        assert!(
+            body.contains("src=\"data:image/png;base64,iVBORw0KGgo=\""),
+            "body was: {body}"
+        );
+    }
+
+    #[test]
+    fn gmail_related_photo_renders_the_picture_not_its_filename() {
+        let body = extract_body(GMAIL_RELATED_PHOTO.as_bytes());
+        assert!(!body.contains("cid:ii_mslv0bge0"), "body was: {body}");
+        assert!(
+            body.contains("src=\"data:image/jpeg;base64,/9j/4AAQSkZJRg==\""),
+            "body was: {body}"
+        );
+        // The rest of the sender's markup survives the rewrite.
+        assert!(body.contains("width=\"420\""), "body was: {body}");
+        // The image is rendered in place, so it isn't appended a second time.
+        assert_eq!(body.matches("/9j/4AAQSkZJRg==").count(), 1, "body was: {body}");
+    }
+
+    #[test]
+    fn percent_encoded_cid_reference_still_resolves() {
+        let raw = concat!(
+            "Content-Type: multipart/related; boundary=R\r\n\r\n",
+            "--R\r\n",
+            "Content-Type: text/html\r\n\r\n",
+            "<img src=\"cid:part1%40mail\">\r\n",
+            "--R\r\n",
+            "Content-Type: image/png\r\n",
+            "Content-ID: <part1@mail>\r\n",
+            "Content-Transfer-Encoding: base64\r\n\r\n",
+            "iVBORw0KGgo=\r\n",
+            "--R--\r\n",
+        );
+        let body = extract_body(raw.as_bytes());
+        assert!(body.contains("data:image/png;base64,"), "body was: {body}");
+    }
+
+    #[test]
+    fn cid_link_target_is_not_rewritten() {
+        let raw = concat!(
+            "Content-Type: multipart/related; boundary=R\r\n\r\n",
+            "--R\r\n",
+            "Content-Type: text/html\r\n\r\n",
+            "<a href=\"cid:logo\"><img src=\"cid:logo\"></a>\r\n",
+            "--R\r\n",
+            "Content-Type: image/png\r\n",
+            "Content-ID: <logo>\r\n",
+            "Content-Transfer-Encoding: base64\r\n\r\n",
+            "iVBORw0KGgo=\r\n",
+            "--R--\r\n",
+        );
+        let body = extract_body(raw.as_bytes());
+        assert!(body.contains("href=\"cid:logo\""), "body was: {body}");
+        assert!(body.contains("src=\"data:image/png;"), "body was: {body}");
+    }
+
+    #[test]
+    fn unresolvable_cid_reference_is_left_untouched() {
+        let raw = b"Content-Type: text/html\r\n\r\n<p>see cid:nope</p><img src=\"cid:gone\">";
+        let body = extract_body(raw);
+        // A cid with no matching part stays as it was — and a bare mention in prose
+        // is never treated as a resource reference.
+        assert_eq!(body, "<p>see cid:nope</p><img src=\"cid:gone\">");
     }
 
     #[test]

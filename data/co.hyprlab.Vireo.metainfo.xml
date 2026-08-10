@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.7.1" date="2026-08-10" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.7.1</url>
+      <description>
+        <p>Fixed inline images sent from Gmail and many newsletters showing as a filename instead of the picture.</p>
+      </description>
+    </release>
     <release version="1.7.0" date="2026-08-05" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.7.0</url>
       <description>

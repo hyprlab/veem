@@ -2,7 +2,11 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.7.0
+## What's new in 1.7.1
+
+- Fixed photos sent from Gmail (and images in many newsletters) showing as a filename instead of the picture. These messages point at their images from inside the email itself, and Vireo wasn't following the reference — the images now appear in place, with no network access needed since they arrived with the message.
+
+## In 1.7.0
 
 - Two new install options, published with every release alongside the Flatpak, RPM and Arch packages:
   - **Debian / Ubuntu** — a native `.deb` for Ubuntu 24.04+ and Debian 13+: download and `sudo apt install ./vireo_*_amd64.deb`.

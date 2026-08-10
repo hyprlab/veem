@@ -75,7 +75,9 @@ CREATE TABLE IF NOT EXISTS attachments_checked (
 /// `LoadBody` serves without re-fetching) must be dropped and rebuilt on open.
 /// v9: re-decode subjects cached as raw RFC 2047 encoded-words by builds that
 /// aborted on over-long encoded-words (e.g. Mailchimp newsletters).
-const SCHEMA_VERSION: i64 = 9;
+/// v10: bodies are re-rendered with `cid:` image references resolved to `data:`
+/// URIs, so cached bodies showing a broken image must be dropped and rebuilt.
+const SCHEMA_VERSION: i64 = 10;
 
 /// The first version whose table *layout* matches the current `SCHEMA`. At or
 /// above this, an upgrade only needs to drop the derived caches, not the
