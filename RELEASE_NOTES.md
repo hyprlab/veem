@@ -5,6 +5,11 @@ Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita
 ## What's new in 1.7.1
 
 - Fixed photos sent from Gmail (and images in many newsletters) showing as a filename instead of the picture. These messages point at their images from inside the email itself, and Vireo wasn't following the reference — the images now appear in place, with no network access needed since they arrived with the message.
+- **The Arch, Debian/Ubuntu and Snap packages have been discontinued.** Vireo is now published as a Flatpak (for every distribution) and a Fedora RPM. If you installed one of the discontinued packages, remove it and install the Flatpak instead — it works everywhere and updates automatically:
+
+  ```sh
+  flatpak install --from https://vireo.hyprlab.co/flatpak/co.hyprlab.Vireo.flatpakref
+  ```
 
 ## In 1.7.0
 

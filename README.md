@@ -61,36 +61,12 @@ signing key, so it still receives updates from the official repo.
 sudo dnf install ./vireo-*.x86_64.rpm
 ```
 
-**Arch Linux** — download the `.pkg.tar.zst` from the
-[latest release](https://github.com/hyprlab/vireo/releases/latest) and:
+Arch, Debian/Ubuntu and Snap packages were discontinued after 1.7.0 — use the
+Flatpak (it works on every distribution) or build from source.
 
-```sh
-sudo pacman -U ./vireo-*-x86_64.pkg.tar.zst
-```
-
-**Debian / Ubuntu** — download the `.deb` (Ubuntu 24.04+, Debian 13+) from the
-[latest release](https://github.com/hyprlab/vireo/releases/latest) and:
-
-```sh
-sudo apt install ./vireo_*_amd64.deb
-```
-
-**Snap** — download the `.snap` from the
-[latest release](https://github.com/hyprlab/vireo/releases/latest) and:
-
-```sh
-sudo snap install --dangerous ./vireo_*_amd64.snap
-```
-
-(`--dangerous` only means "installed from a local file instead of the store".)
-
-You can also build the Arch package yourself with `makepkg` from
-[`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD).
-
-The native packages target current distro releases (Fedora 44+, up-to-date
-Arch). On anything older, use the Flatpak or build from source. A Secret
-Service provider (e.g. gnome-keyring, preinstalled on GNOME) is needed at
-runtime for password storage.
+The RPM targets current Fedora releases (44+). On anything older, use the
+Flatpak or build from source. A Secret Service provider (e.g. gnome-keyring,
+preinstalled on GNOME) is needed at runtime for password storage.
 
 ## Building from source
 
