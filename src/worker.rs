@@ -1423,6 +1423,18 @@ async fn load_raw(
         .unwrap_or_default())
 }
 
+/// Decoded size at or above which a part carrying a Content-ID counts as an
+/// attachment as well as being rendered in the body.
+///
+/// A `cid:` part is referenced from the HTML and drawn in place, so listing it
+/// would give newsletters a paperclip for their logo, spacer and social icons —
+/// the false-attachment noise fixed in 1.4.1. But when someone emails you a
+/// photo, Gmail and Apple Mail send exactly the same shape, and that picture has
+/// to be saveable. Size is the only honest discriminator: decoration is small,
+/// content is not. 64 KiB sits well above logos and icons and well below any
+/// photo worth keeping.
+const INLINE_ATTACHMENT_MIN: usize = 64 * 1024;
+
 /// Parse attachment parts (name, mime, decoded bytes) out of a raw message.
 fn extract_attachments(raw: &[u8]) -> Vec<crate::models::Attachment> {
     use mail_parser::{MessageParser, MimeHeaders};
@@ -1431,10 +1443,9 @@ fn extract_attachments(raw: &[u8]) -> Vec<crate::models::Attachment> {
     };
     let mut out = Vec::new();
     for (i, part) in parsed.attachments().enumerate() {
-        // Skip `cid:` resources referenced from the HTML body (newsletter logos):
-        // they're rendered in place, and `structure_has_attachment` doesn't count
-        // them, so listing them here would contradict the paperclip.
-        if part.content_id().is_some() {
+        // Decoration referenced from the body (a `cid:` logo) is rendered in
+        // place, not listed — unless it's big enough to be real content.
+        if part.content_id().is_some() && part.contents().len() < INLINE_ATTACHMENT_MIN {
             continue;
         }
         let name = part
@@ -2740,11 +2751,10 @@ fn normalize_msgids(raw: &[u8]) -> String {
 ///
 /// `Content-Disposition: attachment` is the obvious case, but Apple Mail sends
 /// iPhone photos as *inline* parts of a multipart/mixed, so disposition alone
-/// misses them. Any non-text part therefore counts, except one carrying a
-/// Content-ID — that marks a `cid:` resource referenced from the HTML body
-/// (a newsletter logo), which is rendered in place rather than listed.
+/// misses them. Any non-text part therefore counts, except a small one carrying a
+/// Content-ID — see [`INLINE_ATTACHMENT_MIN`].
 fn structure_has_attachment(bs: &async_imap::imap_proto::types::BodyStructure) -> bool {
-    use async_imap::imap_proto::types::BodyStructure as Bs;
+    use async_imap::imap_proto::types::{BodyStructure as Bs, ContentEncoding};
 
     let is_attachment = |common: &async_imap::imap_proto::types::BodyContentCommon| {
         common
@@ -2752,12 +2762,22 @@ fn structure_has_attachment(bs: &async_imap::imap_proto::types::BodyStructure) -
             .as_ref()
             .is_some_and(|d| d.ty.eq_ignore_ascii_case("attachment"))
     };
+    // BODYSTRUCTURE reports the *encoded* size; base64 inflates by 4/3.
+    let decoded_size = |other: &async_imap::imap_proto::types::BodyContentSinglePart| {
+        let octets = other.octets as usize;
+        match other.transfer_encoding {
+            ContentEncoding::Base64 => octets / 4 * 3,
+            _ => octets,
+        }
+    };
 
     match bs {
         Bs::Multipart { bodies, .. } => bodies.iter().any(structure_has_attachment),
         Bs::Text { common, .. } => is_attachment(common),
         Bs::Basic { common, other, .. } | Bs::Message { common, other, .. } => {
-            is_attachment(common) || other.id.is_none()
+            is_attachment(common)
+                || other.id.is_none()
+                || decoded_size(other) >= INLINE_ATTACHMENT_MIN
         }
     }
 }
@@ -4090,6 +4110,60 @@ mod tests {
     #[test]
     fn cid_resources_are_not_listed_as_attachments() {
         assert!(extract_attachments(CID_NEWSLETTER.as_bytes()).is_empty());
+    }
+
+    /// A `multipart/related` whose `cid:` image decodes to `bytes` bytes.
+    fn cid_mail_with_image_of(bytes: usize) -> String {
+        // base64 of `bytes` zeroes: 4 chars per 3 bytes, rounded up.
+        let payload = crate::oauth::base64_encode(&vec![0u8; bytes]);
+        concat!(
+            "Content-Type: multipart/related; boundary=R\r\n",
+            "Subject: Photo\r\n\r\n",
+            "--R\r\n",
+            "Content-Type: text/html; charset=utf-8\r\n\r\n",
+            "<p><img src=\"cid:pic\"></p>\r\n",
+            "--R\r\n",
+            "Content-Type: image/jpeg; name=\"pic.jpg\"\r\n",
+            "Content-ID: <pic>\r\n",
+            "Content-Disposition: inline; filename=\"pic.jpg\"\r\n",
+            "Content-Transfer-Encoding: base64\r\n\r\n",
+        )
+        .to_string()
+            + &payload
+            + "\r\n--R--\r\n"
+    }
+
+    #[test]
+    fn large_cid_image_is_listed_as_an_attachment() {
+        // A photo someone emailed you arrives in the same shape as a newsletter
+        // logo; it has to be saveable, so size decides.
+        let found = extract_attachments(cid_mail_with_image_of(INLINE_ATTACHMENT_MIN).as_bytes());
+        assert_eq!(found.len(), 1, "found: {found:?}");
+        assert_eq!(found[0].name, "pic.jpg");
+        assert_eq!(found[0].data.len(), INLINE_ATTACHMENT_MIN);
+    }
+
+    #[test]
+    fn small_cid_image_is_still_only_decoration() {
+        let raw = cid_mail_with_image_of(INLINE_ATTACHMENT_MIN - 1);
+        assert!(extract_attachments(raw.as_bytes()).is_empty());
+    }
+
+    #[test]
+    fn large_cid_image_counts_toward_the_paperclip() {
+        // BODYSTRUCTURE reports the base64 size: 4 characters per 3 bytes, padded.
+        let octets = INLINE_ATTACHMENT_MIN.div_ceil(3) * 4;
+        let raw = format!(
+            concat!(
+                "* 1 FETCH (BODYSTRUCTURE (",
+                "(\"TEXT\" \"HTML\" (\"CHARSET\" \"utf-8\") NIL NIL \"7BIT\" 20 1 NIL NIL NIL NIL)",
+                "(\"IMAGE\" \"JPEG\" (\"NAME\" \"pic.jpg\") \"<pic>\" NIL \"BASE64\" {} NIL ",
+                "(\"INLINE\" (\"FILENAME\" \"pic.jpg\")) NIL NIL)",
+                " \"RELATED\" (\"BOUNDARY\" \"r\") NIL NIL NIL))\r\n",
+            ),
+            octets
+        );
+        assert!(structure_has_attachment(&bodystructure(&raw)));
     }
 
     #[test]

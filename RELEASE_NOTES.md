@@ -2,7 +2,12 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.7.1
+## What's new in 1.7.2
+
+- Photos sent inside a message can now be saved. Right-click one and choose "Save Image As…" — previously that did nothing at all.
+- Those photos also show up as attachments now, with their original filename, so they get a paperclip in the message list and appear in the attachment strip and the gallery like any other attachment. Small embedded images — newsletter logos, spacers, social icons — are still treated as decoration and won't clutter your list with false paperclips.
+
+## In 1.7.1
 
 - Fixed photos sent from Gmail (and images in many newsletters) showing as a filename instead of the picture. These messages point at their images from inside the email itself, and Vireo wasn't following the reference — the images now appear in place, with no network access needed since they arrived with the message.
 - **The Arch, Debian/Ubuntu and Snap packages have been discontinued.** Vireo is now published as a Flatpak (for every distribution) and a Fedora RPM. If you installed one of the discontinued packages, remove it and install the Flatpak instead — it works everywhere and updates automatically:

@@ -599,6 +599,59 @@ fn new_webview() -> webkit6::WebView {
     settings.set_enable_developer_extras(false);
     webview.set_settings(&settings);
 
+    // "Save Image As…" on a right-clicked image. WebKit's own item hands the
+    // image to a download, which needs a `WebKitNetworkSession` destination
+    // handler we don't have — so it silently did nothing. Every image the reader
+    // shows inline (attached photos, and `cid:` images since 1.7.1) is a `data:`
+    // URI whose bytes are already in the document, so swap in our own item that
+    // decodes them and opens a real save dialog.
+    webview.connect_context_menu(|view, menu, hit| {
+        if !hit.context_is_image() {
+            return false; // not an image — leave the default menu alone
+        }
+        let Some(uri) = hit.image_uri() else {
+            return false;
+        };
+        let Some((mime, data)) = decode_data_uri(&uri) else {
+            // A remote image: WebKit's own download-backed item is the only way
+            // to save it, so leave the menu untouched.
+            return false;
+        };
+
+        // Replace the stock item in place so the menu keeps its familiar order.
+        let Some(stock) = menu
+            .items()
+            .into_iter()
+            .find(|i| i.stock_action() == webkit6::ContextMenuAction::DownloadImageToDisk)
+        else {
+            return false;
+        };
+        let position = menu.items().iter().position(|i| i == &stock).unwrap_or(0);
+
+        let action = gtk::gio::SimpleAction::new("vireo-save-image", None);
+        let window = view.root().and_downcast::<gtk::Window>();
+        action.connect_activate(move |_, _| {
+            let dialog = gtk::FileDialog::builder()
+                .initial_name(default_image_name(&mime))
+                .title("Save Image")
+                .build();
+            let data = data.clone();
+            dialog.save(window.as_ref(), gtk::gio::Cancellable::NONE, move |res| {
+                if let Ok(file) = res {
+                    if let Some(path) = file.path() {
+                        let _ = std::fs::write(path, &data);
+                    }
+                }
+            });
+        });
+        menu.remove(&stock);
+        menu.insert(
+            &webkit6::ContextMenuItem::from_gaction(&action, "Save Image As…", None),
+            position as i32,
+        );
+        false // show the (edited) menu
+    });
+
     webview.connect_decide_policy(|_view, decision, decision_type| {
         // Links (including ones inside sandboxed message iframes, and `_blank`
         // links that request a new window) open in the external browser.
@@ -657,6 +710,29 @@ fn new_webview() -> webkit6::WebView {
     });
 
     webview
+}
+
+/// Split a `data:<mime>;base64,<payload>` URI into its MIME type and bytes.
+/// Returns `None` for any other scheme, or for a `data:` URI that isn't base64
+/// (the reader only ever emits base64 ones).
+fn decode_data_uri(uri: &str) -> Option<(String, Vec<u8>)> {
+    let rest = uri.strip_prefix("data:").or_else(|| uri.strip_prefix("DATA:"))?;
+    let (meta, payload) = rest.split_once(',')?;
+    let mime = meta.strip_suffix(";base64")?;
+    let data = gtk::glib::base64_decode(payload);
+    (!data.is_empty()).then(|| (mime.to_ascii_lowercase(), data))
+}
+
+/// A sensible filename to pre-fill the save dialog with. The original name isn't
+/// recoverable from a `data:` URI — the properly named copy is in the attachment
+/// drawer — so offer `image.<ext>` derived from the MIME type.
+fn default_image_name(mime: &str) -> String {
+    let ext = match mime {
+        "image/jpeg" => "jpg",
+        "image/svg+xml" => "svg",
+        other => other.rsplit('/').next().unwrap_or("img"),
+    };
+    format!("image.{ext}")
 }
 
 /// Markup for the sender address as a clickable mailto link.
@@ -815,5 +891,33 @@ fn body_html(body: &str) -> String {
              </style></head><body>{}</body></html>",
             body.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_a_base64_data_uri() {
+        let (mime, data) = decode_data_uri("data:image/jpeg;base64,/9j/4AAQ").expect("decodes");
+        assert_eq!(mime, "image/jpeg");
+        assert_eq!(&data[..3], b"\xff\xd8\xff"); // JPEG magic
+    }
+
+    #[test]
+    fn rejects_uris_it_cannot_save_locally() {
+        // Remote images keep WebKit's own (download-backed) menu item.
+        assert!(decode_data_uri("https://example.com/a.png").is_none());
+        // Non-base64 `data:` URIs aren't something the reader emits.
+        assert!(decode_data_uri("data:image/png,rawbytes").is_none());
+        assert!(decode_data_uri("not a uri").is_none());
+    }
+
+    #[test]
+    fn suggests_a_filename_from_the_mime_type() {
+        assert_eq!(default_image_name("image/jpeg"), "image.jpg");
+        assert_eq!(default_image_name("image/png"), "image.png");
+        assert_eq!(default_image_name("image/svg+xml"), "image.svg");
     }
 }
