@@ -41,6 +41,22 @@ pub struct MessageView {
     /// Forced dark flag for message content, or `None` to follow the system UI.
     /// This themes email content only, not the app chrome.
     content_dark: Option<bool>,
+    /// Whether the current message's From: address survived its provider's
+    /// authentication checks. `None` until the verdict arrives with the body.
+    sender_check: Option<crate::models::SenderCheck>,
+    /// Full URL of the link under the pointer, shown in a corner overlay so a
+    /// link's real destination is visible before it is clicked.
+    link_preview: gtk::Label,
+}
+
+impl MessageView {
+    /// The current verdict, defaulting to "unverified" before one arrives.
+    fn trust(&self) -> crate::models::SenderTrust {
+        self.sender_check
+            .as_ref()
+            .map(|c| c.trust)
+            .unwrap_or(crate::models::SenderTrust::Unverified)
+    }
 }
 
 #[derive(Debug)]
@@ -70,6 +86,8 @@ pub enum MessageViewInput {
     SetContentTheme(Option<bool>),
     /// The WebView finished loading the current document — reveal it.
     Rendered,
+    /// The sender-authentication verdict for the message now on screen.
+    SetSenderCheck(Box<crate::models::SenderCheck>),
     /// A conversation message header was double-clicked — open that message in
     /// its own window.
     OpenHeader { account_id: u32, id: u32 },
@@ -106,6 +124,31 @@ impl Component for MessageView {
             add_named[Some("message")] = &gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
                 add_css_class: "reader-pane",
+
+                gtk::Revealer {
+                    set_transition_type: gtk::RevealerTransitionType::SlideDown,
+                    #[watch]
+                    set_reveal_child: model.trust().is_alarming(),
+
+                    gtk::Box {
+                        add_css_class: "spoof-alert",
+                        set_spacing: 8,
+
+                        gtk::Image { set_icon_name: Some("co.hyprlab.Vireo-dialog-warning-symbolic") },
+                        gtk::Label {
+                            #[watch]
+                            set_label: model
+                                .sender_check
+                                .as_ref()
+                                .map(|c| c.summary.as_str())
+                                .unwrap_or_default(),
+                            set_hexpand: true,
+                            set_halign: gtk::Align::Start,
+                            set_wrap: true,
+                            set_xalign: 0.0,
+                        },
+                    },
+                },
 
                 gtk::Revealer {
                     set_transition_type: gtk::RevealerTransitionType::SlideDown,
@@ -283,6 +326,32 @@ impl Component for MessageView {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let webview = new_webview();
+        // Browser-style link preview: a small plaque in the bottom-left corner of
+        // the body showing exactly where the link under the pointer goes. GTK
+        // tooltips are unreliable over a WebView (WebKit handles motion events
+        // itself, so GTK's hover timer often never starts), and a phishing check
+        // that only sometimes appears is worse than none.
+        let link_preview = gtk::Label::new(None);
+        link_preview.add_css_class("link-preview");
+        link_preview.set_halign(gtk::Align::Start);
+        link_preview.set_valign(gtk::Align::End);
+        link_preview.set_visible(false);
+        link_preview.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        link_preview.set_max_width_chars(90);
+        link_preview.set_can_target(false); // never intercept clicks meant for the page
+        webview.connect_mouse_target_changed({
+            let label = link_preview.clone();
+            move |_view, hit, _modifiers| {
+                let uri = hit.context_is_link().then(|| hit.link_uri()).flatten();
+                match uri {
+                    Some(uri) => {
+                        label.set_text(&link_destination(&uri, hit.link_label().as_deref()));
+                        label.set_visible(true);
+                    }
+                    None => label.set_visible(false),
+                }
+            }
+        });
         let chip_provider = gtk::CssProvider::new();
         if let Some(display) = gtk::gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
@@ -302,6 +371,8 @@ impl Component for MessageView {
             loading: false,
             webview_ready: false,
             webview,
+            sender_check: None,
+            link_preview: link_preview.clone(),
             seq: std::cell::Cell::new(0),
             content_dark: None,
         };
@@ -337,9 +408,10 @@ impl Component for MessageView {
         });
 
         let widgets = view_output!();
-        widgets
-            .body_stack
-            .add_named(&model.webview, Some("body"));
+        let body_overlay = gtk::Overlay::new();
+        body_overlay.set_child(Some(&model.webview));
+        body_overlay.add_overlay(&link_preview);
+        widgets.body_stack.add_named(&body_overlay, Some("body"));
         widgets.body_stack.set_visible_child_name("body");
         ComponentParts { model, widgets }
     }
@@ -354,6 +426,15 @@ impl Component for MessageView {
                 account_color,
                 loading,
             } => {
+                // A new message: the previous message's verdict must not linger
+                // on screen while this one's is still being fetched.
+                let same_message = self.current.as_ref().zip(thread.first()).is_some_and(
+                    |(a, b)| a.id == b.id && a.account_id == b.account_id,
+                );
+                if !same_message {
+                    self.sender_check = None;
+                }
+                self.link_preview.set_visible(false);
                 self.current = thread.first().cloned();
                 self.thread = thread;
                 self.gravatar = gravatar;
@@ -414,6 +495,10 @@ impl Component for MessageView {
                     }
                 }
             }
+            MessageViewInput::SetSenderCheck(check) => {
+                self.sender_check = Some(*check);
+            }
+
             MessageViewInput::Rendered => {
                 self.webview_ready = true;
             }
@@ -712,6 +797,64 @@ fn new_webview() -> webkit6::WebView {
     webview
 }
 
+/// What to show in the link preview: the destination, plus an explicit warning
+/// when the link's visible text claims a different site than it goes to — the
+/// oldest phishing trick there is (`click here: paypal.com` pointing elsewhere).
+fn link_destination(uri: &str, label: Option<&str>) -> String {
+    match label.and_then(|l| mismatched_host(uri, l)) {
+        Some(claimed) => format!("{uri}  ⚠ looks like \"{claimed}\" but goes to {}", host_of(uri).unwrap_or_default()),
+        None => uri.to_string(),
+    }
+}
+
+/// The host a link's visible text claims, when that text is itself a URL or bare
+/// hostname pointing somewhere other than the link's real target.
+fn mismatched_host(uri: &str, label: &str) -> Option<String> {
+    let claimed = host_of(label.trim())?;
+    let actual = host_of(uri)?;
+    // Compare from the right so `mail.example.com` matches `example.com`.
+    let same = actual == claimed
+        || actual.ends_with(&format!(".{claimed}"))
+        || claimed.ends_with(&format!(".{actual}"));
+    (!same).then_some(claimed)
+}
+
+/// The hostname of a URL, or of a bare hostname like `paypal.com/login`.
+fn host_of(text: &str) -> Option<String> {
+    let text = text.trim();
+    // A scheme has no dots, which is what separates `mailto:` from a bare
+    // `example.com:8080`. Only web links have a host worth comparing.
+    let rest = match text.split_once(':') {
+        Some((scheme, rest))
+            if !scheme.is_empty()
+                && !scheme.contains('.')
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-')) =>
+        {
+            if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+                return None;
+            }
+            rest.trim_start_matches("//")
+        }
+        _ => text,
+    };
+    let host = rest
+        .split(['/', '?', '#'])
+        .next()?
+        .rsplit('@') // strip any userinfo
+        .next()?
+        .split(':')
+        .next()?
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let looks_like_host = host.contains('.')
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    looks_like_host.then_some(host)
+}
+
 /// Split a `data:<mime>;base64,<payload>` URI into its MIME type and bytes.
 /// Returns `None` for any other scheme, or for a `data:` URI that isn't base64
 /// (the reader only ever emits base64 ones).
@@ -912,6 +1055,45 @@ mod tests {
         // Non-base64 `data:` URIs aren't something the reader emits.
         assert!(decode_data_uri("data:image/png,rawbytes").is_none());
         assert!(decode_data_uri("not a uri").is_none());
+    }
+
+    #[test]
+    fn link_preview_shows_the_plain_url_when_nothing_is_amiss() {
+        assert_eq!(
+            link_destination("https://example.com/a", Some("Read more")),
+            "https://example.com/a"
+        );
+        // Link text that matches where it goes is not a mismatch.
+        assert_eq!(
+            link_destination("https://example.com/a", Some("example.com")),
+            "https://example.com/a"
+        );
+        // Subdomains belong to the same site.
+        assert_eq!(
+            link_destination("https://mail.example.com/a", Some("example.com")),
+            "https://mail.example.com/a"
+        );
+    }
+
+    #[test]
+    fn link_preview_calls_out_text_claiming_another_site() {
+        let shown = link_destination("https://evil.example/login", Some("https://paypal.com"));
+        assert!(shown.contains("paypal.com"), "{shown}");
+        assert!(shown.contains("evil.example"), "{shown}");
+        assert!(shown.contains('⚠'), "{shown}");
+    }
+
+    #[test]
+    fn ordinary_link_text_is_never_mistaken_for_a_host() {
+        assert_eq!(host_of("Click here to sign in"), None);
+        assert_eq!(host_of("mailto:someone@example.com"), None);
+        assert_eq!(host_of("https://example.com/path"), Some("example.com".into()));
+        assert_eq!(host_of("example.com/path"), Some("example.com".into()));
+        // Userinfo can't be used to disguise the real host.
+        assert_eq!(
+            host_of("https://paypal.com@evil.example/"),
+            Some("evil.example".into())
+        );
     }
 
     #[test]

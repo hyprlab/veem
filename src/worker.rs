@@ -168,6 +168,9 @@ pub enum WorkerEvent {
     /// the loaded window — accurate even for multi-thousand mailboxes).
     FolderUnread { folder_id: u32, unread: u32 },
     Body { message_id: u32, body: String },
+    /// Whether the message's From: address survived its provider's SPF/DKIM/DMARC
+    /// checks. Sent right after `Body`, from the same fetch.
+    SenderChecked { message_id: u32, check: crate::models::SenderCheck },
     Source { text: String },
     Attachments { message_id: u32, items: Vec<crate::models::Attachment> },
     /// The message has attachments that aren't cached; the UI should offer to
@@ -515,6 +518,11 @@ async fn run_imap(
                         message_id: *message_id,
                         body,
                     });
+                    if let Some(check) =
+                        cache.as_ref().and_then(|c| c.load_sender_check(account_id, path, *uid))
+                    {
+                        emit(WorkerEvent::SenderChecked { message_id: *message_id, check });
+                    }
                     continue; // already cached; no network needed
                 }
             }
@@ -631,11 +639,13 @@ async fn run_imap(
                 path,
                 uid,
             } => match load_body_retry(&mut session, &account, &path, uid).await {
-                Ok(body) => {
+                Ok((body, check)) => {
                     if let Some(c) = cache.as_ref() {
                         c.save_body(account_id, &path, uid, &body);
+                        c.save_sender_check(account_id, &path, uid, &check);
                     }
                     emit(WorkerEvent::Body { message_id, body });
+                    emit(WorkerEvent::SenderChecked { message_id, check });
                 }
                 Err(e) => {
                     emit(WorkerEvent::Error {
@@ -1067,7 +1077,7 @@ async fn load_body_retry(
     account: &AccountConfig,
     path: &str,
     uid: u32,
-) -> Result<String, async_imap::error::Error> {
+) -> Result<(String, crate::models::SenderCheck), async_imap::error::Error> {
     let mut s = session.take().expect("session ensured before call");
     let mut res = load_body(&mut s, path, uid).await;
     if res.is_err() {
@@ -1158,8 +1168,11 @@ async fn run_one_prefetch(
         if !already {
             if let Ok(raw) = load_raw_retry(session, account, &path, uid).await {
                 let attachments = extract_attachments(&raw);
+                let check = crate::verify::check_sender(&raw);
+                emit(WorkerEvent::SenderChecked { message_id: uid, check: check.clone() });
                 if let Some(c) = cache {
                     c.save_body(account_id, &path, uid, &extract_body(&raw));
+                    c.save_sender_check(account_id, &path, uid, &check);
                     c.save_attachments(account_id, &path, uid, &attachments);
                     // Mark as fetched so it's never re-downloaded to re-check,
                     // even if it had no attachments after all.
@@ -1268,10 +1281,16 @@ async fn run_one_body_prefetch(
     let Some((path, uid)) = queue.front().cloned() else {
         return;
     };
-    // A cached body needs no connection — serve it straight to the UI.
+    // A cached body needs no connection — serve it straight to the UI, with the
+    // verdict stored alongside it. The two must always travel together: the UI
+    // renders from whichever arrives, and a body without its verdict leaves the
+    // sender badge blank with no second chance to fill it.
     if let Some(body) = cache.and_then(|c| c.load_body(account_id, &path, uid)) {
         queue.pop_front();
         emit(WorkerEvent::Body { message_id: uid, body });
+        if let Some(check) = cache.and_then(|c| c.load_sender_check(account_id, &path, uid)) {
+            emit(WorkerEvent::SenderChecked { message_id: uid, check });
+        }
         emitted.insert((path, uid));
         return;
     }
@@ -1283,11 +1302,13 @@ async fn run_one_body_prefetch(
         return;
     }
     queue.pop_front();
-    if let Ok(body) = load_body_retry(session, account, &path, uid).await {
+    if let Ok((body, check)) = load_body_retry(session, account, &path, uid).await {
         if let Some(c) = cache {
             c.save_body(account_id, &path, uid, &body);
+            c.save_sender_check(account_id, &path, uid, &check);
         }
         emit(WorkerEvent::Body { message_id: uid, body });
+        emit(WorkerEvent::SenderChecked { message_id: uid, check });
         emitted.insert((path, uid));
     }
 }
@@ -2541,7 +2562,7 @@ async fn load_body(
     session: &mut ImapSession,
     path: &str,
     uid: u32,
-) -> Result<String, async_imap::error::Error> {
+) -> Result<(String, crate::models::SenderCheck), async_imap::error::Error> {
     session.select(path).await?;
 
     // Fetch the whole message (PEEK so \Seen isn't set) and extract the body with
@@ -2553,12 +2574,14 @@ async fn load_body(
         .await?
         .try_collect()
         .await?;
-    let body = fetches
-        .iter()
-        .find_map(|f| f.body())
+    // The whole message is in hand, so the sender check rides along for free
+    // rather than costing a second fetch.
+    let raw = fetches.iter().find_map(|f| f.body());
+    let body = raw
         .map(extract_body)
         .unwrap_or_else(|| "(empty message)".to_string());
-    Ok(body)
+    let check = raw.map(crate::verify::check_sender).unwrap_or_default();
+    Ok((body, check))
 }
 
 /// Fetch BODYSTRUCTURE and return the IMAP section number of the preferred text

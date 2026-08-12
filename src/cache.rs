@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS bodies (
     body        TEXT NOT NULL,
     PRIMARY KEY (account_id, folder_path, uid)
 );
+CREATE TABLE IF NOT EXISTS sender_checks (
+    account_id  INTEGER NOT NULL,
+    folder_path TEXT NOT NULL,
+    uid         INTEGER NOT NULL,
+    trust       TEXT NOT NULL,
+    summary     TEXT NOT NULL,
+    findings    TEXT NOT NULL,
+    PRIMARY KEY (account_id, folder_path, uid)
+);
 CREATE TABLE IF NOT EXISTS attachments (
     account_id  INTEGER NOT NULL,
     folder_path TEXT NOT NULL,
@@ -77,7 +86,10 @@ CREATE TABLE IF NOT EXISTS attachments_checked (
 /// aborted on over-long encoded-words (e.g. Mailchimp newsletters).
 /// v10: bodies are re-rendered with `cid:` image references resolved to `data:`
 /// URIs, so cached bodies showing a broken image must be dropped and rebuilt.
-const SCHEMA_VERSION: i64 = 10;
+/// v11: sender authentication is computed from the raw message at the same
+/// moment the body is rendered, so dropping `bodies` re-fetches both together
+/// and every cached message gains a verdict.
+const SCHEMA_VERSION: i64 = 11;
 
 /// The first version whose table *layout* matches the current `SCHEMA`. At or
 /// above this, an upgrade only needs to drop the derived caches, not the
@@ -108,6 +120,7 @@ impl Cache {
                 "DROP TABLE IF EXISTS folders;\
                  DROP TABLE IF EXISTS messages;\
                  DROP TABLE IF EXISTS bodies;\
+                 DROP TABLE IF EXISTS sender_checks;\
                  DROP TABLE IF EXISTS attachments;\
                  DROP TABLE IF EXISTS attachments_checked;",
             );
@@ -116,7 +129,8 @@ impl Cache {
             // build. `LoadBody` serves that cache without ever re-fetching, so a
             // stale entry would survive forever — drop it and let it re-render on
             // next open. The message index is kept: it's expensive to rebuild.
-            let _ = conn.execute_batch("DROP TABLE IF EXISTS bodies;");
+            let _ = conn
+                .execute_batch("DROP TABLE IF EXISTS bodies; DROP TABLE IF EXISTS sender_checks;");
         }
         conn.execute_batch(SCHEMA)?;
         if upgrading_index {
@@ -368,6 +382,59 @@ impl Cache {
             params![account_id, folder_path, uid, body],
         ) {
             tracing::warn!("cache save_body failed: {e}");
+        }
+    }
+
+    /// The cached sender-authentication verdict for a message, if one was stored
+    /// when its body was fetched.
+    pub fn load_sender_check(
+        &self,
+        account_id: u32,
+        folder_path: &str,
+        uid: u32,
+    ) -> Option<crate::models::SenderCheck> {
+        self.conn
+            .query_row(
+                "SELECT trust, summary, findings FROM sender_checks \
+                 WHERE account_id = ?1 AND folder_path = ?2 AND uid = ?3",
+                params![account_id, folder_path, uid],
+                |row| {
+                    Ok(crate::models::SenderCheck {
+                        trust: crate::models::SenderTrust::from_tag(&row.get::<_, String>(0)?),
+                        summary: row.get(1)?,
+                        findings: row
+                            .get::<_, String>(2)?
+                            .lines()
+                            .filter(|l| !l.is_empty())
+                            .map(str::to_string)
+                            .collect(),
+                    })
+                },
+            )
+            .ok()
+    }
+
+    pub fn save_sender_check(
+        &self,
+        account_id: u32,
+        folder_path: &str,
+        uid: u32,
+        check: &crate::models::SenderCheck,
+    ) {
+        if let Err(e) = self.conn.execute(
+            "INSERT OR REPLACE INTO sender_checks \
+             (account_id, folder_path, uid, trust, summary, findings) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                account_id,
+                folder_path,
+                uid,
+                check.trust.as_tag(),
+                check.summary,
+                check.findings.join("\n")
+            ],
+        ) {
+            tracing::warn!("cache save_sender_check failed: {e}");
         }
     }
 

@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.8.0" date="2026-08-12" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.8.0</url>
+      <description>
+        <p>New sender-authentication badge showing whether a message's From: address was forged, and a hover preview of where each link really goes.</p>
+      </description>
+    </release>
     <release version="1.7.2" date="2026-08-10" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.7.2</url>
       <description>

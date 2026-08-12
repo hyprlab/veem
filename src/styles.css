@@ -598,6 +598,54 @@ headerbar.rail-header button image {
   color: rgba(0, 0, 0, 0.75);
 }
 
+/* ---- Sender authentication ---- */
+
+/* A failed or suspicious sender gets the loudest treatment in the reader — red,
+   full width, above everything else. It has to survive being glanced past. */
+.spoof-alert {
+  background-color: #c01c28;
+  color: #ffffff;
+  padding: 8px 10px 8px 14px;
+}
+
+.spoof-alert image {
+  color: #ffffff;
+}
+
+/* Sender-check badge in the reader toolbar: an icon button like its neighbours,
+   tinted by verdict. No padding or radius of its own — it has to line up with
+   Reply/Archive/View Source, so it takes the toolbar's own button metrics. */
+.trust-pass {
+  color: #1a7f37;
+}
+
+.trust-unverified {
+  opacity: 0.55;
+}
+
+.trust-suspicious {
+  color: #b35000;
+}
+
+.trust-fail {
+  color: #c01c28;
+}
+
+.sender-detail {
+  padding: 12px;
+}
+
+/* Link destination plaque, bottom-left of the message body — the same idea as a
+   browser's status bubble, so a link's real target is visible before clicking. */
+.link-preview {
+  background-color: rgba(0, 0, 0, 0.82);
+  color: #ffffff;
+  padding: 3px 10px;
+  border-radius: 6px 6px 0 0;
+  font-size: 0.85em;
+  margin: 0 0 0 4px;
+}
+
 /* ---- Compose ---- */
 
 .compose-pane {

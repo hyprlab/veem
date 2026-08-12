@@ -50,6 +50,8 @@ pub enum MessageWindowInput {
     Ignore,
     /// The message body arrived from the server.
     SetBody(String),
+    /// The sender-authentication verdict for this message.
+    SetSenderCheck(Box<crate::models::SenderCheck>),
     /// Reflect a star toggle that happened elsewhere (or came back from the app).
     SetStarred(bool),
     /// Downloaded attachments are now available.
@@ -270,6 +272,9 @@ impl Component for MessageWindow {
             MessageWindowInput::Ignore => {}
             MessageWindowInput::SetContentTheme(o) => {
                 self.view.emit(MessageViewInput::SetContentTheme(o));
+            }
+            MessageWindowInput::SetSenderCheck(check) => {
+                self.view.emit(MessageViewInput::SetSenderCheck(check));
             }
             MessageWindowInput::SetBody(body) => {
                 self.msg.body = body;

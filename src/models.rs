@@ -98,6 +98,95 @@ pub struct DraftOrigin {
     pub uid: u32,
 }
 
+/// How much a message's claimed sender can be trusted, worst finding wins.
+///
+/// This answers "did this really come from the domain in the From: line?" — not
+/// "is this message safe". A phisher who registers their own domain and
+/// authenticates it properly earns [`SenderTrust::Pass`]; the check proves the
+/// From: address wasn't forged, nothing more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SenderTrust {
+    /// The receiving server authenticated the From: domain (DMARC, or aligned
+    /// SPF/DKIM). Forging this address would have been rejected.
+    Pass,
+    /// No usable authentication result — an old server, a POP3 account, or mail
+    /// that predates the check. Says nothing either way.
+    Unverified,
+    /// Authenticated, but something about the addressing is off: a reply-to on
+    /// another domain, or a display name impersonating one.
+    Suspicious,
+    /// Authentication failed. The From: address is very likely forged.
+    Fail,
+}
+
+impl SenderTrust {
+    /// Round-trip tag for the cache.
+    pub fn as_tag(self) -> &'static str {
+        match self {
+            SenderTrust::Pass => "pass",
+            SenderTrust::Unverified => "unverified",
+            SenderTrust::Suspicious => "suspicious",
+            SenderTrust::Fail => "fail",
+        }
+    }
+
+    pub fn from_tag(tag: &str) -> SenderTrust {
+        match tag {
+            "pass" => SenderTrust::Pass,
+            "suspicious" => SenderTrust::Suspicious,
+            "fail" => SenderTrust::Fail,
+            _ => SenderTrust::Unverified,
+        }
+    }
+
+    /// Heading for the details popover, and the badge's tooltip. Not drawn on
+    /// screen: the toolbar badge is the icon alone, coloured by verdict.
+    pub fn label(self) -> &'static str {
+        match self {
+            SenderTrust::Pass => "Verified sender",
+            SenderTrust::Unverified => "Sender not verified",
+            SenderTrust::Suspicious => "Check this sender",
+            SenderTrust::Fail => "Possible forgery",
+        }
+    }
+
+    /// CSS class for the badge's colour.
+    pub fn css_class(self) -> &'static str {
+        match self {
+            SenderTrust::Pass => "trust-pass",
+            SenderTrust::Unverified => "trust-unverified",
+            SenderTrust::Suspicious => "trust-suspicious",
+            SenderTrust::Fail => "trust-fail",
+        }
+    }
+
+    /// Whether this verdict deserves a banner across the top of the message
+    /// rather than just a badge beside the sender.
+    pub fn is_alarming(self) -> bool {
+        matches!(self, SenderTrust::Suspicious | SenderTrust::Fail)
+    }
+}
+
+/// The result of checking whether a message's From: address was forged.
+#[derive(Debug, Clone)]
+pub struct SenderCheck {
+    pub trust: SenderTrust,
+    /// One-line plain-English verdict, shown in the banner and popover heading.
+    pub summary: String,
+    /// Supporting detail, one line each, for the "Details" popover.
+    pub findings: Vec<String>,
+}
+
+impl Default for SenderCheck {
+    fn default() -> Self {
+        SenderCheck {
+            trust: SenderTrust::Unverified,
+            summary: "This message hasn't been checked.".into(),
+            findings: Vec::new(),
+        }
+    }
+}
+
 /// A decoded message attachment (fetched on demand for the reader).
 #[derive(Debug, Clone)]
 pub struct Attachment {

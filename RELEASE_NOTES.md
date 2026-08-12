@@ -2,7 +2,14 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.7.2
+## What's new in 1.8.0
+
+- **Know who really sent a message.** Anyone can put anything in an email's "From" line — that's how phishing works. Vireo now shows a lightbulb in the toolbar telling you whether your mail provider could actually confirm the sender: green for verified, amber if something's off, red if the address looks forged. Click it for the reasoning, including things like "replies would go to a different company than the one that sent this".
+- **See where a link goes before you click it.** Hover any link in a message and its real destination appears at the bottom of the message. If the link text claims one website while pointing at another — the oldest trick in phishing — Vireo says so directly.
+
+  A verified sender means the address wasn't forged. It doesn't mean the message is safe: a scammer who registers their own convincing-looking domain can pass the check. Use it to catch impersonation, not as a licence to trust.
+
+## In 1.7.2
 
 - Photos sent inside a message can now be saved. Right-click one and choose "Save Image As…" — previously that did nothing at all.
 - Those photos also show up as attachments now, with their original filename, so they get a paperclip in the message list and appear in the attachment strip and the gallery like any other attachment. Small embedded images — newsletter logos, spacers, social icons — are still treated as decoration and won't clutter your list with false paperclips.

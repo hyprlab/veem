@@ -14,6 +14,7 @@ mod oauth;
 mod platform;
 mod power;
 mod ui;
+mod verify;
 mod worker;
 
 use relm4::RelmApp;

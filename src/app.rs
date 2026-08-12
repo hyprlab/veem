@@ -126,6 +126,11 @@ pub struct AppModel {
     /// (account_id, message_id) → fetched body, so reopening a message renders
     /// instantly with no loading spinner.
     body_cache: HashMap<(u32, u32), String>,
+    /// Sender-authentication verdicts, keyed like `body_cache`. Prefetch delivers
+    /// these well before a message is opened, and opening one renders from the
+    /// in-memory body cache without a worker round-trip — so the verdict has to
+    /// be held here or it would be lost by the time the reader needs it.
+    sender_cache: HashMap<(u32, u32), Box<crate::models::SenderCheck>>,
     /// (account_id, folder_id) → server-side unread count, accurate beyond the
     /// loaded window (from IMAP STATUS/SEARCH). Drives the sidebar badges.
     folder_unread: HashMap<(u32, u32), u32>,
@@ -237,6 +242,12 @@ pub enum AppMsg {
     AddContactFrom { name: String, email: String },
     /// Download a specific message's attachments (from a popout window).
     LoadAttachmentsFor(Box<Message>),
+    /// A message's sender-authentication verdict arrived with its body.
+    SenderChecked {
+        account_id: u32,
+        message_id: u32,
+        check: Box<crate::models::SenderCheck>,
+    },
     /// Open a single attachment delivered from a popout window.
     OpenAttachmentItem(Box<Attachment>),
     /// Save attachments delivered from a popout window.
@@ -562,7 +573,71 @@ impl SimpleComponent for AppModel {
                                 },
                                 // pack_end fills right-to-left, so these are declared
                                 // in reverse of their visual order. Left to right:
-                                // Archive, Delete, Spam, View Source.
+                                // Archive, Delete, Spam, View Source, sender check.
+                                pack_end = &gtk::MenuButton {
+                                    set_icon_name: "co.hyprlab.Vireo-lightbulb-symbolic",
+                                    add_css_class: "flat",
+                                    add_css_class: "image-button",
+                                    #[watch]
+                                    set_visible: model.sender_verdict().is_some(),
+                                    #[watch]
+                                    set_css_classes: &[
+                                        "flat",
+                                        "image-button",
+                                        model.sender_trust().css_class(),
+                                    ],
+                                    #[watch]
+                                    set_tooltip_text: Some(model.sender_trust().label()),
+                                    #[wrap(Some)]
+                                    set_popover = &gtk::Popover {
+                                        set_width_request: 380,
+                                        gtk::Box {
+                                            set_orientation: gtk::Orientation::Vertical,
+                                            set_spacing: 10,
+                                            add_css_class: "sender-detail",
+
+                                            gtk::Label {
+                                                #[watch]
+                                                set_label: model.sender_trust().label(),
+                                                set_halign: gtk::Align::Start,
+                                                add_css_class: "heading",
+                                            },
+                                            gtk::Label {
+                                                #[watch]
+                                                set_label: &model
+                                                    .sender_verdict()
+                                                    .map(|c| c.summary.clone())
+                                                    .unwrap_or_default(),
+                                                set_halign: gtk::Align::Start,
+                                                set_wrap: true,
+                                                set_xalign: 0.0,
+                                                set_max_width_chars: 44,
+                                            },
+                                            gtk::Separator {},
+                                            gtk::Label {
+                                                #[watch]
+                                                set_label: &model
+                                                    .sender_verdict()
+                                                    .map(|c| c.findings.join("\n"))
+                                                    .unwrap_or_default(),
+                                                set_halign: gtk::Align::Start,
+                                                set_wrap: true,
+                                                set_xalign: 0.0,
+                                                set_max_width_chars: 44,
+                                                add_css_class: "dim-label",
+                                            },
+                                            gtk::Label {
+                                                set_label: "A pass proves the address wasn't forged — not that the message is safe.",
+                                                set_halign: gtk::Align::Start,
+                                                set_wrap: true,
+                                                set_xalign: 0.0,
+                                                set_max_width_chars: 44,
+                                                add_css_class: "dim-label",
+                                                add_css_class: "caption",
+                                            },
+                                        },
+                                    },
+                                },
                                 pack_end = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-background-app-ghost-symbolic",
                                     set_tooltip_text: Some("View Source"),
@@ -791,6 +866,7 @@ impl SimpleComponent for AppModel {
             message_cache: HashMap::new(),
             indexed_folders: HashSet::new(),
             body_cache: HashMap::new(),
+            sender_cache: HashMap::new(),
             pending_draft: None,
             popouts: HashMap::new(),
             current_thread: Vec::new(),
@@ -2085,6 +2161,27 @@ impl SimpleComponent for AppModel {
                 self.push_index_complete();
             }
 
+            AppMsg::SenderChecked { account_id, message_id, check } => {
+                // Remember it: prefetch delivers the verdict long before the
+                // message is opened, and opening it renders from the in-memory
+                // body cache without asking the worker for anything.
+                self.sender_cache
+                    .insert((account_id, message_id), check.clone());
+                // Only the message actually on screen; a verdict that arrives
+                // from a background prefetch must not relabel a different one.
+                if self
+                    .current
+                    .as_ref()
+                    .is_some_and(|c| c.id == message_id && c.account_id == account_id)
+                {
+                    self.message_view
+                        .emit(MessageViewInput::SetSenderCheck(check.clone()));
+                }
+                if let Some(p) = self.popouts.get(&(account_id, message_id)) {
+                    p.controller.emit(MessageWindowInput::SetSenderCheck(check));
+                }
+            }
+
             AppMsg::Body { account_id, message_id, body } => {
                 self.body_cache
                     .insert((account_id, message_id), body.clone());
@@ -2780,6 +2877,10 @@ impl AppModel {
             ),
             None => (None, None),
         };
+        let stored_check = message
+            .as_ref()
+            .and_then(|m| self.sender_cache.get(&(m.account_id, m.id)))
+            .cloned();
         self.message_view.emit(MessageViewInput::Show {
             thread: message.into_iter().collect(),
             allow_remote,
@@ -2788,6 +2889,11 @@ impl AppModel {
             account_color,
             loading,
         });
+        // After `Show`, which clears the outgoing message's verdict.
+        if let Some(check) = stored_check {
+            self.message_view
+                .emit(MessageViewInput::SetSenderCheck(check));
+        }
     }
 
     /// Render the current conversation (thread) in the reader, newest first.
@@ -2907,6 +3013,19 @@ impl AppModel {
         window.present();
 
         self.popouts.insert(key, PopOut { window, controller });
+    }
+
+    /// The sender verdict for the message on screen, if one has arrived.
+    fn sender_verdict(&self) -> Option<&crate::models::SenderCheck> {
+        let m = self.current.as_ref()?;
+        self.sender_cache.get(&(m.account_id, m.id)).map(|c| &**c)
+    }
+
+    /// That verdict's trust level, defaulting to "unverified".
+    fn sender_trust(&self) -> crate::models::SenderTrust {
+        self.sender_verdict()
+            .map(|c| c.trust)
+            .unwrap_or(crate::models::SenderTrust::Unverified)
     }
 
     /// Whether the given folder is the account's Drafts folder.
@@ -4246,6 +4365,9 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
             AppMsg::FolderUnread { account_id, folder_id, unread }
         }
         WorkerEvent::Body { message_id, body } => AppMsg::Body { account_id, message_id, body },
+        WorkerEvent::SenderChecked { message_id, check } => {
+            AppMsg::SenderChecked { account_id, message_id, check: Box::new(check) }
+        }
         WorkerEvent::Source { text, .. } => AppMsg::Source { text },
         WorkerEvent::Attachments { message_id, items } => {
             AppMsg::Attachments { account_id, message_id, items }
