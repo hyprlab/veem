@@ -17,6 +17,7 @@ use chrono::Datelike;
 use futures::TryStreamExt;
 use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message as LettreMessage, Tokio1Executor};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -1584,7 +1585,20 @@ async fn send_smtp(account: &AccountConfig, msg: &OutgoingMessage) -> Result<Vec
 
     let host = smtp_host(account);
     // Port 465 is implicit TLS; everything else (587, etc.) uses STARTTLS.
-    let transport_builder = if account.smtp_port == 465 {
+    let transport_builder = if is_proton_bridge(account) {
+        let tls = TlsParameters::builder(host.clone())
+            .dangerous_accept_invalid_certs(true)
+            .dangerous_accept_invalid_hostnames(true)
+            .build()?;
+        let mode = if account.smtp_port == 465 {
+            Tls::Wrapper(tls)
+        } else {
+            Tls::Required(tls)
+        };
+        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&host)
+            .port(account.smtp_port)
+            .tls(mode)
+    } else if account.smtp_port == 465 {
         AsyncSmtpTransport::<Tokio1Executor>::relay(&host)?
     } else {
         AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)?
@@ -1728,6 +1742,13 @@ fn smtp_host(account: &AccountConfig) -> String {
     } else {
         account.imap_host.clone()
     }
+}
+
+fn is_proton_bridge(account: &AccountConfig) -> bool {
+    account.imap_host == "127.0.0.1"
+        && account.imap_port == 1143
+        && smtp_host(account) == "127.0.0.1"
+        && account.smtp_port == 1025
 }
 
 async fn store_flag(
@@ -1887,13 +1908,32 @@ async fn mark_spam(
 
 async fn connect(account: &AccountConfig) -> Result<ImapSession, Box<dyn std::error::Error>> {
     let tcp = TcpStream::connect((account.imap_host.as_str(), account.imap_port)).await?;
-    let tls = async_native_tls::TlsConnector::new();
-    let stream = tls.connect(account.imap_host.as_str(), tcp).await?;
-    let mut client = async_imap::Client::new(stream);
-    // Consume the server greeting before issuing commands. LOGIN tolerates an
-    // unread greeting, but the AUTHENTICATE handshake reads it as the command
-    // reply and deadlocks — so read it explicitly here.
-    let _ = client.read_response().await;
+    let tls = if is_proton_bridge(account) {
+        async_native_tls::TlsConnector::new()
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true)
+    } else {
+        async_native_tls::TlsConnector::new()
+    };
+    let client = if account.imap_port == 993 {
+        let stream = tls.connect(account.imap_host.as_str(), tcp).await?;
+        let mut client = async_imap::Client::new(stream);
+        // Consume the server greeting before issuing commands. LOGIN tolerates an
+        // unread greeting, but the AUTHENTICATE handshake reads it as the command
+        // reply and deadlocks — so read it explicitly here.
+        let _ = client.read_response().await;
+        client
+    } else {
+        let mut client = async_imap::Client::new(tcp);
+        // Consume the plaintext greeting before issuing STARTTLS.
+        let _ = client.read_response().await;
+        client.run_command_and_check_ok("STARTTLS", None).await?;
+        let stream = tls
+            .connect(account.imap_host.as_str(), client.into_inner())
+            .await?;
+        // STARTTLS does not send another server greeting.
+        async_imap::Client::new(stream)
+    };
     let session = if account.oauth {
         // XOAUTH2 with a fresh access token (from GOA or a native refresh token).
         let token = fetch_oauth_token(account)
@@ -1966,7 +2006,7 @@ async fn test_imap(account: &AccountConfig) -> Result<(), String> {
 /// credentials without delivering anything.
 async fn test_smtp(account: &AccountConfig) -> Result<(), String> {
     use lettre::transport::smtp::authentication::{Credentials, Mechanism};
-    use lettre::transport::smtp::client::{AsyncSmtpConnection, TlsParameters};
+    use lettre::transport::smtp::client::AsyncSmtpConnection;
     use lettre::transport::smtp::extension::ClientId;
 
     let host = smtp_host(account);
@@ -1977,7 +2017,15 @@ async fn test_smtp(account: &AccountConfig) -> Result<(), String> {
     };
     let creds = Credentials::new(user, pass);
     let hello = ClientId::default();
-    let tls = TlsParameters::new(host.clone()).map_err(|e| e.to_string())?;
+    let tls = if is_proton_bridge(account) {
+        TlsParameters::builder(host.clone())
+            .dangerous_accept_invalid_certs(true)
+            .dangerous_accept_invalid_hostnames(true)
+            .build()
+            .map_err(|e| e.to_string())?
+    } else {
+        TlsParameters::new(host.clone()).map_err(|e| e.to_string())?
+    };
     let addr = format!("{host}:{}", account.smtp_port);
     let timeout = Some(std::time::Duration::from_secs(20));
 
