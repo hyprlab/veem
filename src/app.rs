@@ -257,6 +257,7 @@ pub enum AppMsg {
     /// Save attachments delivered from a popout window.
     SaveAttachmentItems(Vec<Attachment>),
     ToggleStar,
+    MarkUnread,
     Archive,
     Delete,
     RowAction { action: RowAction, message: Box<Message> },
@@ -562,6 +563,14 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::AddToContacts),
+                                },
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-mail-unread-symbolic",
+                                    set_tooltip_text: Some("Mark as Unread"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_sensitive: model.current.is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::MarkUnread),
                                 },
                                 pack_start = &gtk::Button {
                                     set_tooltip_text: Some("Flag"),
@@ -1463,6 +1472,12 @@ impl SimpleComponent for AppModel {
             AppMsg::ToggleStar => {
                 if let Some(m) = self.current.clone() {
                     self.set_star(&m, !m.starred);
+                }
+            }
+
+            AppMsg::MarkUnread => {
+                if let Some(m) = self.current.clone() {
+                    self.set_read(&m, false);
                 }
             }
 
