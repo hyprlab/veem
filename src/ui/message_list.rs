@@ -520,7 +520,7 @@ impl MessageRow {
 }
 
 /// Sort messages in place by the chosen order (stable; ties fall back to date).
-fn sort_messages(msgs: &mut [Message], order: SortOrder) {
+fn message_cmp(a: &Message, b: &Message, order: SortOrder) -> std::cmp::Ordering {
     let name_of = |m: &Message| {
         if m.from_name.trim().is_empty() {
             m.from_addr.to_lowercase()
@@ -529,24 +529,20 @@ fn sort_messages(msgs: &mut [Message], order: SortOrder) {
         }
     };
     match order {
-        SortOrder::DateNewest => msgs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)),
-        SortOrder::DateOldest => msgs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp)),
-        SortOrder::Sender => msgs.sort_by(|a, b| {
-            name_of(a).cmp(&name_of(b)).then(b.timestamp.cmp(&a.timestamp))
-        }),
-        SortOrder::Subject => msgs.sort_by(|a, b| {
-            normalize_subject(&a.subject)
-                .cmp(&normalize_subject(&b.subject))
-                .then(b.timestamp.cmp(&a.timestamp))
-        }),
+        SortOrder::DateNewest => b.timestamp.cmp(&a.timestamp),
+        SortOrder::DateOldest => a.timestamp.cmp(&b.timestamp),
+        SortOrder::Sender => name_of(a).cmp(&name_of(b)).then(b.timestamp.cmp(&a.timestamp)),
+        SortOrder::Subject => normalize_subject(&a.subject)
+            .cmp(&normalize_subject(&b.subject))
+            .then(b.timestamp.cmp(&a.timestamp)),
         // `true` sorts after `false`, so compare b-vs-a to put unread/flagged first.
-        SortOrder::UnreadFirst => {
-            msgs.sort_by(|a, b| b.unread.cmp(&a.unread).then(b.timestamp.cmp(&a.timestamp)))
-        }
-        SortOrder::FlaggedFirst => {
-            msgs.sort_by(|a, b| b.starred.cmp(&a.starred).then(b.timestamp.cmp(&a.timestamp)))
-        }
+        SortOrder::UnreadFirst => b.unread.cmp(&a.unread).then(b.timestamp.cmp(&a.timestamp)),
+        SortOrder::FlaggedFirst => b.starred.cmp(&a.starred).then(b.timestamp.cmp(&a.timestamp)),
     }
+}
+
+fn sort_message_refs(msgs: &mut [&Message], order: SortOrder) {
+    msgs.sort_by(|a, b| message_cmp(a, b, order));
 }
 
 /// The conversation key a message belongs to: its owning account plus the
@@ -1763,7 +1759,12 @@ impl MessageList {
 
     fn rebuild(&mut self) {
         let q = self.query.to_lowercase();
-        let mut matches: Vec<Message> = self
+        // Filter and sort by reference first — a folder's full index can hold
+        // hundreds of thousands of messages, and only `render_limit` of them are
+        // ever shown, so cloning the whole match set before capping it would
+        // block the UI thread on every rebuild (e.g. the initial cache-backed
+        // load on startup). Only the capped page gets cloned.
+        let mut matches: Vec<&Message> = self
             .active_source()
             .iter()
             .filter(|m| {
@@ -1773,13 +1774,14 @@ impl MessageList {
                     || m.from_addr.to_lowercase().contains(&q)
                     || m.preview.to_lowercase().contains(&q)
             })
-            .cloned()
             .collect();
-        sort_messages(&mut matches, self.sort);
-        self.total_matches = matches.len();
+        sort_message_refs(&mut matches, self.sort);
+        let total_matches = matches.len();
         // Render up to the current limit; the rest stay indexed (for search) until
         // the user scrolls further and `LoadMore` raises the limit.
-        let capped: Vec<Message> = matches.into_iter().take(self.render_limit).collect();
+        let render_limit = self.render_limit;
+        let capped: Vec<Message> = matches.into_iter().take(render_limit).cloned().collect();
+        self.total_matches = total_matches;
         self.rendered_count = capped.len();
 
         // Group into conversations by reply headers (Message-ID / In-Reply-To /

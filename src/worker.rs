@@ -394,12 +394,26 @@ async fn run_imap(
                 } else if !backfill.is_empty() {
                     // Index the rest of the mailbox in the background. Connect first
                     // for cached-folder accounts (which connect lazily); if still
-                    // offline, wait for a request instead of spinning.
+                    // offline, wait for a request instead of spinning. An incoming
+                    // request (e.g. the initial cache-backed folder load on startup)
+                    // preempts this connect so cached mail isn't stuck behind a slow
+                    // IMAP handshake before it's even looked at.
                     if session.is_none() {
-                        session =
-                            connect_and_list(account_id, &account, cache.as_ref(), &emit).await;
-                    }
-                    if session.is_some() {
+                        let connect = connect_and_list(account_id, &account, cache.as_ref(), &emit);
+                        tokio::select! {
+                            biased;
+                            req = rx.recv() => {
+                                match req {
+                                    Some(req) => req,
+                                    None => break,
+                                }
+                            }
+                            s = connect => {
+                                session = s;
+                                continue;
+                            }
+                        }
+                    } else {
                         run_one_backfill(
                             &mut backfill,
                             &mut session,
@@ -412,11 +426,6 @@ async fn run_imap(
                         )
                         .await;
                         continue;
-                    } else {
-                        match rx.recv().await {
-                            Some(req) => req,
-                            None => break,
-                        }
                     }
                 } else if push_enabled && session.is_some() && idle_folder.is_some() {
                     let (fid, fpath) = idle_folder.clone().unwrap();
