@@ -38,6 +38,14 @@ pub struct SectionData {
     pub emoji: Option<String>,
 }
 
+/// Initial data for the sidebar.
+pub struct SidebarInit {
+    /// Icon-only mode: hide all text, show just icons and account pills.
+    pub collapsed: bool,
+    /// Whether to show the "Attachments" row.
+    pub show_attachments: bool,
+}
+
 /// What is currently selected in the sidebar.
 #[derive(Clone, PartialEq, Debug)]
 enum Sel {
@@ -75,6 +83,8 @@ pub struct Sidebar {
     selected: Sel,
     /// Icon-only mode: hide all text, show just icons and account pills.
     collapsed: bool,
+    /// Whether to show the "Attachments" row.
+    show_attachments: bool,
     /// Total unread across all inboxes, for the "All Inboxes" badge.
     unified_unread: u32,
     /// Unread badge labels by (account_id, folder_id), updated in place.
@@ -115,6 +125,8 @@ pub enum SidebarInput {
     /// Toggle the collapsible "Folders" (custom folders) section for an account.
     ToggleCustomFoldersLocal(u32),
     ToggleCollapsed,
+    /// Show or hide the "Attachments" row.
+    SetShowAttachments(bool),
     /// Update unread badges in place without rebuilding the sidebar.
     SetUnread {
         folders: HashMap<(u32, u32), u32>,
@@ -173,7 +185,7 @@ pub enum CtxAction {
 
 #[relm4::component(pub)]
 impl Component for Sidebar {
-    type Init = bool;
+    type Init = SidebarInit;
     type Input = SidebarInput;
     type Output = SidebarOutput;
     type CommandOutput = ();
@@ -235,7 +247,8 @@ impl Component for Sidebar {
             attachments_list: None,
             color_provider,
             selected: Sel::None,
-            collapsed: init,
+            collapsed: init.collapsed,
+            show_attachments: init.show_attachments,
             unified_unread: 0,
             folder_badges: HashMap::new(),
             unified_badge: None,
@@ -249,7 +262,7 @@ impl Component for Sidebar {
         };
 
         let widgets = view_output!();
-        if init {
+        if init.collapsed {
             widgets.collapse_btn.set_icon_name("co.hyprlab.Vireo-go-next-symbolic");
             widgets.collapse_btn.set_tooltip_text(Some("Expand sidebar"));
         }
@@ -408,6 +421,17 @@ impl Component for Sidebar {
                 self.rebuild_normal(&widgets.normal_box, &sender);
                 self.restore_selection();
                 let _ = sender.output(SidebarOutput::CollapsedChanged(self.collapsed));
+            }
+
+            SidebarInput::SetShowAttachments(on) => {
+                self.show_attachments = on;
+                // The row is about to disappear out from under the current
+                // selection — fall back the same way an empty selection does.
+                if !on && self.selected == Sel::Attachments {
+                    self.selected = Sel::None;
+                }
+                self.rebuild_normal(&widgets.normal_box, &sender);
+                self.restore_selection();
             }
 
             SidebarInput::ToggleCollapseLocal(id) => {
@@ -750,7 +774,7 @@ impl Sidebar {
 
         // "Attachments" row — a gallery of every inbox attachment. Sits under the
         // All Inboxes block and above the per-account sections.
-        {
+        if self.show_attachments {
             let list = gtk::ListBox::new();
             list.set_selection_mode(gtk::SelectionMode::Single);
             list.add_css_class("navigation-sidebar");
