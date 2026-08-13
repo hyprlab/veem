@@ -17,7 +17,9 @@ use chrono::Datelike;
 use futures::TryStreamExt;
 use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
-use lettre::{AsyncSmtpTransport, AsyncTransport, Message as LettreMessage, Tokio1Executor};
+use lettre::{
+    Address, AsyncSmtpTransport, AsyncTransport, Message as LettreMessage, Tokio1Executor,
+};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
@@ -1550,16 +1552,39 @@ fn parse_recipients(s: &str) -> Vec<(String, String)> {
 /// Build the RFC 822 email (headers + MIME body) from a composed message. Shared
 /// by SMTP sending and by saving to Drafts (no network).
 fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreMessage, SmtpError> {
-    let from: Mailbox = format!("{} <{}>", account.name, account.email).parse()?;
+    let email: Address = account
+        .email
+        .parse()
+        .map_err(|e| format!("invalid account email {:?}: {e}", account.email))?;
+    // Build the mailbox from its parts rather than formatting "Name <email>" and
+    // parsing that as one string: an unquoted RFC 5322 display name can't contain
+    // '@' or '.', so an account whose name happens to equal its own address (e.g.
+    // a GOA import with no separate display name) would fail to parse. Mailbox::new
+    // quotes the name correctly at encode time instead, for any name.
+    let name = account.name.trim();
+    let from = if name.is_empty() || name.eq_ignore_ascii_case(&account.email) {
+        Mailbox::new(None, email)
+    } else {
+        Mailbox::new(Some(name.to_string()), email)
+    };
     let mut builder = LettreMessage::builder().from(from);
     for addr in split_addrs(&msg.to) {
-        builder = builder.to(addr.parse()?);
+        let mailbox = addr
+            .parse()
+            .map_err(|e| format!("invalid To address {addr:?}: {e}"))?;
+        builder = builder.to(mailbox);
     }
     for addr in split_addrs(&msg.cc) {
-        builder = builder.cc(addr.parse()?);
+        let mailbox = addr
+            .parse()
+            .map_err(|e| format!("invalid Cc address {addr:?}: {e}"))?;
+        builder = builder.cc(mailbox);
     }
     for addr in split_addrs(&msg.bcc) {
-        builder = builder.bcc(addr.parse()?);
+        let mailbox = addr
+            .parse()
+            .map_err(|e| format!("invalid Bcc address {addr:?}: {e}"))?;
+        builder = builder.bcc(mailbox);
     }
     let builder = builder.subject(msg.subject.clone());
 
@@ -1585,7 +1610,8 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
             MultiPart::mixed().singlepart(SinglePart::plain(msg.body.clone()))
         };
         for path in &msg.attachments {
-            let bytes = std::fs::read(path)?;
+            let bytes = std::fs::read(path)
+                .map_err(|e| format!("could not read attachment {path:?}: {e}"))?;
             let name = std::path::Path::new(path)
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
@@ -1606,10 +1632,11 @@ async fn send_smtp(account: &AccountConfig, msg: &OutgoingMessage) -> Result<Vec
     let host = smtp_host(account);
     // Port 465 is implicit TLS; everything else (587, etc.) uses STARTTLS.
     let transport_builder = if account.smtp_port == 465 {
-        AsyncSmtpTransport::<Tokio1Executor>::relay(&host)?
+        AsyncSmtpTransport::<Tokio1Executor>::relay(&host)
     } else {
-        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)?
-    };
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)
+    }
+    .map_err(|e| format!("could not set up SMTP transport for {host}:{}: {e}", account.smtp_port))?;
     let mut builder = transport_builder.port(account.smtp_port);
     if account.oauth {
         // XOAUTH2: the "password" is a fresh OAuth token from GOA.
@@ -1631,7 +1658,10 @@ async fn send_smtp(account: &AccountConfig, msg: &OutgoingMessage) -> Result<Vec
     }
     let mailer: AsyncSmtpTransport<Tokio1Executor> = builder.build();
 
-    mailer.send(email).await?;
+    mailer
+        .send(email)
+        .await
+        .map_err(|e| format!("SMTP server {host}:{} rejected the message: {e}", account.smtp_port))?;
     Ok(raw)
 }
 
