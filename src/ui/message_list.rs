@@ -153,13 +153,6 @@ impl FactoryComponent for MessageRow {
             },
 
             gtk::Box {
-                add_css_class: "unread-dot",
-                set_valign: gtk::Align::Center,
-                #[watch]
-                set_visible: self.msg.unread || self.thread_unread,
-            },
-
-            gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
                 set_spacing: 2,
                 set_hexpand: true,
@@ -185,6 +178,12 @@ impl FactoryComponent for MessageRow {
                         #[watch]
                         set_visible: self.msg.starred,
                         add_css_class: "star-icon",
+                    },
+                    gtk::Box {
+                        add_css_class: "unread-dot",
+                        set_valign: gtk::Align::Center,
+                        #[watch]
+                        set_visible: self.msg.unread || self.thread_unread,
                     },
                     gtk::Label {
                         set_label: &self.msg.datetime_list(),

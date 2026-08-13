@@ -440,7 +440,7 @@ headerbar.rail-header button image {
   min-height: 8px;
   border-radius: 4px;
   background: @accent_bg_color;
-  margin-top: 6px;
+  margin: 0 2px;
 }
 
 .message-sender {
