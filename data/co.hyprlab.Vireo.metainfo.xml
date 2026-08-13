@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.8.1" date="2026-08-13" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.8.1</url>
+      <description>
+        <p>The sender-authentication lightbulb now stays in the toolbar, greyed out until a verdict arrives, so the reader's icons no longer shift.</p>
+      </description>
+    </release>
     <release version="1.8.0" date="2026-08-12" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.8.0</url>
       <description>

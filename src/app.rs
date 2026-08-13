@@ -578,16 +578,19 @@ impl SimpleComponent for AppModel {
                                     set_icon_name: "co.hyprlab.Vireo-lightbulb-symbolic",
                                     add_css_class: "flat",
                                     add_css_class: "image-button",
+                                    // Always on screen so the toolbar's icons never
+                                    // shift; greyed out like its neighbours until a
+                                    // verdict for the open message has arrived.
                                     #[watch]
-                                    set_visible: model.sender_verdict().is_some(),
+                                    set_sensitive: model.sender_verdict().is_some(),
                                     #[watch]
-                                    set_css_classes: &[
-                                        "flat",
-                                        "image-button",
-                                        model.sender_trust().css_class(),
-                                    ],
+                                    set_css_classes: &model.sender_badge_classes(),
                                     #[watch]
-                                    set_tooltip_text: Some(model.sender_trust().label()),
+                                    set_tooltip_text: Some(if model.sender_verdict().is_some() {
+                                        model.sender_trust().label()
+                                    } else {
+                                        "Sender authentication"
+                                    }),
                                     #[wrap(Some)]
                                     set_popover = &gtk::Popover {
                                         set_width_request: 380,
@@ -3019,6 +3022,17 @@ impl AppModel {
     fn sender_verdict(&self) -> Option<&crate::models::SenderCheck> {
         let m = self.current.as_ref()?;
         self.sender_cache.get(&(m.account_id, m.id)).map(|c| &**c)
+    }
+
+    /// CSS classes for the sender-check badge. The verdict tint is only added
+    /// once a verdict exists — without one the button is insensitive and should
+    /// grey out exactly like the other toolbar icons.
+    fn sender_badge_classes(&self) -> Vec<&'static str> {
+        let mut classes = vec!["flat", "image-button"];
+        if let Some(check) = self.sender_verdict() {
+            classes.push(check.trust.css_class());
+        }
+        classes
     }
 
     /// That verdict's trust level, defaulting to "unverified".

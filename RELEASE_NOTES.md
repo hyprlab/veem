@@ -2,7 +2,11 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.8.0
+## What's new in 1.8.1
+
+- The sender lightbulb now stays put. It used to appear only once Vireo had a verdict for the message you were reading, which nudged the other toolbar buttons sideways as you moved between messages. It's now always there, greyed out like the other buttons until there's something to report.
+
+## In 1.8.0
 
 - **Know who really sent a message.** Anyone can put anything in an email's "From" line — that's how phishing works. Vireo now shows a lightbulb in the toolbar telling you whether your mail provider could actually confirm the sender: green for verified, amber if something's off, red if the address looks forged. Click it for the reasoning, including things like "replies would go to a different company than the one that sent this".
 - **See where a link goes before you click it.** Hover any link in a message and its real destination appears at the bottom of the message. If the link text claims one website while pointing at another — the oldest trick in phishing — Vireo says so directly.

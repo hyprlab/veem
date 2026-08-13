@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.1 — 2026-08-13
+- The sender-authentication lightbulb no longer appears and disappears with the verdict. It is always in the reader toolbar and, until a verdict for the open message has arrived, sits insensitive and greyed out like Reply, Archive and the rest — so the icon row never shifts position under the pointer. `set_visible` became `set_sensitive` on the badge's `MenuButton` (`src/app.rs`), which also means the details popover can't be opened while there's nothing to show.
+- The verdict tint (`trust-pass`/`trust-suspicious`/`trust-fail`/`trust-unverified`) is now applied only once a verdict exists, via a new `App::sender_badge_classes`. `trust-unverified` carries `opacity: 0.55`, which would otherwise have stacked on top of GTK's insensitive dimming and left the lightbulb visibly fainter than its neighbours. With no verdict the tooltip reads "Sender authentication".
+- No cache bump: nothing about body rendering or the stored verdicts changed.
+
 ## 1.8.0 — 2026-08-12
 - **New: sender authentication.** A lightbulb badge in the reader toolbar (right of View Source) reports whether a message's `From:` address was actually forged, in four states — verified, not verified, check this sender, possible forgery. Colour carries the verdict, the tooltip names it, and clicking opens the evidence: DMARC/DKIM/SPF results, the signing domain, which authority reported each verdict, and any reply-to, bounce or display-name domain that doesn't match. A suspicious or failed verdict also raises a banner across the top of the message.
 - The check (`src/verify.rs`) reads back the SPF/DKIM/DMARC results the receiving provider recorded in `Authentication-Results`. It costs no extra network traffic: `load_body` already fetches the whole message, so the verdict is computed from bytes we had.
