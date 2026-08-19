@@ -32,29 +32,14 @@
   padding-right: 2px;
 }
 
-/* Icon-only rail: shrink the sidebar header's Compose/Menu buttons and tighten
-   its padding so the header stops forcing the rail wider than SIDEBAR_RAIL_WIDTH.
-   Uses the `headerbar` node name for enough specificity to beat Adwaita's own
-   header-button sizing. */
+/* Icon-only rail: tighten the sidebar header's padding so it stops forcing the
+   rail wider than SIDEBAR_RAIL_WIDTH. The menu button keeps its normal size —
+   Compose used to share this header and the two together needed shrinking to
+   fit; alone, the button has room to spare in the 80px rail. */
 headerbar.rail-header {
   padding-left: 2px;
   padding-right: 2px;
   min-height: 0;
-}
-
-headerbar.rail-header button,
-headerbar.rail-header menubutton,
-headerbar.rail-header menubutton > button {
-  min-width: 20px;
-  min-height: 20px;
-  padding: 1px;
-  margin: 0;
-}
-
-/* Smaller glyph inside the rail's Menu button (default symbolic icons are
-   16px). */
-headerbar.rail-header button image {
-  -gtk-icon-size: 12px;
 }
 
 .account-avatar {
