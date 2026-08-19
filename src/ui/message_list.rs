@@ -152,11 +152,15 @@ impl FactoryComponent for MessageRow {
                 set_custom_image: self.avatar_texture.as_ref(),
             },
 
+            // Faded rather than hidden: a hidden widget gives up its slot in the
+            // box, so every read row's sender and preview would sit 18px further
+            // left than an unread one's and the column would jitter as mail is
+            // read. The space is always reserved; only the dot's ink changes.
             gtk::Box {
                 add_css_class: "unread-dot",
                 set_valign: gtk::Align::Center,
                 #[watch]
-                set_visible: self.msg.unread || self.thread_unread,
+                set_opacity: if self.msg.unread || self.thread_unread { 1.0 } else { 0.0 },
             },
 
             gtk::Box {
@@ -520,8 +524,8 @@ impl MessageRow {
     }
 }
 
-/// Sort messages in place by the chosen order (stable; ties fall back to date).
-fn sort_messages(msgs: &mut [Message], order: SortOrder) {
+/// Order two messages by the chosen sort (ties fall back to date).
+fn message_cmp(a: &Message, b: &Message, order: SortOrder) -> std::cmp::Ordering {
     let name_of = |m: &Message| {
         if m.from_name.trim().is_empty() {
             m.from_addr.to_lowercase()
@@ -530,23 +534,15 @@ fn sort_messages(msgs: &mut [Message], order: SortOrder) {
         }
     };
     match order {
-        SortOrder::DateNewest => msgs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)),
-        SortOrder::DateOldest => msgs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp)),
-        SortOrder::Sender => msgs.sort_by(|a, b| {
-            name_of(a).cmp(&name_of(b)).then(b.timestamp.cmp(&a.timestamp))
-        }),
-        SortOrder::Subject => msgs.sort_by(|a, b| {
-            normalize_subject(&a.subject)
-                .cmp(&normalize_subject(&b.subject))
-                .then(b.timestamp.cmp(&a.timestamp))
-        }),
+        SortOrder::DateNewest => b.timestamp.cmp(&a.timestamp),
+        SortOrder::DateOldest => a.timestamp.cmp(&b.timestamp),
+        SortOrder::Sender => name_of(a).cmp(&name_of(b)).then(b.timestamp.cmp(&a.timestamp)),
+        SortOrder::Subject => normalize_subject(&a.subject)
+            .cmp(&normalize_subject(&b.subject))
+            .then(b.timestamp.cmp(&a.timestamp)),
         // `true` sorts after `false`, so compare b-vs-a to put unread/flagged first.
-        SortOrder::UnreadFirst => {
-            msgs.sort_by(|a, b| b.unread.cmp(&a.unread).then(b.timestamp.cmp(&a.timestamp)))
-        }
-        SortOrder::FlaggedFirst => {
-            msgs.sort_by(|a, b| b.starred.cmp(&a.starred).then(b.timestamp.cmp(&a.timestamp)))
-        }
+        SortOrder::UnreadFirst => b.unread.cmp(&a.unread).then(b.timestamp.cmp(&a.timestamp)),
+        SortOrder::FlaggedFirst => b.starred.cmp(&a.starred).then(b.timestamp.cmp(&a.timestamp)),
     }
 }
 
@@ -1764,7 +1760,12 @@ impl MessageList {
 
     fn rebuild(&mut self) {
         let q = self.query.to_lowercase();
-        let mut matches: Vec<Message> = self
+        // Filter and sort by reference, and clone only the page that is actually
+        // rendered. A folder's index holds every message ever synced, while
+        // `render_limit` is a few hundred — cloning the whole match set first put
+        // a copy of the entire mailbox through the allocator on every keystroke
+        // and on the cache-backed load at startup.
+        let mut matches: Vec<&Message> = self
             .active_source()
             .iter()
             .filter(|m| {
@@ -1774,13 +1775,14 @@ impl MessageList {
                     || m.from_addr.to_lowercase().contains(&q)
                     || m.preview.to_lowercase().contains(&q)
             })
-            .cloned()
             .collect();
-        sort_messages(&mut matches, self.sort);
-        self.total_matches = matches.len();
+        let sort = self.sort;
+        matches.sort_by(|a, b| message_cmp(a, b, sort));
+        let total_matches = matches.len();
         // Render up to the current limit; the rest stay indexed (for search) until
         // the user scrolls further and `LoadMore` raises the limit.
-        let capped: Vec<Message> = matches.into_iter().take(self.render_limit).collect();
+        let capped: Vec<Message> = matches.into_iter().take(self.render_limit).cloned().collect();
+        self.total_matches = total_matches;
         self.rendered_count = capped.len();
 
         // Group into conversations by reply headers (Message-ID / In-Reply-To /

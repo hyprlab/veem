@@ -21,6 +21,7 @@ pub struct PrefInit {
     pub threads_expanded: bool,
     pub message_theme: MessageTheme,
     pub notifications: bool,
+    pub show_attachments: bool,
 }
 
 /// Message-content appearance options, in combo order.
@@ -99,6 +100,7 @@ pub enum PrefInput {
     ChangeFetchInterval(u32),
     TogglePush(bool),
     ToggleNotifications(bool),
+    ToggleShowAttachments(bool),
     ChangePaletteCollapse(u64),
     ChangeMessageTheme(u32),
 }
@@ -115,6 +117,7 @@ pub enum PrefOutput {
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
+    SetShowAttachments(bool),
     SetPaletteCollapse(u64),
     SetMessageTheme(MessageTheme),
     Closed,
@@ -171,6 +174,15 @@ impl Component for Preferences {
                             set_subtitle: "Show system notifications for new mail and error alerts when Vireo isn't focused.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleNotifications(row.is_active()));
+                            },
+                        },
+
+                        #[name = "show_attachments_row"]
+                        adw::SwitchRow {
+                            set_title: "Attachments in the sidebar",
+                            set_subtitle: "Show a shortcut for browsing every account's attachments.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleShowAttachments(row.is_active()));
                             },
                         },
                     },
@@ -346,6 +358,7 @@ impl Component for Preferences {
         widgets.fetch_row.set_selected(selected as u32);
         widgets.push_row.set_active(init.push);
         widgets.notifications_row.set_active(init.notifications);
+        widgets.show_attachments_row.set_active(init.show_attachments);
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
 
@@ -391,6 +404,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleNotifications(on) => {
                 let _ = sender.output(PrefOutput::SetNotifications(on));
+            }
+            PrefInput::ToggleShowAttachments(on) => {
+                let _ = sender.output(PrefOutput::SetShowAttachments(on));
             }
             PrefInput::ChangePaletteCollapse(secs) => {
                 let _ = sender.output(PrefOutput::SetPaletteCollapse(secs));

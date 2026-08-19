@@ -17,7 +17,7 @@ use chrono::Datelike;
 use futures::TryStreamExt;
 use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
-use lettre::{AsyncSmtpTransport, AsyncTransport, Message as LettreMessage, Tokio1Executor};
+use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Message as LettreMessage, Tokio1Executor};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
@@ -394,10 +394,38 @@ async fn run_imap(
                     // for cached-folder accounts (which connect lazily); if still
                     // offline, wait for a request instead of spinning.
                     if session.is_none() {
-                        session =
-                            connect_and_list(account_id, &account, cache.as_ref(), &emit).await;
-                    }
-                    if session.is_some() {
+                        // A request beats the handshake. The first thing the UI
+                        // asks for at startup is the visible folder, which the
+                        // cache can answer without a network round trip — awaiting
+                        // the connect here left the message list empty until the
+                        // IMAP handshake finished (or timed out). Dropping the
+                        // connect future only cancels this attempt; the next idle
+                        // pass starts a fresh one.
+                        tokio::select! {
+                            biased;
+                            req = rx.recv() => match req {
+                                Some(req) => req,
+                                None => break,
+                            },
+                            connected = connect_and_list(
+                                account_id,
+                                &account,
+                                cache.as_ref(),
+                                &emit,
+                            ) => {
+                                if connected.is_some() {
+                                    session = connected;
+                                    continue;
+                                }
+                                // Still offline: wait for a request rather than
+                                // spinning on back-to-back reconnect attempts.
+                                match rx.recv().await {
+                                    Some(req) => req,
+                                    None => break,
+                                }
+                            }
+                        }
+                    } else {
                         run_one_backfill(
                             &mut backfill,
                             &mut session,
@@ -410,11 +438,6 @@ async fn run_imap(
                         )
                         .await;
                         continue;
-                    } else {
-                        match rx.recv().await {
-                            Some(req) => req,
-                            None => break,
-                        }
                     }
                 } else if push_enabled && session.is_some() && idle_folder.is_some() {
                     let (fid, fpath) = idle_folder.clone().unwrap();
@@ -1546,20 +1569,39 @@ fn parse_recipients(s: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Build a `Name <addr>` mailbox from its parts. Never format the two into one
+/// string and parse that back: an RFC 5322 display name has to be quoted unless
+/// it is a bare atom, so "Alfonso Lizárraga", "Martin, Jason" or a name that is
+/// itself an address ("a@b.com <a@b.com>", which is what an import with no
+/// separate display name produces) all fail to parse and the send is rejected.
+/// `Mailbox` quotes and encodes the name itself when the header is written.
+fn mailbox(name: &str, addr: &str) -> Result<Mailbox, SmtpError> {
+    let address: Address = addr
+        .parse()
+        .map_err(|e| format!("invalid email address {addr:?}: {e}"))?;
+    let name = name.trim();
+    // A "display name" that just repeats the address is noise in the header.
+    if name.is_empty() || name.eq_ignore_ascii_case(addr.trim()) {
+        Ok(Mailbox::new(None, address))
+    } else {
+        Ok(Mailbox::new(Some(name.to_string()), address))
+    }
+}
+
 /// Send the message and return its raw RFC 822 bytes (for saving to Sent).
 /// Build the RFC 822 email (headers + MIME body) from a composed message. Shared
 /// by SMTP sending and by saving to Drafts (no network).
 fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreMessage, SmtpError> {
-    let from: Mailbox = format!("{} <{}>", account.name, account.email).parse()?;
+    let from = mailbox(&account.name, &account.email)?;
     let mut builder = LettreMessage::builder().from(from);
-    for addr in split_addrs(&msg.to) {
-        builder = builder.to(addr.parse()?);
+    for (name, addr) in parse_recipients(&msg.to) {
+        builder = builder.to(mailbox(&name, &addr)?);
     }
-    for addr in split_addrs(&msg.cc) {
-        builder = builder.cc(addr.parse()?);
+    for (name, addr) in parse_recipients(&msg.cc) {
+        builder = builder.cc(mailbox(&name, &addr)?);
     }
-    for addr in split_addrs(&msg.bcc) {
-        builder = builder.bcc(addr.parse()?);
+    for (name, addr) in parse_recipients(&msg.bcc) {
+        builder = builder.bcc(mailbox(&name, &addr)?);
     }
     let builder = builder.subject(msg.subject.clone());
 
@@ -1733,10 +1775,6 @@ async fn delete_draft(
         .await;
     let _: Vec<u32> = session.expunge().await?.try_collect().await?;
     Ok(())
-}
-
-fn split_addrs(s: &str) -> impl Iterator<Item = &str> {
-    s.split(',').map(str::trim).filter(|s| !s.is_empty())
 }
 
 /// SMTP host: the configured value, or derived from the IMAP host.
@@ -3950,6 +3988,84 @@ fn wrap_fragment(inner: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_account() -> AccountConfig {
+        AccountConfig {
+            name: String::new(),
+            email: "me@example.com".into(),
+            protocol: crate::config::Protocol::Imap,
+            imap_host: "imap.example.com".into(),
+            imap_port: 993,
+            smtp_host: String::new(),
+            smtp_port: 587,
+            username: "me@example.com".into(),
+            password: String::new(),
+            smtp_separate: false,
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+            color: None,
+            emoji: None,
+            signature: None,
+            signature_html: false,
+            label: None,
+            enabled: true,
+            goa_id: None,
+            oauth: false,
+            oauth_settings: None,
+            oauth_refresh: String::new(),
+        }
+    }
+
+    fn sample_outgoing() -> OutgoingMessage {
+        OutgoingMessage {
+            from_account_id: 1,
+            to: String::new(),
+            cc: String::new(),
+            bcc: String::new(),
+            subject: "Subject".into(),
+            body: "Body".into(),
+            html: String::new(),
+            attachments: Vec::new(),
+            draft_origin: None,
+        }
+    }
+
+    #[test]
+    fn mailbox_quotes_display_names_that_are_not_atoms() {
+        // Each of these fails if the mailbox is built by formatting
+        // "Name <addr>" and parsing the result back.
+        for name in ["Alfonso Lizárraga", "Martin, Jason", "Dr. X", "a@b.com"] {
+            let mb = mailbox(name, "a@b.com").expect("mailbox builds");
+            assert_eq!(mb.email.to_string(), "a@b.com");
+        }
+    }
+
+    #[test]
+    fn mailbox_drops_a_name_that_merely_repeats_the_address() {
+        // An import with no separate display name sets both to the address;
+        // "a@b.com <a@b.com>" is noise, so the header carries the address alone.
+        let mb = mailbox("A@B.com", "a@b.com").expect("mailbox builds");
+        assert!(mb.name.is_none());
+        assert_eq!(mb.to_string(), "a@b.com");
+    }
+
+    #[test]
+    fn build_email_accepts_named_recipients() {
+        let account = AccountConfig {
+            name: "Jason Martin".into(),
+            email: "me@example.com".into(),
+            ..sample_account()
+        };
+        let msg = OutgoingMessage {
+            to: "Alfonso Lizárraga <alfonso@example.com>, plain@example.com".into(),
+            ..sample_outgoing()
+        };
+        let email = build_email(&account, &msg).expect("email builds");
+        let raw = String::from_utf8_lossy(&email.formatted()).to_string();
+        assert!(raw.contains("alfonso@example.com"), "{raw}");
+        assert!(raw.contains("plain@example.com"), "{raw}");
+    }
+
 
     #[test]
     fn decode_header_handles_over_long_encoded_word() {

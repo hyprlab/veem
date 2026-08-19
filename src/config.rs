@@ -367,6 +367,10 @@ struct PrivacyFile {
     /// Whether to post desktop notifications (new mail, error alerts).
     #[serde(default = "default_notifications")]
     notifications: bool,
+    /// Whether the sidebar shows the "Attachments" row (the gallery of every
+    /// account's attachments).
+    #[serde(default = "default_show_attachments")]
+    show_attachments: bool,
 }
 
 fn default_fetch_interval() -> u64 {
@@ -389,6 +393,10 @@ fn default_notifications() -> bool {
     true
 }
 
+fn default_show_attachments() -> bool {
+    true
+}
+
 impl Default for PrivacyFile {
     fn default() -> Self {
         Self {
@@ -402,6 +410,7 @@ impl Default for PrivacyFile {
             threads_expanded: false,
             message_theme: MessageTheme::default(),
             notifications: default_notifications(),
+            show_attachments: default_show_attachments(),
         }
     }
 }
@@ -470,6 +479,11 @@ pub fn load_notifications() -> bool {
     load_privacy().notifications
 }
 
+/// Whether the sidebar shows the "Attachments" row.
+pub fn load_show_attachments() -> bool {
+    load_privacy().show_attachments
+}
+
 /// Persist all app settings together (so no field is clobbered).
 #[allow(clippy::too_many_arguments)]
 pub fn save_privacy(
@@ -483,6 +497,7 @@ pub fn save_privacy(
     threads_expanded: bool,
     message_theme: MessageTheme,
     notifications: bool,
+    show_attachments: bool,
 ) {
     let Some(path) = privacy_path() else {
         return;
@@ -501,6 +516,7 @@ pub fn save_privacy(
         threads_expanded,
         message_theme,
         notifications,
+        show_attachments,
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {

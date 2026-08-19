@@ -243,7 +243,19 @@ fn watch_loop<F: Fn()>(on_change: &F) -> Result<(), Box<dyn std::error::Error>> 
 /// Fetch a fresh OAuth2 access token for a GOA account (by id). GOA refreshes the
 /// token as needed, so this always returns a currently-valid token. Blocking.
 pub fn oauth_token(goa_id: &str) -> Option<String> {
-    let conn = zbus::blocking::Connection::session().ok()?;
+    // A failure here surfaces as an authentication error several layers up, with
+    // nothing to say why. Log the D-Bus reason before discarding it.
+    match try_oauth_token(goa_id) {
+        Ok(token) => Some(token),
+        Err(e) => {
+            tracing::warn!("GOA GetAccessToken failed for {goa_id}: {e}");
+            None
+        }
+    }
+}
+
+fn try_oauth_token(goa_id: &str) -> Result<String, String> {
+    let conn = zbus::blocking::Connection::session().map_err(|e| e.to_string())?;
     let path = format!("/org/gnome/OnlineAccounts/Accounts/{goa_id}");
     let reply = conn
         .call_method(
@@ -253,13 +265,14 @@ pub fn oauth_token(goa_id: &str) -> Option<String> {
             "GetAccessToken",
             &(),
         )
-        .ok()?;
+        .map_err(|e| e.to_string())?;
     // GetAccessToken() -> (access_token: s, expires_in: i)
-    let (token, _expires): (String, i32) = reply.body().deserialize().ok()?;
+    let (token, _expires): (String, i32) =
+        reply.body().deserialize().map_err(|e| e.to_string())?;
     if token.is_empty() {
-        None
+        Err("GOA returned an empty access token".to_string())
     } else {
-        Some(token)
+        Ok(token)
     }
 }
 

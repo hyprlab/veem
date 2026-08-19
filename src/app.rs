@@ -39,7 +39,9 @@ use crate::ui::message_window::{
 };
 use crate::ui::notifications::{NotificationCenter, NotifyInput, NotifyOutput};
 use crate::ui::preferences::{PrefInit, PrefOutput, Preferences};
-use crate::ui::sidebar::{CtxAction, SectionData, Sidebar, SidebarInput, SidebarOutput};
+use crate::ui::sidebar::{
+    CtxAction, SectionData, Sidebar, SidebarInit, SidebarInput, SidebarOutput,
+};
 use crate::worker::{self, MailRequest, OutgoingMessage, WorkerEvent};
 
 /// The currently selected mailbox.
@@ -160,6 +162,8 @@ pub struct AppModel {
     push: bool,
     /// Whether desktop notifications (new mail, error alerts) are posted.
     notifications_enabled: bool,
+    /// Whether the sidebar shows the "Attachments" row.
+    show_attachments: bool,
     /// Whether messages are grouped into conversation threads.
     threading: bool,
     /// Whether conversation threads start expanded in the message list.
@@ -277,6 +281,7 @@ pub enum AppMsg {
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
+    SetShowAttachments(bool),
     SetPaletteCollapse(u64),
     SetMessageTheme(config::MessageTheme),
     ComposeTo(String),
@@ -760,8 +765,9 @@ impl SimpleComponent for AppModel {
         let collapsed = sidebar_state.collapsed;
         let folders_expanded = sidebar_state.folders_expanded;
 
+        let show_attachments = config::load_show_attachments();
         let sidebar = Sidebar::builder()
-            .launch(icon_only)
+            .launch(SidebarInit { collapsed: icon_only, show_attachments })
             .forward(sender.input_sender(), |out| match out {
                 SidebarOutput::UnifiedSelected => AppMsg::UnifiedSelected,
                 SidebarOutput::AttachmentsSelected => AppMsg::ShowAttachments,
@@ -889,6 +895,7 @@ impl SimpleComponent for AppModel {
             fetch_interval_secs: config::load_fetch_interval(),
             push: config::load_push(),
             notifications_enabled: config::load_notifications(),
+            show_attachments,
             threading: config::load_threading(),
             threads_expanded: config::load_threads_expanded(),
             message_theme: config::load_message_theme(),
@@ -1713,6 +1720,14 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetShowAttachments(on) => {
+                if self.show_attachments != on {
+                    self.show_attachments = on;
+                    self.save_settings();
+                    self.sidebar.emit(SidebarInput::SetShowAttachments(on));
+                }
+            }
+
             AppMsg::SetThreading(on) => {
                 if self.threading != on {
                     self.threading = on;
@@ -1982,6 +1997,7 @@ impl SimpleComponent for AppModel {
                     threads_expanded: self.threads_expanded,
                     message_theme: self.message_theme,
                     notifications: self.notifications_enabled,
+                    show_attachments: self.show_attachments,
                 };
                 let prefs = Preferences::builder()
                     .transient_for(&self.window)
@@ -1997,6 +2013,7 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                         PrefOutput::SetPush(on) => AppMsg::SetPush(on),
                         PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
+                        PrefOutput::SetShowAttachments(on) => AppMsg::SetShowAttachments(on),
                         PrefOutput::SetPaletteCollapse(secs) => AppMsg::SetPaletteCollapse(secs),
                         PrefOutput::SetMessageTheme(t) => AppMsg::SetMessageTheme(t),
                         PrefOutput::Closed => AppMsg::ClosePreferences,
@@ -2360,6 +2377,7 @@ impl AppModel {
             self.threads_expanded,
             self.message_theme,
             self.notifications_enabled,
+            self.show_attachments,
         );
     }
 
