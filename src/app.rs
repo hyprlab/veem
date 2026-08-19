@@ -3979,8 +3979,8 @@ impl AppModel {
                 .child(&main_tv)
                 .build(),
         );
-        nav.add(&notes_page("Release Notes", "notes", &release_notes_pango()));
-        nav.add(&notes_page("Changelog", "changelog", &changelog_pango()));
+        nav.add(&release_notes_page());
+        nav.add(&changelog_page());
 
         win.set_content(Some(&nav));
         win.present();
@@ -4263,63 +4263,181 @@ impl AppModel {
     }
 }
 
-/// Render the single source of truth — `RELEASE_NOTES.md` at the repo root — as
-/// Pango markup for the About window's "Release Notes" page. The same
-/// `RELEASE_NOTES.md` is used verbatim for the GitHub release, so the notes stay
-/// identical everywhere.
-fn release_notes_pango() -> String {
-    md_to_pango(include_str!("../RELEASE_NOTES.md"))
+/// The About window's "Release Notes" page, rendered from the single source of
+/// truth — `RELEASE_NOTES.md` at the repo root, which is also used verbatim for
+/// the GitHub release, so the notes stay identical everywhere.
+fn release_notes_page() -> adw::NavigationPage {
+    notes_page("Release Notes", "notes", include_str!("../RELEASE_NOTES.md"))
 }
 
-/// Pango markup for the About window's "Changelog" page, from the centralized
-/// `CHANGELOG.md` — so the version history updates everywhere from one file.
-fn changelog_pango() -> String {
-    md_to_pango(include_str!("../CHANGELOG.md"))
+/// The About window's "Changelog" page, from the centralized `CHANGELOG.md` — so
+/// the version history updates everywhere from one file.
+fn changelog_page() -> adw::NavigationPage {
+    notes_page("Changelog", "changelog", include_str!("../CHANGELOG.md"))
 }
 
-/// Minimal Markdown → Pango markup (headings, bullets) for the About sub-pages.
-fn md_to_pango(md: &str) -> String {
+/// Inline Markdown → Pango markup: `**bold**`, `*italic*`, `` `code` `` and
+/// `[text](url)`. Everything outside a marker is escaped, so the source may
+/// contain `&` or `<` safely. Emphasis nests (a bold link, a link with code in
+/// its text); an unclosed marker stays the literal character it is.
+fn md_inline(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let joined = |from: usize, to: usize| -> String { chars[from..to].iter().collect() };
+    // Where `needle` next starts, at or after `from`.
+    let find = |from: usize, needle: &[char]| -> Option<usize> {
+        if needle.len() > chars.len() {
+            return None;
+        }
+        (from..=chars.len() - needle.len()).find(|&i| chars[i..i + needle.len()] == *needle)
+    };
+
     let mut out = String::new();
-    for raw in md.lines() {
-        let line = raw.trim_end();
-        let rendered = if let Some(rest) = line.strip_prefix("## ") {
-            format!("<b>{}</b>", gtk::glib::markup_escape_text(rest))
-        } else if let Some(rest) = line.strip_prefix("# ") {
-            format!("<big><b>{}</b></big>", gtk::glib::markup_escape_text(rest))
-        } else if let Some(rest) = line.strip_prefix("- ") {
-            format!("•  {}", gtk::glib::markup_escape_text(rest))
-        } else if line.is_empty() {
-            String::new()
-        } else {
-            gtk::glib::markup_escape_text(line).to_string()
-        };
-        out.push_str(&rendered);
-        out.push('\n');
+    let mut i = 0;
+    while i < chars.len() {
+        // Code spans first: their contents are literal, never re-parsed.
+        if chars[i] == '`' {
+            if let Some(end) = find(i + 1, &['`']) {
+                out.push_str("<tt>");
+                out.push_str(&gtk::glib::markup_escape_text(&joined(i + 1, end)));
+                out.push_str("</tt>");
+                i = end + 1;
+                continue;
+            }
+        } else if chars[i..].starts_with(&['*', '*']) {
+            if let Some(end) = find(i + 2, &['*', '*']) {
+                out.push_str("<b>");
+                out.push_str(&md_inline(&joined(i + 2, end)));
+                out.push_str("</b>");
+                i = end + 2;
+                continue;
+            }
+        } else if chars[i] == '*' {
+            if let Some(end) = find(i + 1, &['*']) {
+                out.push_str("<i>");
+                out.push_str(&md_inline(&joined(i + 1, end)));
+                out.push_str("</i>");
+                i = end + 1;
+                continue;
+            }
+        } else if chars[i] == '[' {
+            if let Some(close) = find(i + 1, &[']']) {
+                if chars.get(close + 1) == Some(&'(') {
+                    if let Some(paren) = find(close + 2, &[')']) {
+                        out.push_str(&format!(
+                            "<a href=\"{}\">{}</a>",
+                            gtk::glib::markup_escape_text(&joined(close + 2, paren)),
+                            md_inline(&joined(i + 1, close)),
+                        ));
+                        i = paren + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push_str(&gtk::glib::markup_escape_text(&chars[i].to_string()));
+        i += 1;
     }
     out
 }
 
-/// Build a scrollable About sub-page (Pango `markup`) for the navigation stack,
+/// A wrapped label carrying inline Markdown. Links are opened through the app's
+/// own URI handler rather than GTK's default, which has no portal under Flatpak.
+fn md_label(text: &str, classes: &[&str]) -> gtk::Label {
+    let label = gtk::Label::new(None);
+    label.set_markup(&md_inline(text));
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_xalign(0.0);
+    label.set_halign(gtk::Align::Start);
+    for class in classes {
+        label.add_css_class(class);
+    }
+    label.connect_activate_link(|_, uri| {
+        crate::oauth::open_uri(uri);
+        gtk::glib::Propagation::Stop
+    });
+    label
+}
+
+/// Render Markdown as a column of widgets rather than one long label: a bullet
+/// gets its own column so wrapped lines align under the text instead of running
+/// back under the bullet, and each heading carries its own spacing. Handles
+/// headings, bullets (nested one level), indented continuation paragraphs, and
+/// the inline syntax in [`md_inline`].
+fn md_column(md: &str) -> gtk::Box {
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let mut first = true;
+
+    for raw in md.lines() {
+        let line = raw.trim_end();
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        // Blank lines carry no meaning here: spacing comes from each block's
+        // own margins, so a stray one can't open a gap.
+        if trimmed.is_empty() {
+            continue;
+        }
+        // The page's header bar already shows the document's title.
+        if trimmed.starts_with("# ") {
+            continue;
+        }
+
+        let widget: gtk::Widget = if let Some(rest) = trimmed.strip_prefix("### ") {
+            let label = md_label(rest, &["heading"]);
+            label.set_margin_top(if first { 0 } else { 14 });
+            label.into()
+        } else if let Some(rest) = trimmed.strip_prefix("## ") {
+            let label = md_label(rest, &["title-4"]);
+            label.set_margin_top(if first { 0 } else { 22 });
+            label.set_margin_bottom(2);
+            label.into()
+        } else if let Some(rest) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            row.set_margin_top(6);
+            row.set_margin_start(if indent >= 2 { 18 } else { 0 });
+            let bullet = gtk::Label::new(Some(if indent >= 2 { "◦" } else { "•" }));
+            bullet.set_valign(gtk::Align::Start);
+            bullet.add_css_class("dim-label");
+            row.append(&bullet);
+            let text = md_label(rest, &[]);
+            text.set_hexpand(true);
+            row.append(&text);
+            row.into()
+        } else {
+            // An indented paragraph continues the bullet above it, so it lines up
+            // with that bullet's text rather than the page margin.
+            let label = md_label(trimmed, &[]);
+            label.set_margin_top(8);
+            label.set_margin_start(if indent >= 2 { 26 } else { 0 });
+            label.into()
+        };
+
+        column.append(&widget);
+        first = false;
+    }
+    column
+}
+
+/// Build a scrollable About sub-page from Markdown for the navigation stack,
 /// reachable by `tag`. Pushed pages get a back button and slide animation from
 /// the parent `NavigationView`.
-fn notes_page(title: &str, tag: &str, markup: &str) -> adw::NavigationPage {
+fn notes_page(title: &str, tag: &str, md: &str) -> adw::NavigationPage {
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .build();
     let clamp = adw::Clamp::builder().maximum_size(460).build();
 
-    let label = gtk::Label::new(None);
-    label.set_markup(markup);
-    label.set_wrap(true);
-    label.set_xalign(0.0);
-    label.set_yalign(0.0);
-    label.set_margin_top(18);
-    label.set_margin_bottom(24);
-    label.set_margin_start(18);
-    label.set_margin_end(18);
+    let column = md_column(md);
+    column.set_margin_top(18);
+    column.set_margin_bottom(24);
+    column.set_margin_start(18);
+    column.set_margin_end(18);
 
-    clamp.set_child(Some(&label));
+    clamp.set_child(Some(&column));
     scroller.set_child(Some(&clamp));
 
     let tv = adw::ToolbarView::new();
@@ -4665,6 +4783,66 @@ fn build_search_pool(cache: &HashMap<(u32, u32), Vec<Message>>) -> Vec<Message> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn md_inline_renders_the_syntax_the_changelog_uses() {
+        assert_eq!(md_inline("**bold**"), "<b>bold</b>");
+        assert_eq!(md_inline("routed *every* port"), "routed <i>every</i> port");
+        assert_eq!(md_inline("`set_visible`"), "<tt>set_visible</tt>");
+        assert_eq!(
+            md_inline("[Chris](https://github.com/chrispouliot)"),
+            "<a href=\"https://github.com/chrispouliot\">Chris</a>"
+        );
+        // Emphasis nests, as in the changelog's bolded contributor links.
+        assert_eq!(
+            md_inline("**[Chris](https://example.com)**"),
+            "<b><a href=\"https://example.com\">Chris</a></b>"
+        );
+    }
+
+    #[test]
+    fn md_inline_escapes_markup_and_keeps_stray_markers() {
+        // Pango would refuse the whole label if these went through unescaped.
+        assert_eq!(md_inline("a < b & c"), "a &lt; b &amp; c");
+        // A code span's contents are literal, never re-parsed as Markdown.
+        assert_eq!(md_inline("`a <b> *c*`"), "<tt>a &lt;b&gt; *c*</tt>");
+        // Unclosed markers stay the characters they are rather than eating the line.
+        assert_eq!(md_inline("2 * 3 = 6"), "2 * 3 = 6");
+        assert_eq!(md_inline("see [the docs"), "see [the docs");
+    }
+
+    #[test]
+    fn changelog_and_release_notes_render_without_pango_errors() {
+        // Pango refuses to render a label whose markup is malformed, blanking the
+        // whole page — so every line of both documents has to parse. Link tags are
+        // GtkLabel's own extension and are not known to `parse_markup`, so they
+        // are lifted out first (which also asserts each one is closed).
+        fn without_links(markup: &str) -> String {
+            let mut out = String::new();
+            let mut rest = markup;
+            while let Some(open) = rest.find("<a href=\"") {
+                out.push_str(&rest[..open]);
+                let tail = &rest[open..];
+                let close = tail.find('>').expect("link tag is closed");
+                rest = &tail[close + 1..];
+            }
+            out.push_str(rest);
+            out.replace("</a>", "")
+        }
+
+        for md in [
+            include_str!("../CHANGELOG.md"),
+            include_str!("../RELEASE_NOTES.md"),
+        ] {
+            for line in md.lines() {
+                let markup = md_inline(line);
+                assert!(
+                    gtk::pango::parse_markup(&without_links(&markup), '\0').is_ok(),
+                    "does not parse as Pango markup: {line}\n  -> {markup}"
+                );
+            }
+        }
+    }
 
     fn msg(account_id: u32, folder_id: u32, uid: u32) -> Message {
         Message {
