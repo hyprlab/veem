@@ -137,7 +137,10 @@ impl FactoryComponent for MessageRow {
             #[wrap(Some)]
             set_child = &gtk::Box {
             set_orientation: gtk::Orientation::Horizontal,
-            set_spacing: 10,
+            // Matches `.message-row`'s 12px horizontal padding, so the gap at the
+            // list's edge, the gap either side of the unread dot and the gap
+            // before the text are all the same width.
+            set_spacing: 12,
             add_css_class: "message-row",
 
             adw::Avatar {
