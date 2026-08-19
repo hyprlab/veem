@@ -3943,7 +3943,7 @@ impl AppModel {
         for (name, handle, what) in CONTRIBUTORS {
             let row = adw::ActionRow::builder()
                 .title(*name)
-                .subtitle(*what)
+                .subtitle(format!("@{handle} — {what}"))
                 .activatable(true)
                 .build();
             let url = format!("https://github.com/{handle}");

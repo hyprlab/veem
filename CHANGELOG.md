@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.1 — 2026-08-19
+- Records **[Chris Pouliot](https://github.com/chrispouliot)**'s authorship of the Proton Bridge work in a form GitHub can resolve. 1.9.0 credited him with a `Co-Authored-By:` trailer carrying the address from his own commit on #13, `chrispouliot@icloud.com` — which isn't verified on any GitHub account, so neither his commit nor the trailer could be matched to his profile and he never appeared as a contributor. This release's commit repeats that co-authorship using his `users.noreply.github.com` address, which always resolves. The 1.9.0 commit itself is left alone: `v1.9.0` is tagged, built and published, and rewriting it to fix a display detail would invalidate a shipped release.
+- The About window's "Thanks" rows now show each contributor's GitHub handle alongside what they contributed, rather than hiding it in the row's link.
+
 ## 1.9.0 — 2026-08-19
 
 First release with code from outside Hyprlab. Thanks to **[Alfonso Lizárraga](https://github.com/alfonsolzrg)** (#14) and **[Chris Pouliot](https://github.com/chrispouliot)** (#13), whose pull requests are the basis of most of what follows.

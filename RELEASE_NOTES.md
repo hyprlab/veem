@@ -2,7 +2,11 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.9.0
+## What's new in 1.9.1
+
+- A correction to how 1.9.0 credited its contributors: Chris Pouliot's work on Proton Bridge support was attributed with an email address GitHub couldn't match to his account, so his name never appeared on the project's contributor list. This release records it properly. Contributors are also now shown with their GitHub handle in the About window's "Thanks" list.
+
+## In 1.9.0
 
 This is the first Vireo release built partly from other people's code. Thanks to [Alfonso Lizárraga](https://github.com/alfonsolzrg) and [Chris Pouliot](https://github.com/chrispouliot), who found these problems, fixed them, and sent the fixes upstream.
 
