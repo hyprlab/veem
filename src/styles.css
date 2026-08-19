@@ -354,7 +354,9 @@ headerbar.rail-header {
 }
 
 .message-row {
-  padding: 10px 12px;
+  /* Roomier at the list's edge than between the avatar, the unread dot and the
+     text; the row reads as indented rather than evenly striped. */
+  padding: 10px 12px 10px 16px;
 }
 
 /* Conversation threading: count chip + compact expand/collapse chevron on the
