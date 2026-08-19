@@ -143,6 +143,9 @@ pub struct AppModel {
     /// Sidebar header. In the icon-only rail its window-control buttons are
     /// hidden so the header stops forcing a minimum width wider than the rail.
     sidebar_header: Option<adw::HeaderBar>,
+    /// The main-menu button, which moves into the header's centre (the title
+    /// slot) while the sidebar is a rail.
+    sidebar_menu: Option<gtk::MenuButton>,
     /// Whether the sidebar is in icon-only (collapsed) mode.
     sidebar_collapsed: bool,
     /// Held so the in-flight collapse/expand width animation isn't dropped.
@@ -403,6 +406,7 @@ impl SimpleComponent for AppModel {
                                 set_label: "Vireo",
                                 add_css_class: "app-title",
                             },
+                            #[name = "sidebar_menu"]
                             pack_end = &gtk::MenuButton {
                                 set_icon_name: "co.hyprlab.Vireo-open-menu-symbolic",
                                 set_tooltip_text: Some("Main Menu"),
@@ -887,6 +891,7 @@ impl SimpleComponent for AppModel {
             folder_unread: HashMap::new(),
             sidebar_split: None,
             app_title: None,
+            sidebar_menu: None,
             sidebar_header: None,
             sidebar_collapsed: icon_only,
             sidebar_anim: None,
@@ -1019,11 +1024,16 @@ impl SimpleComponent for AppModel {
         model.sidebar_split = Some(widgets.sidebar_split.clone());
         model.app_title = Some(widgets.app_title.clone());
         model.sidebar_header = Some(widgets.sidebar_header.clone());
+        model.sidebar_menu = Some(widgets.sidebar_menu.clone());
         if model.sidebar_collapsed {
             widgets.sidebar_split.set_min_sidebar_width(SIDEBAR_RAIL_WIDTH);
             widgets.sidebar_split.set_max_sidebar_width(SIDEBAR_RAIL_WIDTH);
-            widgets.app_title.set_visible(false);
-            set_sidebar_header_compact(&widgets.sidebar_header, true);
+            set_sidebar_header_compact(
+                &widgets.sidebar_header,
+                &widgets.app_title,
+                &widgets.sidebar_menu,
+                true,
+            );
         }
 
         let mut group = RelmActionGroup::<WindowActionGroup>::new();
@@ -1180,11 +1190,12 @@ impl SimpleComponent for AppModel {
             AppMsg::SidebarCollapsed(collapsed) => {
                 self.sidebar_collapsed = collapsed;
                 self.animate_sidebar(collapsed);
-                if let Some(title) = &self.app_title {
-                    title.set_visible(!collapsed);
-                }
-                if let Some(header) = &self.sidebar_header {
-                    set_sidebar_header_compact(header, collapsed);
+                if let (Some(header), Some(title), Some(menu)) = (
+                    self.sidebar_header.as_ref(),
+                    self.app_title.as_ref(),
+                    self.sidebar_menu.as_ref(),
+                ) {
+                    set_sidebar_header_compact(header, title, menu, collapsed);
                 }
                 self.save_sidebar_state();
             }
@@ -4323,14 +4334,34 @@ fn bulk_busy_label(action: BulkAction, n: usize) -> String {
 /// the header so its Compose/Menu buttons shrink to fit (see `.rail-header` in the
 /// stylesheet). The reader pane's header still carries the window's close button,
 /// so nothing becomes unreachable.
-fn set_sidebar_header_compact(header: &adw::HeaderBar, compact: bool) {
+fn set_sidebar_header_compact(
+    header: &adw::HeaderBar,
+    title: &gtk::Label,
+    menu: &gtk::MenuButton,
+    compact: bool,
+) {
+    // Reparenting the menu button is only valid as a transition: called twice
+    // with the same value, the second `remove` would target a widget that is no
+    // longer a packed child.
+    if header.has_css_class("rail-header") == compact {
+        return;
+    }
     header.set_show_start_title_buttons(!compact);
     header.set_show_end_title_buttons(!compact);
+    // In the rail there is no title to show, so the menu button takes the title
+    // slot — the only position a header bar centres — instead of hugging the
+    // right edge of an 80px strip. Both widgets are held by the model, so the
+    // one being displaced survives being unparented here.
     if compact {
         header.add_css_class("rail-header");
+        header.remove(menu);
+        header.set_title_widget(Some(menu));
     } else {
         header.remove_css_class("rail-header");
+        header.set_title_widget(Some(title));
+        header.pack_end(menu);
     }
+    title.set_visible(!compact);
 }
 
 fn open_attachment(att: &Attachment) {
