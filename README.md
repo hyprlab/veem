@@ -162,6 +162,22 @@ development tool:
 Bug reports and pull requests are welcome from humans and their AI tools alike;
 everything merged gets the same human review.
 
+## Contributors
+
+Vireo is maintained by Hyprlab. Thanks to the people who have sent patches
+upstream — their work ships in the app and is credited in the About window:
+
+- [**Alfonso Lizárraga**](https://github.com/alfonsolzrg) ([#14](https://github.com/hyprlab/vireo/pull/14)) — sending
+  to recipients with punctuated or accented names, the startup message list,
+  message-list rebuild performance, the unread dot, and the Attachments-row
+  setting.
+- [**Chris Pouliot**](https://github.com/chrispouliot) ([#13](https://github.com/hyprlab/vireo/pull/13)) — Proton
+  Bridge connections: IMAP STARTTLS and locally signed certificates.
+
+Pull requests are welcome. There's no CLA — by opening one you agree your
+contribution ships under the [AGPL-3.0-or-later](LICENSE), and it may be adapted
+before it lands (with the change explained on the pull request).
+
 ## Contact & support
 
 - Website — [vireo.hyprlab.co](https://vireo.hyprlab.co)

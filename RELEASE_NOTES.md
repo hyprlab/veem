@@ -2,7 +2,20 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.8.1
+## What's new in 1.9.0
+
+This is the first Vireo release built partly from other people's code. Thanks to [Alfonso Lizárraga](https://github.com/alfonsolzrg) and [Chris Pouliot](https://github.com/chrispouliot), who found these problems, fixed them, and sent the fixes upstream.
+
+- **Sending to a named recipient works.** Picking a contact whose name carries an accent, a comma or a full stop — "Alfonso Lizárraga", "Martin, Jason", "Dr. Chen" — used to fail outright with "Invalid param". Every address field is now assembled properly, so any name goes through.
+- **Proton Mail works, through Proton Bridge.** Vireo can now talk to Bridge running on your machine (and to other local bridges like hydroxide or DavMail). Point an account at 127.0.0.1 with Bridge's ports and password; the certificate Bridge signs for itself is accepted for this machine only, and everything on the network is still fully verified.
+- **Your mail is there the moment the window opens.** A synced account used to show an empty list while it waited for the connection, even though the messages were already cached. Long folders also scroll and search noticeably faster.
+- **The message list stops shifting.** The unread dot keeps its space when a message is read, so subjects no longer jump sideways as you work through the list.
+- **Compose has moved** to the top of the message list, next to the notification bell — above the list it adds to, rather than above your folders.
+- **New setting:** hide the sidebar's Attachments row if you don't use it (Preferences → Mail).
+
+  Contributions are credited in the About window under "Thanks", with links to the people behind them.
+
+## In 1.8.1
 
 - The sender lightbulb now stays put. It used to appear only once Vireo had a verdict for the message you were reading, which nudged the other toolbar buttons sideways as you moved between messages. It's now always there, greyed out like the other buttons until there's something to report.
 

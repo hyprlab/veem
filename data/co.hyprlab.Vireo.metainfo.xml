@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.9.0" date="2026-08-19" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.9.0</url>
+      <description>
+        <p>Community fixes: sending to recipients with accented or punctuated names, Proton Bridge support, and a message list that fills from cache at startup. Compose moves above the message list.</p>
+      </description>
+    </release>
     <release version="1.8.1" date="2026-08-13" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.8.1</url>
       <description>

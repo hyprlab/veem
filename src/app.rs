@@ -8,6 +8,21 @@ use relm4::actions::{RelmAction, RelmActionGroup};
 use relm4::prelude::*;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// Contributors whose work is in the app, shown in the About window's "Thanks"
+/// list: display name, GitHub handle, and what they contributed.
+const CONTRIBUTORS: &[(&str, &str, &str)] = &[
+    (
+        "Alfonso Lizárraga",
+        "alfonsolzrg",
+        "Sending to named recipients, startup message list, unread dot",
+    ),
+    (
+        "Chris Pouliot",
+        "chrispouliot",
+        "Proton Bridge connections (STARTTLS, local certificates)",
+    ),
+];
+
 /// Width of the collapsed, icon-only sidebar rail.
 const SIDEBAR_RAIL_WIDTH: f64 = 80.0;
 
@@ -3913,6 +3928,31 @@ impl AppModel {
         coffee.connect_activated(move |_| crate::oauth::open_uri("https://buymeacoffee.com/hyprlab"));
         links.append(&coffee);
         page.append(&links);
+
+        // Contributors — people outside Hyprlab whose patches are in the app.
+        let thanks_title = gtk::Label::new(Some("Thanks"));
+        thanks_title.add_css_class("heading");
+        thanks_title.set_halign(gtk::Align::Start);
+        thanks_title.set_margin_top(20);
+        thanks_title.set_margin_bottom(6);
+        page.append(&thanks_title);
+
+        let thanks = gtk::ListBox::new();
+        thanks.add_css_class("boxed-list");
+        thanks.set_selection_mode(gtk::SelectionMode::None);
+        for (name, handle, what) in CONTRIBUTORS {
+            let row = adw::ActionRow::builder()
+                .title(*name)
+                .subtitle(*what)
+                .activatable(true)
+                .build();
+            let url = format!("https://github.com/{handle}");
+            row.set_tooltip_text(Some(&url));
+            row.add_suffix(&gtk::Image::from_icon_name("co.hyprlab.Vireo-adw-external-link-symbolic"));
+            row.connect_activated(move |_| crate::oauth::open_uri(&url));
+            thanks.append(&row);
+        }
+        page.append(&thanks);
 
         // Footer.
         let footer = gtk::Label::new(Some("© 2026 Hyprlab"));
