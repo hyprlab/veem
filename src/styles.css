@@ -51,8 +51,8 @@ headerbar.rail-header menubutton > button {
   margin: 0;
 }
 
-/* Smaller glyphs inside the rail's Compose/Menu buttons (default symbolic icons
-   are 16px). */
+/* Smaller glyph inside the rail's Menu button (default symbolic icons are
+   16px). */
 headerbar.rail-header button image {
   -gtk-icon-size: 12px;
 }

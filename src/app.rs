@@ -403,12 +403,6 @@ impl SimpleComponent for AppModel {
                                 set_label: "Vireo",
                                 add_css_class: "app-title",
                             },
-                            pack_start = &gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-mail-message-new-symbolic",
-                                set_tooltip_text: Some("Compose"),
-                                add_css_class: "suggested-action",
-                                connect_clicked[sender] => move |_| sender.input(AppMsg::Compose),
-                            },
                             pack_end = &gtk::MenuButton {
                                 set_icon_name: "co.hyprlab.Vireo-open-menu-symbolic",
                                 set_tooltip_text: Some("Main Menu"),
@@ -463,6 +457,15 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_label: model.pane_title(),
                                     add_css_class: "pane-title",
+                                },
+                                // Compose leads this header: it is the window's
+                                // primary action and sits directly above the list
+                                // of messages it adds to.
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-mail-message-new-symbolic",
+                                    set_tooltip_text: Some("Compose"),
+                                    add_css_class: "suggested-action",
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::Compose),
                                 },
                                 pack_start = &gtk::Button {
                                     set_tooltip_text: Some("Notifications"),
