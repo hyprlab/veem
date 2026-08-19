@@ -25,3 +25,14 @@ password = "app-specific-password"
 #   iCloud  imap.mail.me.com         (requires an app-specific password)
 #   Outlook outlook.office365.com
 #   Fastmail imap.fastmail.com
+#
+# Proton Mail is reached through Proton Bridge running on this machine. Take the
+# host, ports and generated password from the Bridge window:
+#
+#   imap_host = "127.0.0.1"
+#   imap_port = 1143         # STARTTLS; Bridge's default
+#   smtp_host = "127.0.0.1"
+#   smtp_port = 1025
+#
+# Bridge presents a certificate it signed itself, which is accepted for
+# 127.0.0.1/localhost only — connections to any other host are fully verified.

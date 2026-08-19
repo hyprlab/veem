@@ -1641,13 +1641,41 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
     Ok(email)
 }
 
+/// TLS settings for an SMTP connection, matching [`tls_connector`]: a local
+/// bridge's self-signed certificate is accepted, every other host is verified.
+fn smtp_tls_parameters(
+    host: &str,
+) -> Result<lettre::transport::smtp::client::TlsParameters, lettre::transport::smtp::Error> {
+    use lettre::transport::smtp::client::TlsParameters;
+    if is_loopback_host(host) {
+        TlsParameters::builder(host.to_string())
+            .dangerous_accept_invalid_certs(true)
+            .dangerous_accept_invalid_hostnames(true)
+            .build()
+    } else {
+        TlsParameters::new(host.to_string())
+    }
+}
+
 async fn send_smtp(account: &AccountConfig, msg: &OutgoingMessage) -> Result<Vec<u8>, SmtpError> {
     let email = build_email(account, msg)?;
     let raw = email.formatted();
 
     let host = smtp_host(account);
     // Port 465 is implicit TLS; everything else (587, etc.) uses STARTTLS.
-    let transport_builder = if account.smtp_port == 465 {
+    let implicit_tls = account.smtp_port == 465;
+    let transport_builder = if is_loopback_host(&host) {
+        // A local bridge signs its own certificate (see `is_loopback_host`), so
+        // the relay builders' verification would reject it. TLS is still
+        // required — only the certificate checks are relaxed.
+        let tls = smtp_tls_parameters(&host)?;
+        let mode = if implicit_tls {
+            lettre::transport::smtp::client::Tls::Wrapper(tls)
+        } else {
+            lettre::transport::smtp::client::Tls::Required(tls)
+        };
+        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&host).tls(mode)
+    } else if implicit_tls {
         AsyncSmtpTransport::<Tokio1Executor>::relay(&host)?
     } else {
         AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)?
@@ -1944,15 +1972,63 @@ async fn mark_spam(
     move_or_create(session, path, uid, dest).await
 }
 
+/// Whether a host is this machine. Local mail bridges — Proton Bridge, hydroxide,
+/// DavMail — terminate TLS with a certificate generated on the machine itself at
+/// install time: no CA has signed it and it is issued for an address rather than
+/// a name, so it fails both checks. Verification is relaxed for loopback
+/// addresses only, where anyone able to intercept the connection is already
+/// running code as the user, and never for a host reached over a network.
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim().trim_start_matches('[').trim_end_matches(']');
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// A TLS connector for a mail server: it tolerates a local bridge’s self-signed
+/// certificate and verifies everything else normally.
+fn tls_connector(host: &str) -> async_native_tls::TlsConnector {
+    let tls = async_native_tls::TlsConnector::new();
+    if is_loopback_host(host) {
+        tls.danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true)
+    } else {
+        tls
+    }
+}
+
+/// Whether the IMAP connection opens in plaintext and upgrades with STARTTLS
+/// instead of negotiating TLS from the first byte. 993 is always implicit TLS
+/// and 143 is the conventional STARTTLS port; a local bridge listens on a port
+/// of its own (Proton Bridge defaults to 1143) and speaks STARTTLS there.
+fn imap_uses_starttls(account: &AccountConfig) -> bool {
+    account.imap_port != 993
+        && (account.imap_port == 143 || is_loopback_host(&account.imap_host))
+}
+
 async fn connect(account: &AccountConfig) -> Result<ImapSession, Box<dyn std::error::Error>> {
     let tcp = TcpStream::connect((account.imap_host.as_str(), account.imap_port)).await?;
-    let tls = async_native_tls::TlsConnector::new();
-    let stream = tls.connect(account.imap_host.as_str(), tcp).await?;
-    let mut client = async_imap::Client::new(stream);
-    // Consume the server greeting before issuing commands. LOGIN tolerates an
-    // unread greeting, but the AUTHENTICATE handshake reads it as the command
-    // reply and deadlocks — so read it explicitly here.
-    let _ = client.read_response().await;
+    let tls = tls_connector(&account.imap_host);
+    let client = if imap_uses_starttls(account) {
+        let mut plain = async_imap::Client::new(tcp);
+        // Consume the plaintext greeting before issuing STARTTLS. Nothing secret
+        // has been sent at this point; the credentials go out below, after the
+        // socket has been upgraded.
+        let _ = plain.read_response().await;
+        plain.run_command_and_check_ok("STARTTLS", None).await?;
+        let stream = tls.connect(account.imap_host.as_str(), plain.into_inner()).await?;
+        // A server that accepted STARTTLS does not send a second greeting.
+        async_imap::Client::new(stream)
+    } else {
+        let stream = tls.connect(account.imap_host.as_str(), tcp).await?;
+        let mut client = async_imap::Client::new(stream);
+        // Consume the server greeting before issuing commands. LOGIN tolerates an
+        // unread greeting, but the AUTHENTICATE handshake reads it as the command
+        // reply and deadlocks — so read it explicitly here.
+        let _ = client.read_response().await;
+        client
+    };
     let session = if account.oauth {
         // XOAUTH2 with a fresh access token (from GOA or a native refresh token).
         let token = fetch_oauth_token(account)
@@ -2025,7 +2101,7 @@ async fn test_imap(account: &AccountConfig) -> Result<(), String> {
 /// credentials without delivering anything.
 async fn test_smtp(account: &AccountConfig) -> Result<(), String> {
     use lettre::transport::smtp::authentication::{Credentials, Mechanism};
-    use lettre::transport::smtp::client::{AsyncSmtpConnection, TlsParameters};
+    use lettre::transport::smtp::client::AsyncSmtpConnection;
     use lettre::transport::smtp::extension::ClientId;
 
     let host = smtp_host(account);
@@ -2036,7 +2112,7 @@ async fn test_smtp(account: &AccountConfig) -> Result<(), String> {
     };
     let creds = Credentials::new(user, pass);
     let hello = ClientId::default();
-    let tls = TlsParameters::new(host.clone()).map_err(|e| e.to_string())?;
+    let tls = smtp_tls_parameters(&host).map_err(|e| e.to_string())?;
     let addr = format!("{host}:{}", account.smtp_port);
     let timeout = Some(std::time::Duration::from_secs(20));
 
@@ -2864,7 +2940,7 @@ impl Pop3 {
         let tcp = TcpStream::connect((host, port))
             .await
             .map_err(|e| e.to_string())?;
-        let tls = async_native_tls::TlsConnector::new();
+        let tls = tls_connector(host);
 
         let stream = if port == 995 {
             tls.connect(host, tcp).await.map_err(|e| e.to_string())?
@@ -3987,6 +4063,7 @@ fn wrap_fragment(inner: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     fn sample_account() -> AccountConfig {
@@ -4066,6 +4143,38 @@ mod tests {
         assert!(raw.contains("plain@example.com"), "{raw}");
     }
 
+    #[test]
+    fn only_this_machine_counts_as_a_local_bridge() {
+        for host in ["127.0.0.1", "localhost", "LocalHost", "::1", "[::1]", "127.1.2.3"] {
+            assert!(is_loopback_host(host), "{host} should be loopback");
+        }
+        // A remote host must keep full certificate verification, however it is
+        // named — including anything merely containing "localhost".
+        for host in ["imap.gmail.com", "127.0.0.1.example.com", "localhost.evil.com", "10.0.1.14"] {
+            assert!(!is_loopback_host(host), "{host} should not be loopback");
+        }
+    }
+
+    #[test]
+    fn starttls_is_used_for_143_and_local_bridges_only() {
+        let starttls = |host: &str, port: u16| {
+            imap_uses_starttls(&AccountConfig {
+                imap_host: host.into(),
+                imap_port: port,
+                ..sample_account()
+            })
+        };
+        // Proton Bridge's default endpoint, and a bridge on a changed port.
+        assert!(starttls("127.0.0.1", 1143));
+        assert!(starttls("localhost", 2143));
+        // The conventional STARTTLS port, anywhere.
+        assert!(starttls("imap.example.com", 143));
+        // 993 is implicit TLS even on a bridge, and a remote host on any other
+        // port keeps the implicit-TLS behaviour it had before.
+        assert!(!starttls("127.0.0.1", 993));
+        assert!(!starttls("imap.gmail.com", 993));
+        assert!(!starttls("imap.example.com", 1993));
+    }
 
     #[test]
     fn decode_header_handles_over_long_encoded_word() {
