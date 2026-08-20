@@ -37,7 +37,7 @@ jobs:
       - name: Install flatpak-builder
         run: |
           sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder python3-aiohttp python3-toml
+          sudo apt-get install -y flatpak flatpak-builder python3-aiohttp python3-tomlkit
 
       - name: Install the GNOME runtime and Rust SDK extension
         run: |
@@ -53,9 +53,26 @@ jobs:
         # of Cargo.lock, which is committed, so this reproduces the file the
         # maintainer builds x86_64 from.
         run: |
-          curl -fsSL -o /tmp/flatpak-cargo-generator.py \
+          curl -fsSL -o /tmp/gen-cargo-sources.py \
             https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
-          python3 /tmp/flatpak-cargo-generator.py Cargo.lock -o cargo-sources.json
+          # The generator's dependencies drift (it moved from toml to tomlkit),
+          # and it is fetched from master rather than a tag. Install whatever it
+          # turns out to want instead of guessing: run it, and on a missing
+          # module install that module and try again.
+          for attempt in 1 2 3; do
+            if python3 /tmp/gen-cargo-sources.py Cargo.lock -o cargo-sources.json 2>/tmp/gen.err; then
+              break
+            fi
+            cat /tmp/gen.err
+            module="$(sed -n "s/.*No module named '\([^']*\)'.*/\1/p" /tmp/gen.err | head -1)"
+            if [ -z "$module" ]; then
+              echo "generator failed for a reason other than a missing module" >&2
+              exit 1
+            fi
+            echo "installing missing module: $module"
+            pip install --break-system-packages "$module"
+          done
+          test -s cargo-sources.json
           echo "vendored $(python3 -c 'import json;print(len(json.load(open("cargo-sources.json"))))') crate sources"
 
       - name: Build
@@ -72,6 +89,12 @@ jobs:
       - name: Check the result is actually ARM64
         run: |
           file build-dir/files/bin/vireo | tee /dev/stderr | grep -q 'ARM aarch64'
+          # Guard against building the wrong revision: the app's version has to
+          # match the checkout's Cargo.toml.
+          want="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          grep -q "version=\"$want\"" build-dir/files/share/metainfo/co.hyprlab.Vireo.metainfo.xml \
+            || { echo "built app is not $want" >&2; exit 1; }
+          echo "built Vireo $want for aarch64"
           flatpak build-update-repo "$PWD/repo-aarch64"
           ostree --repo="$PWD/repo-aarch64" refs | sort
 
