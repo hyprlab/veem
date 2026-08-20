@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.9.2" date="2026-08-19" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.9.2</url>
+      <description>
+        <p>ARM64 (aarch64) builds are now published alongside x86_64, so ARM machines install and run Vireo like any other. The About window also formats its changelog and release notes properly.</p>
+      </description>
+    </release>
     <release version="1.9.1" date="2026-08-19" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.9.1</url>
       <description>

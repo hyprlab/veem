@@ -1,0 +1,86 @@
+name: Build aarch64 Flatpak
+
+# Vireo is developed and released from an x86_64 machine, so the ARM64 build is
+# made here, natively, on GitHub's arm64 runners (free for public repos).
+# Emulating the build locally through qemu takes hours; this takes minutes.
+#
+# The job produces an *unsigned* OSTree repo as an artifact. Nothing is
+# published from CI: the maintainer imports that repo into the signed
+# distribution repo with `tools/import-arm64.sh`, which re-commits it under the
+# project's GPG key. The signing key never leaves the maintainer's machine.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag, branch or SHA to build'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: aarch64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder python3-aiohttp python3-toml
+
+      - name: Install the GNOME runtime and Rust SDK extension
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub \
+            org.gnome.Platform//50 \
+            org.gnome.Sdk//50 \
+            org.freedesktop.Sdk.Extension.rust-stable//25.08
+
+      - name: Vendor the crate sources
+        # cargo-sources.json is generated, not committed — it pins every crate
+        # tarball so the build inside the sandbox needs no network. It comes out
+        # of Cargo.lock, which is committed, so this reproduces the file the
+        # maintainer builds x86_64 from.
+        run: |
+          curl -fsSL -o /tmp/flatpak-cargo-generator.py \
+            https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+          python3 /tmp/flatpak-cargo-generator.py Cargo.lock -o cargo-sources.json
+          echo "vendored $(python3 -c 'import json;print(len(json.load(open("cargo-sources.json"))))') crate sources"
+
+      - name: Build
+        # The manifest's pinned source points at the *previous* release when this
+        # runs on a tag (the pin commit necessarily comes after the tag), so the
+        # build takes the checkout itself. Same recipe otherwise.
+        run: |
+          tools/local-manifest.sh /tmp/vireo-aarch64.yml
+          flatpak-builder --user --force-clean --disable-rofiles-fuse \
+            --repo="$PWD/repo-aarch64" --default-branch=stable \
+            --mirror-screenshots-url=https://dl.flathub.org/media \
+            "$PWD/build-dir" /tmp/vireo-aarch64.yml
+
+      - name: Check the result is actually ARM64
+        run: |
+          file build-dir/files/bin/vireo | tee /dev/stderr | grep -q 'ARM aarch64'
+          flatpak build-update-repo "$PWD/repo-aarch64"
+          ostree --repo="$PWD/repo-aarch64" refs | sort
+
+      - name: Package the repo
+        run: tar czf vireo-aarch64-repo.tar.gz repo-aarch64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vireo-aarch64-repo
+          path: vireo-aarch64-repo.tar.gz
+          retention-days: 30
+          if-no-files-found: error

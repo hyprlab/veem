@@ -2,7 +2,13 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.9.1
+## What's new in 1.9.2
+
+- **Vireo now runs on ARM.** If you're on a Raspberry Pi, a Snapdragon X Elite laptop, an ARM virtual machine or anything else `aarch64`, Vireo installs and runs the same way it does everywhere else — the install command works out which build you need, so there is nothing to pick. Previously ARM machines were handed the Intel build and it refused to start.
+- Direct downloads now come in both flavours: the site's download button follows your machine, and every release carries `Vireo-x86_64.flatpak` and `Vireo-aarch64.flatpak`. The Fedora RPM remains Intel/AMD only.
+- **The About window's Changelog and Release Notes read properly.** They were showing raw Markdown — stray asterisks, backticks and bracketed links — with long entries wrapping awkwardly under their own bullets. Now they're formatted, with working links.
+
+## In 1.9.1
 
 - A correction to how 1.9.0 credited its contributors: Chris Pouliot's work on Proton Bridge support was attributed with an email address GitHub couldn't match to his account, so his name never appeared on the project's contributor list. This release records it properly. Contributors are also now shown with their GitHub handle in the About window's "Thanks" list.
 

@@ -47,12 +47,21 @@ See **[RELEASE_NOTES.md](RELEASE_NOTES.md)** for the full list.
 
 ## Installing
 
-**Flatpak (recommended)** — works on any distribution; see
-[vireo.hyprlab.co](https://vireo.hyprlab.co) for the signed Flatpak repo.
-Prefer a direct download? Grab `Vireo-<version>.flatpak` from the
+**Flatpak (recommended)** — works on any distribution, on **x86_64 and
+aarch64 (ARM64)**; see [vireo.hyprlab.co](https://vireo.hyprlab.co) for the
+signed Flatpak repo. Installing from the repo picks the right architecture on
+its own:
+
+```sh
+flatpak install --from https://vireo.hyprlab.co/flatpak/co.hyprlab.Vireo.flatpakref
+```
+
+Prefer a direct download? Each release carries `Vireo-x86_64.flatpak` and
+`Vireo-aarch64.flatpak`; grab the one matching `uname -m` from the
 [latest release](https://github.com/hyprlab/vireo/releases/latest) and run
 `flatpak install ./Vireo-*.flatpak` — the bundle carries the repo address and
-signing key, so it still receives updates from the official repo.
+signing key, so it still receives updates from the official repo. (A bundle
+holds a single architecture; the repo above holds both.)
 
 **Fedora** — download the `.rpm` from the
 [latest release](https://github.com/hyprlab/vireo/releases/latest) and:
@@ -64,8 +73,8 @@ sudo dnf install ./vireo-*.x86_64.rpm
 Arch, Debian/Ubuntu and Snap packages were discontinued after 1.7.0 — use the
 Flatpak (it works on every distribution) or build from source.
 
-The RPM targets current Fedora releases (44+). On anything older, use the
-Flatpak or build from source. A Secret Service provider (e.g. gnome-keyring,
+The RPM targets current Fedora releases (44+) on x86_64 only — on ARM, or on
+anything older, use the Flatpak or build from source. A Secret Service provider (e.g. gnome-keyring,
 preinstalled on GNOME) is needed at runtime for password storage.
 
 ## Building from source
