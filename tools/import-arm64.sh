@@ -52,7 +52,7 @@ flatpak build-update-repo --generate-static-deltas \
     --gpg-sign="$KEYID" --gpg-homedir="$GPG_HOME" "$REPO"
 
 mkdir -p "$OUT"
-flatpak build-bundle --arch=aarch64 "$REPO" "$OUT/Vireo-$VERSION-aarch64.flatpak" \
+flatpak build-bundle --arch=aarch64 "$REPO" "$OUT/Vireo-aarch64.flatpak" \
     "$APP_ID" stable \
     --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
     --repo-url=https://vireo.hyprlab.co/flatpak \
@@ -61,4 +61,4 @@ flatpak build-bundle --arch=aarch64 "$REPO" "$OUT/Vireo-$VERSION-aarch64.flatpak
 echo
 echo "imported:"
 ostree --repo="$REPO" refs | grep "$APP_ID" | sort
-echo "bundle:   $OUT/Vireo-$VERSION-aarch64.flatpak"
+echo "bundle:   $OUT/Vireo-aarch64.flatpak"
