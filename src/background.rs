@@ -43,11 +43,12 @@ fn call_request(reason: &str, autostart: bool) -> Result<(), String> {
     let mut options: std::collections::HashMap<&str, Value> = std::collections::HashMap::new();
     options.insert("reason", Value::from(reason));
     options.insert("autostart", Value::from(autostart));
-    // Not `dbus-activatable`: that tells the portal to autostart the app over
-    // D-Bus, which only works if the desktop file declares DBusActivatable, and
-    // Vireo's does not. Without it the portal uses the desktop file's Exec line,
-    // which launches Vireo the ordinary way — window and all. Starting hidden
-    // would need a flag of its own and a way to suppress the first present.
+    // Autostart runs this rather than the desktop file's Exec line, so logging in
+    // leaves Vireo checking mail from the Background Apps menu instead of opening
+    // a window at you. Not `dbus-activatable`: that would autostart over D-Bus,
+    // which needs DBusActivatable in the desktop file, and takes no arguments.
+    let commandline = vec!["vireo".to_string(), crate::HIDDEN_FLAG.to_string()];
+    options.insert("commandline", Value::from(commandline));
     conn.call_method(
         Some(PORTAL_DEST),
         PORTAL_PATH,

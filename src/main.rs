@@ -25,6 +25,14 @@ use crate::app::AppModel;
 
 const APP_ID: &str = "co.hyprlab.Vireo";
 
+/// Command-line flag for starting without a window (used by the autostart entry
+/// the background portal writes).
+pub const HIDDEN_FLAG: &str = "--hidden";
+
+/// Whether this run started hidden. Read once the UI is built, to keep the first
+/// activation from presenting the window that was deliberately not shown.
+pub static HIDDEN_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -36,11 +44,23 @@ fn main() {
     migrate_legacy_dirs();
     register_resources();
 
+    // `--hidden` starts without showing the window: the autostart entry written
+    // by the background portal uses it, so logging in leaves Vireo checking mail
+    // from the Background Apps menu rather than opening a window at you. The flag
+    // is stripped before GTK sees the arguments, which would otherwise reject it
+    // as unknown.
+    let mut args: Vec<String> = std::env::args().collect();
+    let hidden = args.iter().any(|a| a == HIDDEN_FLAG);
+    args.retain(|a| a != HIDDEN_FLAG);
+    HIDDEN_START.store(hidden, std::sync::atomic::Ordering::Relaxed);
+
     let adw_app = adw::Application::builder()
         .application_id(APP_ID)
         .build();
 
-    let app = RelmApp::from_app(adw_app);
+    let app = RelmApp::from_app(adw_app)
+        .with_args(args)
+        .visible_on_activate(!hidden);
     app.run::<AppModel>(());
 }
 

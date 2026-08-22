@@ -225,8 +225,8 @@ impl Component for Preferences {
                         #[name = "autostart_row"]
                         adw::SwitchRow {
                             set_title: "Start at login",
-                            set_subtitle: "Open Vireo when you log in, so mail is checked from \
-                                           the moment you sign in.",
+                            set_subtitle: "Start checking for mail when you log in. Vireo starts \
+                                           without a window and waits in the system menu.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleAutostart(row.is_active()));
                             },

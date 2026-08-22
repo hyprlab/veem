@@ -1193,7 +1193,15 @@ impl SimpleComponent for AppModel {
             // autostart entry — brings the hidden window back rather than doing
             // nothing.
             let window = root.clone();
+            // Started hidden? Then the first activation is this very launch, and
+            // presenting here would undo it. Every activation after that is a
+            // person asking for the window.
+            let pending_hidden_start =
+                std::cell::Cell::new(crate::HIDDEN_START.load(std::sync::atomic::Ordering::Relaxed));
             app.connect_activate(move |_| {
+                if pending_hidden_start.replace(false) {
+                    return;
+                }
                 window.set_visible(true);
                 window.present();
             });
