@@ -275,11 +275,25 @@ impl Component for AccountsWindow {
                             add = &adw::PreferencesGroup {
                                 set_visible: false,
 
-                                adw::Banner {
-                                    set_revealed: true,
-                                    set_title: "Managed by GNOME Online Accounts —                                                 change the address, servers or password in                                                 Settings → Online Accounts.",
-                                    set_button_label: Some("Open Online Accounts…"),
-                                    connect_button_clicked => AccountsInput::OpenOnlineAccounts,
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_spacing: 12,
+                                    set_halign: gtk::Align::Center,
+                                    set_margin_bottom: 6,
+
+                                    gtk::Label {
+                                        set_label: "This account is managed by GNOME Online Accounts.\nIts address, servers and password are changed in Settings \u{2192} Online Accounts.",
+                                        set_justify: gtk::Justification::Center,
+                                        set_halign: gtk::Align::Center,
+                                        set_wrap: true,
+                                        add_css_class: "dim-label",
+                                    },
+
+                                    gtk::Button {
+                                        set_label: "Open Online Accounts\u{2026}",
+                                        set_halign: gtk::Align::Center,
+                                        connect_clicked => AccountsInput::OpenOnlineAccounts,
+                                    },
                                 },
                             },
 
