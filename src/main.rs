@@ -1,6 +1,7 @@
 //! Vireo — a clean, fast, GNOME-native email client built with Rust + relm4.
 
 mod app;
+mod background;
 mod avatar;
 mod backend;
 mod cache;

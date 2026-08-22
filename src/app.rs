@@ -188,6 +188,11 @@ pub struct AppModel {
     /// The keyboard-shortcut reference, while it is open — so the shortcut that
     /// opens it closes it again.
     shortcuts_win: Option<adw::Window>,
+    /// Whether Vireo keeps running with no window. Shared with the window's
+    /// close handler, which has to read it without the model.
+    run_in_background: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Whether Vireo starts at login (background running only).
+    autostart: bool,
     /// Whether single-key (modifier-free) shortcuts are enabled. The window's key
     /// controller needs to read this without the model, so it is shared: with the
     /// feature off, keystrokes must pass straight through rather than be consumed
@@ -329,6 +334,8 @@ pub enum AppMsg {
     SetShowAttachments(bool),
     SetPreviewLines(u32),
     SetSingleKey(bool),
+    SetRunInBackground(bool),
+    SetAutostart(bool),
     /// A single-key shortcut fired.
     Shortcut(Shortcut),
     /// Show the keyboard-shortcut reference.
@@ -414,7 +421,7 @@ impl SimpleComponent for AppModel {
             // Persist the window size + maximized state on close. (Position and
             // which monitor can't be restored on Wayland — the compositor owns
             // placement — so only the geometry is saved.)
-            connect_close_request => move |w| {
+            connect_close_request[background = model.run_in_background.clone()] => move |w| {
                 let maximized = w.is_maximized();
                 let (width, height) = if maximized {
                     let (sw, sh, _) = crate::config::load_window_state();
@@ -423,6 +430,15 @@ impl SimpleComponent for AppModel {
                     (w.width(), w.height())
                 };
                 crate::config::save_window_state(width, height, maximized);
+                // Running in the background: hide the window and stay alive, so
+                // mail keeps arriving and GNOME lists Vireo under Background Apps
+                // (issue #3). The window is kept rather than rebuilt, so reopening
+                // is instant and nothing is torn down — which is also what makes
+                // this safe, given the exit below.
+                if background.get() {
+                    w.set_visible(false);
+                    return gtk::glib::Propagation::Stop;
+                }
                 // Exit cleanly the moment window state is saved. Letting GTK,
                 // WebKit and the per-account worker threads tear down the normal
                 // way can abort — a Rust panic fired from a GObject dispose
@@ -943,6 +959,7 @@ impl SimpleComponent for AppModel {
         menu.append(Some("Accounts"), Some("win.accounts"));
         menu.append(Some("Preferences"), Some("win.preferences"));
         menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
+        menu.append(Some("Quit"), Some("app.quit"));
         menu.append(Some("About Vireo"), Some("win.about"));
 
         let mut model = AppModel {
@@ -1003,6 +1020,10 @@ impl SimpleComponent for AppModel {
             show_attachments,
             preview_lines: config::load_preview_lines(),
             shortcuts_win: None,
+            run_in_background: std::rc::Rc::new(std::cell::Cell::new(
+                config::load_run_in_background(),
+            )),
+            autostart: config::load_autostart(),
             single_key: std::rc::Rc::new(std::cell::Cell::new(
                 config::load_single_key_shortcuts(),
             )),
@@ -1142,6 +1163,40 @@ impl SimpleComponent for AppModel {
                 &widgets.sidebar_menu,
                 true,
             );
+        }
+
+        // GNOME's Background Apps menu quits an app by activating its `quit`
+        // action over D-Bus, falling back to `flatpak kill` if nothing answers
+        // within five seconds. Without this the ✕ there would be a hard kill.
+        {
+            let app = relm4::main_application();
+            let window = root.clone();
+            let quit = gtk::gio::SimpleAction::new("quit", None);
+            quit.connect_activate(move |_, _| {
+                // Same teardown as closing the last window: save the geometry,
+                // then exit rather than unwinding through GTK and WebKit.
+                let maximized = window.is_maximized();
+                let (width, height) = if maximized {
+                    let (sw, sh, _) = crate::config::load_window_state();
+                    (sw, sh)
+                } else {
+                    (window.width(), window.height())
+                };
+                crate::config::save_window_state(width, height, maximized);
+                crate::background::set_status("");
+                std::process::exit(0)
+            });
+            app.add_action(&quit);
+            gtk::prelude::GtkApplicationExt::set_accels_for_action(&app, "app.quit", &["<Ctrl>q"]);
+
+            // Activating the app again — its icon, a notification, or the
+            // autostart entry — brings the hidden window back rather than doing
+            // nothing.
+            let window = root.clone();
+            app.connect_activate(move |_| {
+                window.set_visible(true);
+                window.present();
+            });
         }
 
         let mut group = RelmActionGroup::<WindowActionGroup>::new();
@@ -2007,6 +2062,28 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetRunInBackground(on) => {
+                if self.run_in_background.get() != on {
+                    self.run_in_background.set(on);
+                    self.save_settings();
+                    // Ask the portal as the setting changes, so the permission
+                    // dialog appears while the user is looking at the switch they
+                    // just moved rather than at some later, unexplained moment.
+                    crate::background::request(on && self.autostart);
+                    if !on {
+                        crate::background::set_status("");
+                    }
+                }
+            }
+
+            AppMsg::SetAutostart(on) => {
+                if self.autostart != on {
+                    self.autostart = on;
+                    self.save_settings();
+                    crate::background::request(self.run_in_background.get() && on);
+                }
+            }
+
             AppMsg::SetSingleKey(on) => {
                 if self.single_key.get() != on {
                     self.single_key.set(on);
@@ -2309,6 +2386,8 @@ impl SimpleComponent for AppModel {
                     show_attachments: self.show_attachments,
                     preview_lines: self.preview_lines,
                     single_key_shortcuts: self.single_key.get(),
+                    run_in_background: self.run_in_background.get(),
+                    autostart: self.autostart,
                 };
                 let prefs = Preferences::builder()
                     .transient_for(&self.window)
@@ -2327,6 +2406,8 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetShowAttachments(on) => AppMsg::SetShowAttachments(on),
                         PrefOutput::SetPreviewLines(n) => AppMsg::SetPreviewLines(n),
                         PrefOutput::SetSingleKey(on) => AppMsg::SetSingleKey(on),
+                        PrefOutput::SetRunInBackground(on) => AppMsg::SetRunInBackground(on),
+                        PrefOutput::SetAutostart(on) => AppMsg::SetAutostart(on),
                         PrefOutput::SetPaletteCollapse(secs) => AppMsg::SetPaletteCollapse(secs),
                         PrefOutput::SetMessageTheme(t) => AppMsg::SetMessageTheme(t),
                         PrefOutput::Closed => AppMsg::ClosePreferences,
@@ -2736,6 +2817,8 @@ impl AppModel {
             self.show_attachments,
             self.preview_lines,
             self.single_key.get(),
+            self.run_in_background.get(),
+            self.autostart,
         );
     }
 
@@ -3186,6 +3269,11 @@ impl AppModel {
         let unified = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
         self.sidebar
             .emit(SidebarInput::SetUnread { folders, unified });
+        // The same number is what GNOME shows beside Vireo in Background Apps,
+        // so a process with no window still says what it is there for.
+        if self.run_in_background.get() {
+            crate::background::set_status(&crate::background::status_text(unified));
+        }
     }
 
     /// Push the current accounts + folders to the sidebar, in the user's chosen

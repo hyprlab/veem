@@ -379,6 +379,13 @@ struct PrivacyFile {
     /// a stray keystroke shouldn't archive mail for someone who never asked.
     #[serde(default)]
     single_key_shortcuts: bool,
+    /// Keep running after the window is closed, so new mail still arrives and
+    /// notifies. Off by default: closing a window is expected to quit.
+    #[serde(default)]
+    run_in_background: bool,
+    /// Start at login (only meaningful with `run_in_background`).
+    #[serde(default)]
+    autostart: bool,
 }
 
 fn default_fetch_interval() -> u64 {
@@ -425,6 +432,8 @@ impl Default for PrivacyFile {
             show_attachments: default_show_attachments(),
             preview_lines: default_preview_lines(),
             single_key_shortcuts: false,
+            run_in_background: false,
+            autostart: false,
         }
     }
 }
@@ -509,6 +518,17 @@ pub fn load_single_key_shortcuts() -> bool {
     load_privacy().single_key_shortcuts
 }
 
+/// Whether Vireo keeps running once its window is closed.
+pub fn load_run_in_background() -> bool {
+    load_privacy().run_in_background
+}
+
+/// Whether Vireo starts at login (background running only).
+pub fn load_autostart() -> bool {
+    let p = load_privacy();
+    p.run_in_background && p.autostart
+}
+
 /// Persist all app settings together (so no field is clobbered).
 #[allow(clippy::too_many_arguments)]
 pub fn save_privacy(
@@ -525,6 +545,8 @@ pub fn save_privacy(
     show_attachments: bool,
     preview_lines: u32,
     single_key_shortcuts: bool,
+    run_in_background: bool,
+    autostart: bool,
 ) {
     let Some(path) = privacy_path() else {
         return;
@@ -546,6 +568,8 @@ pub fn save_privacy(
         show_attachments,
         preview_lines,
         single_key_shortcuts,
+        run_in_background,
+        autostart,
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {

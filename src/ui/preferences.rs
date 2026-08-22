@@ -24,6 +24,8 @@ pub struct PrefInit {
     pub show_attachments: bool,
     pub preview_lines: u32,
     pub single_key_shortcuts: bool,
+    pub run_in_background: bool,
+    pub autostart: bool,
 }
 
 /// Message-content appearance options, in combo order.
@@ -105,6 +107,8 @@ pub enum PrefInput {
     ToggleShowAttachments(bool),
     ChangePreviewLines(u32),
     ToggleSingleKey(bool),
+    ToggleRunInBackground(bool),
+    ToggleAutostart(bool),
     ChangePaletteCollapse(u64),
     ChangeMessageTheme(u32),
 }
@@ -124,6 +128,8 @@ pub enum PrefOutput {
     SetShowAttachments(bool),
     SetPreviewLines(u32),
     SetSingleKey(bool),
+    SetRunInBackground(bool),
+    SetAutostart(bool),
     SetPaletteCollapse(u64),
     SetMessageTheme(MessageTheme),
     Closed,
@@ -202,6 +208,27 @@ impl Component for Preferences {
                             set_subtitle: "Collapse replies into a single threaded conversation.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleThreading(row.is_active()));
+                            },
+                        },
+
+                        #[name = "background_row"]
+                        adw::SwitchRow {
+                            set_title: "Keep running in the background",
+                            set_subtitle: "Closing the window hides it instead of quitting, so new \
+                                           mail still arrives. Vireo then appears under Background \
+                                           Apps in the system menu, where it can be quit.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleRunInBackground(row.is_active()));
+                            },
+                        },
+
+                        #[name = "autostart_row"]
+                        adw::SwitchRow {
+                            set_title: "Start at login",
+                            set_subtitle: "Open Vireo when you log in, so mail is checked from \
+                                           the moment you sign in.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleAutostart(row.is_active()));
                             },
                         },
 
@@ -391,6 +418,16 @@ impl Component for Preferences {
             .set_model(Some(&gtk::StringList::new(&preview_labels)));
         widgets.preview_lines_row.set_selected(init.preview_lines.min(3));
 
+        widgets.background_row.set_active(init.run_in_background);
+        widgets.autostart_row.set_active(init.autostart);
+        // Starting at login only means anything if Vireo stays running.
+        widgets.autostart_row.set_sensitive(init.run_in_background);
+        {
+            let autostart_row = widgets.autostart_row.clone();
+            widgets.background_row.connect_active_notify(move |row| {
+                autostart_row.set_sensitive(row.is_active());
+            });
+        }
         widgets.single_key_row.set_active(init.single_key_shortcuts);
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
@@ -443,6 +480,12 @@ impl Component for Preferences {
             }
             PrefInput::ToggleSingleKey(on) => {
                 let _ = sender.output(PrefOutput::SetSingleKey(on));
+            }
+            PrefInput::ToggleRunInBackground(on) => {
+                let _ = sender.output(PrefOutput::SetRunInBackground(on));
+            }
+            PrefInput::ToggleAutostart(on) => {
+                let _ = sender.output(PrefOutput::SetAutostart(on));
             }
             PrefInput::ChangePreviewLines(index) => {
                 // The combo lists Off, then 1, 2 and 3 lines — so the row index is
