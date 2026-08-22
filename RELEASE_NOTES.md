@@ -2,7 +2,13 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.10.3
+## What's new in 1.11.0
+
+- **Vireo can keep running after you close its window**, so new mail still arrives and notifies. GNOME doesn't have a system tray — instead Vireo appears under **Background Apps** in the system menu, with your unread count beside it, and can be quit from there. It's off by default: turn on *Keep running in the background* in Preferences → Mail.
+- **Start at login** (a second switch, once the above is on). Vireo starts without a window and waits in the system menu, watching for mail from the moment you sign in.
+- **Quit** is now in the main menu and on Ctrl+Q.
+
+## In 1.10.3
 
 - **Fixed: some accounts imported from GNOME Online Accounts couldn't sign in.** Accounts that use a password (rather than a Google-style sign-in) could end up without one, with no way to correct it. Vireo now asks GNOME Online Accounts for the password each time it connects, so those accounts start working without being re-added — and if the system genuinely has no password stored, Vireo says so and points you to Settings → Online Accounts.
 
