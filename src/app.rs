@@ -768,13 +768,16 @@ impl SimpleComponent for AppModel {
                                 },
                                 pack_end = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-printer-symbolic",
-                                    set_tooltip_text: Some("Print (Ctrl+P)"),
+                                    set_tooltip_text: Some("Print Preview (Ctrl+Shift+P)"),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox,
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::PrintMessage),
+                                    // The preview, not the print dialog: the button
+                                    // shows what will come out and prints from
+                                    // there, so nobody spends paper to find out.
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::PrintPreview),
                                 },
                                 pack_end = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-background-app-ghost-symbolic",
