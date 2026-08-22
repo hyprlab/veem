@@ -40,25 +40,41 @@ jobs:
           sudo apt-get install -y flatpak flatpak-builder python3-aiohttp python3-tomlkit
 
       - name: Install the GNOME runtime and Rust SDK extension
+        id: sdk
         run: |
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          # `--no-static-deltas`: Flathub's aarch64 mirror periodically
-          # serves a summary listing a ref whose delta objects 404, which fails
-          # the install even though the ref exists (it did for v1.10.0). Pulling
-          # plain objects goes around it. Retried because it is a CDN, and a
-          # release shouldn't hinge on one request.
-          for attempt in 1 2 3; do
-            if flatpak install --user -y --noninteractive --no-static-deltas flathub \
-              org.gnome.Platform//50 \
-              org.gnome.Sdk//50 \
-              org.freedesktop.Sdk.Extension.rust-stable//25.08
-            then
-              exit 0
-            fi
-            echo "install attempt $attempt failed; retrying"
-            sleep 30
-          done
-          exit 1
+          install_ref() {
+            # `--no-static-deltas`: Flathub occasionally serves a summary listing
+            # a ref whose delta objects 404. Pulling plain objects goes around
+            # that, and the install is retried because it is a CDN and a release
+            # shouldn't hinge on one request.
+            for attempt in 1 2 3; do
+              if flatpak install --user -y --noninteractive --no-static-deltas flathub "$@"; then
+                return 0
+              fi
+              echo "install attempt $attempt failed for $*; retrying"
+              sleep 30
+            done
+            return 1
+          }
+
+          install_ref org.gnome.Platform//50 org.gnome.Sdk//50
+
+          # The stable Rust extension is what releases are built with. During
+          # v1.10.0 its aarch64 objects were missing from Flathub for hours
+          # (rust-nightly was fine), which would otherwise have held the ARM
+          # build indefinitely. Fall back rather than stall — and note which
+          # toolchain was used, because it belongs in the release notes. This
+          # returns to stable by itself once Flathub serves it again.
+          if install_ref org.freedesktop.Sdk.Extension.rust-stable//25.08; then
+            echo "toolchain=rust-stable" >> "$GITHUB_OUTPUT"
+          elif install_ref org.freedesktop.Sdk.Extension.rust-nightly//25.08; then
+            echo "::warning::rust-stable/aarch64 is unavailable on Flathub; built with rust-nightly"
+            echo "toolchain=rust-nightly" >> "$GITHUB_OUTPUT"
+          else
+            echo "no Rust SDK extension could be installed" >&2
+            exit 1
+          fi
 
       - name: Vendor the crate sources
         # cargo-sources.json is generated, not committed — it pins every crate
@@ -94,6 +110,11 @@ jobs:
         # build takes the checkout itself. Same recipe otherwise.
         run: |
           tools/local-manifest.sh /tmp/vireo-aarch64.yml
+          # Point the manifest at whichever extension actually installed.
+          if [ "${{ steps.sdk.outputs.toolchain }}" = "rust-nightly" ]; then
+            sed -i 's/rust-stable/rust-nightly/g' /tmp/vireo-aarch64.yml
+            grep -n "rust-" /tmp/vireo-aarch64.yml
+          fi
           flatpak-builder --user --force-clean --disable-rofiles-fuse \
             --repo="$PWD/repo-aarch64" --default-branch=stable \
             --mirror-screenshots-url=https://dl.flathub.org/media \
@@ -107,7 +128,7 @@ jobs:
           want="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
           grep -q "version=\"$want\"" build-dir/files/share/metainfo/co.hyprlab.Vireo.metainfo.xml \
             || { echo "built app is not $want" >&2; exit 1; }
-          echo "built Vireo $want for aarch64"
+          echo "built Vireo $want for aarch64 with ${{ steps.sdk.outputs.toolchain }}"
           flatpak build-update-repo "$PWD/repo-aarch64"
           ostree --repo="$PWD/repo-aarch64" refs | sort
 
