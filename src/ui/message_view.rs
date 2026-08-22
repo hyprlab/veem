@@ -83,6 +83,9 @@ pub enum MessageViewInput {
     ThemeChanged,
     /// Print the message on screen (issue #16).
     Print,
+    /// Render the message to a PDF and open it, so the layout can be checked
+    /// before any paper is used.
+    PrintPreview,
     /// Set the message-content theme: `None` follows the system, `Some(dark)`
     /// forces light/dark for email content only (not the app UI).
     SetContentTheme(Option<bool>),
@@ -533,6 +536,54 @@ impl Component for MessageView {
                         Err(e) => tracing::debug!("print dialog dismissed: {e}"),
                     },
                 );
+            }
+
+            MessageViewInput::PrintPreview => {
+                // The print dialog's own Preview button belongs to the portal and,
+                // in a sandbox, does not produce one — so Vireo makes its own:
+                // print to a PDF with the same code path the printer uses, then
+                // hand the file to whatever opens PDFs.
+                let print = webkit6::PrintOperation::new(&self.webview);
+                let job = self
+                    .current
+                    .as_ref()
+                    .map(|m| m.subject.clone())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| "Message".to_string());
+                let name = sanitize_filename(&job);
+                let dir = std::env::temp_dir().join("vireo-print");
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    tracing::warn!("could not make a place for the preview: {e}");
+                    return;
+                }
+                let path = dir.join(format!("{name}.pdf"));
+                let uri = format!("file://{}", path.display());
+
+                let settings = gtk::PrintSettings::new();
+                // The "Print to File" backend is what turns a print job into a
+                // PDF; without naming it, this would go to the default printer.
+                settings.set_printer("Print to File");
+                settings.set(gtk::PRINT_SETTINGS_OUTPUT_URI, Some(&uri));
+                settings.set(gtk::PRINT_SETTINGS_OUTPUT_FILE_FORMAT, Some("pdf"));
+                settings.set(gtk::PRINT_SETTINGS_OUTPUT_BASENAME, Some(&name));
+                print.set_print_settings(&settings);
+
+                print.connect_failed(|_, error| {
+                    tracing::warn!("print preview failed: {error}");
+                });
+                let keep = std::cell::RefCell::new(Some(print.clone()));
+                print.connect_finished(move |_| {
+                    keep.borrow_mut().take();
+                    // The same route attachments take: GIO hands the portal a
+                    // file descriptor, so a viewer outside the sandbox can read a
+                    // file that only exists inside it. A plain OpenURI with this
+                    // path would point the viewer at nothing.
+                    let _ = gtk::gio::AppInfo::launch_default_for_uri(
+                        &uri,
+                        None::<&gtk::gio::AppLaunchContext>,
+                    );
+                });
+                print.print();
             }
 
             MessageViewInput::ThemeChanged => {

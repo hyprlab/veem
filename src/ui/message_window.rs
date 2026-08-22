@@ -48,6 +48,8 @@ pub struct MessageWindow {
 pub enum MessageWindowInput {
     /// Print this message (Ctrl+P), the same as in the main window.
     Print,
+    /// Preview it as a PDF (Ctrl+Shift+P).
+    PrintPreview,
     /// No-op (unreachable output mapping).
     Ignore,
     /// The message body arrived from the server.
@@ -269,11 +271,16 @@ impl Component for MessageWindow {
             let keys = gtk::EventControllerKey::new();
             let s = sender.clone();
             keys.connect_key_pressed(move |_, keyval, _, state| {
-                if state.contains(gtk::gdk::ModifierType::CONTROL_MASK)
-                    && keyval == gtk::gdk::Key::p
-                {
-                    s.input(MessageWindowInput::Print);
-                    return gtk::glib::Propagation::Stop;
+                if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+                    // Shift+P is the preview; the keyval arrives capitalised.
+                    if keyval == gtk::gdk::Key::P {
+                        s.input(MessageWindowInput::PrintPreview);
+                        return gtk::glib::Propagation::Stop;
+                    }
+                    if keyval == gtk::gdk::Key::p {
+                        s.input(MessageWindowInput::Print);
+                        return gtk::glib::Propagation::Stop;
+                    }
                 }
                 gtk::glib::Propagation::Proceed
             });
@@ -320,6 +327,8 @@ impl Component for MessageWindow {
             MessageWindowInput::ViewSource => self.emit_action(RowAction::ViewSource, &sender),
             // Moving the message away — let the app handle it, then close.
             MessageWindowInput::Print => self.view.emit(MessageViewInput::Print),
+
+            MessageWindowInput::PrintPreview => self.view.emit(MessageViewInput::PrintPreview),
 
             MessageWindowInput::Delete => {
                 self.emit_action(RowAction::Delete, &sender);
