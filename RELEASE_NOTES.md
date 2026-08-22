@@ -2,7 +2,15 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.9.2
+## What's new in 1.10.0
+
+- **Nothing is lost when a send fails.** Messages that can't go out — usually because you're offline — now wait in an **Outbox** and are sent as soon as the connection is back. You can open one to edit it, send it by hand, or throw it away, and Vireo tells you when a waiting message has gone. The Outbox behaves like any other folder in the sidebar and only appears while something is in it.
+- **Message previews.** The list can show the first lines of each message under its subject. Choose **Off, 1, 2 or 3 lines** in Preferences → Message List; Off also stops previews being downloaded at all.
+- **Keyboard shortcuts, no modifier needed.** Press `j`/`k` to move through the list, `r` to reply, `a` to archive, `d` to delete, `w`/`b` to step through a conversation — Gmail's keys, where they and this scheme agree. They're **off by default**; switch them on in Preferences → Message List, and press **Ctrl+?** any time for the full list. `Esc` backs out of a reply and returns to the list even with shortcuts switched off.
+- **Folders with non-Latin names read properly.** Gmail labels in Chinese (and any other non-ASCII mailbox name) were showing as `&XfJSoGYfaAc-` instead of 已加星标. They now display correctly, and you can create folders with non-ASCII names too.
+- The message list's action buttons moved to their own line under the preview, so they no longer cover the text or shift it sideways, and opening them no longer widens the pane.
+
+## In 1.9.2
 
 - **Vireo now runs on ARM.** If you're on a Raspberry Pi, a Snapdragon X Elite laptop, an ARM virtual machine or anything else `aarch64`, Vireo installs and runs the same way it does everywhere else — the install command works out which build you need, so there is nothing to pick. Previously ARM machines were handed the Intel build and it refused to start.
 - Direct downloads now come in both flavours: the site's download button follows your machine, and every release carries `Vireo-x86_64.flatpak` and `Vireo-aarch64.flatpak`. The Fedora RPM remains Intel/AMD only.

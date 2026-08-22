@@ -40,10 +40,40 @@ trackers by default — no telemetry, no analytics.
 - **Whole-mailbox sync & search** — no message-count cap; a fast first page loads instantly, the rest indexes in the background with infinite scroll.
 - **Two-way sync** — deletions and moves from your phone or another client sync back automatically (IMAP IDLE + reconciliation).
 - **Conversation threading**, compose/reply/forward with HTML signatures, editable drafts, and full folder management.
+- **Outbox** — a send that fails is kept and retried when the connection returns, not lost; queued messages can be edited, sent by hand or discarded.
+- **Message previews** — the first one to three lines of each message under its subject in the list (or off).
+- **Single-key shortcuts** — Gmail-style `j`/`k`, `r`, `a`, `d` and friends, without a modifier (see below).
 - **Privacy-first reading** — remote content blocked by default, per-sender allow/block lists, and a per-message light/dark content theme.
 - **GNOME-native** — adaptive three-pane layout, per-account colours and emoji avatars, light/dark following the system, optional GNOME Contacts.
 
 See **[RELEASE_NOTES.md](RELEASE_NOTES.md)** for the full list.
+
+## Keyboard shortcuts
+
+Vireo can be driven from the keyboard without holding a modifier, in the style of
+Gmail and Geary. The scheme is **off by default** — a stray keystroke shouldn't
+archive mail — so switch it on first in **Preferences → Message List → Single-key
+shortcuts**. Press **Ctrl+?** (or F1, or *Main Menu → Keyboard Shortcuts*) at any
+time for this list in the app; the same key closes it again.
+
+| Move around | | Act on a message | |
+| --- | --- | --- | --- |
+| <kbd>j</kbd> <kbd>↓</kbd> | Next message | <kbd>r</kbd> | Reply |
+| <kbd>k</kbd> <kbd>↑</kbd> | Previous message | <kbd>R</kbd> | Reply to all |
+| <kbd>l</kbd> <kbd>→</kbd> | Open the selected message | <kbd>f</kbd> | Forward |
+| <kbd>h</kbd> <kbd>←</kbd> <kbd>u</kbd> | Back to the message list | <kbd>a</kbd> | Archive |
+| <kbd>w</kbd> | Next message in the conversation | <kbd>d</kbd> | Delete |
+| <kbd>b</kbd> | Previous message in the conversation | <kbd>!</kbd> | Mark as spam |
+| <kbd>/</kbd> | Search | <kbd>s</kbd> | Star or unstar |
+| <kbd>c</kbd> | Compose | <kbd>m</kbd> | Mark read or unread |
+| <kbd>?</kbd> | This list | <kbd>x</kbd> | Select the row (for a bulk action) |
+
+<kbd>Esc</kbd> backs out of a reply, forward or compose and returns you to the
+message list. It works whether or not single-key shortcuts are enabled — as does
+everything in the menus — and in a search field it still clears the search.
+
+Keys never fire while you are typing: whatever has focus gets first refusal, so
+"archive" typed into the search box searches for it.
 
 ## Installing
 

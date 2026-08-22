@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.10.0" date="2026-08-21" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.10.0</url>
+      <description>
+        <p>New Outbox for messages that could not be sent, message previews in the list, single-key keyboard shortcuts, and folders with non-Latin names now display correctly.</p>
+      </description>
+    </release>
     <release version="1.9.2" date="2026-08-19" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.9.2</url>
       <description>
