@@ -567,6 +567,7 @@ impl Component for MessageView {
                     tracing::warn!("no printer available that can write a PDF");
                     return;
                 };
+                tracing::info!(%printer, %uri, "printing preview to a file");
                 let settings = gtk::PrintSettings::new();
                 settings.set_printer(&printer);
                 settings.set(gtk::PRINT_SETTINGS_OUTPUT_URI, Some(&uri));
@@ -578,8 +579,11 @@ impl Component for MessageView {
                     tracing::warn!("print preview failed: {error}");
                 });
                 let keep = std::cell::RefCell::new(Some(print.clone()));
+                let written = path.clone();
                 print.connect_finished(move |_| {
                     keep.borrow_mut().take();
+                    let size = std::fs::metadata(&written).map(|m| m.len()).unwrap_or(0);
+                    tracing::info!(bytes = size, "preview written; opening it");
                     // The same route attachments take: GIO hands the portal a
                     // file descriptor, so a viewer outside the sandbox can read a
                     // file that only exists inside it. A plain OpenURI with this

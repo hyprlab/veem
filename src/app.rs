@@ -2130,18 +2130,26 @@ impl SimpleComponent for AppModel {
 
             AppMsg::ShowShortcuts => self.show_shortcuts(),
 
-            AppMsg::PrintPreview => {
-                if self.current.is_some() {
-                    self.message_view.emit(MessageViewInput::PrintPreview);
-                }
-            }
-
-            AppMsg::PrintMessage => {
+            AppMsg::PrintPreview | AppMsg::PrintMessage => {
                 // Only the reader can print: it holds the rendered message, and
-                // printing from an empty reader would offer a blank page.
-                if self.current.is_some() {
-                    self.message_view.emit(MessageViewInput::Print);
+                // printing from an empty reader would offer a blank page. Say so
+                // rather than appearing to do nothing, which is indistinguishable
+                // from a broken menu item.
+                let preview = matches!(msg, AppMsg::PrintPreview);
+                tracing::info!(preview, open = self.current.is_some(), "print requested");
+                if self.current.is_none() {
+                    self.notifications.emit(NotifyInput::Push {
+                        text: "Open a message first, then print it.".to_string(),
+                        error: false,
+                        connectivity: false,
+                    });
+                    return;
                 }
+                self.message_view.emit(if preview {
+                    MessageViewInput::PrintPreview
+                } else {
+                    MessageViewInput::Print
+                });
             }
 
             AppMsg::Shortcut(action) => self.run_shortcut(action, &sender),
