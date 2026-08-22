@@ -46,6 +46,8 @@ pub struct MessageWindow {
 
 #[derive(Debug)]
 pub enum MessageWindowInput {
+    /// Print this message (Ctrl+P), the same as in the main window.
+    Print,
     /// No-op (unreachable output mapping).
     Ignore,
     /// The message body arrived from the server.
@@ -261,6 +263,23 @@ impl Component for MessageWindow {
         let attach_list = model.attach_list.clone();
         let widgets = view_output!();
 
+        // Ctrl+P prints, matching the main window. This window has no menu bar to
+        // hang an action off, so the accelerator is wired directly.
+        {
+            let keys = gtk::EventControllerKey::new();
+            let s = sender.clone();
+            keys.connect_key_pressed(move |_, keyval, _, state| {
+                if state.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+                    && keyval == gtk::gdk::Key::p
+                {
+                    s.input(MessageWindowInput::Print);
+                    return gtk::glib::Propagation::Stop;
+                }
+                gtk::glib::Propagation::Proceed
+            });
+            root.add_controller(keys);
+        }
+
         model.render_body();
         model.rebuild_attach_popover(&sender);
 
@@ -300,6 +319,8 @@ impl Component for MessageWindow {
             MessageWindowInput::ToggleStar => self.emit_action(RowAction::ToggleStar, &sender),
             MessageWindowInput::ViewSource => self.emit_action(RowAction::ViewSource, &sender),
             // Moving the message away — let the app handle it, then close.
+            MessageWindowInput::Print => self.view.emit(MessageViewInput::Print),
+
             MessageWindowInput::Delete => {
                 self.emit_action(RowAction::Delete, &sender);
                 root.close();

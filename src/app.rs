@@ -35,6 +35,7 @@ relm4::new_stateless_action!(AccountsAction, WindowActionGroup, "accounts");
 relm4::new_stateless_action!(PreferencesAction, WindowActionGroup, "preferences");
 relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
 relm4::new_stateless_action!(ShortcutsAction, WindowActionGroup, "shortcuts");
+relm4::new_stateless_action!(PrintAction, WindowActionGroup, "print");
 
 use crate::config::{self, AccountConfig};
 use crate::models::{Account, Attachment, Folder, FolderKind, Message};
@@ -340,6 +341,8 @@ pub enum AppMsg {
     Shortcut(Shortcut),
     /// Show the keyboard-shortcut reference.
     ShowShortcuts,
+    /// Print the message in the reader (issue #16).
+    PrintMessage,
     SetPaletteCollapse(u64),
     SetMessageTheme(config::MessageTheme),
     ComposeTo(String),
@@ -958,6 +961,7 @@ impl SimpleComponent for AppModel {
         let menu = gtk::gio::Menu::new();
         menu.append(Some("Accounts"), Some("win.accounts"));
         menu.append(Some("Preferences"), Some("win.preferences"));
+        menu.append(Some("Print Message…"), Some("win.print"));
         menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
         menu.append(Some("Quit"), Some("app.quit"));
         menu.append(Some("About Vireo"), Some("win.about"));
@@ -1224,6 +1228,10 @@ impl SimpleComponent for AppModel {
         group.add_action(RelmAction::<ShortcutsAction>::new_stateless(move |_| {
             shortcuts_sender.input(AppMsg::ShowShortcuts);
         }));
+        let print_sender = sender.clone();
+        group.add_action(RelmAction::<PrintAction>::new_stateless(move |_| {
+            print_sender.input(AppMsg::PrintMessage);
+        }));
         group.register_for_widget(&root);
 
         // A real accelerator rather than a key handler: GTK matches these before
@@ -1231,6 +1239,7 @@ impl SimpleComponent for AppModel {
         // a message (the web view would otherwise swallow it). Both spellings are
         // bound because layouts disagree about whether Ctrl+Shift+/ arrives as
         // `question` or as `slash`, and F1 is the GNOME convention.
+        relm4::main_application().set_accelerators_for_action::<PrintAction>(&["<Ctrl>p"]);
         relm4::main_application().set_accelerators_for_action::<ShortcutsAction>(&[
             "<Ctrl>question",
             "<Ctrl><Shift>question",
@@ -2100,6 +2109,14 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ShowShortcuts => self.show_shortcuts(),
+
+            AppMsg::PrintMessage => {
+                // Only the reader can print: it holds the rendered message, and
+                // printing from an empty reader would offer a blank page.
+                if self.current.is_some() {
+                    self.message_view.emit(MessageViewInput::Print);
+                }
+            }
 
             AppMsg::Shortcut(action) => self.run_shortcut(action, &sender),
 
@@ -5223,6 +5240,7 @@ const SHORTCUT_HELP: &[(&str, &[(&str, &str)])] = &[
         &[
             ("c", "Compose"),
             ("Esc", "Back out of a reply and return to the list"),
+            ("Ctrl+P", "Print the message you are reading"),
             ("?", "This list"),
         ],
     ),

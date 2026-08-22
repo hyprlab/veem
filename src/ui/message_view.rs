@@ -81,6 +81,8 @@ pub enum MessageViewInput {
     ComposeSender,
     /// The system/app light-dark preference changed; re-render to match.
     ThemeChanged,
+    /// Print the message on screen (issue #16).
+    Print,
     /// Set the message-content theme: `None` follows the system, `Some(dark)`
     /// forces light/dark for email content only (not the app UI).
     SetContentTheme(Option<bool>),
@@ -478,6 +480,39 @@ impl Component for MessageView {
                     }
                 }
             }
+            MessageViewInput::Print => {
+                // WebKit prints the document it is showing — the message as it is
+                // rendered here, quoting, images and all — through the system
+                // print dialog, which under Flatpak is the portal's.
+                let print = webkit6::PrintOperation::new(&self.webview);
+                let job = self
+                    .current
+                    .as_ref()
+                    .map(|m| m.subject.clone())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| "Message".to_string());
+                let settings = gtk::PrintSettings::new();
+                // Names the job in the print queue and seeds the filename when
+                // printing to a file, which is otherwise "unknown".
+                settings.set(gtk::PRINT_SETTINGS_OUTPUT_BASENAME, Some(&sanitize_filename(&job)));
+                print.set_print_settings(&settings);
+                print.connect_failed(|_, error| {
+                    tracing::warn!("printing failed: {error}");
+                });
+                let parent = self
+                    .webview
+                    .root()
+                    .and_downcast::<gtk::Window>();
+                print.run_dialog(parent.as_ref());
+                // The operation must outlive this scope or the dialog vanishes
+                // with it; the signal handler below drops the reference once the
+                // job is done.
+                let keep = std::cell::RefCell::new(Some(print.clone()));
+                print.connect_finished(move |_| {
+                    keep.borrow_mut().take();
+                });
+            }
+
             MessageViewInput::ThemeChanged => {
                 let dark = self.effective_dark();
                 self.apply_webview_bg(dark);
@@ -1037,9 +1072,45 @@ fn body_html(body: &str) -> String {
     }
 }
 
+/// A message subject reduced to something usable as a filename: no separators,
+/// no leading dots, and short enough for any filesystem.
+fn sanitize_filename(subject: &str) -> String {
+    let cleaned: String = subject
+        .chars()
+        .map(|c| if c.is_control() || "/\\:*?\"<>|".contains(c) { '-' } else { c })
+        .collect();
+    // Leading dots would make a hidden file; leading dashes are what a stripped
+    // path separator leaves behind, and look like a command-line flag.
+    let cleaned = cleaned.trim().trim_start_matches(['.', '-']).trim();
+    if cleaned.is_empty() {
+        return "Message".to_string();
+    }
+    cleaned.chars().take(120).collect::<String>().trim_end().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn print_filenames_survive_real_subjects() {
+        // The subject names the print job and seeds the filename when printing to
+        // a file, so it must not carry path separators or other characters a
+        // filesystem would refuse.
+        assert_eq!(sanitize_filename("Quarterly numbers"), "Quarterly numbers");
+        assert_eq!(sanitize_filename("Invoice 3/4 <urgent>"), "Invoice 3-4 -urgent-");
+        assert_eq!(sanitize_filename("../../etc/passwd"), "etc-passwd");
+        // Nothing usable left, or nothing to begin with.
+        assert_eq!(sanitize_filename("   "), "Message");
+        assert_eq!(sanitize_filename(""), "Message");
+        assert_eq!(sanitize_filename("..."), "Message");
+    }
+
+    #[test]
+    fn print_filenames_are_bounded() {
+        let long = "word ".repeat(100);
+        assert!(sanitize_filename(&long).chars().count() <= 120);
+    }
 
     #[test]
     fn decodes_a_base64_data_uri() {
