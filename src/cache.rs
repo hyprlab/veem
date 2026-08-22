@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS messages (
     has_attachment INTEGER NOT NULL,
     message_id     TEXT    NOT NULL DEFAULT '',
     references_    TEXT    NOT NULL DEFAULT '',
+    preview        TEXT    NOT NULL DEFAULT '',
     PRIMARY KEY (account_id, folder_path, uid)
 );
 CREATE TABLE IF NOT EXISTS bodies (
@@ -71,6 +72,20 @@ CREATE TABLE IF NOT EXISTS addresses (
     name  TEXT NOT NULL DEFAULT '',
     count INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS outbox (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id  INTEGER NOT NULL,
+    from_addr   TEXT    NOT NULL,
+    rcpts       TEXT    NOT NULL,
+    recipients  TEXT    NOT NULL,
+    subject     TEXT    NOT NULL,
+    preview     TEXT    NOT NULL DEFAULT '',
+    raw         BLOB    NOT NULL,
+    sent_path   TEXT,
+    queued_at   INTEGER NOT NULL,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT    NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS attachments_checked (
     account_id  INTEGER NOT NULL,
     folder_path TEXT NOT NULL,
@@ -91,6 +106,11 @@ CREATE TABLE IF NOT EXISTS attachments_checked (
 /// and every cached message gains a verdict.
 const SCHEMA_VERSION: i64 = 11;
 
+/// (Adding a *new* table needs no bump: `SCHEMA` runs `CREATE TABLE IF NOT
+/// EXISTS` on every open, so an existing cache gains it in place. A bump is for
+/// changing or invalidating what is already stored — it costs users a re-render
+/// or a re-sync.)
+///
 /// The first version whose table *layout* matches the current `SCHEMA`. At or
 /// above this, an upgrade only needs to drop the derived caches, not the
 /// expensive message index (which would force a whole-mailbox re-sync).
@@ -133,6 +153,11 @@ impl Cache {
                 .execute_batch("DROP TABLE IF EXISTS bodies; DROP TABLE IF EXISTS sender_checks;");
         }
         conn.execute_batch(SCHEMA)?;
+        // `messages` predates the preview column, and `CREATE TABLE IF NOT
+        // EXISTS` leaves an existing table alone. Add it in place rather than
+        // dropping the index, which would cost every user a full re-sync; the
+        // error when it is already there is the expected outcome, not a problem.
+        let _ = conn.execute("ALTER TABLE messages ADD COLUMN preview TEXT NOT NULL DEFAULT ''", []);
         if upgrading_index {
             Self::redecode_encoded_subjects(&conn);
         }
@@ -231,7 +256,7 @@ impl Cache {
     pub fn load_messages(&self, account_id: u32, folder_path: &str, folder_id: u32) -> Vec<Message> {
         let run = || -> rusqlite::Result<Vec<Message>> {
             let mut stmt = self.conn.prepare(
-                "SELECT uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_
+                "SELECT uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, preview
                  FROM messages WHERE account_id = ?1 AND folder_path = ?2 ORDER BY uid DESC",
             )?;
             let rows = stmt.query_map(params![account_id, folder_path], |row| {
@@ -246,7 +271,7 @@ impl Cache {
                     to: row.get(9)?,
                     cc: row.get(10)?,
                     subject: row.get(3)?,
-                    preview: String::new(),
+                    preview: row.get(13)?,
                     body: String::new(),
                     date: row.get(4)?,
                     timestamp: row.get(5)?,
@@ -338,12 +363,12 @@ impl Cache {
             for m in messages {
                 tx.execute(
                     "INSERT OR REPLACE INTO messages
-                     (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                     (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, preview)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                     params![
                         account_id, folder_path, m.uid, m.from_name, m.from_addr, m.subject,
                         m.date, m.timestamp, m.unread, m.starred, m.has_attachment, m.to, m.cc,
-                        m.message_id, m.references
+                        m.message_id, m.references, m.preview
                     ],
                 )?;
             }
@@ -582,6 +607,99 @@ impl Cache {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Outbox: messages that could not be sent yet
+    // -----------------------------------------------------------------------
+
+    /// Queue a message that failed to send. Returns its Outbox id.
+    #[allow(clippy::too_many_arguments)]
+    pub fn queue_outbox(
+        &self,
+        account_id: u32,
+        from_addr: &str,
+        rcpts: &[String],
+        recipients: &str,
+        subject: &str,
+        preview: &str,
+        raw: &[u8],
+        sent_path: Option<&str>,
+        error: &str,
+    ) -> Option<u32> {
+        let queued_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        self.conn
+            .execute(
+                "INSERT INTO outbox(account_id, from_addr, rcpts, recipients, subject,                  preview, raw, sent_path, queued_at, attempts, last_error)                  VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10)",
+                params![
+                    account_id,
+                    from_addr,
+                    rcpts.join("\n"),
+                    recipients,
+                    subject,
+                    preview,
+                    raw,
+                    sent_path,
+                    queued_at,
+                    error,
+                ],
+            )
+            .map_err(|e| tracing::warn!("could not queue the message: {e}"))
+            .ok()?;
+        Some(self.conn.last_insert_rowid() as u32)
+    }
+
+    /// Everything waiting for this account, oldest first (the order it is sent in).
+    pub fn outbox_items(&self, account_id: u32) -> Vec<crate::models::OutboxItem> {
+        let mut stmt = match self.conn.prepare(
+            "SELECT id, account_id, from_addr, rcpts, recipients, subject, preview, raw,              sent_path, queued_at, attempts, last_error FROM outbox              WHERE account_id = ?1 ORDER BY queued_at, id",
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("could not read the outbox: {e}");
+                return Vec::new();
+            }
+        };
+        let rows = stmt.query_map(params![account_id], |r| {
+            let rcpts: String = r.get(3)?;
+            Ok(crate::models::OutboxItem {
+                id: r.get::<_, i64>(0)? as u32,
+                account_id: r.get::<_, i64>(1)? as u32,
+                from_addr: r.get(2)?,
+                rcpts: rcpts.lines().map(str::to_string).collect(),
+                recipients: r.get(4)?,
+                subject: r.get(5)?,
+                preview: r.get(6)?,
+                raw: r.get(7)?,
+                sent_path: r.get(8)?,
+                queued_at: r.get(9)?,
+                attempts: r.get::<_, i64>(10)? as u32,
+                last_error: r.get(11)?,
+            })
+        });
+        match rows {
+            Ok(rows) => rows.filter_map(Result::ok).collect(),
+            Err(e) => {
+                tracing::warn!("could not read the outbox: {e}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Drop a queued message — it went out, or the user discarded it.
+    pub fn delete_outbox(&self, id: u32) {
+        let _ = self.conn.execute("DELETE FROM outbox WHERE id = ?1", params![id]);
+    }
+
+    /// Record another failed attempt, so the list can say what went wrong.
+    pub fn record_outbox_failure(&self, id: u32, error: &str) {
+        let _ = self.conn.execute(
+            "UPDATE outbox SET attempts = attempts + 1, last_error = ?2 WHERE id = ?1",
+            params![id, error],
+        );
+    }
+
     /// Aggregate every address seen in stored mail (senders received +
     /// recipients sent/recorded), as (name, email, frequency), most-frequent first.
     pub fn address_history(&self) -> Vec<(String, String, u32)> {
@@ -729,6 +847,69 @@ mod tests {
             conn.execute_batch(SCHEMA).unwrap();
             Cache { conn }
         }
+    }
+
+    #[test]
+    fn outbox_round_trips_a_queued_message() {
+        let c = Cache::in_memory();
+        let rcpts = vec!["ada@example.com".to_string(), "bcc@example.com".to_string()];
+        let id = c
+            .queue_outbox(
+                1,
+                "me@example.com",
+                &rcpts,
+                "Ada Lovelace <ada@example.com>",
+                "Notes",
+                "the body preview",
+                b"From: me\r\n\r\nbody",
+                Some("Sent"),
+                "connection refused",
+            )
+            .expect("queued");
+
+        let items = c.outbox_items(1);
+        assert_eq!(items.len(), 1);
+        let item = &items[0];
+        assert_eq!(item.id, id);
+        // The envelope has to survive verbatim — Bcc exists only here, so losing a
+        // recipient silently drops someone from the message.
+        assert_eq!(item.rcpts, rcpts);
+        assert_eq!(item.from_addr, "me@example.com");
+        assert_eq!(item.subject, "Notes");
+        assert_eq!(item.preview, "the body preview");
+        assert_eq!(item.raw, b"From: me\r\n\r\nbody");
+        assert_eq!(item.sent_path.as_deref(), Some("Sent"));
+        assert_eq!(item.attempts, 1);
+        assert_eq!(item.last_error, "connection refused");
+        assert!(item.queued_at > 0);
+
+        // Another account's queue is its own.
+        assert!(c.outbox_items(2).is_empty());
+
+        c.record_outbox_failure(id, "no route to host");
+        let item = c.outbox_items(1).remove(0);
+        assert_eq!(item.attempts, 2);
+        assert_eq!(item.last_error, "no route to host");
+
+        c.delete_outbox(id);
+        assert!(c.outbox_items(1).is_empty());
+    }
+
+    #[test]
+    fn outbox_keeps_the_order_messages_were_queued_in() {
+        let c = Cache::in_memory();
+        for (subject, at) in [("second", 200), ("first", 100), ("third", 300)] {
+            c.conn
+                .execute(
+                    "INSERT INTO outbox(account_id, from_addr, rcpts, recipients, subject, \
+                     preview, raw, sent_path, queued_at, attempts, last_error) \
+                     VALUES(1, 'me@example.com', 'a@b.com', '', ?1, '', x'00', NULL, ?2, 1, '')",
+                    params![subject, at],
+                )
+                .unwrap();
+        }
+        let subjects: Vec<String> = c.outbox_items(1).into_iter().map(|i| i.subject).collect();
+        assert_eq!(subjects, ["first", "second", "third"]);
     }
 
     fn add_msg(c: &Cache, folder: &str, uid: u32, from: &str, subject: &str, ts: i64) {

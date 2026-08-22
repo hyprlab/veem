@@ -30,6 +30,8 @@ pub enum RowAction {
 pub struct RowInit {
     pub msg: Message,
     pub gravatar: bool,
+    /// How many lines of the message's text the row shows (1–3).
+    pub preview_lines: u32,
     pub ring_class: Option<String>,
     /// Shared Actions Palette collapse delay in seconds — how long it stays open
     /// after the cursor leaves it (read live when scheduling).
@@ -52,6 +54,7 @@ pub struct RowInit {
 pub struct MessageRow {
     msg: Message,
     gravatar: bool,
+    preview_lines: u32,
     avatar_texture: Option<gtk::gdk::Texture>,
     ring_class: Option<String>,
     /// Whether the pointer is over this row (drives the chevron fade).
@@ -224,11 +227,37 @@ impl FactoryComponent for MessageRow {
                     set_css_classes: &self.subject_classes(),
                 },
 
-                // Bottom line: a ⋯ button that slides the Actions Palette in from the
-                // left, over the preview text (so the row height doesn't change).
+                // The message's own text, at full width: nothing shares this line,
+                // so it never reflows or gets covered.
+                gtk::Label {
+                    // 0 lines: previews are off, so the row gives them no space.
+                    set_visible: self.preview_lines > 0,
+                    set_label: &self.msg.preview,
+                    set_halign: gtk::Align::Start,
+                    set_hexpand: true,
+                    set_xalign: 0.0,
+                    // `lines` only means anything once wrapping is on; at one line
+                    // it changes nothing, since the text is ellipsized before it
+                    // can reach a second.
+                    set_wrap: true,
+                    set_wrap_mode: gtk::pango::WrapMode::WordChar,
+                    set_ellipsize: gtk::pango::EllipsizeMode::End,
+                    // A ceiling, not a reservation: a short message keeps a short
+                    // row, so the list stays scannable and only long messages use
+                    // the extra lines.
+                    set_lines: self.preview_lines.max(1) as i32,
+                    add_css_class: "message-preview",
+                },
+
+                // Below it, the Actions Palette on a line of its own, opening
+                // rightward from the ⋯ button. The line reserves the palette's
+                // width even while collapsed (see `.actions-line`), so the first
+                // click doesn't shove the whole pane wider under the pointer.
                 gtk::Box {
                     set_spacing: 2,
+                    set_halign: gtk::Align::Start,
                     set_valign: gtk::Align::Center,
+                    add_css_class: "actions-line",
 
                     // Actions toggle (⋯). Clicking it opens/closes the palette but
                     // does NOT select or open the message (it's a button, so the
@@ -323,19 +352,6 @@ impl FactoryComponent for MessageRow {
                         },
                     },
 
-                    // After the palette so its collapse (slide back left) isn't
-                    // shoved rightward by the preview reappearing. Hidden while open.
-                    gtk::Label {
-                        #[watch]
-                        set_visible: !self.palette_open,
-                        set_label: &self.msg.preview,
-                        set_halign: gtk::Align::Start,
-                        set_hexpand: true,
-                        set_valign: gtk::Align::Center,
-                        set_ellipsize: gtk::pango::EllipsizeMode::End,
-                        set_lines: 1,
-                        add_css_class: "message-preview",
-                    },
                 },
             },
         }
@@ -346,6 +362,7 @@ impl FactoryComponent for MessageRow {
         let RowInit {
             msg,
             gravatar,
+            preview_lines,
             ring_class,
             palette_collapse_secs,
             thread_count,
@@ -357,6 +374,7 @@ impl FactoryComponent for MessageRow {
         let mut model = Self {
             msg,
             gravatar,
+            preview_lines,
             avatar_texture: None,
             ring_class,
             row_hovered: false,
@@ -659,6 +677,8 @@ pub struct MessageList {
     query: String,
     title: String,
     gravatar: bool,
+    /// Lines of preview text per row (1–3), from Preferences.
+    preview_lines: u32,
     /// Tint each row by its account (used in the unified inbox view).
     colorize: bool,
     /// account_id → avatar colour, for tinting rows.
@@ -773,6 +793,8 @@ pub enum MessageListInput {
     /// Whether conversations start expanded (true) or collapsed (false).
     SetThreadsExpanded(bool),
     SetGravatar(bool),
+    /// How many lines of preview text each row shows (1–3).
+    SetPreviewLines(u32),
     SetColorize(bool),
     /// The local day rolled over — re-render rows so "Today" stays accurate.
     DayChanged,
@@ -791,6 +813,14 @@ pub enum MessageListInput {
     Bulk(BulkAction),
     /// Deselect everything.
     ClearSelection,
+    /// Move the selection by `delta` rows (single-key j/k and the arrow keys).
+    MoveSelection(i32),
+    /// Add or remove the focused row from the selection, without opening it.
+    ToggleSelection,
+    /// Put keyboard focus on the list (so the arrow keys work again).
+    FocusList,
+    /// Put the cursor in the search field.
+    FocusSearch,
     /// Expand/collapse a conversation thread.
     ToggleThread((u32, String)),
     /// Change the list sort order.
@@ -1105,6 +1135,7 @@ impl SimpleComponent for MessageList {
             query: String::new(),
             title: String::new(),
             gravatar: false,
+            preview_lines: 1,
             colorize: false,
             account_colors: std::collections::HashMap::new(),
             color_provider,
@@ -1271,6 +1302,15 @@ impl SimpleComponent for MessageList {
                     self.rebuild();
                 }
             }
+            MessageListInput::SetPreviewLines(lines) => {
+                let lines = lines.min(3);
+                if self.preview_lines != lines {
+                    self.preview_lines = lines;
+                    // Row height is set when the row is built, so the list has to
+                    // be rebuilt rather than nudged.
+                    self.rebuild();
+                }
+            }
             MessageListInput::SetColorize(on) => {
                 if self.colorize != on {
                     self.colorize = on;
@@ -1368,6 +1408,58 @@ impl SimpleComponent for MessageList {
                 self.selected_ids.clear();
                 self.selection_count = 0;
             }
+            MessageListInput::MoveSelection(delta) => {
+                let list = self.rows.widget();
+                if self.shown.is_empty() {
+                    return;
+                }
+                // From the current row, or from the top/bottom when nothing is
+                // selected yet, so the first keypress always lands somewhere.
+                let current = list
+                    .selected_rows()
+                    .first()
+                    .map(|r| r.index())
+                    .unwrap_or(if delta > 0 { -1 } else { self.shown.len() as i32 });
+                let next = (current + delta).clamp(0, self.shown.len() as i32 - 1);
+                if let Some(row) = list.row_at_index(next) {
+                    list.unselect_all();
+                    list.select_row(Some(&row));
+                    row.grab_focus();
+                }
+            }
+
+            MessageListInput::ToggleSelection => {
+                let list = self.rows.widget();
+                let Some(row) = list.focus_child().and_downcast::<gtk::ListBoxRow>().or_else(|| {
+                    list.selected_rows().first().cloned()
+                }) else {
+                    return;
+                };
+                if row.is_selected() {
+                    list.unselect_row(&row);
+                } else {
+                    list.select_row(Some(&row));
+                }
+            }
+
+            MessageListInput::FocusList => {
+                let list = self.rows.widget();
+                let row = list
+                    .selected_rows()
+                    .first()
+                    .cloned()
+                    .or_else(|| list.row_at_index(0));
+                if let Some(row) = row {
+                    row.grab_focus();
+                }
+            }
+
+            MessageListInput::FocusSearch => {
+                if let Some(entry) = &self.search_entry {
+                    entry.grab_focus();
+                }
+            }
+
             MessageListInput::ClearSelection => {
                 self.rows.widget().unselect_all();
                 self.selected_id = None;
@@ -1879,6 +1971,7 @@ impl MessageList {
                 guard.push_back(RowInit {
                     msg: m.clone(),
                     gravatar: self.gravatar,
+                    preview_lines: self.preview_lines,
                     ring_class,
                     palette_collapse_secs: self.palette_collapse_secs.clone(),
                     thread_count: meta.count,
@@ -1957,5 +2050,16 @@ impl MessageList {
             ));
         }
         self.color_provider.load_from_data(&css);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn preview_lines_clamp_but_keep_zero() {
+        // 0 is "off"; anything above 3 is a hand-edited file, not a setting.
+        for (asked, expected) in [(0u32, 0u32), (1, 1), (3, 3), (9, 3)] {
+            assert_eq!(asked.min(3), expected, "for {asked}");
+        }
     }
 }

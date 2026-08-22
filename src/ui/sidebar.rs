@@ -53,6 +53,7 @@ enum Sel {
     Unified,
     /// The attachments gallery (all inboxes).
     Attachments,
+    Outbox,
     Folder(u32, String),
     /// An account's inbox selected via the "All Inboxes" sub-list.
     UnifiedInbox(u32),
@@ -78,6 +79,8 @@ pub struct Sidebar {
     unified_list: Option<gtk::ListBox>,
     /// The "Attachments" row list box (one row), when shown.
     attachments_list: Option<gtk::ListBox>,
+    /// The "Outbox" row list box (one row), while anything is queued.
+    outbox_list: Option<gtk::ListBox>,
     /// Display-wide provider holding each account's avatar colour rules.
     color_provider: gtk::CssProvider,
     selected: Sel,
@@ -85,6 +88,10 @@ pub struct Sidebar {
     collapsed: bool,
     /// Whether the "Attachments" row is shown.
     show_attachments: bool,
+    /// How many messages are waiting in the Outbox across all accounts. The row
+    /// only exists while this is non-zero — an empty Outbox is the normal state
+    /// and does not deserve permanent furniture.
+    outbox_count: u32,
     /// Total unread across all inboxes, for the "All Inboxes" badge.
     unified_unread: u32,
     /// Unread badge labels by (account_id, folder_id), updated in place.
@@ -127,6 +134,10 @@ pub enum SidebarInput {
     ToggleCollapsed,
     /// Show or hide the "Attachments" row.
     SetShowAttachments(bool),
+    /// How many messages are waiting to be sent; 0 hides the Outbox row.
+    SetOutboxCount(u32),
+    /// The "Outbox" row was chosen.
+    OutboxRowSelected,
     /// Update unread badges in place without rebuilding the sidebar.
     SetUnread {
         folders: HashMap<(u32, u32), u32>,
@@ -143,6 +154,7 @@ pub enum SidebarOutput {
     UnifiedSelected,
     /// The attachments gallery was selected.
     AttachmentsSelected,
+    OutboxSelected,
     FolderSelected {
         account_id: u32,
         folder_id: u32,
@@ -245,10 +257,12 @@ impl Component for Sidebar {
             custom_chevrons: HashMap::new(),
             unified_list: None,
             attachments_list: None,
+            outbox_list: None,
             color_provider,
             selected: Sel::None,
             collapsed: init.collapsed,
             show_attachments: init.show_attachments,
+            outbox_count: 0,
             unified_unread: 0,
             folder_badges: HashMap::new(),
             unified_badge: None,
@@ -308,6 +322,45 @@ impl Component for Sidebar {
                 self.selected = Sel::Attachments;
                 self.clear_other_selections(Sel::Attachments);
                 let _ = sender.output(SidebarOutput::AttachmentsSelected);
+            }
+
+            SidebarInput::OutboxRowSelected => {
+                if self.selected == Sel::Outbox {
+                    return;
+                }
+                self.selected = Sel::Outbox;
+                self.clear_other_selections(Sel::Outbox);
+                let _ = sender.output(SidebarOutput::OutboxSelected);
+            }
+
+            SidebarInput::SetOutboxCount(count) => {
+                if self.outbox_count == count {
+                    return;
+                }
+                let appearing = (self.outbox_count == 0) != (count == 0);
+                self.outbox_count = count;
+                // The row itself comes and goes with the count, so the sidebar
+                // only needs rebuilding when it crosses zero; otherwise just
+                // refresh the badge in place.
+                if appearing {
+                    // Leaving the Outbox selected when its row disappears would
+                    // strand the view on an empty list.
+                    if count == 0 && self.selected == Sel::Outbox {
+                        self.selected = Sel::None;
+                    }
+                    self.rebuild_normal(&widgets.normal_box, &sender);
+                    self.restore_selection();
+                } else if let Some(list) = &self.outbox_list {
+                    if let Some(row) = list.row_at_index(0) {
+                        if let Some(badge) = row.child().and_downcast::<gtk::Box>() {
+                            if let Some(label) =
+                                badge.last_child().and_downcast::<gtk::Label>()
+                            {
+                                label.set_label(&count.to_string());
+                            }
+                        }
+                    }
+                }
             }
 
             SidebarInput::UnifiedInboxRowSelected(index) => {
@@ -546,6 +599,7 @@ impl Sidebar {
         self.custom_chevrons.clear();
         self.unified_list = None;
         self.attachments_list = None;
+        self.outbox_list = None;
         self.folder_badges.clear();
         self.unified_badge = None;
         self.unified_revealer = None;
@@ -807,6 +861,50 @@ impl Sidebar {
             });
             container.append(&list);
             self.attachments_list = Some(list);
+        }
+
+        // "Outbox" row — only while something is waiting to be sent. It sits
+        // directly above the accounts so a stuck message is impossible to miss.
+        if self.outbox_count > 0 {
+            let list = gtk::ListBox::new();
+            list.set_selection_mode(gtk::SelectionMode::Single);
+            list.add_css_class("navigation-sidebar");
+
+            let row = gtk::ListBoxRow::new();
+            let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            hbox.add_css_class("folder-row");
+            let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-send-symbolic");
+            img.add_css_class("folder-icon");
+            let badge = gtk::Label::new(Some(&self.outbox_count.to_string()));
+            badge.add_css_class("unread-badge");
+            badge.set_valign(gtk::Align::Center);
+            if self.collapsed {
+                hbox.set_halign(gtk::Align::Center);
+                row.set_tooltip_text(Some(&format!(
+                    "Outbox — {} waiting to be sent",
+                    self.outbox_count
+                )));
+                hbox.append(&img);
+            } else {
+                hbox.append(&img);
+                let label = gtk::Label::new(Some("Outbox"));
+                label.set_hexpand(true);
+                label.set_halign(gtk::Align::Start);
+                label.add_css_class("account-name");
+                hbox.append(&label);
+                hbox.append(&badge);
+            }
+            row.set_child(Some(&hbox));
+            list.append(&row);
+
+            let s = sender.clone();
+            list.connect_row_selected(move |_, row| {
+                if row.is_some() {
+                    s.input(SidebarInput::OutboxRowSelected);
+                }
+            });
+            container.append(&list);
+            self.outbox_list = Some(list);
         }
 
         for section in &sections {
@@ -1135,6 +1233,11 @@ impl Sidebar {
                 l.unselect_all();
             }
         }
+        if keep != Sel::Outbox {
+            if let Some(l) = &self.outbox_list {
+                l.unselect_all();
+            }
+        }
         if !matches!(keep, Sel::UnifiedInbox(_)) {
             if let Some(l) = &self.unified_inbox_list {
                 l.unselect_all();
@@ -1170,10 +1273,19 @@ impl Sidebar {
         }
     }
 
+    fn select_outbox(&self) {
+        if let Some(list) = &self.outbox_list {
+            if let Some(row) = list.row_at_index(0) {
+                list.select_row(Some(&row));
+            }
+        }
+    }
+
     fn restore_selection(&mut self) {
         match self.selected.clone() {
             Sel::Unified => self.select_unified(),
             Sel::Attachments => self.select_attachments(),
+            Sel::Outbox => self.select_outbox(),
             Sel::Folder(acc, path) => self.select_folder(acc, &path),
             Sel::UnifiedInbox(acc) => self.select_unified_inbox(acc),
             Sel::None => {

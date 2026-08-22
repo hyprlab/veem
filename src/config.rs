@@ -371,6 +371,14 @@ struct PrivacyFile {
     /// account's attachments).
     #[serde(default = "default_show_attachments")]
     show_attachments: bool,
+    /// Lines of message text shown under the subject in the list: 0 turns the
+    /// preview off entirely, and stops it being fetched.
+    #[serde(default = "default_preview_lines")]
+    preview_lines: u32,
+    /// Single-key shortcuts (j/k, r, a, d…) without a modifier. Off by default:
+    /// a stray keystroke shouldn't archive mail for someone who never asked.
+    #[serde(default)]
+    single_key_shortcuts: bool,
 }
 
 fn default_fetch_interval() -> u64 {
@@ -397,6 +405,10 @@ fn default_show_attachments() -> bool {
     true
 }
 
+fn default_preview_lines() -> u32 {
+    1
+}
+
 impl Default for PrivacyFile {
     fn default() -> Self {
         Self {
@@ -411,6 +423,8 @@ impl Default for PrivacyFile {
             message_theme: MessageTheme::default(),
             notifications: default_notifications(),
             show_attachments: default_show_attachments(),
+            preview_lines: default_preview_lines(),
+            single_key_shortcuts: false,
         }
     }
 }
@@ -484,6 +498,17 @@ pub fn load_show_attachments() -> bool {
     load_privacy().show_attachments
 }
 
+/// Lines of message text shown under the subject in the list; 0 means previews
+/// are off. Clamped in case the file was edited by hand.
+pub fn load_preview_lines() -> u32 {
+    load_privacy().preview_lines.min(3)
+}
+
+/// Whether single-key (modifier-free) shortcuts are enabled.
+pub fn load_single_key_shortcuts() -> bool {
+    load_privacy().single_key_shortcuts
+}
+
 /// Persist all app settings together (so no field is clobbered).
 #[allow(clippy::too_many_arguments)]
 pub fn save_privacy(
@@ -498,6 +523,8 @@ pub fn save_privacy(
     message_theme: MessageTheme,
     notifications: bool,
     show_attachments: bool,
+    preview_lines: u32,
+    single_key_shortcuts: bool,
 ) {
     let Some(path) = privacy_path() else {
         return;
@@ -517,6 +544,8 @@ pub fn save_privacy(
         message_theme,
         notifications,
         show_attachments,
+        preview_lines,
+        single_key_shortcuts,
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {
@@ -738,6 +767,21 @@ pub fn save_drawer_collapsed(collapsed: bool) {
 #[cfg(test)]
 mod tests {
     use super::PrivacyFile;
+
+    #[test]
+    fn preview_lines_default_to_one_and_stay_in_range() {
+        // An older privacy.toml has no key at all.
+        let p: PrivacyFile = toml::from_str("").unwrap();
+        assert_eq!(p.preview_lines, 1);
+        // Hand-edited nonsense must not make the list build rows of 40 lines, or
+        // of none: the setting offers 1–3 and that is what it is worth honouring.
+        // 0 is a real setting — previews off — but nothing above 3 is.
+        for (written, expected) in [(0, 0), (1, 1), (3, 3), (99, 3)] {
+            let p: PrivacyFile =
+                toml::from_str(&format!("preview_lines = {written}")).unwrap();
+            assert_eq!(p.preview_lines.min(3), expected, "for {written}");
+        }
+    }
 
     #[test]
     fn notifications_default_on_when_absent() {

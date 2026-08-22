@@ -389,6 +389,15 @@ headerbar.rail-header {
 
 /* The Actions Palette: quick-action buttons that slide in from the chevron,
    over the preview slot (so the row height doesn't change). */
+/* The row's actions line holds the ⋯ toggle and, once opened, the palette. Its
+   width is reserved up front so revealing the palette never widens the message
+   list: the pane's minimum comes from its widest row, and a pane that grows the
+   moment you click is disconcerting. The figure is the palette's own metrics —
+   nine buttons at 22px + 4px padding, plus the 20px toggle and 2px spacing. */
+.actions-line {
+  min-width: 260px;
+}
+
 .actions-palette button {
   min-width: 22px;
   min-height: 0;
@@ -446,6 +455,15 @@ headerbar.rail-header {
 .message-subject.unread {
   font-weight: 700;
   opacity: 1;
+}
+
+/* Key names in the shortcuts window, drawn like keycaps. */
+.shortcut-key {
+  font-family: monospace;
+  font-size: 0.9em;
+  background: alpha(currentColor, 0.08);
+  border-radius: 6px;
+  padding: 2px 8px;
 }
 
 .message-preview {

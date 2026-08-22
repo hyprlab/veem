@@ -118,6 +118,12 @@ pub enum MailRequest {
         message: Box<OutgoingMessage>,
         sent_path: Option<String>,
     },
+    /// Try the Outbox again now (a queued message, or every one of them).
+    FlushOutbox { id: Option<u32> },
+    /// Load the Outbox for display.
+    LoadOutbox,
+    /// Discard a queued message without sending it.
+    DeleteOutbox { id: u32 },
     /// Save a message to the Drafts folder (`folder_id`/`path`) without sending.
     SaveDraft {
         message: Box<OutgoingMessage>,
@@ -148,6 +154,10 @@ pub struct OutgoingMessage {
     /// When editing an existing draft, the draft being replaced (removed from the
     /// Drafts folder after this message is saved or sent).
     pub draft_origin: Option<crate::models::DraftOrigin>,
+    /// When this came out of the Outbox for editing, the queued row it replaces.
+    /// Dropped once this version is sent or re-queued, so the queue never holds
+    /// the message twice.
+    pub outbox_origin: Option<u32>,
 }
 
 /// An event pushed from the worker back to the UI.
@@ -181,6 +191,12 @@ pub enum WorkerEvent {
     /// inline `cid:` images). The UI should drop its paperclip.
     NoAttachments { message_id: u32 },
     Sent,
+    /// Something worth telling the user that isn't a failure — a queued message
+    /// going out on its own, say.
+    Notice(String),
+    /// The account's Outbox, whenever it changes (queued, retried, sent or
+    /// discarded). Empty means nothing is waiting.
+    Outbox { items: Vec<crate::models::OutboxItem> },
     /// A draft was saved to the Drafts folder.
     DraftSaved,
     /// A bulk MoveMessages request finished (success or failure) — drives the
@@ -334,6 +350,10 @@ async fn run_imap(
     // session (falling back to raw-header parsing) if the server sends responses
     // our IMAP parser can't handle (e.g. iCloud).
     let mut use_envelope = true;
+    // Whether the Outbox has been retried since this connection came up. A queued
+    // message is almost always waiting on the network, so having a session again
+    // is the moment worth retrying — not a timer.
+    let mut outbox_flushed = false;
 
     // Queue every known folder for background indexing so search covers the whole
     // mailbox shortly after the first sync (like Apple Mail). The backfill skips
@@ -354,6 +374,20 @@ async fn run_imap(
     }
 
     loop {
+        // Back online with something queued: send it before anything else, so a
+        // message the user thinks they sent doesn't sit behind a mailbox sync.
+        if session.is_some() {
+            if !outbox_flushed {
+                outbox_flushed = true;
+                flush_outbox(
+                    cache.as_ref(), account_id, &account, None, &mut session, &emit, false,
+                )
+                .await;
+            }
+        } else {
+            outbox_flushed = false;
+        }
+
         // Always prefer incoming requests. When idle: drain the attachment prefetch
         // queue (fast), then index a chunk of the background backfill, then — if
         // push is on — re-sync once to catch any mail that arrived while busy, then
@@ -902,16 +936,69 @@ async fn run_imap(
                                 }
                             }
                         }
+                        // This version replaces the queued one it was edited from.
+                        if let (Some(queued), Some(c)) = (message.outbox_origin, cache.as_ref()) {
+                            c.delete_outbox(queued);
+                            emit_outbox(cache.as_ref(), account_id, &emit);
+                        }
                         emit(WorkerEvent::Sent);
                     }
                     Err(e) => {
                         emit(WorkerEvent::Status(String::new()));
+                        // Hold the message rather than losing it: the composer is
+                        // already closed by the time this arrives, so anything not
+                        // queued here is gone (issue #15). Being offline is the
+                        // usual reason a send fails, which is exactly when saving
+                        // to the server's Drafts folder would fail too.
+                        let queued = queue_failed_send(
+                            cache.as_ref(),
+                            account_id,
+                            &account,
+                            &message,
+                            sent_path.as_deref(),
+                            &e.to_string(),
+                        );
+                        // Queue first, drop the superseded row second: a crash in
+                        // between leaves the message queued twice, which is
+                        // recoverable, rather than not at all.
+                        if let (true, Some(old), Some(c)) =
+                            (queued, message.outbox_origin, cache.as_ref())
+                        {
+                            c.delete_outbox(old);
+                        }
                         emit(WorkerEvent::Error {
-                            text: format!("Send failed: {e}"),
+                            text: if queued {
+                                format!("Send failed: {e}. The message is in the Outbox and will be sent when the connection is back.")
+                            } else {
+                                format!("Send failed: {e}")
+                            },
                             connectivity: false,
                         });
+                        emit_outbox(cache.as_ref(), account_id, &emit);
                     }
                 }
+            }
+
+            MailRequest::LoadOutbox => emit_outbox(cache.as_ref(), account_id, &emit),
+
+            MailRequest::DeleteOutbox { id } => {
+                if let Some(c) = cache.as_ref() {
+                    c.delete_outbox(id);
+                }
+                emit_outbox(cache.as_ref(), account_id, &emit);
+            }
+
+            MailRequest::FlushOutbox { id } => {
+                flush_outbox(
+                    cache.as_ref(),
+                    account_id,
+                    &account,
+                    id,
+                    &mut session,
+                    &emit,
+                    true,
+                )
+                .await;
             }
 
             MailRequest::SaveDraft { message, folder_id, path } => {
@@ -956,6 +1043,14 @@ async fn run_imap(
                                 // Surface a newly-created Drafts folder in the sidebar.
                                 if let Some(sess) = session.as_mut() {
                                     refresh_folders(account_id, sess, cache.as_ref(), &emit).await;
+                                }
+                                // Saved as a draft instead of sent: the queued
+                                // copy it was edited from is now superseded.
+                                if let (Some(queued), Some(c)) =
+                                    (message.outbox_origin, cache.as_ref())
+                                {
+                                    c.delete_outbox(queued);
+                                    emit_outbox(cache.as_ref(), account_id, &emit);
                                 }
                                 emit(WorkerEvent::Status(String::new()));
                                 emit(WorkerEvent::DraftSaved);
@@ -1479,6 +1574,12 @@ async fn load_raw(
 /// photo worth keeping.
 const INLINE_ATTACHMENT_MIN: usize = 64 * 1024;
 
+/// The attachments of a raw message. Public so the Outbox can list a queued
+/// message's files without a fetch.
+pub fn extract_attachments_of(raw: &[u8]) -> Vec<crate::models::Attachment> {
+    extract_attachments(raw)
+}
+
 /// Parse attachment parts (name, mime, decoded bytes) out of a raw message.
 fn extract_attachments(raw: &[u8]) -> Vec<crate::models::Attachment> {
     use mail_parser::{MessageParser, MimeHeaders};
@@ -1536,6 +1637,254 @@ fn guess_mime(name: &str) -> &'static str {
 }
 
 type SmtpError = Box<dyn std::error::Error + Send + Sync>;
+
+// ---------------------------------------------------------------------------
+// Outbox
+// ---------------------------------------------------------------------------
+
+/// Push the account's queue to the UI (empty list = nothing waiting).
+fn emit_outbox(cache: Option<&Cache>, account_id: u32, emit: &impl Fn(WorkerEvent)) {
+    let items = cache.map(|c| c.outbox_items(account_id)).unwrap_or_default();
+    emit(WorkerEvent::Outbox { items });
+}
+
+/// Store a message that could not be sent. Returns whether it was kept — with no
+/// cache there is nowhere to put it, and the caller must not claim otherwise.
+fn queue_failed_send(
+    cache: Option<&Cache>,
+    account_id: u32,
+    account: &AccountConfig,
+    msg: &OutgoingMessage,
+    sent_path: Option<&str>,
+    error: &str,
+) -> bool {
+    let Some(cache) = cache else {
+        return false;
+    };
+    // Build once, here: the composed attachments are read from disk now, while
+    // their files certainly exist. A retry sends these bytes verbatim.
+    let email = match build_email(account, msg) {
+        Ok(email) => email,
+        Err(e) => {
+            tracing::warn!("could not build the failed message for the outbox: {e}");
+            return false;
+        }
+    };
+    let envelope = email.envelope().clone();
+    let raw = email.formatted();
+    let recipients = [&msg.to, &msg.cc]
+        .iter()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let preview: String = msg.body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let preview: String = preview.chars().take(160).collect();
+    cache
+        .queue_outbox(
+            account_id,
+            envelope.from().map(|f| f.to_string()).unwrap_or_default().as_str(),
+            &envelope.to().iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            &recipients,
+            &msg.subject,
+            &preview,
+            &raw,
+            sent_path,
+            error,
+        )
+        .is_some()
+}
+
+/// Try the queue: one message when `id` is given, otherwise all of them, oldest
+/// first. A message that goes out is copied to Sent and dropped from the queue;
+/// one that fails again keeps its place with the new reason recorded. `loud`
+/// reports failures to the UI — background sweeps stay quiet, since the user did
+/// not ask for anything and already knows the message is waiting.
+async fn flush_outbox(
+    cache: Option<&Cache>,
+    account_id: u32,
+    account: &AccountConfig,
+    id: Option<u32>,
+    session: &mut Option<ImapSession>,
+    emit: &impl Fn(WorkerEvent),
+    loud: bool,
+) {
+    let Some(cache) = cache else { return };
+    let items: Vec<crate::models::OutboxItem> = cache
+        .outbox_items(account_id)
+        .into_iter()
+        .filter(|item| id.is_none_or(|wanted| wanted == item.id))
+        .collect();
+    if items.is_empty() {
+        return;
+    }
+
+    if loud {
+        emit(WorkerEvent::Status("Sending…".into()));
+    }
+    let mut sent_any = false;
+    let mut sent = 0usize;
+    for item in items {
+        let envelope = match outbox_envelope(&item) {
+            Some(envelope) => envelope,
+            None => {
+                // Unsendable as stored: keep it, but say so rather than retrying
+                // it forever in silence.
+                cache.record_outbox_failure(item.id, "the stored recipients are not valid addresses");
+                continue;
+            }
+        };
+        match send_raw_smtp(account, &envelope, &item.raw).await {
+            Ok(()) => {
+                sent_any = true;
+                sent += 1;
+                cache.delete_outbox(item.id);
+                if let (Some(path), Some(sess)) = (item.sent_path.as_deref(), session.as_mut()) {
+                    if let Err(e) = append_to_sent(sess, path, &item.raw).await {
+                        tracing::warn!("outbox: sent, but saving to Sent failed: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                cache.record_outbox_failure(item.id, &e.to_string());
+                if loud {
+                    emit(WorkerEvent::Error {
+                        text: format!("Still could not send \u{201c}{}\u{201d}: {e}", item.subject),
+                        connectivity: false,
+                    });
+                }
+                // A failure now will almost certainly repeat for the rest of the
+                // queue (the connection is down), so stop rather than hammering.
+                break;
+            }
+        }
+    }
+    if loud {
+        emit(WorkerEvent::Status(String::new()));
+    }
+    if sent_any {
+        // A background flush is silent up to here, but the user was last told the
+        // message had *failed* to send. They have to learn that it since went.
+        if !loud {
+            emit(WorkerEvent::Notice(match sent {
+                1 => "A message waiting in the Outbox has been sent".to_string(),
+                n => format!("{n} messages waiting in the Outbox have been sent"),
+            }));
+        }
+        emit(WorkerEvent::Sent);
+    }
+    emit_outbox(Some(cache), account_id, emit);
+}
+
+/// Render an address header back into the form the composer's fields use —
+/// `Ada Lovelace <ada@example.com>, bob@example.com` — keeping display names so
+/// editing a queued message doesn't reduce everyone to a bare address.
+fn addr_list(header: Option<&mail_parser::Address>) -> String {
+    header
+        .map(|a| {
+            a.iter()
+                .filter_map(|addr| {
+                    let email = addr.address()?.trim();
+                    if email.is_empty() {
+                        return None;
+                    }
+                    Some(match addr.name().map(str::trim).filter(|n| !n.is_empty()) {
+                        Some(name) => format!("{name} <{email}>"),
+                        None => email.to_string(),
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default()
+}
+
+/// A queued message taken apart for editing: the fields a composer needs, plus
+/// its attachments as bytes.
+pub struct EditableMessage {
+    pub to: String,
+    pub cc: String,
+    pub bcc: String,
+    pub subject: String,
+    /// The best body to edit: the HTML alternative when there is one, otherwise
+    /// the plain text escaped into HTML (the composer edits HTML).
+    pub body_html: String,
+    pub attachments: Vec<crate::models::Attachment>,
+}
+
+/// Take a queued message apart so it can be edited and sent again.
+///
+/// The stored bytes are the source of truth, but they are not quite the whole
+/// message: lettre strips `Bcc` from what goes on the wire, so those recipients
+/// survive only in the stored envelope. Anything in the envelope that isn't in
+/// To or Cc is therefore a Bcc recipient, and is restored as one.
+pub fn editable_from_raw(raw: &[u8], envelope_rcpts: &[String]) -> EditableMessage {
+    use mail_parser::MessageParser;
+
+    let parsed = MessageParser::default().parse(raw);
+    let to = parsed.as_ref().map(|p| addr_list(p.to())).unwrap_or_default();
+    let cc = parsed.as_ref().map(|p| addr_list(p.cc())).unwrap_or_default();
+    let subject = parsed
+        .as_ref()
+        .and_then(|p| p.subject())
+        .unwrap_or_default()
+        .to_string();
+
+    // Whoever is in the envelope but named in neither header was a Bcc.
+    let named: Vec<String> = parse_recipients(&to)
+        .into_iter()
+        .chain(parse_recipients(&cc))
+        .map(|(_, addr)| addr.to_lowercase())
+        .collect();
+    let bcc = envelope_rcpts
+        .iter()
+        .filter(|addr| !named.contains(&addr.to_lowercase()))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let html = parsed
+        .as_ref()
+        .and_then(|p| p.body_html(0).map(|b| b.to_string()))
+        .unwrap_or_default();
+    let body_html = if html.trim().is_empty() {
+        let text = parsed
+            .as_ref()
+            .and_then(|p| p.body_text(0).map(|b| b.to_string()))
+            .unwrap_or_default();
+        // The composer edits HTML, so plain text has to be escaped and its line
+        // breaks preserved — otherwise the whole body collapses into one line.
+        text.lines()
+            .map(|line| format!("<div>{}</div>", escape_html(line)))
+            .collect::<Vec<_>>()
+            .join("")
+    } else {
+        html
+    };
+
+    EditableMessage {
+        to,
+        cc,
+        bcc,
+        subject,
+        body_html,
+        attachments: extract_attachments(raw),
+    }
+}
+
+/// Rebuild the SMTP envelope stored alongside a queued message.
+fn outbox_envelope(item: &crate::models::OutboxItem) -> Option<lettre::address::Envelope> {
+    let from = item.from_addr.parse::<Address>().ok();
+    let to: Vec<Address> = item
+        .rcpts
+        .iter()
+        .filter_map(|a| a.parse::<Address>().ok())
+        .collect();
+    if to.len() != item.rcpts.len() || to.is_empty() {
+        return None;
+    }
+    lettre::address::Envelope::new(from, to).ok()
+}
 
 /// Record a sent message's recipients so they autocomplete in future composes.
 fn record_sent_addresses(cache: Option<&Cache>, msg: &OutgoingMessage) {
@@ -1627,7 +1976,11 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
             MultiPart::mixed().singlepart(SinglePart::plain(msg.body.clone()))
         };
         for path in &msg.attachments {
-            let bytes = std::fs::read(path)?;
+            // Name the file in the error: "No such file or directory" on its own
+            // gives no clue which attachment went missing, and under Flatpak the
+            // portal's /run/user/.../doc/ paths do expire.
+            let bytes = std::fs::read(path)
+                .map_err(|e| format!("could not read the attachment {path}: {e}"))?;
             let name = std::path::Path::new(path)
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
@@ -1657,10 +2010,10 @@ fn smtp_tls_parameters(
     }
 }
 
-async fn send_smtp(account: &AccountConfig, msg: &OutgoingMessage) -> Result<Vec<u8>, SmtpError> {
-    let email = build_email(account, msg)?;
-    let raw = email.formatted();
-
+/// An SMTP transport for this account, configured but not yet connected.
+async fn smtp_transport(
+    account: &AccountConfig,
+) -> Result<AsyncSmtpTransport<Tokio1Executor>, SmtpError> {
     let host = smtp_host(account);
     // Port 465 is implicit TLS; everything else (587, etc.) uses STARTTLS.
     let implicit_tls = account.smtp_port == 465;
@@ -1699,9 +2052,26 @@ async fn send_smtp(account: &AccountConfig, msg: &OutgoingMessage) -> Result<Vec
         };
         builder = builder.credentials(creds);
     }
-    let mailer: AsyncSmtpTransport<Tokio1Executor> = builder.build();
+    Ok(builder.build())
+}
 
-    mailer.send(email).await?;
+/// Send an already-built message: the bytes that go on the wire, plus the
+/// envelope they are addressed with. Retrying an Outbox message goes through
+/// here, so what is retried is byte-for-byte what was composed.
+async fn send_raw_smtp(
+    account: &AccountConfig,
+    envelope: &lettre::address::Envelope,
+    raw: &[u8],
+) -> Result<(), SmtpError> {
+    let mailer = smtp_transport(account).await?;
+    mailer.send_raw(envelope, raw).await?;
+    Ok(())
+}
+
+async fn send_smtp(account: &AccountConfig, msg: &OutgoingMessage) -> Result<Vec<u8>, SmtpError> {
+    let email = build_email(account, msg)?;
+    let raw = email.formatted();
+    send_raw_smtp(account, email.envelope(), &raw).await?;
     Ok(raw)
 }
 
@@ -2345,29 +2715,167 @@ async fn fetch_window(
     // unescaped quotes in the Message-ID) that our IMAP parser rejects. For those
     // the caller retries with `use_envelope = false`, and we instead pull the raw
     // header block — opaque to the IMAP parser — and parse it with mail-parser.
+    // `BODY.PEEK[1]<0.2048>` rides along for the list preview. Section 1 is the
+    // first body part of a multipart message — text/plain in the usual
+    // alternative and mixed layouts — and the whole body of a single-part one, so
+    // one query covers both without a second round trip per message.
+    //
+    // With previews switched off it is left out altogether: the setting exists
+    // partly to avoid downloading a slice of every message, so honouring it only
+    // in the UI would miss the point. Read per sync, so turning it back on takes
+    // effect without a restart.
+    let want_preview = crate::config::load_preview_lines() > 0;
+    let preview_part = if want_preview {
+        format!(" BODY.PEEK[1]<0.{PREVIEW_FETCH_BYTES}>")
+    } else {
+        String::new()
+    };
     let mut messages: Vec<Message> = if use_envelope {
-        let fetches: Vec<Fetch> = session
-            .fetch(&range, "(UID ENVELOPE FLAGS BODYSTRUCTURE INTERNALDATE)")
-            .await?
-            .try_collect()
-            .await?;
+        let query = format!("(UID ENVELOPE FLAGS BODYSTRUCTURE INTERNALDATE{preview_part})");
+        let fetches: Vec<Fetch> = session.fetch(&range, query).await?.try_collect().await?;
         fetches
             .iter()
-            .map(|f| build_summary(account_id, f, folder_id))
+            .map(|f| {
+                let mut m = build_summary(account_id, f, folder_id);
+                m.preview = preview_of(f);
+                m
+            })
             .collect()
     } else {
-        let fetches: Vec<Fetch> = session
-            .fetch(&range, "(UID FLAGS BODY.PEEK[HEADER] INTERNALDATE)")
-            .await?
-            .try_collect()
-            .await?;
+        let query = format!("(UID FLAGS BODY.PEEK[HEADER] INTERNALDATE{preview_part})");
+        let fetches: Vec<Fetch> = session.fetch(&range, query).await?.try_collect().await?;
         fetches
             .iter()
-            .map(|f| summary_from_headers(account_id, f, folder_id))
+            .map(|f| {
+                let mut m = summary_from_headers(account_id, f, folder_id);
+                m.preview = preview_of(f);
+                m
+            })
             .collect()
     };
     messages.reverse(); // IMAP returns oldest-first; show newest at the top.
     Ok(messages)
+}
+
+/// The preview snippet from a fetch that asked for `BODY.PEEK[1]`.
+fn preview_of(fetch: &Fetch) -> String {
+    use async_imap::imap_proto::types::SectionPath;
+    fetch
+        .section(&SectionPath::Part(vec![1], None))
+        .map(preview_from_part)
+        .unwrap_or_default()
+}
+
+/// How much of a message's first body part to fetch for the list preview. Enough
+/// for a couple of lines of text after decoding, small enough that syncing a
+/// large mailbox doesn't turn into downloading it.
+const PREVIEW_FETCH_BYTES: usize = 2048;
+
+/// Longest preview stored per message.
+const PREVIEW_CHARS: usize = 240;
+
+/// Turn the first bytes of a message's body part into a one-line snippet for the
+/// message list.
+///
+/// What arrives is raw MIME, cut off mid-stream: still transfer-encoded, perhaps
+/// HTML, and (being a prefix) possibly ending mid-character or mid-tag. The
+/// encoding is declared in headers this fetch doesn't include, so it is inferred
+/// from the bytes themselves — wrongly guessing plain text for base64 would show
+/// gibberish in the list, which is worse than showing nothing.
+fn preview_from_part(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    let text = String::from_utf8_lossy(bytes);
+    let decoded = if looks_like_base64(&text) {
+        // Only whole 4-character groups can be decoded; the tail of a truncated
+        // fetch is dropped rather than turned into noise.
+        let clean: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+        let usable = &clean[..clean.len() - clean.len() % 4];
+        crate::oauth::base64_decode(usable)
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+            .unwrap_or_default()
+    } else if text.contains('=') {
+        decode_quoted_printable(&text)
+    } else {
+        text.to_string()
+    };
+
+    // An HTML part becomes readable text; a plain part passes through.
+    let plain = if decoded.contains('<') && decoded.contains('>') {
+        crate::app::message_text(&decoded)
+    } else {
+        decoded
+    };
+
+    // Quoted replies say nothing about *this* message, so skip those lines.
+    let body: String = plain
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('>'))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let collapsed = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(PREVIEW_CHARS).collect()
+}
+
+/// Whether a chunk looks like base64 rather than text: base64's alphabet only,
+/// and long enough that a short plain word can't be mistaken for it.
+fn looks_like_base64(text: &str) -> bool {
+    let mut significant = 0;
+    for c in text.chars() {
+        if c.is_ascii_whitespace() {
+            continue;
+        }
+        if !(c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=') {
+            return false;
+        }
+        significant += 1;
+    }
+    significant >= 40
+}
+
+/// Decode quoted-printable, leaving anything malformed as written (a truncated
+/// fetch can end mid-escape).
+fn decode_quoted_printable(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let bytes: Vec<u8> = {
+        let src = text.as_bytes();
+        let mut buf = Vec::with_capacity(src.len());
+        let mut i = 0;
+        while i < src.len() {
+            if src[i] == b'=' {
+                // "=\r\n" is a soft line break: the line continues.
+                if src.get(i + 1) == Some(&b'\r') && src.get(i + 2) == Some(&b'\n') {
+                    i += 3;
+                    continue;
+                }
+                if src.get(i + 1) == Some(&b'\n') {
+                    i += 2;
+                    continue;
+                }
+                let hex = src.get(i + 1..i + 3).and_then(|h| {
+                    std::str::from_utf8(h).ok().and_then(|h| u8::from_str_radix(h, 16).ok())
+                });
+                match hex {
+                    Some(b) => {
+                        buf.push(b);
+                        i += 3;
+                        continue;
+                    }
+                    None => {
+                        buf.push(b'=');
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+            buf.push(src[i]);
+            i += 1;
+        }
+        buf
+    };
+    out.push_str(&String::from_utf8_lossy(&bytes));
+    out
 }
 
 /// Build a message summary from a raw header block (mail-parser), for servers
@@ -3356,13 +3864,62 @@ async fn run_pop3(
             MailRequest::Send { message, .. } => match send_smtp(&account, &message).await {
                 Ok(_) => {
                     record_sent_addresses(cache.as_ref(), &message);
+                    if let (Some(queued), Some(c)) = (message.outbox_origin, cache.as_ref()) {
+                        c.delete_outbox(queued);
+                        emit_outbox(cache.as_ref(), account_id, &emit);
+                    }
                     emit(WorkerEvent::Sent);
                 }
-                Err(e) => emit(WorkerEvent::Error {
-                    text: format!("Could not send message: {e}"),
-                    connectivity: false,
-                }),
+                Err(e) => {
+                    // POP3 has no Sent folder to copy to, but the message is held
+                    // exactly as it is for IMAP accounts.
+                    let queued = queue_failed_send(
+                        cache.as_ref(),
+                        account_id,
+                        &account,
+                        &message,
+                        None,
+                        &e.to_string(),
+                    );
+                    if let (true, Some(old), Some(c)) =
+                        (queued, message.outbox_origin, cache.as_ref())
+                    {
+                        c.delete_outbox(old);
+                    }
+                    emit(WorkerEvent::Error {
+                        text: if queued {
+                            format!("Send failed: {e}. The message is in the Outbox and will be sent when the connection is back.")
+                        } else {
+                            format!("Send failed: {e}")
+                        },
+                        connectivity: false,
+                    });
+                    emit_outbox(cache.as_ref(), account_id, &emit);
+                }
             },
+
+            MailRequest::LoadOutbox => emit_outbox(cache.as_ref(), account_id, &emit),
+
+            MailRequest::DeleteOutbox { id } => {
+                if let Some(c) = cache.as_ref() {
+                    c.delete_outbox(id);
+                }
+                emit_outbox(cache.as_ref(), account_id, &emit);
+            }
+
+            MailRequest::FlushOutbox { id } => {
+                let mut no_session = None;
+                flush_outbox(
+                    cache.as_ref(),
+                    account_id,
+                    &account,
+                    id,
+                    &mut no_session,
+                    &emit,
+                    true,
+                )
+                .await;
+            }
 
             MailRequest::Reconnect => {
                 emit(WorkerEvent::Folders(pop3_folders(account_id)));
@@ -3502,7 +4059,11 @@ async fn run_mock(
             | MailRequest::MoveMessage { .. }
             | MailRequest::CreateFolder { .. }
             | MailRequest::DeleteFolder { .. }
+            | MailRequest::FlushOutbox { .. }
+            | MailRequest::DeleteOutbox { .. }
             | MailRequest::Reconnect => {}
+            // The demo backend sends nothing, so its Outbox is always empty.
+            MailRequest::LoadOutbox => emit(WorkerEvent::Outbox { items: Vec::new() }),
             // Signal completion so the demo's bulk spinner clears.
             MailRequest::MoveMessages { .. } => emit(WorkerEvent::BulkComplete),
             MailRequest::SaveDraft { .. } => emit(WorkerEvent::DraftSaved),
@@ -3572,7 +4133,10 @@ fn display_name(path: &str, delimiter: Option<&str>) -> String {
         Some(d) if !d.is_empty() => path.rsplit(d).next().unwrap_or(path),
         _ => path.rsplit(['/', '.']).next().unwrap_or(path),
     };
-    leaf.to_string()
+    // Split first, decode second: the delimiter is ASCII and modified UTF-7
+    // never produces one inside an escaped run (that is why `,` stands in for
+    // `/`), so the leaf is always a whole name (issue #1).
+    crate::mutf7::decode(leaf)
 }
 
 /// Join an envelope address list into "a@x.com, b@y.com" (emails only).
@@ -3694,7 +4258,10 @@ fn format_date(raw: &[u8]) -> (String, i64) {
 /// photo mail, most newsletters) get the same treatment: nothing in the reader can
 /// resolve a `cid:` URL, so each reference is rewritten to the `data:` URI of the
 /// part it names — otherwise the image renders as its broken-image alt text.
-fn extract_body(raw: &[u8]) -> String {
+/// Render a raw message to the HTML the reader displays. Public so the Outbox
+/// can show a queued message without a round trip to the server — the bytes are
+/// already on disk.
+pub fn extract_body(raw: &[u8]) -> String {
     use mail_parser::{MessageParser, MimeHeaders, PartType};
 
     /// Total decoded bytes of inline images embedded into one message body.
@@ -4104,6 +4671,7 @@ mod tests {
             html: String::new(),
             attachments: Vec::new(),
             draft_origin: None,
+            outbox_origin: None,
         }
     }
 
@@ -4124,6 +4692,234 @@ mod tests {
         let mb = mailbox("A@B.com", "a@b.com").expect("mailbox builds");
         assert!(mb.name.is_none());
         assert_eq!(mb.to_string(), "a@b.com");
+    }
+
+    fn queued(from: &str, rcpts: &[&str]) -> crate::models::OutboxItem {
+        crate::models::OutboxItem {
+            id: 1,
+            account_id: 1,
+            from_addr: from.into(),
+            rcpts: rcpts.iter().map(|s| s.to_string()).collect(),
+            recipients: String::new(),
+            subject: "Notes".into(),
+            preview: String::new(),
+            raw: b"From: me\r\n\r\nbody".to_vec(),
+            sent_path: None,
+            queued_at: 0,
+            attempts: 1,
+            last_error: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_queued_message_can_be_taken_apart_for_editing() {
+        // Round trip: compose → build → (failed send) → edit. What comes back has
+        // to be what went in, including the Bcc that lettre strips from the bytes.
+        let account = AccountConfig {
+            name: "Me".into(),
+            email: "me@example.com".into(),
+            ..sample_account()
+        };
+        let msg = OutgoingMessage {
+            to: "Ada Lovelace <ada@example.com>".into(),
+            cc: "carol@example.com".into(),
+            bcc: "hidden@example.com".into(),
+            subject: "Quarterly numbers".into(),
+            body: "First line\nSecond line".into(),
+            ..sample_outgoing()
+        };
+        let email = build_email(&account, &msg).expect("builds");
+        let rcpts: Vec<String> =
+            email.envelope().to().iter().map(|a| a.to_string()).collect();
+        let raw = email.formatted();
+
+        // lettre drops Bcc from the wire format, so the envelope is the only
+        // record of it — which is exactly why it is stored alongside.
+        assert!(!String::from_utf8_lossy(&raw).contains("hidden@example.com"));
+
+        let editable = editable_from_raw(&raw, &rcpts);
+        assert_eq!(editable.to, "Ada Lovelace <ada@example.com>");
+        assert_eq!(editable.cc, "carol@example.com");
+        assert_eq!(editable.bcc, "hidden@example.com");
+        assert_eq!(editable.subject, "Quarterly numbers");
+        // A plain-text body is escaped into HTML for the editor, keeping its lines.
+        assert!(editable.body_html.contains("First line"), "{}", editable.body_html);
+        assert!(editable.body_html.contains("Second line"), "{}", editable.body_html);
+        assert!(editable.attachments.is_empty());
+    }
+
+    #[test]
+    fn editing_a_queued_message_keeps_its_attachments_and_html() {
+        let dir = std::env::temp_dir().join(format!("vireo-edit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let file = dir.join("report.pdf");
+        std::fs::write(&file, [0x25, 0x50, 0x44, 0x46, 0x00, 0xff]).expect("write");
+
+        let msg = OutgoingMessage {
+            to: "ada@example.com".into(),
+            subject: "With a file".into(),
+            body: "plain fallback".into(),
+            html: "<p>rich <b>body</b></p>".into(),
+            attachments: vec![file.to_string_lossy().to_string()],
+            ..sample_outgoing()
+        };
+        let email = build_email(&sample_account(), &msg).expect("builds");
+        let rcpts: Vec<String> =
+            email.envelope().to().iter().map(|a| a.to_string()).collect();
+        let editable = editable_from_raw(&email.formatted(), &rcpts);
+
+        // The HTML alternative is what the composer edits, not the plain fallback.
+        assert!(editable.body_html.contains("rich <b>body</b>"), "{}", editable.body_html);
+        assert_eq!(editable.attachments.len(), 1);
+        assert_eq!(editable.attachments[0].name, "report.pdf");
+        assert_eq!(editable.attachments[0].data, [0x25, 0x50, 0x44, 0x46, 0x00, 0xff]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn preview_reads_plain_text() {
+        let text = b"Here are the figures we discussed.\r\n\r\nLet me know if the Q3 line looks wrong.\r\n";
+        assert_eq!(
+            preview_from_part(text),
+            "Here are the figures we discussed. Let me know if the Q3 line looks wrong."
+        );
+        assert_eq!(preview_from_part(b""), "");
+    }
+
+    #[test]
+    fn preview_decodes_the_transfer_encoding_it_was_not_told_about() {
+        // The fetch asks for body bytes only, so the encoding has to be inferred.
+        // Quoted-printable, including a soft line break mid-sentence:
+        let qp = b"Caf=C3=A9 meeting at 3pm =\r\nsharp, bring the numbers";
+        assert_eq!(preview_from_part(qp), "Café meeting at 3pm sharp, bring the numbers");
+
+        // Base64 — shown raw this would be gibberish in the list.
+        let encoded = crate::oauth::base64_encode(
+            b"Base64 bodies are common from newsletters and phones alike.",
+        );
+        assert_eq!(
+            preview_from_part(encoded.as_bytes()),
+            "Base64 bodies are common from newsletters and phones alike."
+        );
+    }
+
+    #[test]
+    fn preview_survives_being_cut_off_mid_stream() {
+        // 2KB of a base64 part almost never lands on a group boundary; the
+        // incomplete tail is dropped rather than decoded into noise.
+        let full = crate::oauth::base64_encode(&b"The quick brown fox jumps over the lazy dog. ".repeat(4));
+        let truncated = &full[..full.len() - 3];
+        let preview = preview_from_part(truncated.as_bytes());
+        assert!(preview.starts_with("The quick brown fox"), "{preview}");
+        // A quoted-printable escape cut in half stays literal instead of eating
+        // the character after it.
+        assert!(preview_from_part(b"Total: 50=").ends_with('='));
+    }
+
+    #[test]
+    fn preview_reads_html_and_skips_quoted_replies() {
+        let html = b"<html><body><p>Meeting moved to <b>Tuesday</b>.</p></body></html>";
+        assert_eq!(preview_from_part(html), "Meeting moved to Tuesday.");
+        let reply = b"Sounds good to me.\r\n\r\n> On Monday, Ada wrote:\r\n> the original text\r\n";
+        assert_eq!(preview_from_part(reply), "Sounds good to me.");
+    }
+
+    #[test]
+    fn preview_is_capped() {
+        let long = "word ".repeat(200);
+        assert_eq!(preview_from_part(long.as_bytes()).chars().count(), PREVIEW_CHARS);
+    }
+
+    #[test]
+    fn short_text_is_not_mistaken_for_base64() {
+        // "Meeting" is all base64 characters, but far too short to be a body.
+        assert_eq!(preview_from_part(b"Meeting"), "Meeting");
+    }
+
+    #[test]
+    fn folder_names_are_decoded_for_display() {
+        // Issue #1: Gmail's Chinese labels arrived as modified UTF-7 and were
+        // shown verbatim in the sidebar.
+        assert_eq!(display_name("&XfJSoGYfaAc-", Some("/")), "已加星标");
+        // Only the leaf is shown, and the parent may be encoded too.
+        assert_eq!(display_name("&U,BTFw-/&g0l6Pw-", Some("/")), "草稿");
+        assert_eq!(display_name("INBOX.&U,BTFw-", Some(".")), "台北");
+        // Ordinary names are untouched, and INBOX keeps its special casing.
+        assert_eq!(display_name("INBOX", Some("/")), "Inbox");
+        assert_eq!(display_name("[Gmail]/All Mail", Some("/")), "All Mail");
+        assert_eq!(display_name("Tom & Jerry", Some("/")), "Tom & Jerry");
+    }
+
+    #[test]
+    fn a_queued_message_keeps_every_recipient_on_retry() {
+        // Bcc exists only in the envelope, so a retry that rebuilds it from the
+        // headers would silently drop those recipients.
+        let item = queued("me@example.com", &["ada@example.com", "bcc@example.com"]);
+        let envelope = outbox_envelope(&item).expect("envelope rebuilds");
+        assert_eq!(envelope.from().map(|f| f.to_string()).as_deref(), Some("me@example.com"));
+        assert_eq!(
+            envelope.to().iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            ["ada@example.com", "bcc@example.com"]
+        );
+    }
+
+    #[test]
+    fn a_queued_message_with_an_unusable_address_is_not_retried() {
+        // Better to leave it in the Outbox saying so than to retry forever.
+        assert!(outbox_envelope(&queued("me@example.com", &["not-an-address"])).is_none());
+        assert!(outbox_envelope(&queued("me@example.com", &[])).is_none());
+        // A missing sender is legal (SMTP's null reverse-path), so it is not a
+        // reason to refuse.
+        assert!(outbox_envelope(&queued("", &["ada@example.com"])).is_some());
+    }
+
+    #[test]
+    fn build_email_carries_attachments() {
+        // Issue #15: "Send failed: Invalid input" when sending with attachments.
+        // "Invalid input" is lettre's AddressError, raised only by parsing a
+        // "Name <addr>" string — which 1.8.x did for From/To and 1.9.0 replaced
+        // with mailboxes built from parts. This pins the attachment path itself,
+        // including a name that would have needed quoting and a UTF-8 filename.
+        let dir = std::env::temp_dir().join(format!("vireo-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let file = dir.join("Meeting notes, final.pdf");
+        // Binary, so the encoder has to base64 it — as it would a real PDF.
+        std::fs::write(&file, [0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x00, 0x80, 0xff])
+            .expect("write attachment");
+
+        let account = AccountConfig {
+            name: "Powers, Benny".into(),
+            email: "benny@example.com".into(),
+            ..sample_account()
+        };
+        let msg = OutgoingMessage {
+            to: "Ada Lovelace <ada@example.com>".into(),
+            subject: "Notes".into(),
+            attachments: vec![file.to_string_lossy().to_string()],
+            ..sample_outgoing()
+        };
+
+        let email = build_email(&account, &msg).expect("email builds with an attachment");
+        let raw = String::from_utf8_lossy(&email.formatted()).to_string();
+        assert!(raw.contains("multipart/mixed"), "{raw}");
+        assert!(raw.contains("application/pdf"), "{raw}");
+        // The filename has a comma and a space, so it has to be quoted or encoded.
+        assert!(raw.contains("Meeting notes, final.pdf") || raw.contains("Meeting%20notes"), "{raw}");
+        // Base64 of the bytes written above.
+        assert!(raw.contains("base64"), "{raw}");
+        assert!(raw.contains("JVBERi0xLjQAgP8="), "{raw}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn build_email_reports_a_missing_attachment_by_name() {
+        let msg = OutgoingMessage {
+            to: "ada@example.com".into(),
+            attachments: vec!["/nonexistent/report.pdf".into()],
+            ..sample_outgoing()
+        };
+        let err = build_email(&sample_account(), &msg).expect_err("missing file fails");
+        assert!(err.to_string().contains("report.pdf"), "{err}");
     }
 
     #[test]

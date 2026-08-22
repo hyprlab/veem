@@ -141,6 +141,36 @@ pub fn base64_encode(data: &[u8]) -> String {
     out
 }
 
+/// Decode standard base64, ignoring whitespace. `None` if the input isn't valid
+/// (which for a truncated fetch is a real possibility, not a bug).
+pub fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    let value = |b: u8| -> Option<u8> {
+        match b {
+            b'A'..=b'Z' => Some(b - b'A'),
+            b'a'..=b'z' => Some(b - b'a' + 26),
+            b'0'..=b'9' => Some(b - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    };
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    let mut bits: u32 = 0;
+    let mut nbits = 0;
+    for b in text.bytes() {
+        if b.is_ascii_whitespace() || b == b'=' {
+            continue;
+        }
+        bits = (bits << 6) | u32::from(value(b)?);
+        nbits += 6;
+        if nbits >= 8 {
+            nbits -= 8;
+            out.push((bits >> nbits) as u8);
+        }
+    }
+    Some(out)
+}
+
 /// Server presets for a known provider (endpoints + IMAP/SMTP hosts). Client
 /// credentials come from [`provider_credentials`], not here.
 pub struct Preset {

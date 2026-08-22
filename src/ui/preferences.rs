@@ -22,6 +22,8 @@ pub struct PrefInit {
     pub message_theme: MessageTheme,
     pub notifications: bool,
     pub show_attachments: bool,
+    pub preview_lines: u32,
+    pub single_key_shortcuts: bool,
 }
 
 /// Message-content appearance options, in combo order.
@@ -101,6 +103,8 @@ pub enum PrefInput {
     TogglePush(bool),
     ToggleNotifications(bool),
     ToggleShowAttachments(bool),
+    ChangePreviewLines(u32),
+    ToggleSingleKey(bool),
     ChangePaletteCollapse(u64),
     ChangeMessageTheme(u32),
 }
@@ -118,6 +122,8 @@ pub enum PrefOutput {
     SetPush(bool),
     SetNotifications(bool),
     SetShowAttachments(bool),
+    SetPreviewLines(u32),
+    SetSingleKey(bool),
     SetPaletteCollapse(u64),
     SetMessageTheme(MessageTheme),
     Closed,
@@ -196,6 +202,26 @@ impl Component for Preferences {
                             set_subtitle: "Collapse replies into a single threaded conversation.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleThreading(row.is_active()));
+                            },
+                        },
+
+                        #[name = "single_key_row"]
+                        adw::SwitchRow {
+                            set_title: "Single-key shortcuts",
+                            set_subtitle: "Act on mail with one key and no modifier — j/k to move, \
+                                           r to reply, a to archive. Press Ctrl+? for the full list.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleSingleKey(row.is_active()));
+                            },
+                        },
+
+                        #[name = "preview_lines_row"]
+                        adw::ComboRow {
+                            set_title: "Preview lines",
+                            set_subtitle: "How much of each message to show under its subject. \
+                                           Off also stops previews being downloaded.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangePreviewLines(row.selected()));
                             },
                         },
 
@@ -359,6 +385,13 @@ impl Component for Preferences {
         widgets.push_row.set_active(init.push);
         widgets.notifications_row.set_active(init.notifications);
         widgets.show_attachments_row.set_active(init.show_attachments);
+        let preview_labels = ["Off", "1 line", "2 lines", "3 lines"];
+        widgets
+            .preview_lines_row
+            .set_model(Some(&gtk::StringList::new(&preview_labels)));
+        widgets.preview_lines_row.set_selected(init.preview_lines.min(3));
+
+        widgets.single_key_row.set_active(init.single_key_shortcuts);
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
 
@@ -407,6 +440,14 @@ impl Component for Preferences {
             }
             PrefInput::ToggleShowAttachments(on) => {
                 let _ = sender.output(PrefOutput::SetShowAttachments(on));
+            }
+            PrefInput::ToggleSingleKey(on) => {
+                let _ = sender.output(PrefOutput::SetSingleKey(on));
+            }
+            PrefInput::ChangePreviewLines(index) => {
+                // The combo lists Off, then 1, 2 and 3 lines — so the row index is
+                // the number of lines.
+                let _ = sender.output(PrefOutput::SetPreviewLines(index));
             }
             PrefInput::ChangePaletteCollapse(secs) => {
                 let _ = sender.output(PrefOutput::SetPaletteCollapse(secs));

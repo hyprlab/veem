@@ -786,7 +786,12 @@ fn caption(item: &GalleryItem) -> String {
 /// A friendly folder name from a mailbox path (the last path segment).
 fn folder_label(path: &str) -> String {
     let name = path.rsplit(['/', '.']).next().unwrap_or(path);
-    if name.eq_ignore_ascii_case("inbox") { "Inbox".to_string() } else { name.to_string() }
+    if name.eq_ignore_ascii_case("inbox") {
+        "Inbox".to_string()
+    } else {
+        // Paths are stored as the server names them, in modified UTF-7.
+        crate::mutf7::decode(name)
+    }
 }
 
 /// The lowercase extension of a filename (empty when there is none).

@@ -73,11 +73,17 @@ pub struct ComposeAccount {
 pub struct ComposePrefill {
     pub to: String,
     pub cc: String,
+    pub bcc: String,
     pub subject: String,
     /// HTML prefill placed into the rich editor (e.g. a quoted reply/forward).
     pub body_html: String,
+    /// Files to attach on open, already on disk (a queued message's attachments
+    /// are written out before its composer opens).
+    pub attachments: Vec<std::path::PathBuf>,
     /// When editing an existing draft, its origin (so saving/sending replaces it).
     pub draft_origin: Option<DraftOrigin>,
+    /// When editing a queued Outbox message, the row this replaces.
+    pub outbox_origin: Option<u32>,
 }
 
 /// Everything the compose pane needs to open.
@@ -105,6 +111,8 @@ pub struct Compose {
     current_sig: String,
     /// Files to attach.
     attachments: Vec<std::path::PathBuf>,
+    /// When editing a queued Outbox message, the row this replaces once sent.
+    outbox_origin: Option<u32>,
     /// Recipient suggestions, filtered as the user types.
     suggestions: Vec<Suggestion>,
     /// Shared autocomplete popover and which field it's currently attached to.
@@ -302,6 +310,8 @@ impl Component for Compose {
             can_toggle,
         } = init;
         let draft_origin = prefill.draft_origin.clone();
+        let outbox_origin = prefill.outbox_origin;
+        let prefill_attachments = prefill.attachments.clone();
         let current_sig = accounts.get(selected).map(|a| a.signature.clone()).unwrap_or_default();
 
         let completion = gtk::Popover::new();
@@ -326,7 +336,7 @@ impl Component for Compose {
             accounts,
             editor,
             current_sig,
-            attachments: Vec::new(),
+            attachments: prefill_attachments,
             suggestions,
             completion,
             completion_field: None,
@@ -335,6 +345,7 @@ impl Component for Compose {
             completion_count: 0,
             completion_open: std::rc::Rc::new(std::cell::Cell::new(false)),
             draft_origin,
+            outbox_origin,
             compose_id,
             windowed,
             can_toggle,
@@ -384,7 +395,11 @@ impl Component for Compose {
 
         widgets.to_row.set_text(&prefill.to);
         widgets.cc_row.set_text(&prefill.cc);
+        widgets.bcc_row.set_text(&prefill.bcc);
         widgets.subject_row.set_text(&prefill.subject);
+        if !model.attachments.is_empty() {
+            model.rebuild_attachments(&widgets.attach_box, &sender);
+        }
 
         // Wire autocomplete *after* prefilling, so the initial text doesn't pop it.
         for (row, field) in [
@@ -419,6 +434,14 @@ impl Component for Compose {
         key.connect_key_pressed(move |_, keyval, _, _| {
             use gtk::glib::Propagation;
             if !open.get() {
+                // Escape backs out of the whole composer — the same as Cancel,
+                // so an accidental reply is one key away from being undone. Only
+                // once the suggestion list is closed, which Escape dismisses
+                // first (below), so one press never does both.
+                if keyval == gtk::gdk::Key::Escape {
+                    s.input(ComposeInput::Cancel);
+                    return Propagation::Stop;
+                }
                 return Propagation::Proceed;
             }
             // Compare by value (the const-as-pattern match wasn't matching).
@@ -724,6 +747,7 @@ impl Compose {
                 .map(|p| p.to_string_lossy().to_string())
                 .collect(),
             draft_origin: self.draft_origin.clone(),
+            outbox_origin: self.outbox_origin,
         }
     }
 

@@ -9,6 +9,7 @@ mod config;
 mod contacts;
 mod goa;
 mod models;
+mod mutf7;
 mod notify;
 mod oauth;
 mod platform;

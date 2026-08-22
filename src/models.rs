@@ -187,6 +187,117 @@ impl Default for SenderCheck {
     }
 }
 
+/// A message that could not be sent and is waiting in the Outbox.
+///
+/// The built MIME bytes are stored rather than the composed fields: a retry has
+/// to send exactly what was composed, and the attachments' files may be gone by
+/// then — under Flatpak the portal paths handed to the file chooser expire.
+/// `from_addr` and `rcpts` are the SMTP envelope, which is not always what the
+/// headers say (Bcc is in the envelope only).
+#[derive(Debug, Clone)]
+pub struct OutboxItem {
+    pub id: u32,
+    pub account_id: u32,
+    /// Envelope sender.
+    pub from_addr: String,
+    /// Envelope recipients (To + Cc + Bcc), one per line as stored.
+    pub rcpts: Vec<String>,
+    /// Header recipients, for display ("Ada Lovelace, bob@example.com").
+    pub recipients: String,
+    pub subject: String,
+    pub preview: String,
+    pub raw: Vec<u8>,
+    /// The account's Sent folder at queue time, appended to once it goes out.
+    pub sent_path: Option<String>,
+    /// Unix seconds when it was first queued.
+    pub queued_at: i64,
+    pub attempts: u32,
+    /// Why the last attempt failed, shown in the list.
+    pub last_error: String,
+}
+
+impl OutboxItem {
+    /// "Waiting since 10 minutes ago" — what the reader shows where a received
+    /// message shows its date, since an unsent message has no send time yet.
+    pub fn waiting_label(queued_at: i64) -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(queued_at);
+        let secs = (now - queued_at).max(0);
+        let ago = match secs {
+            s if s < 90 => "just now".to_string(),
+            s if s < 3600 => format!("{} minutes ago", s / 60),
+            s if s < 7200 => "an hour ago".to_string(),
+            s if s < 86400 => format!("{} hours ago", s / 3600),
+            s if s < 172_800 => "yesterday".to_string(),
+            s => format!("{} days ago", s / 86400),
+        };
+        format!("Waiting since {ago}")
+    }
+
+    /// The queued message as a list row. Everything the list needs is stored with
+    /// the message, so the Outbox reads as an ordinary folder: same list, same
+    /// reader, same sorting. `folder_id` is `OUTBOX_FOLDER_ID`, which no real
+    /// folder uses, so a row can always be traced back here.
+    pub fn as_message(&self) -> Message {
+        Message {
+            id: self.id,
+            account_id: self.account_id,
+            folder_id: OUTBOX_FOLDER_ID,
+            uid: self.id,
+            // The list's headline column is the sender everywhere else; for
+            // unsent mail the useful name is who it is going to.
+            from_name: if self.recipients.trim().is_empty() {
+                "(no recipients)".to_string()
+            } else {
+                self.recipients.clone()
+            },
+            from_addr: self.from_addr.clone(),
+            to: self.recipients.clone(),
+            cc: String::new(),
+            subject: if self.subject.trim().is_empty() {
+                "(no subject)".to_string()
+            } else {
+                self.subject.clone()
+            },
+            // The row's one line of context: how long it has been stuck and what
+            // is stopping it, falling back to the body when nothing has failed
+            // yet (a message queued while offline never got an error).
+            preview: {
+                let waiting = Self::waiting_label(self.queued_at);
+                let attempts = match self.attempts {
+                    0 | 1 => String::new(),
+                    n => format!(" · {n} attempts"),
+                };
+                let reason = if self.last_error.trim().is_empty() {
+                    self.preview.trim().to_string()
+                } else {
+                    self.last_error.trim().to_string()
+                };
+                if reason.is_empty() {
+                    format!("{waiting}{attempts}")
+                } else {
+                    format!("{waiting}{attempts} · {reason}")
+                }
+            },
+            body: String::new(),
+            date: String::new(),
+            timestamp: self.queued_at,
+            // Never dimmed as read: it is still waiting to go out.
+            unread: true,
+            starred: false,
+            has_attachment: false,
+            message_id: String::new(),
+            references: String::new(),
+        }
+    }
+}
+
+/// Folder id for the Outbox's synthetic rows. Real folders are numbered from 1
+/// by the worker, so this can't collide.
+pub const OUTBOX_FOLDER_ID: u32 = u32::MAX;
+
 /// A decoded message attachment (fetched on demand for the reader).
 #[derive(Debug, Clone)]
 pub struct Attachment {
@@ -300,4 +411,63 @@ impl Message {
         }
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item() -> OutboxItem {
+        OutboxItem {
+            id: 7,
+            account_id: 1,
+            from_addr: "me@example.com".into(),
+            rcpts: vec!["ada@example.com".into()],
+            recipients: "Ada Lovelace <ada@example.com>".into(),
+            subject: "Quarterly numbers".into(),
+            preview: "Here are the figures".into(),
+            raw: Vec::new(),
+            sent_path: None,
+            queued_at: 0,
+            attempts: 1,
+            last_error: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_queued_message_reads_as_an_ordinary_row() {
+        let row = item().as_message();
+        // The list's headline column is who it is going to, not who sent it: in
+        // an Outbox every message is from the same person.
+        assert_eq!(row.from_name, "Ada Lovelace <ada@example.com>");
+        assert_eq!(row.subject, "Quarterly numbers");
+        assert_eq!(row.folder_id, OUTBOX_FOLDER_ID);
+        assert_eq!(row.id, 7);
+        // Still waiting, so never shown as read.
+        assert!(row.unread);
+    }
+
+    #[test]
+    fn a_queued_row_says_why_it_is_stuck() {
+        let mut i = item();
+        i.attempts = 4;
+        i.last_error = "Connection refused (os error 111)".into();
+        let row = i.as_message();
+        assert!(row.preview.contains("4 attempts"), "{}", row.preview);
+        assert!(row.preview.contains("Connection refused"), "{}", row.preview);
+        // With nothing failed yet, the body stands in for the reason.
+        let row = item().as_message();
+        assert!(row.preview.contains("Here are the figures"), "{}", row.preview);
+        assert!(!row.preview.contains("attempts"), "{}", row.preview);
+    }
+
+    #[test]
+    fn an_empty_subject_or_recipient_still_reads_sensibly() {
+        let mut i = item();
+        i.subject = "  ".into();
+        i.recipients = String::new();
+        let row = i.as_message();
+        assert_eq!(row.subject, "(no subject)");
+        assert_eq!(row.from_name, "(no recipients)");
+    }
 }

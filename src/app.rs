@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use adw::prelude::*;
-use relm4::actions::{RelmAction, RelmActionGroup};
+use relm4::actions::{AccelsPlus, RelmAction, RelmActionGroup};
 use relm4::prelude::*;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -34,6 +34,7 @@ relm4::new_action_group!(WindowActionGroup, "win");
 relm4::new_stateless_action!(AccountsAction, WindowActionGroup, "accounts");
 relm4::new_stateless_action!(PreferencesAction, WindowActionGroup, "preferences");
 relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
+relm4::new_stateless_action!(ShortcutsAction, WindowActionGroup, "shortcuts");
 
 use crate::config::{self, AccountConfig};
 use crate::models::{Account, Attachment, Folder, FolderKind, Message};
@@ -182,6 +183,16 @@ pub struct AppModel {
     notifications_enabled: bool,
     /// Whether the sidebar shows the "Attachments" row.
     show_attachments: bool,
+    /// Lines of preview text per message-list row (1–3).
+    preview_lines: u32,
+    /// The keyboard-shortcut reference, while it is open — so the shortcut that
+    /// opens it closes it again.
+    shortcuts_win: Option<adw::Window>,
+    /// Whether single-key (modifier-free) shortcuts are enabled. The window's key
+    /// controller needs to read this without the model, so it is shared: with the
+    /// feature off, keystrokes must pass straight through rather than be consumed
+    /// and dropped.
+    single_key: std::rc::Rc<std::cell::Cell<bool>>,
     /// Whether messages are grouped into conversation threads.
     threading: bool,
     /// Whether conversation threads start expanded in the message list.
@@ -202,6 +213,10 @@ pub struct AppModel {
     gallery: Controller<AttachmentsGallery>,
     /// True when the attachments gallery replaces the mail panes.
     showing_gallery: bool,
+    /// Whether the Outbox is showing instead of the mail panes.
+    showing_outbox: bool,
+    /// Messages waiting to be sent, per account, as last reported by its worker.
+    outbox_by_account: HashMap<u32, Vec<crate::models::OutboxItem>>,
     /// Gallery items per account inbox, merged for display.
     gallery_by_account: HashMap<u32, Vec<crate::models::GalleryItem>>,
     /// Messages popped out into their own windows, keyed by (account, message).
@@ -231,6 +246,18 @@ pub enum AppMsg {
     UnifiedSelected,
     /// Show the attachments gallery (sidebar "Attachments" row).
     ShowAttachments,
+    /// Show the Outbox (queued, unsent messages).
+    ShowOutbox,
+    /// A worker reported its queue: replaces that account's entries.
+    OutboxItems { account_id: u32, items: Vec<crate::models::OutboxItem> },
+    /// A worker reported something noteworthy that isn't a failure.
+    Notice(String),
+    /// Edit the queued message currently open in the reader.
+    EditCurrentOutbox,
+    /// Try to send the queued message currently open in the reader.
+    SendCurrentOutbox,
+    /// Try to send everything waiting, across accounts.
+    RetryAllOutbox,
     /// Cached gallery attachments for an account inbox arrived.
     GalleryItems { account_id: u32, items: Vec<crate::models::GalleryItem> },
     /// Gallery "Go to Message" — open the attachment's source message.
@@ -300,6 +327,12 @@ pub enum AppMsg {
     SetPush(bool),
     SetNotifications(bool),
     SetShowAttachments(bool),
+    SetPreviewLines(u32),
+    SetSingleKey(bool),
+    /// A single-key shortcut fired.
+    Shortcut(Shortcut),
+    /// Show the keyboard-shortcut reference.
+    ShowShortcuts,
     SetPaletteCollapse(u64),
     SetMessageTheme(config::MessageTheme),
     ComposeTo(String),
@@ -553,10 +586,43 @@ impl SimpleComponent for AppModel {
                                 set_title_widget = &gtk::Label {
                                     set_label: "",
                                 },
+                                // Outbox actions, in place of Reply/Forward/Flag —
+                                // a message that hasn't been sent can't be replied
+                                // to, and the questions worth asking about it are
+                                // whether to edit, send or bin it.
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-document-edit-symbolic",
+                                    set_tooltip_text: Some("Edit this message"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: model.showing_outbox,
+                                    #[watch]
+                                    set_sensitive: model.current.is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::EditCurrentOutbox),
+                                },
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-mail-send-symbolic",
+                                    set_tooltip_text: Some("Try to send this message now"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: model.showing_outbox,
+                                    #[watch]
+                                    set_sensitive: model.current.is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::SendCurrentOutbox),
+                                },
+                                pack_start = &gtk::Button {
+                                    set_label: "Send all",
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: model.showing_outbox,
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::RetryAllOutbox),
+                                },
                                 pack_start = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-mail-reply-sender-symbolic",
                                     set_tooltip_text: Some("Reply"),
                                     add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox,
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Reply),
@@ -566,6 +632,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Reply All"),
                                     add_css_class: "flat",
                                     #[watch]
+                                    set_visible: !model.showing_outbox,
+                                    #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ReplyAll),
                                 },
@@ -573,6 +641,8 @@ impl SimpleComponent for AppModel {
                                     set_icon_name: "co.hyprlab.Vireo-mail-forward-symbolic",
                                     set_tooltip_text: Some("Forward"),
                                     add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox,
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Forward),
@@ -582,12 +652,16 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Add sender to Contacts"),
                                     add_css_class: "flat",
                                     #[watch]
+                                    set_visible: !model.showing_outbox,
+                                    #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::AddToContacts),
                                 },
                                 pack_start = &gtk::Button {
                                     set_tooltip_text: Some("Flag"),
                                     add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox,
                                     #[watch]
                                     set_icon_name: if model.current.as_ref().is_some_and(|m| m.starred) {
                                         "co.hyprlab.Vireo-starred-symbolic"
@@ -681,6 +755,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Mark as Spam"),
                                     add_css_class: "flat",
                                     #[watch]
+                                    set_visible: !model.showing_outbox,
+                                    #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::MarkSpam),
                                 },
@@ -696,6 +772,8 @@ impl SimpleComponent for AppModel {
                                     set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
                                     set_tooltip_text: Some("Archive"),
                                     add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox,
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Archive),
@@ -793,6 +871,7 @@ impl SimpleComponent for AppModel {
             .forward(sender.input_sender(), |out| match out {
                 SidebarOutput::UnifiedSelected => AppMsg::UnifiedSelected,
                 SidebarOutput::AttachmentsSelected => AppMsg::ShowAttachments,
+                SidebarOutput::OutboxSelected => AppMsg::ShowOutbox,
                 SidebarOutput::FolderSelected { account_id, folder_id, name, path } => {
                     AppMsg::FolderSelected { account_id, folder_id, name, path }
                 }
@@ -861,6 +940,7 @@ impl SimpleComponent for AppModel {
         let menu = gtk::gio::Menu::new();
         menu.append(Some("Accounts"), Some("win.accounts"));
         menu.append(Some("Preferences"), Some("win.preferences"));
+        menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
         menu.append(Some("About Vireo"), Some("win.about"));
 
         let mut model = AppModel {
@@ -919,6 +999,11 @@ impl SimpleComponent for AppModel {
             push: config::load_push(),
             notifications_enabled: config::load_notifications(),
             show_attachments,
+            preview_lines: config::load_preview_lines(),
+            shortcuts_win: None,
+            single_key: std::rc::Rc::new(std::cell::Cell::new(
+                config::load_single_key_shortcuts(),
+            )),
             threading: config::load_threading(),
             threads_expanded: config::load_threads_expanded(),
             message_theme: config::load_message_theme(),
@@ -932,6 +1017,8 @@ impl SimpleComponent for AppModel {
             attachment_drawer,
             gallery,
             showing_gallery: false,
+            showing_outbox: false,
+            outbox_by_account: HashMap::new(),
             gallery_by_account: HashMap::new(),
         };
         model.spawn_workers(&sender);
@@ -960,6 +1047,9 @@ impl SimpleComponent for AppModel {
         model
             .message_list
             .emit(MessageListInput::SetGravatar(model.gravatar));
+        model
+            .message_list
+            .emit(MessageListInput::SetPreviewLines(model.preview_lines));
         model
             .message_list
             .emit(MessageListInput::SetThreading(model.threading));
@@ -995,6 +1085,7 @@ impl SimpleComponent for AppModel {
             gallery_tv.add_top_bar(&gallery_hb);
             gallery_tv.set_content(Some(model.gallery.widget()));
             widgets.content_stack.add_named(&gallery_tv, Some("gallery"));
+
         }
         // Desktop-notification click actions: raise the window (error alerts) and
         // raise + open a specific message (new-mail alerts). Registered here rather
@@ -1064,7 +1155,70 @@ impl SimpleComponent for AppModel {
         group.add_action(RelmAction::<AboutAction>::new_stateless(move |_| {
             about_sender.input(AppMsg::OpenAbout);
         }));
+        let shortcuts_sender = sender.clone();
+        group.add_action(RelmAction::<ShortcutsAction>::new_stateless(move |_| {
+            shortcuts_sender.input(AppMsg::ShowShortcuts);
+        }));
         group.register_for_widget(&root);
+
+        // A real accelerator rather than a key handler: GTK matches these before
+        // the keystroke reaches whatever has focus, so Ctrl+? works while reading
+        // a message (the web view would otherwise swallow it). Both spellings are
+        // bound because layouts disagree about whether Ctrl+Shift+/ arrives as
+        // `question` or as `slash`, and F1 is the GNOME convention.
+        relm4::main_application().set_accelerators_for_action::<ShortcutsAction>(&[
+            "<Ctrl>question",
+            "<Ctrl><Shift>question",
+            "<Ctrl>slash",
+            "<Ctrl><Shift>slash",
+            "F1",
+        ]);
+
+        // Single-key shortcuts. The controller is on the window in the bubble
+        // phase, so the focused widget always gets first refusal: a search entry
+        // or the composer consumes the letter itself and nothing here fires.
+        // `focus_takes_keys` covers the rest — chiefly the reader's web view,
+        // which handles keys without consuming them.
+        {
+            let keys = gtk::EventControllerKey::new();
+            let s = sender.clone();
+            let window = root.clone();
+            let enabled = model.single_key.clone();
+            keys.connect_key_pressed(move |_, keyval, _, state| {
+                let ctrl = state.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+                let shift = state.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+                // Ctrl+? opens the reference whether or not the shortcuts
+                // themselves are switched on.
+                if ctrl && matches!(keyval, gtk::gdk::Key::question | gtk::gdk::Key::slash) {
+                    s.input(AppMsg::ShowShortcuts);
+                    return gtk::glib::Propagation::Stop;
+                }
+                if ctrl || state.contains(gtk::gdk::ModifierType::ALT_MASK) {
+                    return gtk::glib::Propagation::Proceed;
+                }
+                // Escape backs out to the message list whatever else is going on,
+                // and without needing single-key shortcuts switched on. A text
+                // field keeps it, though — there it clears the search.
+                if keyval == gtk::gdk::Key::Escape {
+                    if focus_is_text(&window) {
+                        return gtk::glib::Propagation::Proceed;
+                    }
+                    s.input(AppMsg::Shortcut(Shortcut::BackToList));
+                    return gtk::glib::Propagation::Stop;
+                }
+                if !enabled.get() || focus_takes_keys(&window) {
+                    return gtk::glib::Propagation::Proceed;
+                }
+                match shortcut_for(keyval, shift) {
+                    Some(action) => {
+                        s.input(AppMsg::Shortcut(action));
+                        gtk::glib::Propagation::Stop
+                    }
+                    None => gtk::glib::Propagation::Proceed,
+                }
+            });
+            root.add_controller(keys);
+        }
 
         // One-time, dismissible keyring setup tip for Linux Mint / Cinnamon, where
         // the Secret Service often needs configuring so passwords persist and the
@@ -1083,7 +1237,68 @@ impl SimpleComponent for AppModel {
 
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
         match msg {
+            AppMsg::ShowOutbox => {
+                // Treated as a folder: same list, same reader, nothing swapped
+                // out from under the user. `selected` stays None so no sync or
+                // server request is ever aimed at it.
+                self.showing_outbox = true;
+                self.showing_gallery = false;
+                self.unified = false;
+                self.selected = None;
+                self.current = None;
+                self.current_thread.clear();
+                self.attachments.clear();
+                self.attachments_loading = false;
+                self.attachments_available = false;
+                self.sync_attachment_drawer();
+                self.message_list.emit(MessageListInput::SetSelected(None));
+                self.message_list.emit(MessageListInput::SetColorize(self.accounts.len() > 1));
+                self.message_list.emit(MessageListInput::ResetPaging);
+                self.show_message(None, false);
+                self.push_outbox();
+            }
+
+            AppMsg::OutboxItems { account_id, items } => {
+                self.outbox_by_account.insert(account_id, items);
+                self.push_outbox();
+            }
+
+
+
+
+            AppMsg::EditCurrentOutbox => {
+                if let Some(m) = self.current.clone() {
+                    self.compose_from_outbox(m.account_id, m.id, &sender);
+                }
+            }
+
+            AppMsg::SendCurrentOutbox => {
+                if let Some(m) = self.current.clone() {
+                    self.send_to(m.account_id, MailRequest::FlushOutbox { id: Some(m.id) });
+                }
+            }
+
+            AppMsg::RetryAllOutbox => {
+                let accounts: Vec<u32> = self.outbox_by_account
+                    .iter()
+                    .filter(|(_, items)| !items.is_empty())
+                    .map(|(id, _)| *id)
+                    .collect();
+                for account_id in accounts {
+                    self.send_to(account_id, MailRequest::FlushOutbox { id: None });
+                }
+            }
+
+            AppMsg::Notice(text) => {
+                self.notifications.emit(NotifyInput::Push {
+                    text,
+                    error: false,
+                    connectivity: false,
+                });
+            }
+
             AppMsg::ShowAttachments => {
+                self.showing_outbox = false;
                 self.showing_gallery = true;
                 self.gallery_by_account.clear();
                 self.gallery.emit(GalleryInput::SetLoading(true));
@@ -1110,6 +1325,7 @@ impl SimpleComponent for AppModel {
 
             AppMsg::OpenAttachmentMessage { account_id, folder_path, uid } => {
                 self.showing_gallery = false;
+                self.showing_outbox = false;
                 if let Some(folder) = self
                     .folders
                     .get(&account_id)
@@ -1125,6 +1341,7 @@ impl SimpleComponent for AppModel {
 
             AppMsg::UnifiedSelected => {
                 self.showing_gallery = false;
+                self.showing_outbox = false;
                 self.unified = true;
                 self.selected = None;
                 self.current = None;
@@ -1280,7 +1497,14 @@ impl SimpleComponent for AppModel {
             AppMsg::CreateFolder { account_id, name } => {
                 let name = name.trim();
                 if !name.is_empty() {
-                    let path = format!("{}{}", self.folder_namespace(account_id), name);
+                    // The server names mailboxes in modified UTF-7, so a name
+                    // with any non-ASCII character has to be encoded before it
+                    // becomes a path (issue #1, in the other direction).
+                    let path = format!(
+                        "{}{}",
+                        self.folder_namespace(account_id),
+                        crate::mutf7::encode(name)
+                    );
                     self.send_to(account_id, MailRequest::CreateFolder { path });
                 }
             }
@@ -1344,6 +1568,12 @@ impl SimpleComponent for AppModel {
                 // Navigating away releases any inline reply (save-if-dirty, or keep
                 // it as an independent window if it was popped out).
                 self.release_reader_compose();
+                // A queued message reads like any other, straight from the bytes
+                // already on disk — no folder, no UID, nothing to ask the server.
+                if let Some(item) = self.outbox_item(m.account_id, m.id) {
+                    self.show_outbox_message(&item);
+                    return;
+                }
                 // Clicking a draft opens it in the compose editor, not the reader.
                 if self.is_drafts_folder(m.account_id, m.folder_id) {
                     self.open_draft(m, &sender);
@@ -1505,12 +1735,29 @@ impl SimpleComponent for AppModel {
             }
             AppMsg::Delete => {
                 if let Some(m) = self.current.clone() {
-                    self.move_to(m, FolderKind::Trash);
+                    // In the Outbox, deleting means giving up on sending it —
+                    // there is no server-side copy to move to Trash.
+                    if self.outbox_item(m.account_id, m.id).is_some() {
+                        self.send_to(m.account_id, MailRequest::DeleteOutbox { id: m.id });
+                        self.current = None;
+                        self.show_message(None, false);
+                    } else {
+                        self.move_to(m, FolderKind::Trash);
+                    }
                 }
             }
 
             AppMsg::RowAction { action, message } => {
                 let m = *message;
+                if self.outbox_item(m.account_id, m.id).is_some() {
+                    // Nothing else in the palette applies to an unsent message,
+                    // and every other action would aim an IMAP command at a UID
+                    // that doesn't exist on any server.
+                    if matches!(action, RowAction::Delete) {
+                        self.send_to(m.account_id, MailRequest::DeleteOutbox { id: m.id });
+                    }
+                    return;
+                }
                 match action {
                     RowAction::Reply => {
                         let m = self.with_cached_body(m);
@@ -1547,6 +1794,15 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::Bulk { action, messages } => {
+                if self.showing_outbox {
+                    if matches!(action, BulkAction::Delete) {
+                        for m in &messages {
+                            self.send_to(m.account_id, MailRequest::DeleteOutbox { id: m.id });
+                        }
+                    }
+                    self.message_list.emit(MessageListInput::ClearSelection);
+                    return;
+                }
                 match action {
                     // Flag/read changes update rows in place (no removal).
                     BulkAction::MarkRead => for m in &messages { self.set_read(m, true); },
@@ -1749,6 +2005,25 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetSingleKey(on) => {
+                if self.single_key.get() != on {
+                    self.single_key.set(on);
+                    self.save_settings();
+                }
+            }
+
+            AppMsg::ShowShortcuts => self.show_shortcuts(),
+
+            AppMsg::Shortcut(action) => self.run_shortcut(action, &sender),
+
+            AppMsg::SetPreviewLines(lines) => {
+                if self.preview_lines != lines {
+                    self.preview_lines = lines;
+                    self.save_settings();
+                    self.message_list.emit(MessageListInput::SetPreviewLines(lines));
+                }
+            }
+
             AppMsg::SetShowAttachments(on) => {
                 if self.show_attachments != on {
                     self.show_attachments = on;
@@ -1845,7 +2120,10 @@ impl SimpleComponent for AppModel {
                 // compose window has closed. No notification (mirrors silent send).
             }
 
-            AppMsg::ComposeClosed(id) => self.close_compose(id),
+            AppMsg::ComposeClosed(id) => {
+                self.close_compose(id);
+                self.message_list.emit(MessageListInput::FocusList);
+            }
 
             AppMsg::ComposeToggleWindow(id) => self.toggle_compose_window(id, &sender),
 
@@ -2027,6 +2305,8 @@ impl SimpleComponent for AppModel {
                     message_theme: self.message_theme,
                     notifications: self.notifications_enabled,
                     show_attachments: self.show_attachments,
+                    preview_lines: self.preview_lines,
+                    single_key_shortcuts: self.single_key.get(),
                 };
                 let prefs = Preferences::builder()
                     .transient_for(&self.window)
@@ -2043,6 +2323,8 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetPush(on) => AppMsg::SetPush(on),
                         PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
                         PrefOutput::SetShowAttachments(on) => AppMsg::SetShowAttachments(on),
+                        PrefOutput::SetPreviewLines(n) => AppMsg::SetPreviewLines(n),
+                        PrefOutput::SetSingleKey(on) => AppMsg::SetSingleKey(on),
                         PrefOutput::SetPaletteCollapse(secs) => AppMsg::SetPaletteCollapse(secs),
                         PrefOutput::SetMessageTheme(t) => AppMsg::SetMessageTheme(t),
                         PrefOutput::Closed => AppMsg::ClosePreferences,
@@ -2407,7 +2689,195 @@ impl AppModel {
             self.message_theme,
             self.notifications_enabled,
             self.show_attachments,
+            self.preview_lines,
+            self.single_key.get(),
         );
+    }
+
+    /// Carry out a single-key shortcut.
+    fn run_shortcut(&mut self, action: Shortcut, sender: &ComponentSender<Self>) {
+        match action {
+            Shortcut::NextMessage => self.message_list.emit(MessageListInput::MoveSelection(1)),
+            Shortcut::PrevMessage => self.message_list.emit(MessageListInput::MoveSelection(-1)),
+            Shortcut::ToggleSelect => self.message_list.emit(MessageListInput::ToggleSelection),
+            Shortcut::BackToList => self.message_list.emit(MessageListInput::FocusList),
+            Shortcut::Search => self.message_list.emit(MessageListInput::FocusSearch),
+            Shortcut::OpenMessage => {
+                if let Some(view) = self.message_view.widget().first_child() {
+                    view.grab_focus();
+                }
+            }
+            Shortcut::NextInThread => self.step_thread(1),
+            Shortcut::PrevInThread => self.step_thread(-1),
+            Shortcut::Reply => sender.input(AppMsg::Reply),
+            Shortcut::ReplyAll => sender.input(AppMsg::ReplyAll),
+            Shortcut::Forward => sender.input(AppMsg::Forward),
+            Shortcut::Archive => sender.input(AppMsg::Archive),
+            Shortcut::Delete => sender.input(AppMsg::Delete),
+            Shortcut::Spam => sender.input(AppMsg::MarkSpam),
+            Shortcut::Star => sender.input(AppMsg::ToggleStar),
+            Shortcut::ToggleRead => {
+                if let Some(m) = self.current.clone() {
+                    let read = !m.unread;
+                    self.set_read(&m, !read);
+                }
+            }
+            Shortcut::Compose => sender.input(AppMsg::Compose),
+            Shortcut::Shortcuts => self.show_shortcuts(),
+        }
+    }
+
+    /// Move to the next (or previous) message of the open conversation.
+    fn step_thread(&mut self, delta: i32) {
+        let Some(current) = self.current.clone() else {
+            return;
+        };
+        let thread = self.current_thread.clone();
+        let Some(index) = thread
+            .iter()
+            .position(|m| m.id == current.id && m.account_id == current.account_id)
+        else {
+            // Not in a conversation: fall back to moving through the list, which
+            // is what someone pressing "next" almost certainly meant.
+            self.message_list.emit(MessageListInput::MoveSelection(delta));
+            return;
+        };
+        let next = index as i32 + delta;
+        if next < 0 || next as usize >= thread.len() {
+            return;
+        }
+        let target = &thread[next as usize];
+        self.message_list
+            .emit(MessageListInput::SelectAndLoad((target.account_id, target.id)));
+    }
+
+    /// Open the keyboard-shortcut reference, or close it if it is already up:
+    /// the key that summons a cheatsheet is the obvious one to dismiss it with.
+    fn show_shortcuts(&mut self) {
+        if let Some(win) = self.shortcuts_win.take() {
+            if win.is_visible() {
+                win.close();
+                return;
+            }
+            // Closed from its own titlebar; fall through and open a fresh one.
+        }
+        self.shortcuts_win = Some(self.build_shortcuts_window());
+    }
+
+    /// A plain window listing every single-key shortcut.
+    fn build_shortcuts_window(&self) -> adw::Window {
+        let win = adw::Window::builder()
+            .transient_for(&self.window)
+            .modal(true)
+            .title("Keyboard Shortcuts")
+            .default_width(420)
+            .default_height(560)
+            .build();
+
+        let page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        page.set_margin_top(12);
+        page.set_margin_bottom(18);
+        page.set_margin_start(18);
+        page.set_margin_end(18);
+
+        if !self.single_key.get() {
+            let off = gtk::Label::new(Some(
+                "Single-key shortcuts are switched off. Turn them on in Preferences → Message List.",
+            ));
+            off.add_css_class("dim-label");
+            off.set_wrap(true);
+            off.set_xalign(0.0);
+            off.set_margin_bottom(12);
+            page.append(&off);
+        }
+
+        for (section, keys) in SHORTCUT_HELP {
+            let title = gtk::Label::new(Some(section));
+            title.add_css_class("heading");
+            title.set_halign(gtk::Align::Start);
+            title.set_margin_top(14);
+            title.set_margin_bottom(6);
+            page.append(&title);
+
+            let list = gtk::ListBox::new();
+            list.add_css_class("boxed-list");
+            list.set_selection_mode(gtk::SelectionMode::None);
+            for (key, what) in *keys {
+                let row = adw::ActionRow::builder().title(*what).build();
+                let label = gtk::Label::new(Some(key));
+                label.add_css_class("shortcut-key");
+                label.set_valign(gtk::Align::Center);
+                row.add_suffix(&label);
+                list.append(&row);
+            }
+            page.append(&list);
+        }
+
+        let scroller = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .child(&page)
+            .build();
+        let tv = adw::ToolbarView::new();
+        tv.add_top_bar(&adw::HeaderBar::new());
+        tv.set_content(Some(&scroller));
+        win.set_content(Some(&tv));
+
+        // Escape closes it, as does the accelerator that opened it. A reference
+        // you can't dismiss with the key you opened it with is a nuisance.
+        let keys = gtk::EventControllerKey::new();
+        let closer = win.clone();
+        keys.connect_key_pressed(move |_, keyval, _, state| {
+            let ctrl = state.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+            let toggles = ctrl
+                && matches!(keyval, gtk::gdk::Key::question | gtk::gdk::Key::slash);
+            if keyval == gtk::gdk::Key::Escape || toggles || keyval == gtk::gdk::Key::F1 {
+                closer.close();
+                return gtk::glib::Propagation::Stop;
+            }
+            gtk::glib::Propagation::Proceed
+        });
+        win.add_controller(keys);
+
+        win.present();
+        win
+    }
+
+    /// Push the merged queue to the Outbox view and the sidebar's badge. Oldest
+    /// first, which is the order the workers send in.
+    fn push_outbox(&self) {
+        let items = self.outbox_items();
+        self.sidebar.emit(SidebarInput::SetOutboxCount(items.len() as u32));
+        if self.showing_outbox {
+            self.message_list.emit(MessageListInput::SetMessages {
+                title: "Outbox".into(),
+                messages: items.iter().map(|i| i.as_message()).collect(),
+            });
+        }
+    }
+
+    /// Every account's queue merged, oldest first — the order they will send in.
+    fn outbox_items(&self) -> Vec<crate::models::OutboxItem> {
+        let mut items: Vec<crate::models::OutboxItem> = self
+            .outbox_by_account
+            .values()
+            .flatten()
+            .cloned()
+            .collect();
+        items.sort_by_key(|i| (i.queued_at, i.id));
+        items
+    }
+
+    /// The queued message behind a list row, if the Outbox is what's shown.
+    fn outbox_item(&self, account_id: u32, id: u32) -> Option<crate::models::OutboxItem> {
+        if !self.showing_outbox {
+            return None;
+        }
+        self.outbox_by_account
+            .get(&account_id)?
+            .iter()
+            .find(|i| i.id == id)
+            .cloned()
     }
 
     /// Tell the message list whether the folder(s) currently shown are fully
@@ -2486,6 +2956,9 @@ impl AppModel {
                 let account_id = i as u32 + 1;
                 let worker = Self::spawn_worker(account_id, Some(account.clone()), sender);
                 self.workers.insert(account_id, worker);
+                // Anything left queued by a previous run has to show up now, not
+                // only after the next failed send.
+                self.send_to(account_id, MailRequest::LoadOutbox);
             }
         }
     }
@@ -2890,6 +3363,7 @@ impl AppModel {
     /// sidebar selection and the "open message from notification" flow.
     fn select_folder(&mut self, account_id: u32, folder_id: u32, name: String, path: String) {
         self.showing_gallery = false;
+        self.showing_outbox = false;
         self.unified = false;
         self.attachments.clear();
         self.sync_attachment_drawer();
@@ -3125,6 +3599,77 @@ impl AppModel {
         }
     }
 
+    /// Render a queued message in the reader. Its bytes are stored with it, so
+    /// this is a local render — the same one the worker would produce.
+    fn show_outbox_message(&mut self, item: &crate::models::OutboxItem) {
+        let mut message = item.as_message();
+        message.body = crate::worker::extract_body(&item.raw);
+        message.date = crate::models::OutboxItem::waiting_label(item.queued_at);
+        self.attachments = crate::worker::extract_attachments_of(&item.raw);
+        self.attachments_available = !self.attachments.is_empty();
+        self.attachments_loading = false;
+        self.sync_attachment_drawer();
+        self.current = Some(message.clone());
+        self.current_thread.clear();
+        self.show_message(Some(message), false);
+    }
+
+    /// Open a queued Outbox message in the composer.
+    ///
+    /// The queued copy stays put until the edited version is handed back to the
+    /// worker: an editor that is closed again must not have destroyed the only
+    /// copy of the message. Attachments are written to a private temp directory,
+    /// because the composer attaches files by path and the originals are long
+    /// gone (under Flatpak the portal's paths expire).
+    fn compose_from_outbox(&mut self, account_id: u32, id: u32, sender: &ComponentSender<Self>) {
+        let Some(item) = self
+            .outbox_by_account
+            .get(&account_id)
+            .and_then(|items| items.iter().find(|i| i.id == id))
+            .cloned()
+        else {
+            return;
+        };
+        let editable = crate::worker::editable_from_raw(&item.raw, &item.rcpts);
+
+        let mut attachments = Vec::new();
+        if !editable.attachments.is_empty() {
+            let dir = std::env::temp_dir().join(format!("vireo-outbox-{account_id}-{id}"));
+            if std::fs::create_dir_all(&dir).is_ok() {
+                for (i, att) in editable.attachments.iter().enumerate() {
+                    // The name came out of a message header; keep it to a single
+                    // path component.
+                    let safe = att.name.replace(['/', '\\'], "_");
+                    let name = if safe.trim().is_empty() {
+                        format!("attachment-{}", i + 1)
+                    } else {
+                        safe
+                    };
+                    let path = dir.join(&name);
+                    match std::fs::write(&path, &att.data) {
+                        Ok(()) => attachments.push(path),
+                        Err(e) => tracing::warn!("could not stage {name} for editing: {e}"),
+                    }
+                }
+            }
+        }
+
+        let prefill = ComposePrefill {
+            to: editable.to,
+            cc: editable.cc,
+            bcc: editable.bcc,
+            subject: editable.subject,
+            body_html: editable.body_html,
+            attachments,
+            draft_origin: None,
+            outbox_origin: Some(id),
+        };
+        // The Outbox stays the folder on screen: its list is still what's listed,
+        // so its toolbar has to stay too. Leaving it would strand the user in a
+        // reader offering Reply and Forward for a message that hasn't been sent.
+        self.open_compose(account_id, prefill, sender);
+    }
+
     /// Open the compose editor pre-filled from a draft, remembering its origin so
     /// saving/sending replaces it.
     fn compose_from_draft(&mut self, m: Message, body_html: String, sender: &ComponentSender<Self>) {
@@ -3140,6 +3685,7 @@ impl AppModel {
                 path,
                 uid: m.uid,
             }),
+            ..Default::default()
         };
         self.open_compose(m.account_id, prefill, sender);
     }
@@ -4451,6 +4997,127 @@ fn notes_page(title: &str, tag: &str, md: &str) -> adw::NavigationPage {
         .build()
 }
 
+/// One single-key shortcut. Gmail-compatible where Gmail and the request agree
+/// (issue #5); where they differ, the request wins — `a` archives here, rather
+/// than replying to all as it does in Gmail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shortcut {
+    NextMessage,
+    PrevMessage,
+    OpenMessage,
+    BackToList,
+    NextInThread,
+    PrevInThread,
+    ToggleSelect,
+    Reply,
+    ReplyAll,
+    Forward,
+    Archive,
+    Delete,
+    Spam,
+    Star,
+    ToggleRead,
+    Compose,
+    Search,
+    Shortcuts,
+}
+
+/// The shortcut for a key press, if any. `shift` distinguishes `r` from `R`.
+fn shortcut_for(key: gtk::gdk::Key, shift: bool) -> Option<Shortcut> {
+    use gtk::gdk::Key;
+    let action = match key {
+        Key::j | Key::Down => Shortcut::NextMessage,
+        Key::k | Key::Up => Shortcut::PrevMessage,
+        Key::l | Key::Right => Shortcut::OpenMessage,
+        Key::h | Key::Left | Key::u => Shortcut::BackToList,
+        Key::w => Shortcut::NextInThread,
+        Key::b => Shortcut::PrevInThread,
+        Key::x => Shortcut::ToggleSelect,
+        Key::r if !shift => Shortcut::Reply,
+        Key::R => Shortcut::ReplyAll,
+        Key::f => Shortcut::Forward,
+        Key::a => Shortcut::Archive,
+        Key::d => Shortcut::Delete,
+        Key::exclam => Shortcut::Spam,
+        Key::s => Shortcut::Star,
+        Key::m => Shortcut::ToggleRead,
+        Key::c => Shortcut::Compose,
+        Key::slash => Shortcut::Search,
+        Key::question => Shortcut::Shortcuts,
+        _ => return None,
+    };
+    Some(action)
+}
+
+/// Every shortcut with its key and description, for the reference window.
+const SHORTCUT_HELP: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Move around",
+        &[
+            ("j  or  ↓", "Next message"),
+            ("k  or  ↑", "Previous message"),
+            ("l  or  →", "Open the selected message"),
+            ("h  or  ←  or  u", "Back to the message list"),
+            ("w", "Next message in the conversation"),
+            ("b", "Previous message in the conversation"),
+            ("/", "Search"),
+        ],
+    ),
+    (
+        "Act on a message",
+        &[
+            ("r", "Reply"),
+            ("R", "Reply to all"),
+            ("f", "Forward"),
+            ("a", "Archive"),
+            ("d", "Delete"),
+            ("!", "Mark as spam"),
+            ("s", "Star or unstar"),
+            ("m", "Mark read or unread"),
+            ("x", "Select this row (for a bulk action)"),
+        ],
+    ),
+    (
+        "Everything else",
+        &[
+            ("c", "Compose"),
+            ("Esc", "Back out of a reply and return to the list"),
+            ("?", "This list"),
+        ],
+    ),
+];
+
+/// Whether a keystroke should be left to the widget that has focus. Typing in a
+/// search field, an address row or the composer must never archive mail, and the
+/// message view is a web view that handles its own keys (find, scrolling).
+fn focus_takes_keys(window: &adw::ApplicationWindow) -> bool {
+    focus_matches(window, true)
+}
+
+/// Whether focus is in something being typed into. Narrower than
+/// [`focus_takes_keys`]: Escape means "back out" while reading a message, but in
+/// a search field it means "clear the search", which is the field's business.
+fn focus_is_text(window: &adw::ApplicationWindow) -> bool {
+    focus_matches(window, false)
+}
+
+fn focus_matches(window: &adw::ApplicationWindow, include_web_view: bool) -> bool {
+    let Some(focus) = gtk::prelude::GtkWindowExt::focus(window) else {
+        return false;
+    };
+    let mut node = Some(focus);
+    while let Some(widget) = node {
+        if widget.is::<gtk::Editable>() || widget.is::<gtk::TextView>() {
+            return true;
+        }
+        if include_web_view && widget.is::<webkit6::WebView>() {
+            return true;
+        }
+        node = widget.parent();
+    }
+    false
+}
+
 /// Whether to serve the built-in sample/demo data (for screenshots). Off unless
 /// `VIREO_DEMO` is set, so removing all real accounts leaves the app blank.
 fn demo_mode() -> bool {
@@ -4603,6 +5270,8 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
             AppMsg::NoAttachments { account_id, message_id }
         }
         WorkerEvent::Sent => AppMsg::Sent { account_id },
+        WorkerEvent::Outbox { items } => AppMsg::OutboxItems { account_id, items },
+        WorkerEvent::Notice(text) => AppMsg::Notice(text),
         WorkerEvent::DraftSaved => AppMsg::DraftSaved,
         WorkerEvent::Status(text) => AppMsg::Status { account_id, text },
         WorkerEvent::Error { text, connectivity } => {
@@ -4624,7 +5293,7 @@ fn reply_prefill(m: &Message) -> ComposePrefill {
         cc: String::new(),
         subject,
         body_html: quote_block(&attribution, &text),
-        draft_origin: None,
+        ..Default::default()
     }
 }
 
@@ -4667,7 +5336,7 @@ fn forward_prefill(m: &Message) -> ComposePrefill {
         cc: String::new(),
         subject,
         body_html: quote_block(&header, &text),
-        draft_origin: None,
+        ..Default::default()
     }
 }
 
@@ -4689,7 +5358,7 @@ fn quote_block(attribution: &str, text: &str) -> String {
 
 /// A readable plain-text rendering of a message body, which may be HTML. Used to
 /// build safe quoted replies/forwards (no scripts, styles or remote content).
-fn message_text(body: &str) -> String {
+pub fn message_text(body: &str) -> String {
     if !body.contains('<') {
         return body.trim().to_string();
     }
@@ -4783,6 +5452,52 @@ fn build_search_pool(cache: &HashMap<(u32, u32), Vec<Message>>) -> Vec<Message> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_key_map_matches_the_request() {
+        use gtk::gdk::Key;
+        // The keys issue #5 asked for, by name.
+        assert_eq!(shortcut_for(Key::j, false), Some(Shortcut::NextMessage));
+        assert_eq!(shortcut_for(Key::k, false), Some(Shortcut::PrevMessage));
+        assert_eq!(shortcut_for(Key::l, false), Some(Shortcut::OpenMessage));
+        assert_eq!(shortcut_for(Key::h, false), Some(Shortcut::BackToList));
+        assert_eq!(shortcut_for(Key::r, false), Some(Shortcut::Reply));
+        assert_eq!(shortcut_for(Key::a, false), Some(Shortcut::Archive));
+        assert_eq!(shortcut_for(Key::x, false), Some(Shortcut::ToggleSelect));
+        assert_eq!(shortcut_for(Key::d, false), Some(Shortcut::Delete));
+        assert_eq!(shortcut_for(Key::w, false), Some(Shortcut::NextInThread));
+        assert_eq!(shortcut_for(Key::b, false), Some(Shortcut::PrevInThread));
+        // Arrows do what h/j/k/l do.
+        assert_eq!(shortcut_for(Key::Down, false), Some(Shortcut::NextMessage));
+        assert_eq!(shortcut_for(Key::Up, false), Some(Shortcut::PrevMessage));
+        assert_eq!(shortcut_for(Key::Right, false), Some(Shortcut::OpenMessage));
+        assert_eq!(shortcut_for(Key::Left, false), Some(Shortcut::BackToList));
+        // Shift distinguishes reply from reply-all.
+        assert_eq!(shortcut_for(Key::R, true), Some(Shortcut::ReplyAll));
+        // Anything unmapped is left to the widget with focus.
+        assert_eq!(shortcut_for(Key::z, false), None);
+        assert_eq!(shortcut_for(Key::Return, false), None);
+        assert_eq!(shortcut_for(Key::space, false), None);
+    }
+
+    #[test]
+    fn every_shortcut_is_documented() {
+        // The reference window is the only place the keys are written down, so a
+        // new shortcut without a line there would be invisible.
+        let documented: Vec<&str> = SHORTCUT_HELP
+            .iter()
+            .flat_map(|(_, keys)| keys.iter().map(|(key, _)| *key))
+            .collect();
+        for key in ["j  or  ↓", "r", "a", "d", "w", "b", "x", "?"] {
+            assert!(documented.contains(&key), "{key} is not in the reference");
+        }
+        // Every documented line has a description.
+        for (_, keys) in SHORTCUT_HELP {
+            for (key, what) in *keys {
+                assert!(!key.trim().is_empty() && !what.trim().is_empty());
+            }
+        }
+    }
 
     #[test]
     fn md_inline_renders_the_syntax_the_changelog_uses() {
