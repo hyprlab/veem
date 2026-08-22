@@ -980,8 +980,9 @@ impl SimpleComponent for AppModel {
         menu.append(Some("Print Preview…"), Some("win.print-preview"));
         menu.append(Some("Print Message…"), Some("win.print"));
         menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
-        menu.append(Some("Quit"), Some("app.quit"));
         menu.append(Some("About Vireo"), Some("win.about"));
+        // Last, where a Quit item belongs.
+        menu.append(Some("Quit"), Some("app.quit"));
 
         let mut model = AppModel {
             workers: HashMap::new(),
