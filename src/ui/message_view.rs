@@ -484,8 +484,8 @@ impl Component for MessageView {
                 }
             }
             MessageViewInput::Print => {
-                crate::ui::print_preview::print_webview(
-                    &self.webview,
+                crate::ui::print_preview::print_html(
+                    &self.print_document_html(),
                     &sanitize_filename(&self.job_name()),
                     self.webview.root().and_downcast::<gtk::Window>(),
                 );
@@ -663,7 +663,6 @@ impl MessageView {
                 sections.push_str(&body);
             }
         }
-        let print_header = self.print_header_html();
         let scheme = if dark { "dark" } else { "light" };
         // Paint the wrapper and the (still-loading) iframes in the theme colour so
         // there's no white flash before each message's content renders.
@@ -682,10 +681,9 @@ impl MessageView {
                .vireo-addr{{opacity:0.55;font-size:0.9em;}}\
                .vireo-date{{margin-left:auto;opacity:0.55;font-size:0.85em;}}\
                .vireo-loading{{opacity:0.5;padding:16px;}}\
-               {PRINT_STYLES}\
              </style>\
              <script>{SIZE_SCRIPT}</script>\
-             </head><body>{print_header}{sections}</body></html>"
+             </head><body>{sections}</body></html>"
         )
     }
 
@@ -698,11 +696,38 @@ impl MessageView {
             .unwrap_or_else(|| "Message".to_string())
     }
 
-    /// The document as it will print: rendered light, header shown, laid out on a
-    /// page-shaped sheet. Built from the same `document_html` the reader uses, so
-    /// the preview cannot drift from what is printed.
+    /// The document that gets printed: the header, then each message inlined
+    /// into the page.
+    ///
+    /// Not the reader's document. That one puts every message in a sandboxed
+    /// iframe, which is right on screen — an email's CSS cannot escape it — but
+    /// wrong on paper, where a print engine draws the frame at its on-screen size
+    /// with its scrollbars and clips the rest.
+    fn print_document_html(&self) -> String {
+        // In a conversation the top header describes the first message only, so
+        // each one says who sent it and when — as the reader's own per-message
+        // headers do on screen.
+        let conversation = self.thread.len() > 1;
+        let messages: Vec<(String, String)> = self
+            .thread
+            .iter()
+            .map(|m| {
+                let doc = body_html(&m.body);
+                let doc = if self.blocked { strip_remote(&doc) } else { doc };
+                let head = if conversation {
+                    print_message_header_html(m)
+                } else {
+                    String::new()
+                };
+                (head, doc)
+            })
+            .collect();
+        print_document(&self.print_header_html(), &messages, !self.blocked)
+    }
+
+    /// That same document, dressed as a page for the preview window.
     fn preview_html(&self) -> String {
-        let doc = self.document_html(false);
+        let doc = self.print_document_html();
         let extra = format!(
             "<style>{}</style></head>",
             crate::ui::print_preview::PREVIEW_STYLES
@@ -1089,24 +1114,156 @@ fn message_frame(body: &str, blocked: bool, dark: bool) -> String {
     )
 }
 
-/// Print-only rules for the wrapper document.
+/// Remove a document's structural tags, keeping everything inside them.
 ///
-/// Printing a dark-themed message would put white text on a black page, so paper
-/// is always light; the on-screen conversation headers lose their hover styling,
-/// which means nothing on paper.
-const PRINT_STYLES: &str = "\
-    .vireo-print-hdr{display:none;}\
-    @media print{\
-      :root{color-scheme:light;}\
-      body{background:#fff;color:#000;}\
-      .vireo-print-hdr{display:block;padding:0 0 10pt;margin:0 0 12pt;\
-        border-bottom:1pt solid #999;font:10pt/1.45 system-ui,sans-serif;color:#000;}\
-      .vireo-print-subject{font-size:14pt;font-weight:700;margin:0 0 8pt;}\
-      .vireo-print-row{margin:0 0 2pt;}\
-      .vireo-print-label{font-weight:700;}\
-      .vireo-msg-hdr{background:none;padding:8pt 0 4pt;}\
-      .vireo-msg{border-bottom:1pt solid #999;}\
-    }";
+/// Printing cannot use the reader's sandboxed iframes: a print engine draws an
+/// iframe at its on-screen size — scrollbars included — and clips whatever does
+/// not fit, so a long message came out as one cropped page. Inlining each
+/// message into the printed document instead lets it flow across pages.
+///
+/// `<style>` and `<meta>` are deliberately kept: a message's own CSS is what
+/// makes it look like itself on paper too.
+fn inline_body(doc: &str) -> String {
+    let mut out = String::with_capacity(doc.len());
+    let lower = doc.to_ascii_lowercase();
+    let mut i = 0;
+    while i < doc.len() {
+        if lower[i..].starts_with("<!doctype") {
+            match doc[i..].find('>') {
+                Some(end) => {
+                    i += end + 1;
+                    continue;
+                }
+                None => break,
+            }
+        }
+        let structural = ["<html", "</html", "<head", "</head", "<body", "</body"];
+        if let Some(tag) = structural.iter().find(|t| lower[i..].starts_with(**t)) {
+            // Only a real tag: "<bodyguard" is content, "<body class=…" is not.
+            let after = i + tag.len();
+            let next = doc.as_bytes().get(after).copied().unwrap_or(b'>');
+            if next == b'>' || next.is_ascii_whitespace() || next == b'/' {
+                match doc[i..].find('>') {
+                    Some(end) => {
+                        i += end + 1;
+                        continue;
+                    }
+                    None => break,
+                }
+            }
+        }
+        let ch = doc[i..].chars().next().unwrap_or('\u{fffd}');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Point a message's own `html`/`body` rules at the block it prints in.
+///
+/// Inlining costs the isolation an iframe gave: with every message in one
+/// document, one sender's `body{font-family:monospace}` would restyle the whole
+/// printout, including the next message in the conversation. Redirecting those
+/// selectors to `.vireo-print-msg` keeps the rule working where it is meant to
+/// and nowhere else. Bare type selectors (`p`, `a`) still reach across, which is
+/// the remaining price of printing a thread as one page.
+fn scope_styles(doc: &str, block: &str) -> String {
+    let lower = doc.to_ascii_lowercase();
+    let mut out = String::with_capacity(doc.len());
+    let mut rest = 0;
+    while let Some(open) = lower[rest..].find("<style").map(|i| i + rest) {
+        let Some(body_start) = lower[open..].find('>').map(|i| open + i + 1) else {
+            break;
+        };
+        let end = lower[body_start..]
+            .find("</style")
+            .map(|i| body_start + i)
+            .unwrap_or(doc.len());
+        out.push_str(&doc[rest..body_start]);
+        out.push_str(&scope_css(&doc[body_start..end], block));
+        rest = end;
+    }
+    out.push_str(&doc[rest..]);
+    out
+}
+
+/// Rewrite `html`/`body` in every selector of a stylesheet.
+fn scope_css(css: &str, block: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let mut prelude = String::new();
+    // What each open brace holds: rules (an at-rule such as `@media`) or
+    // declarations. Only the former contains further selectors.
+    let mut stack: Vec<bool> = Vec::new();
+    let in_rules = |stack: &Vec<bool>| stack.last().copied().unwrap_or(true);
+    for ch in css.chars() {
+        match ch {
+            '{' => {
+                let holds_rules = prelude.trim_start().starts_with('@');
+                if in_rules(&stack) {
+                    out.push_str(&scope_selectors(&prelude, block));
+                } else {
+                    out.push_str(&prelude);
+                }
+                prelude.clear();
+                stack.push(holds_rules);
+                out.push('{');
+            }
+            '}' => {
+                out.push_str(&prelude);
+                prelude.clear();
+                stack.pop();
+                out.push('}');
+            }
+            _ => prelude.push(ch),
+        }
+    }
+    out.push_str(&prelude);
+    out
+}
+
+/// Replace whole-word `html`/`body` in a selector list with the message's block.
+fn scope_selectors(prelude: &str, block: &str) -> String {
+    let bytes = prelude.as_bytes();
+    let mut out = String::with_capacity(prelude.len());
+    let mut i = 0;
+    while i < prelude.len() {
+        let word = ["html", "body"]
+            .into_iter()
+            .find(|w| prelude[i..].to_ascii_lowercase().starts_with(w));
+        // A tag name, not part of `.body`, `#body` or `bodyguard`.
+        let boundary_before = i == 0 || !matches!(bytes[i - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'#' | b'%');
+        if let Some(word) = word {
+            let after = bytes.get(i + word.len()).copied();
+            let boundary_after = !matches!(after, Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_'));
+            if boundary_before && boundary_after {
+                out.push_str(block);
+                i += word.len();
+                continue;
+            }
+        }
+        let ch = prelude[i..].chars().next().unwrap_or('\u{fffd}');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Rules for the printed document, which is a plain page rather than a stack of
+/// frames: long URLs wrap instead of running off the sheet, images shrink to the
+/// page, and each message after the first starts a new one.
+const PRINT_DOCUMENT_STYLES: &str = "\
+    html,body{background:#fff;color:#000;margin:0;padding:0;}\
+    body{font:11pt/1.5 system-ui,sans-serif;overflow-wrap:anywhere;}\
+    img,table,pre{max-width:100% !important;}\
+    img{height:auto !important;}\
+    pre{white-space:pre-wrap;}\
+    .vireo-print-msg + .vireo-print-msg{border-top:1pt solid #999;margin-top:12pt;padding-top:12pt;}\
+    .vireo-print-msghdr{font:bold 10pt/1.45 system-ui,sans-serif;color:#000;margin:0 0 8pt;}\
+    .vireo-print-hdr{display:block;padding:0 0 10pt;margin:0 0 12pt;\
+      border-bottom:1pt solid #999;font:10pt/1.45 system-ui,sans-serif;color:#000;}\
+    .vireo-print-subject{font-size:14pt;font-weight:700;margin:0 0 8pt;}\
+    .vireo-print-row{margin:0 0 2pt;}\
+    .vireo-print-label{font-weight:700;}";
 
 /// The header block that only appears on paper: subject, who it is from and to,
 /// and when.
@@ -1116,6 +1273,51 @@ const PRINT_STYLES: &str = "\
 /// and that document is the body alone. Printed mail without a sender or a date
 /// is close to useless (issue #16), so the same facts go into the document and
 /// are hidden with `@media`.
+/// Assemble the printed page: the header, then every message inlined into it.
+fn print_document(
+    header: &str,
+    messages: &[(String, String)],
+    allow_remote: bool,
+) -> String {
+    let mut body = header.to_string();
+    for (n, (head, doc)) in messages.iter().enumerate() {
+        let block = format!("vireo-print-m{n}");
+        body.push_str(&format!("<article class=\"vireo-print-msg {block}\">"));
+        body.push_str(head);
+        body.push_str(&scope_styles(&inline_body(doc), &format!(".{block}")));
+        body.push_str("</article>");
+    }
+    // The same content policy the reader's frames get: no scripts, and remote
+    // content only when the sender is trusted.
+    inject_csp(
+        &format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\">\
+             <style>{PRINT_DOCUMENT_STYLES}</style></head><body>{body}</body></html>"
+        ),
+        allow_remote,
+        false,
+    )
+}
+
+/// Who sent one message of a printed conversation, and when.
+fn print_message_header_html(m: &Message) -> String {
+    let from = if m.from_addr.is_empty() {
+        attr_escape(&m.from_name)
+    } else if m.from_name.trim().is_empty() {
+        attr_escape(&m.from_addr)
+    } else {
+        format!(
+            "{} &lt;{}&gt;",
+            attr_escape(&m.from_name),
+            attr_escape(&m.from_addr)
+        )
+    };
+    format!(
+        "<div class=\"vireo-print-msghdr\">{from} — {date}</div>",
+        date = attr_escape(&m.datetime_full())
+    )
+}
+
 fn print_header_html(message: Option<&Message>) -> String {
     // Newest first, so a conversation is described by the message on top.
     let Some(m) = message else {
@@ -1255,13 +1457,88 @@ mod tests {
     }
 
     #[test]
-    fn the_header_only_appears_on_paper() {
-        assert!(PRINT_STYLES.contains(".vireo-print-hdr{display:none;}"));
-        assert!(PRINT_STYLES.contains("@media print"));
-        // Paper is light whatever the reader is set to; white text on a black
-        // page would be unreadable and a waste of toner.
-        assert!(PRINT_STYLES.contains("color-scheme:light"));
-        assert!(PRINT_STYLES.contains("background:#fff"));
+    fn printing_inlines_the_message_instead_of_framing_it() {
+        // The bug: printed pages carried the reader's iframe scrollbars and were
+        // cut off at the frame's on-screen height, because a print engine draws an
+        // iframe as a box rather than paginating what is inside it.
+        let doc = print_document(
+            "<div class=\"vireo-print-hdr\">HEADER</div>",
+            &[(
+                String::new(),
+                "<!DOCTYPE html><html><head><style>p{color:red}</style></head>\
+                 <body class=\"x\"><p>Hello</p></body></html>"
+                    .to_string(),
+            )],
+            false,
+        );
+        assert!(!doc.contains("<iframe"), "{doc}");
+        assert!(doc.contains("HEADER"));
+        assert!(doc.contains("<p>Hello</p>"));
+        // The message keeps its own styling on paper.
+        assert!(doc.contains("p{color:red}"));
+        // Long URLs wrap rather than running off the sheet, and wide content is
+        // scaled down instead of being clipped.
+        assert!(doc.contains("overflow-wrap:anywhere"));
+        assert!(doc.contains("img,table,pre{max-width:100% !important;}"));
+        // Still no scripts, and blocked remote content stays blocked.
+        assert!(doc.contains("Content-Security-Policy"));
+    }
+
+    #[test]
+    fn inlining_keeps_everything_but_the_structure() {
+        assert_eq!(
+            inline_body("<!doctype html><html><head><meta charset=\"utf-8\"></head><body id=\"a\">hi</body></html>"),
+            "<meta charset=\"utf-8\">hi"
+        );
+        // A tag that merely starts like one of them is content, not structure.
+        assert_eq!(inline_body("<bodyguard>x</bodyguard>"), "<bodyguard>x</bodyguard>");
+        assert_eq!(inline_body("<p>plain fragment</p>"), "<p>plain fragment</p>");
+        // Unterminated tags must not swallow the rest of the message.
+        assert_eq!(inline_body("text < 5 and > 2"), "text < 5 and > 2");
+    }
+
+    #[test]
+    fn one_message_cannot_restyle_the_whole_printout() {
+        // A conversation prints as one document, so a sender's body rules have to
+        // land on that sender's block and nothing else.
+        let out = scope_styles(
+            "<style>body{font-family:monospace}\
+             @media print{html,body>p{color:red}}\
+             .bodyguard{margin:0}</style><p>hi</p>",
+            ".vireo-print-m1",
+        );
+        assert!(out.contains(".vireo-print-m1{font-family:monospace}"), "{out}");
+        assert!(
+            out.contains("@media print{.vireo-print-m1,.vireo-print-m1>p{color:red}}"),
+            "{out}"
+        );
+        // Only whole tag names: a class that merely contains "body" is untouched,
+        // and so are declarations that mention one.
+        assert!(out.contains(".bodyguard{margin:0}"), "{out}");
+        assert!(out.contains("<p>hi</p>"));
+        assert!(!scope_styles("<p>body{x}</p>", ".vireo-print-m0").contains("vireo-print-m0"));
+        // Each message gets a class of its own, so the first sender's rules stop
+        // at the first message.
+        let doc = print_document(
+            "",
+            &[
+                (String::new(), "<style>body{color:red}</style>one".into()),
+                (String::new(), "two".into()),
+            ],
+            false,
+        );
+        assert!(doc.contains(".vireo-print-m0{color:red}"), "{doc}");
+        assert!(doc.contains("vireo-print-msg vireo-print-m1"), "{doc}");
+    }
+
+    #[test]
+    fn a_printed_conversation_says_who_sent_what() {
+        let mut a = msg_for_print();
+        a.from_name = "Alfonso".into();
+        a.from_addr = "a@example.com".into();
+        let head = print_message_header_html(&a);
+        assert!(head.contains("Alfonso &lt;a@example.com&gt;"), "{head}");
+        assert!(head.contains(&attr_escape(&a.datetime_full())));
     }
 
     #[test]

@@ -12,7 +12,6 @@
 //! sheet. Printing from that window prints the very thing being looked at.
 
 use adw::prelude::*;
-use gtk::prelude::*;
 use webkit6::prelude::WebViewExt;
 
 /// Open the print dialog for a web view and print it.
@@ -54,6 +53,36 @@ pub fn print_webview(webview: &webkit6::WebView, job_name: &str, parent: Option<
             Err(e) => tracing::debug!("print dialog dismissed: {e}"),
         },
     );
+}
+
+/// Print `html` without showing it: render it in a view of its own, then print
+/// that once it has loaded.
+///
+/// Printing the reader's own view is what a print command would naturally do,
+/// and it is wrong here — the reader puts each message in an iframe, which a
+/// print engine draws at its on-screen size, scrollbars and all, clipping the
+/// rest. So Ctrl+P renders the same page-shaped document the preview shows.
+pub fn print_html(html: &str, job_name: &str, parent: Option<gtk::Window>) {
+    let webview = crate::ui::message_view::new_preview_webview();
+    // Nothing else holds this view, and a dropped view never finishes loading.
+    // One at a time is enough: starting another print replaces it.
+    PENDING.with(|slot| *slot.borrow_mut() = Some(webview.clone()));
+
+    let job = job_name.to_string();
+    let done = std::rc::Rc::new(std::cell::Cell::new(false));
+    webview.connect_load_changed(move |view, event| {
+        if event != webkit6::LoadEvent::Finished || done.replace(true) {
+            return;
+        }
+        print_webview(view, &job, parent.clone());
+    });
+    webview.load_html(html, Some("https://vireo.localhost/print"));
+}
+
+thread_local! {
+    /// The view of a print that has been asked for but has not loaded yet.
+    static PENDING: std::cell::RefCell<Option<webkit6::WebView>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// The name of a printer that writes to a file, for saving a PDF.
@@ -228,8 +257,6 @@ pub const PREVIEW_STYLES: &str = "\
     .vireo-print-subject{font-size:14pt;font-weight:700;margin:0 0 8pt;}\
     .vireo-print-row{margin:0 0 2pt;}\
     .vireo-print-label{font-weight:700;}\
-    .vireo-msg-hdr{background:none !important;padding:8pt 0 4pt;}\
-    .vireo-msg{border-bottom:1pt solid #999;}\
     @media print{\
       html,body{background:#fff !important;padding:0;}\
       .vireo-print-sheet{width:auto;min-height:0;margin:0;padding:0;box-shadow:none;}\
