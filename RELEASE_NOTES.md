@@ -2,7 +2,12 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.11.0
+## What's new in 1.12.0
+
+- **You can print a message.** Press **Ctrl+P**, use the printer button in the toolbar, or Main Menu → Print Message… What comes out is the message as you see it, with a header carrying the subject, who it is from and to, and the date — and it always prints on white, even if you read in dark mode.
+- **Print preview, inside Vireo.** The toolbar's printer button opens a preview on a page-shaped sheet, so you can see what will come out before spending paper. **Print…** sends it to the printer, and **Save as PDF…** writes it straight to a file without going through the print dialog at all.
+
+## In 1.11.0
 
 - **Vireo can keep running after you close its window**, so new mail still arrives and notifies. GNOME doesn't have a system tray — instead Vireo appears under **Background Apps** in the system menu, with your unread count beside it, and can be quit from there. It's off by default: turn on *Keep running in the background* in Preferences → Mail.
 - **Start at login** (a second switch, once the above is on). Vireo starts without a window and waits in the system menu, watching for mail from the moment you sign in.
