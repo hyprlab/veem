@@ -695,7 +695,7 @@ impl SimpleComponent for AppModel {
                                 },
                                 // pack_end fills right-to-left, so these are declared
                                 // in reverse of their visual order. Left to right:
-                                // Archive, Delete, Spam, View Source, sender check.
+                                // Archive, Delete, Spam, View Source, Print, sender check.
                                 pack_end = &gtk::MenuButton {
                                     set_icon_name: "co.hyprlab.Vireo-lightbulb-symbolic",
                                     add_css_class: "flat",
@@ -762,6 +762,16 @@ impl SimpleComponent for AppModel {
                                             },
                                         },
                                     },
+                                },
+                                pack_end = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-printer-symbolic",
+                                    set_tooltip_text: Some("Print (Ctrl+P)"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox,
+                                    #[watch]
+                                    set_sensitive: model.current.is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::PrintMessage),
                                 },
                                 pack_end = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-background-app-ghost-symbolic",
