@@ -8,5 +8,6 @@ pub mod message_view;
 pub mod message_window;
 pub mod notifications;
 pub mod preferences;
+pub mod print_preview;
 pub mod rich_editor;
 pub mod sidebar;

@@ -484,122 +484,32 @@ impl Component for MessageView {
                 }
             }
             MessageViewInput::Print => {
-                // Printing is deliberately split in two: GTK's async print dialog
-                // collects the settings, then WebKit prints with them.
-                //
-                // WebKit's own `run_dialog` would be one call, but it spins a
-                // nested main loop, and polling a glib future from inside one
-                // aborts the process ("Polling futures only allowed if the thread
-                // is owning the MainContext") — which is exactly what happened
-                // the first time this shipped. GtkPrintDialog exists because of
-                // that class of bug: it returns through a callback instead.
-                let print = webkit6::PrintOperation::new(&self.webview);
-                let job = self
-                    .current
-                    .as_ref()
-                    .map(|m| m.subject.clone())
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or_else(|| "Message".to_string());
-                let parent = self.webview.root().and_downcast::<gtk::Window>();
-
-                let dialog = gtk::PrintDialog::new();
-                dialog.set_title("Print Message");
-                // Names the job in the queue and seeds the filename when printing
-                // to a file, which is otherwise "unknown".
-                let settings = gtk::PrintSettings::new();
-                settings.set(
-                    gtk::PRINT_SETTINGS_OUTPUT_BASENAME,
-                    Some(&sanitize_filename(&job)),
-                );
-                dialog.set_print_settings(&settings);
-
-                dialog.setup(
-                    parent.as_ref(),
-                    gtk::gio::Cancellable::NONE,
-                    move |result| match result {
-                        Ok(setup) => {
-                            print.set_print_settings(&setup.print_settings());
-                            print.set_page_setup(&setup.page_setup());
-                            print.connect_failed(|_, error| {
-                                tracing::warn!("printing failed: {error}");
-                            });
-                            // Keep the operation alive until WebKit says it is
-                            // done; dropping it here would cancel the job.
-                            let keep = std::cell::RefCell::new(Some(print.clone()));
-                            print.connect_finished(move |_| {
-                                keep.borrow_mut().take();
-                            });
-                            print.print();
-                        }
-                        // Dismissing the dialog arrives here as an error; it is
-                        // the ordinary way to change your mind, not a failure.
-                        Err(e) => tracing::debug!("print dialog dismissed: {e}"),
-                    },
+                crate::ui::print_preview::print_webview(
+                    &self.webview,
+                    &sanitize_filename(&self.job_name()),
+                    self.webview.root().and_downcast::<gtk::Window>(),
                 );
             }
 
             MessageViewInput::PrintPreview => {
-                // The print dialog's own Preview button belongs to the portal and,
-                // in a sandbox, does not produce one — so Vireo makes its own:
-                // print to a PDF with the same code path the printer uses, then
-                // hand the file to whatever opens PDFs.
-                let print = webkit6::PrintOperation::new(&self.webview);
-                let job = self
-                    .current
-                    .as_ref()
-                    .map(|m| m.subject.clone())
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or_else(|| "Message".to_string());
-                let name = sanitize_filename(&job);
-                let dir = std::env::temp_dir().join("vireo-print");
-                if let Err(e) = std::fs::create_dir_all(&dir) {
-                    tracing::warn!("could not make a place for the preview: {e}");
-                    return;
-                }
-                let path = dir.join(format!("{name}.pdf"));
-                // Build the URI with GIO, not with `format!`: a subject becomes a
-                // filename, and mail subjects are full of spaces and brackets. An
-                // unescaped URI parses as nothing, so the PDF was written and then
-                // silently never opened.
-                let uri = gtk::gio::File::for_path(&path).uri().to_string();
-
-                // Naming the file printer literally ("Print to File") fails:
-                // that name is translated, and GTK enumerates printers
-                // asynchronously, so the guess may also not exist yet — which is
-                // what "Printer not found" meant the first time this shipped.
-                let Some(printer) = file_printer() else {
-                    tracing::warn!("no printer available that can write a PDF");
+                // Shown inside Vireo rather than exported to a PDF and handed to
+                // whatever the desktop opens PDFs with: that route is a temporary
+                // file, a URI, the document portal and an external viewer, each
+                // able to fail without saying anything — and it did.
+                let Some(parent) = self
+                    .webview
+                    .root()
+                    .and_downcast::<adw::ApplicationWindow>()
+                else {
+                    tracing::warn!("no window to attach the preview to");
                     return;
                 };
-                tracing::info!(%printer, %uri, "printing preview to a file");
-                let settings = gtk::PrintSettings::new();
-                settings.set_printer(&printer);
-                settings.set(gtk::PRINT_SETTINGS_OUTPUT_URI, Some(&uri));
-                settings.set(gtk::PRINT_SETTINGS_OUTPUT_FILE_FORMAT, Some("pdf"));
-                settings.set(gtk::PRINT_SETTINGS_OUTPUT_BASENAME, Some(&name));
-                print.set_print_settings(&settings);
-
-                print.connect_failed(|_, error| {
-                    tracing::warn!("print preview failed: {error}");
-                });
-                let keep = std::cell::RefCell::new(Some(print.clone()));
-                let written = path.clone();
-                print.connect_finished(move |_| {
-                    keep.borrow_mut().take();
-                    let size = std::fs::metadata(&written).map(|m| m.len()).unwrap_or(0);
-                    tracing::info!(bytes = size, "preview written; opening it");
-                    // The same route attachments take: GIO hands the portal a
-                    // file descriptor, so a viewer outside the sandbox can read a
-                    // file that only exists inside it. A plain OpenURI with this
-                    // path would point the viewer at nothing.
-                    if let Err(e) = gtk::gio::AppInfo::launch_default_for_uri(
-                        &uri,
-                        None::<&gtk::gio::AppLaunchContext>,
-                    ) {
-                        tracing::warn!("could not open the preview: {e}");
-                    }
-                });
-                print.print();
+                let html = self.preview_html();
+                crate::ui::print_preview::open(
+                    &parent,
+                    &html,
+                    &sanitize_filename(&self.job_name()),
+                );
             }
 
             MessageViewInput::ThemeChanged => {
@@ -779,6 +689,30 @@ impl MessageView {
         )
     }
 
+    /// What to call the print job — the subject, or something rather than nothing.
+    fn job_name(&self) -> String {
+        self.current
+            .as_ref()
+            .map(|m| m.subject.clone())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Message".to_string())
+    }
+
+    /// The document as it will print: rendered light, header shown, laid out on a
+    /// page-shaped sheet. Built from the same `document_html` the reader uses, so
+    /// the preview cannot drift from what is printed.
+    fn preview_html(&self) -> String {
+        let doc = self.document_html(false);
+        let extra = format!(
+            "<style>{}</style></head>",
+            crate::ui::print_preview::PREVIEW_STYLES
+        );
+        let doc = doc.replacen("</head>", &extra, 1);
+        // Wrap the content in the sheet the styles above draw.
+        doc.replacen("<body>", "<body><div class=\"vireo-print-sheet\">", 1)
+            .replacen("</body>", "</div></body>", 1)
+    }
+
     /// The header block that only appears on paper (see [`print_header_html`]).
     fn print_header_html(&self) -> String {
         print_header_html(self.thread.first().or(self.current.as_ref()))
@@ -798,6 +732,12 @@ impl MessageView {
 
 /// Create a sandboxed WebView: no JavaScript or dev tools, smooth scrolling, and
 /// links routed to the external browser.
+/// A web view for the print preview: same sandboxing as the reader's, since it
+/// shows the same message.
+pub fn new_preview_webview() -> webkit6::WebView {
+    new_webview()
+}
+
 fn new_webview() -> webkit6::WebView {
     // A user-content manager with a script message handler lets the wrapper
     // document notify us (e.g. a double-clicked conversation header).
