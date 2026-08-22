@@ -282,7 +282,7 @@ impl Component for AccountsWindow {
                                     set_margin_bottom: 6,
 
                                     gtk::Label {
-                                        set_label: "This account is managed by GNOME Online Accounts.\nIts address, servers and password are changed in Settings \u{2192} Online Accounts.",
+                                        set_label: "This account is managed by GNOME Online Accounts.\nIts address, servers and password are changed in Settings \u{2192} Online Accounts.\nTurn it off below to hide it in Vireo without touching your system account.",
                                         set_justify: gtk::Justification::Center,
                                         set_halign: gtk::Align::Center,
                                         set_wrap: true,
@@ -506,25 +506,14 @@ impl Component for AccountsWindow {
                             add = &adw::PreferencesGroup {
                                 set_visible: false,
                                 set_title: "GNOME Online Account",
-                                set_description: Some(
-                                    "This account comes from GNOME Online Accounts. Turn it off \
-                                     to hide it in Vireo without touching your system; to edit or \
-                                     remove it, open Online Accounts."
-                                ),
 
                                 #[name = "goa_enabled_row"]
                                 adw::SwitchRow {
                                     set_title: "Enabled in Vireo",
+                                    set_subtitle: "Hides the account here without removing it from your system.",
                                     connect_active_notify[sender] => move |row| {
                                         sender.input(AccountsInput::ToggleCurrentEnabled(row.is_active()));
                                     },
-                                },
-
-                                gtk::Button {
-                                    set_label: "Open Online Accounts…",
-                                    set_halign: gtk::Align::Center,
-                                    set_margin_top: 12,
-                                    connect_clicked => AccountsInput::OpenOnlineAccounts,
                                 },
                             },
 
