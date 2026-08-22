@@ -2,7 +2,11 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.10.1
+## What's new in 1.10.2
+
+- **Accounts from GNOME Online Accounts are now read-only in Vireo.** Their address, servers and password belong to the system, so Vireo greys those fields out and points you to Settings → Online Accounts, where changing them actually works. Your display name, signature, colour and label are still yours to edit here, and the switch at the top of the account still hides an account in Vireo without removing it from your system.
+
+## In 1.10.1
 
 - **Fixed: attachments that didn't show up.** Some messages — Apple Mail ones in particular, where a PDF or photo is attached "inline" — showed no paperclip in the list and no attachment when opened, even though the file was there. Vireo now checks the message itself rather than trusting what the server's summary implies, so those files appear. Recent mail is corrected in the background before you open it.
 

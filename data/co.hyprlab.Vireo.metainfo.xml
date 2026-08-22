@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.10.2" date="2026-08-22" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.10.2</url>
+      <description>
+        <p>Accounts imported from GNOME Online Accounts are now read-only in Vireo, which points to Settings → Online Accounts for the settings the system owns.</p>
+      </description>
+    </release>
     <release version="1.10.1" date="2026-08-22" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.10.1</url>
       <description>
