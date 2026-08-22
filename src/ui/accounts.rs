@@ -267,6 +267,22 @@ impl Component for AccountsWindow {
 
                         #[wrap(Some)]
                         set_content = &adw::PreferencesPage {
+                            // GNOME Online Accounts owns this account's servers and
+                            // credentials; Vireo only mirrors them. Saying so where
+                            // the greyed-out fields are is worth more than leaving
+                            // the user to work out why they can't type.
+                            #[name = "goa_banner"]
+                            add = &adw::PreferencesGroup {
+                                set_visible: false,
+
+                                adw::Banner {
+                                    set_revealed: true,
+                                    set_title: "Managed by GNOME Online Accounts —                                                 change the address, servers or password in                                                 Settings → Online Accounts.",
+                                    set_button_label: Some("Open Online Accounts…"),
+                                    connect_button_clicked => AccountsInput::OpenOnlineAccounts,
+                                },
+                            },
+
                             add = &adw::PreferencesGroup {
                                 set_title: "Mail Account",
 
@@ -597,6 +613,8 @@ impl Component for AccountsWindow {
                 self.label_synced = String::new();
                 self.pending_oauth_refresh = None;
                 clear_editor(widgets);
+                set_connection_editable(widgets, true);
+                widgets.goa_banner.set_visible(false);
                 self.apply_provider(widgets);
                 self.sig_editor.set_html("");
                 widgets.color_btn.set_rgba(&parse_color(DEFAULT_COLOR));
@@ -626,6 +644,8 @@ impl Component for AccountsWindow {
                 // GOA accounts: no "Remove" (it lives in the system) — offer an
                 // enable/disable toggle and a shortcut to Online Accounts instead.
                 let is_goa = acc.goa_id.is_some();
+                set_connection_editable(widgets, !is_goa);
+                widgets.goa_banner.set_visible(is_goa);
                 widgets.remove_group.set_visible(!is_goa);
                 widgets.goa_manage_group.set_visible(is_goa);
                 widgets.goa_enabled_row.set_active(acc.enabled);
@@ -788,6 +808,20 @@ impl Component for AccountsWindow {
                     if orig.goa_id.is_some() {
                         account.oauth = orig.oauth;
                         account.oauth_settings = orig.oauth_settings.clone();
+                        // GNOME Online Accounts is the source of truth for these;
+                        // Vireo keeps only what it owns (display name, signature,
+                        // colour, emoji, label).
+                        account.email = orig.email.clone();
+                        account.protocol = orig.protocol;
+                        account.imap_host = orig.imap_host.clone();
+                        account.imap_port = orig.imap_port;
+                        account.smtp_host = orig.smtp_host.clone();
+                        account.smtp_port = orig.smtp_port;
+                        account.username = orig.username.clone();
+                        account.password = orig.password.clone();
+                        account.smtp_separate = orig.smtp_separate;
+                        account.smtp_username = orig.smtp_username.clone();
+                        account.smtp_password = orig.smtp_password.clone();
                     }
                 }
 
@@ -1350,6 +1384,46 @@ fn fill_editor(widgets: &AccountsWindowWidgets, acc: &AccountConfig) {
     // Signature is loaded into the rich-text editor by the caller.
     widgets.test_result.set_visible(false);
     widgets.test_btn.set_sensitive(true);
+}
+
+/// Grey out everything GNOME Online Accounts owns.
+///
+/// An account imported from GOA takes its address, servers, protocol and
+/// credentials from the system; editing them here would either be overwritten
+/// the next time GOA is read, or quietly disagree with what the rest of the
+/// desktop uses. What stays editable is what Vireo owns: the sender's display
+/// name, signature, colour, emoji and label.
+fn set_connection_editable(widgets: &AccountsWindowWidgets, editable: bool) {
+    for row in [
+        widgets.email_row.upcast_ref::<gtk::Widget>(),
+        widgets.host_row.upcast_ref(),
+        widgets.port_row.upcast_ref(),
+        widgets.smtp_row.upcast_ref(),
+        widgets.smtp_port_row.upcast_ref(),
+        widgets.user_row.upcast_ref(),
+        widgets.pass_row.upcast_ref(),
+        widgets.smtp_user_row.upcast_ref(),
+        widgets.smtp_pass_row.upcast_ref(),
+    ] {
+        row.set_sensitive(editable);
+    }
+    widgets.provider_row.set_sensitive(editable);
+    widgets.protocol_row.set_sensitive(editable);
+    widgets.smtp_separate_row.set_sensitive(editable);
+    // OAuth client details belong to a natively-added account; a GOA one gets its
+    // tokens from the system.
+    for row in [
+        widgets.oauth_client_id_row.upcast_ref::<gtk::Widget>(),
+        widgets.oauth_secret_row.upcast_ref(),
+        widgets.oauth_auth_url_row.upcast_ref(),
+        widgets.oauth_token_url_row.upcast_ref(),
+        widgets.oauth_scope_row.upcast_ref(),
+    ] {
+        row.set_sensitive(editable);
+    }
+    widgets.oauth_signin_btn.set_sensitive(editable);
+    // Testing stays available: it is read-only, and confirming that the imported
+    // settings actually connect is exactly what someone would want here.
 }
 
 fn clear_editor(widgets: &AccountsWindowWidgets) {
