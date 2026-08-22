@@ -2,7 +2,11 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.10.0
+## What's new in 1.10.1
+
+- **Fixed: attachments that didn't show up.** Some messages — Apple Mail ones in particular, where a PDF or photo is attached "inline" — showed no paperclip in the list and no attachment when opened, even though the file was there. Vireo now checks the message itself rather than trusting what the server's summary implies, so those files appear. Recent mail is corrected in the background before you open it.
+
+## In 1.10.0
 
 - **Nothing is lost when a send fails.** Messages that can't go out — usually because you're offline — now wait in an **Outbox** and are sent as soon as the connection is back. You can open one to edit it, send it by hand, or throw it away, and Vireo tells you when a waiting message has gone. The Outbox behaves like any other folder in the sidebar and only appears while something is in it.
 - **Message previews.** The list can show the first lines of each message under its subject. Choose **Off, 1, 2 or 3 lines** in Preferences → Message List; Off also stops previews being downloaded at all.
