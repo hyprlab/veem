@@ -686,6 +686,7 @@ impl MessageView {
                 sections.push_str(&body);
             }
         }
+        let print_header = self.print_header_html();
         let scheme = if dark { "dark" } else { "light" };
         // Paint the wrapper and the (still-loading) iframes in the theme colour so
         // there's no white flash before each message's content renders.
@@ -704,10 +705,16 @@ impl MessageView {
                .vireo-addr{{opacity:0.55;font-size:0.9em;}}\
                .vireo-date{{margin-left:auto;opacity:0.55;font-size:0.85em;}}\
                .vireo-loading{{opacity:0.5;padding:16px;}}\
+               {PRINT_STYLES}\
              </style>\
              <script>{SIZE_SCRIPT}</script>\
-             </head><body>{sections}</body></html>"
+             </head><body>{print_header}{sections}</body></html>"
         )
+    }
+
+    /// The header block that only appears on paper (see [`print_header_html`]).
+    fn print_header_html(&self) -> String {
+        print_header_html(self.thread.first().or(self.current.as_ref()))
     }
 
     /// Paint the WebView canvas in the theme colour so unstyled bodies (and the
@@ -997,7 +1004,9 @@ fn inject_csp(html: &str, allow_remote: bool, dark: bool) -> String {
     let supported = if dark { "dark light" } else { "light dark" };
     let theme = format!(
         "<meta name=\"color-scheme\" content=\"{supported}\">\
-         <style>:root{{color-scheme:{scheme};}}{body_pad}</style>"
+         <style>:root{{color-scheme:{scheme};}}{body_pad}\
+         @media print{{:root{{color-scheme:light;}}html,body{{background:#fff !important;}}}}\
+         </style>"
     );
     // `no-referrer` keeps the synthetic `vireo.localhost` base URI from leaking as
     // a Referer/Origin header — both for privacy and because hotlink-protected
@@ -1073,6 +1082,80 @@ fn message_frame(body: &str, blocked: bool, dark: bool) -> String {
     )
 }
 
+/// Print-only rules for the wrapper document.
+///
+/// Printing a dark-themed message would put white text on a black page, so paper
+/// is always light; the on-screen conversation headers lose their hover styling,
+/// which means nothing on paper.
+const PRINT_STYLES: &str = "\
+    .vireo-print-hdr{display:none;}\
+    @media print{\
+      :root{color-scheme:light;}\
+      body{background:#fff;color:#000;}\
+      .vireo-print-hdr{display:block;padding:0 0 10pt;margin:0 0 12pt;\
+        border-bottom:1pt solid #999;font:10pt/1.45 system-ui,sans-serif;color:#000;}\
+      .vireo-print-subject{font-size:14pt;font-weight:700;margin:0 0 8pt;}\
+      .vireo-print-row{margin:0 0 2pt;}\
+      .vireo-print-label{font-weight:700;}\
+      .vireo-msg-hdr{background:none;padding:8pt 0 4pt;}\
+      .vireo-msg{border-bottom:1pt solid #999;}\
+    }";
+
+/// The header block that only appears on paper: subject, who it is from and to,
+/// and when.
+///
+/// On screen these facts are in the pane above the message, which is a GTK widget
+/// and therefore cannot be printed — WebKit prints the document it is showing,
+/// and that document is the body alone. Printed mail without a sender or a date
+/// is close to useless (issue #16), so the same facts go into the document and
+/// are hidden with `@media`.
+fn print_header_html(message: Option<&Message>) -> String {
+    // Newest first, so a conversation is described by the message on top.
+    let Some(m) = message else {
+        return String::new();
+    };
+    let row = |label: &str, value: &str| -> String {
+        if value.trim().is_empty() {
+            return String::new();
+        }
+        format!(
+            "<div class=\"vireo-print-row\"><span class=\"vireo-print-label\">{}</span> {}</div>",
+            escape_text(label),
+            escape_text(value)
+        )
+    };
+    let from = if m.from_addr.trim().is_empty() {
+        m.from_name.clone()
+    } else if m.from_name.trim().is_empty() || m.from_name == m.from_addr {
+        m.from_addr.clone()
+    } else {
+        format!("{} <{}>", m.from_name, m.from_addr)
+    };
+    let subject = if m.subject.trim().is_empty() {
+        "(no subject)".to_string()
+    } else {
+        m.subject.clone()
+    };
+    format!(
+        "<div class=\"vireo-print-hdr\">\
+           <div class=\"vireo-print-subject\">{subject}</div>{from}{to}{cc}{date}\
+         </div>",
+        subject = escape_text(&subject),
+        from = row("From:", &from),
+        to = row("To:", &m.to),
+        cc = row("Cc:", &m.cc),
+        date = row("Date:", &m.datetime_full()),
+    )
+}
+
+/// Escape text for HTML content: a subject or an address that contains `<` must
+/// not become a tag.
+fn escape_text(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 /// Escape a string for use inside a double-quoted HTML attribute (e.g. `srcdoc`).
 fn attr_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('"', "&quot;")
@@ -1113,6 +1196,66 @@ fn sanitize_filename(subject: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn msg_for_print() -> Message {
+        Message {
+            id: 1,
+            account_id: 1,
+            folder_id: 1,
+            uid: 1,
+            from_name: "Ada Lovelace".into(),
+            from_addr: "ada@example.com".into(),
+            to: "me@example.com".into(),
+            cc: "carol@example.com".into(),
+            subject: "Quarterly numbers".into(),
+            preview: String::new(),
+            body: "<p>hi</p>".into(),
+            date: "09:14".into(),
+            timestamp: 0,
+            unread: false,
+            starred: false,
+            has_attachment: false,
+            message_id: String::new(),
+            references: String::new(),
+        }
+    }
+
+    #[test]
+    fn the_printed_page_carries_the_header() {
+        // On screen these facts live in a GTK pane, which WebKit cannot print —
+        // so they have to be in the document itself (issue #16).
+        let m = msg_for_print();
+        let header = print_header_html(Some(&m));
+        assert!(header.contains("Quarterly numbers"), "{header}");
+        assert!(header.contains("Ada Lovelace &lt;ada@example.com&gt;"), "{header}");
+        assert!(header.contains("me@example.com"), "{header}");
+        assert!(header.contains("carol@example.com"), "{header}");
+        assert!(header.contains("From:") && header.contains("To:") && header.contains("Date:"));
+    }
+
+    #[test]
+    fn the_printed_header_is_text_not_markup() {
+        let mut m = msg_for_print();
+        m.subject = "<script>alert(1)</script>".into();
+        m.cc = String::new();
+        let header = print_header_html(Some(&m));
+        assert!(!header.contains("<script>"), "{header}");
+        assert!(header.contains("&lt;script&gt;"), "{header}");
+        // An empty field is left out rather than printed as a blank line.
+        assert!(!header.contains("Cc:"), "{header}");
+        // No message at all: nothing to describe.
+        assert_eq!(print_header_html(None), "");
+    }
+
+    #[test]
+    fn the_header_only_appears_on_paper() {
+        assert!(PRINT_STYLES.contains(".vireo-print-hdr{display:none;}"));
+        assert!(PRINT_STYLES.contains("@media print"));
+        // Paper is light whatever the reader is set to; white text on a black
+        // page would be unreadable and a waste of toner.
+        assert!(PRINT_STYLES.contains("color-scheme:light"));
+        assert!(PRINT_STYLES.contains("background:#fff"));
+    }
 
     #[test]
     fn print_filenames_survive_real_subjects() {
