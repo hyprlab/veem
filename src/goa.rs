@@ -25,8 +25,6 @@ const IFACE_OAUTH2: &str = "org.gnome.OnlineAccounts.OAuth2Based";
 pub struct GoaMailAccount {
     /// GOA account id (e.g. "account_1699…").
     pub id: String,
-    /// D-Bus object path of the account.
-    pub path: String,
     pub email: String,
     pub name: String,
     pub provider: String,
@@ -124,7 +122,7 @@ fn try_list() -> Result<Vec<GoaMailAccount>, String> {
     let (objects,): (ManagedObjects,) = reply.body().deserialize().map_err(|e| e.to_string())?;
 
     let mut out = Vec::new();
-    for (path, ifaces) in objects.iter() {
+    for ifaces in objects.values() {
         let (Some(account), Some(mail)) =
             (ifaces.get(IFACE_ACCOUNT), ifaces.get(IFACE_MAIL))
         else {
@@ -154,7 +152,6 @@ fn try_list() -> Result<Vec<GoaMailAccount>, String> {
 
         out.push(GoaMailAccount {
             id: get_str(account, "Id"),
-            path: path.as_str().to_string(),
             email,
             name: {
                 let n = get_str(mail, "Name");
@@ -276,25 +273,69 @@ fn try_oauth_token(goa_id: &str) -> Result<String, String> {
     }
 }
 
-/// Fetch a GOA account's mail password (password-based providers only).
-pub fn fetch_password(path: &str, goa_id: &str) -> Option<String> {
-    let conn = zbus::blocking::Connection::session().ok()?;
-    // GOA's GetPassword takes an id argument; the account id is the usual key.
+/// Ask GOA to validate or refresh an account's credentials before reading them.
+///
+/// Geary does this first and it matters: GOA may need to unlock the keyring or
+/// renew a token, and without it `GetPassword` can come back empty for an
+/// account that is perfectly usable. Failure is not fatal — GOA often still has
+/// a cached secret — so the caller carries on and lets the read decide.
+fn ensure_credentials(conn: &zbus::blocking::Connection, path: &str) {
+    if let Err(e) = conn.call_method(
+        Some(GOA_DEST),
+        path,
+        Some(IFACE_ACCOUNT),
+        "EnsureCredentials",
+        &(),
+    ) {
+        tracing::debug!("GOA EnsureCredentials failed for {path}: {e}");
+    }
+}
+
+/// Read one credential by id, if GOA has it.
+fn password_by_id(
+    conn: &zbus::blocking::Connection,
+    path: &str,
+    credential_id: &str,
+) -> Option<String> {
     let reply = conn
         .call_method(
             Some(GOA_DEST),
             path,
             Some(IFACE_PASSWORD),
             "GetPassword",
-            &(goa_id,),
+            &(credential_id,),
         )
+        .map_err(|e| tracing::debug!("GOA GetPassword({credential_id}) failed: {e}"))
         .ok()?;
     let (password,): (String,) = reply.body().deserialize().ok()?;
-    if password.is_empty() {
-        None
-    } else {
-        Some(password)
+    (!password.is_empty()).then_some(password)
+}
+
+/// The IMAP and SMTP passwords GOA holds for a mail account.
+///
+/// GOA's mail provider files these under `imap-password` and `smtp-password`;
+/// other providers use a plain `password`, and some builds hand back the account
+/// secret whatever id they are given. All three are tried rather than assuming
+/// one, because getting it wrong leaves an account that silently can't log in
+/// (issue #17) — and since accounts imported from GOA no longer expose their
+/// password field, there is no longer a manual way out.
+pub fn mail_passwords(goa_id: &str) -> (Option<String>, Option<String>) {
+    let Ok(conn) = zbus::blocking::Connection::session() else {
+        tracing::warn!("GOA passwords unavailable: no session bus");
+        return (None, None);
+    };
+    let path = format!("/org/gnome/OnlineAccounts/Accounts/{goa_id}");
+    ensure_credentials(&conn, &path);
+
+    let first = |ids: &[&str]| ids.iter().find_map(|id| password_by_id(&conn, &path, id));
+    let imap = first(&["imap-password", "password", goa_id]);
+    // Most servers use one password for both; only look for a separate SMTP one,
+    // and fall back to the incoming password rather than sending none.
+    let smtp = first(&["smtp-password"]).or_else(|| imap.clone());
+    if imap.is_none() {
+        tracing::warn!("GNOME Online Accounts returned no password for {goa_id}");
     }
+    (imap, smtp)
 }
 
 

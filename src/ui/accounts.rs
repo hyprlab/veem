@@ -701,8 +701,10 @@ impl Component for AccountsWindow {
                 if let Some(g) = self.goa.get(index).cloned() {
                     // Password-based providers: pull the password now. OAuth
                     // providers: authenticate with a GOA token at connect time.
+                    // Either way the worker asks GOA again when it connects, so an
+                    // account still works if this read comes back empty.
                     let (password, oauth) = if g.password_based {
-                        (crate::goa::fetch_password(&g.path, &g.id).unwrap_or_default(), false)
+                        (crate::goa::mail_passwords(&g.id).0.unwrap_or_default(), false)
                     } else {
                         (String::new(), true)
                     };

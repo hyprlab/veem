@@ -297,6 +297,37 @@ async fn run_imap(
             account.smtp_password = pw;
         }
     }
+    // Still nothing, and the account came from GNOME Online Accounts? Ask GOA.
+    // The import may have read it before GOA could unlock the keyring, and since
+    // an imported account no longer exposes its password field there would
+    // otherwise be no way to fix it (issue #17). Storing what comes back means a
+    // later run works even if GOA is slow to start.
+    if account.password.is_empty() && !account.oauth {
+        if let Some(goa_id) = account.goa_id.clone() {
+            let (imap, smtp) =
+                tokio::task::spawn_blocking(move || crate::goa::mail_passwords(&goa_id))
+                    .await
+                    .unwrap_or((None, None));
+            if let Some(pw) = imap {
+                let _ = crate::config::store_password(&account.email, &pw);
+                account.password = pw;
+            }
+            if let (true, Some(pw)) = (account.smtp_separate, smtp) {
+                let _ = crate::config::store_smtp_password(&account.email, &pw);
+                account.smtp_password = pw;
+            }
+            if account.password.is_empty() {
+                emit(WorkerEvent::Error {
+                    text: format!(
+                        "GNOME Online Accounts has no password for {}. Open Settings → Online \
+                         Accounts and sign in again.",
+                        account.email
+                    ),
+                    connectivity: false,
+                });
+            }
+        }
+    }
 
     let cache = Cache::open()
         .map_err(|e| tracing::warn!("cache unavailable: {e}"))
