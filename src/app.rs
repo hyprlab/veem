@@ -2521,14 +2521,11 @@ impl SimpleComponent for AppModel {
                 });
                 let next_after_vanish = if vanished {
                     let cur_uid = self.current.as_ref().unwrap().uid;
-                    let old_idx = self
-                        .message_cache
-                        .get(&(account_id, folder_id))
-                        .and_then(|old| old.iter().position(|m| m.uid == cur_uid));
-                    old_idx
-                        .and_then(|i| messages.get(i.min(messages.len().saturating_sub(1))))
-                        .or_else(|| messages.first())
-                        .map(|m| (m.account_id, m.id))
+                    next_after_vanish(
+                        self.message_cache.get(&(account_id, folder_id)),
+                        &messages,
+                        cur_uid,
+                    )
                 } else {
                     None
                 };
@@ -5650,9 +5647,46 @@ fn build_search_pool(cache: &HashMap<(u32, u32), Vec<Message>>) -> Vec<Message> 
     cache.values().flatten().cloned().collect()
 }
 
+/// Where to move the reader when its message disappeared from a sync (deleted or
+/// moved on another device): whatever now sits in the slot it occupied.
+///
+/// `None` when that slot cannot be worked out, which is not the same as "start at
+/// the top". This used to fall back to the folder's first message, and since
+/// deleting prunes the message from the cache before the sync arrives, the
+/// lookup fails on exactly that path — so a delete could throw the selection to
+/// the top of the folder and scroll the list with it (#19).
+fn next_after_vanish(
+    previous: Option<&Vec<Message>>,
+    messages: &[Message],
+    cur_uid: u32,
+) -> Option<(u32, u32)> {
+    let idx = previous?.iter().position(|m| m.uid == cur_uid)?;
+    messages
+        .get(idx.min(messages.len().checked_sub(1)?))
+        .map(|m| (m.account_id, m.id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_vanished_message_never_throws_you_to_the_top() {
+        let m = |uid| msg(1, 1, uid);
+        let previous = vec![m(10), m(9), m(8), m(7)];
+        let after = vec![m(10), m(9), m(7)];
+        // The message that vanished sat third; whatever is third now takes over.
+        assert_eq!(next_after_vanish(Some(&previous), &after, 8), Some((1, 7)));
+        // It sat last: the new last row.
+        let after = vec![m(10), m(9)];
+        assert_eq!(next_after_vanish(Some(&previous), &after, 7), Some((1, 9)));
+        // No slot to go by — deleting prunes the cache, so this is the delete
+        // path — and the top of the folder is NOT the answer (#19).
+        assert_eq!(next_after_vanish(Some(&previous), &after, 999), None);
+        assert_eq!(next_after_vanish(None, &after, 8), None);
+        // Nothing left at all.
+        assert_eq!(next_after_vanish(Some(&previous), &[], 8), None);
+    }
 
     #[test]
     fn single_key_map_matches_the_request() {

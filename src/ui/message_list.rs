@@ -1544,9 +1544,7 @@ impl SimpleComponent for MessageList {
                         // SelectionChanged, which loads it in the reader.
                         Some(idx) if !self.shown.is_empty() => {
                             let next = idx.min(self.shown.len() - 1);
-                            if let Some(row) = self.rows.widget().row_at_index(next as i32) {
-                                self.rows.widget().select_row(Some(&row));
-                            }
+                            self.select_and_focus(next);
                         }
                         // Nothing left to show → clear the reader.
                         _ => {
@@ -1587,9 +1585,7 @@ impl SimpleComponent for MessageList {
                     match first_removed {
                         Some(idx) if !self.shown.is_empty() => {
                             let next = idx.min(self.shown.len() - 1);
-                            if let Some(row) = self.rows.widget().row_at_index(next as i32) {
-                                self.rows.widget().select_row(Some(&row));
-                            }
+                            self.select_and_focus(next);
                         }
                         _ => {
                             let _ = sender.output(MessageListOutput::SelectionCleared);
@@ -2017,6 +2013,21 @@ impl MessageList {
             members
         } else {
             vec![m.clone()]
+        }
+    }
+
+    /// Select row `idx` and put the keyboard focus on it.
+    ///
+    /// Focus matters after a removal: destroying the focused row leaves GTK to
+    /// pick a fallback of its own, which can be the top of the list — and moving
+    /// focus scrolls the viewport with it, so the list appears to jump away from
+    /// where the user was working (#19). Taking focus deliberately also means the
+    /// single-key shortcuts carry on from the row that is now selected.
+    fn select_and_focus(&self, idx: usize) {
+        let list = self.rows.widget();
+        if let Some(row) = list.row_at_index(idx as i32) {
+            list.select_row(Some(&row));
+            row.grab_focus();
         }
     }
 
