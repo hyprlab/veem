@@ -687,6 +687,16 @@ impl Cache {
         }
     }
 
+    /// Correct a message's attachment flag once its body has proved the answer,
+    /// so the paperclip survives a restart rather than being re-guessed.
+    pub fn set_has_attachment(&self, account_id: u32, folder_path: &str, uid: u32, has: bool) {
+        let _ = self.conn.execute(
+            "UPDATE messages SET has_attachment = ?4 \
+             WHERE account_id = ?1 AND folder_path = ?2 AND uid = ?3",
+            params![account_id, folder_path, uid, has],
+        );
+    }
+
     /// Drop a queued message — it went out, or the user discarded it.
     pub fn delete_outbox(&self, id: u32) {
         let _ = self.conn.execute("DELETE FROM outbox WHERE id = ?1", params![id]);

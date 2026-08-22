@@ -389,6 +389,8 @@ pub enum AppMsg {
     AttachmentsPending { account_id: u32, message_id: u32 },
     /// A flagged message turned out to have no real attachments — drop its paperclip.
     NoAttachments { account_id: u32, message_id: u32 },
+    /// An unflagged message turned out to carry attachments — give it one.
+    HasAttachments { account_id: u32, message_id: u32 },
     Sent { account_id: u32 },
     Status { account_id: u32, text: String },
     Error { account_id: u32, text: String, connectivity: bool },
@@ -2614,6 +2616,49 @@ impl SimpleComponent for AppModel {
                 }
                 self.message_list
                     .emit(MessageListInput::SetHasAttachment { id: message_id, has: false });
+            }
+
+            AppMsg::HasAttachments { account_id, message_id } => {
+                // The mirror of NoAttachments: a message whose structure didn't
+                // advertise its attachments (an inline PDF, say — issue #9) is
+                // given its paperclip once the body has proved they are there.
+                for ((aid, _), msgs) in self.message_cache.iter_mut() {
+                    if *aid == account_id {
+                        for m in msgs.iter_mut().filter(|m| m.id == message_id) {
+                            m.has_attachment = true;
+                        }
+                    }
+                }
+                self.message_list
+                    .emit(MessageListInput::SetHasAttachment { id: message_id, has: true });
+                // If it is the message on screen, fetch the files too: the reader
+                // only asks for them when the flag was already set, which by
+                // definition it wasn't.
+                let already = self
+                    .current
+                    .as_ref()
+                    .is_some_and(|c| c.id == message_id && c.account_id == account_id && c.has_attachment);
+                let open = self
+                    .current
+                    .as_mut()
+                    .filter(|c| c.id == message_id && c.account_id == account_id);
+                if let (false, Some(current)) = (already, open) {
+                    current.has_attachment = true;
+                    let message = current.clone();
+                    if let Some(cached) =
+                        self.attachment_cache.get(&(account_id, message_id)).cloned()
+                    {
+                        self.attachments = cached;
+                        self.rebuild_attach_popover(&sender);
+                    } else if let Some(path) = self.resolve_folder_path(&message) {
+                        self.send_to(account_id, MailRequest::LoadAttachments {
+                            message_id,
+                            path,
+                            uid: message.uid,
+                            download: false,
+                        });
+                    }
+                }
             }
 
             AppMsg::LoadAttachmentsNow => {
@@ -5268,6 +5313,9 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
         }
         WorkerEvent::NoAttachments { message_id } => {
             AppMsg::NoAttachments { account_id, message_id }
+        }
+        WorkerEvent::HasAttachments { message_id } => {
+            AppMsg::HasAttachments { account_id, message_id }
         }
         WorkerEvent::Sent => AppMsg::Sent { account_id },
         WorkerEvent::Outbox { items } => AppMsg::OutboxItems { account_id, items },

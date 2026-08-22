@@ -190,6 +190,10 @@ pub enum WorkerEvent {
     /// body was fetched (e.g. iCloud marketing mail whose only extra parts are
     /// inline `cid:` images). The UI should drop its paperclip.
     NoAttachments { message_id: u32 },
+    /// The opposite: a message with no paperclip turned out to carry attachments
+    /// after all (an inline PDF the structure didn't advertise — issue #9). The
+    /// UI should show the paperclip and offer the files.
+    HasAttachments { message_id: u32 },
     Sent,
     /// Something worth telling the user that isn't a failure — a queued message
     /// going out on its own, say.
@@ -696,13 +700,19 @@ async fn run_imap(
                 path,
                 uid,
             } => match load_body_retry(&mut session, &account, &path, uid).await {
-                Ok((body, check)) => {
+                Ok((body, check, has_attachments)) => {
                     if let Some(c) = cache.as_ref() {
                         c.save_body(account_id, &path, uid, &body);
                         c.save_sender_check(account_id, &path, uid, &check);
+                        c.set_has_attachment(account_id, &path, uid, has_attachments);
                     }
                     emit(WorkerEvent::Body { message_id, body });
                     emit(WorkerEvent::SenderChecked { message_id, check });
+                    emit(if has_attachments {
+                        WorkerEvent::HasAttachments { message_id }
+                    } else {
+                        WorkerEvent::NoAttachments { message_id }
+                    });
                 }
                 Err(e) => {
                     emit(WorkerEvent::Error {
@@ -1195,7 +1205,7 @@ async fn load_body_retry(
     account: &AccountConfig,
     path: &str,
     uid: u32,
-) -> Result<(String, crate::models::SenderCheck), async_imap::error::Error> {
+) -> Result<(String, crate::models::SenderCheck, bool), async_imap::error::Error> {
     let mut s = session.take().expect("session ensured before call");
     let mut res = load_body(&mut s, path, uid).await;
     if res.is_err() {
@@ -1420,13 +1430,20 @@ async fn run_one_body_prefetch(
         return;
     }
     queue.pop_front();
-    if let Ok((body, check)) = load_body_retry(session, account, &path, uid).await {
+    if let Ok((body, check, has_attachments)) = load_body_retry(session, account, &path, uid).await
+    {
         if let Some(c) = cache {
             c.save_body(account_id, &path, uid, &body);
             c.save_sender_check(account_id, &path, uid, &check);
+            c.set_has_attachment(account_id, &path, uid, has_attachments);
         }
         emit(WorkerEvent::Body { message_id: uid, body });
         emit(WorkerEvent::SenderChecked { message_id: uid, check });
+        // The background prefetch reads the whole message anyway, so a wrong
+        // paperclip corrects itself before the message is ever opened.
+        if has_attachments {
+            emit(WorkerEvent::HasAttachments { message_id: uid });
+        }
         emitted.insert((path, uid));
     }
 }
@@ -3180,11 +3197,13 @@ async fn run_one_backfill(
     }
 }
 
+/// Returns the rendered body, the sender verdict, and whether the message
+/// actually carries attachments — all three from the one fetch.
 async fn load_body(
     session: &mut ImapSession,
     path: &str,
     uid: u32,
-) -> Result<(String, crate::models::SenderCheck), async_imap::error::Error> {
+) -> Result<(String, crate::models::SenderCheck, bool), async_imap::error::Error> {
     session.select(path).await?;
 
     // Fetch the whole message (PEEK so \Seen isn't set) and extract the body with
@@ -3203,7 +3222,13 @@ async fn load_body(
         .map(extract_body)
         .unwrap_or_else(|| "(empty message)".to_string());
     let check = raw.map(crate::verify::check_sender).unwrap_or_default();
-    Ok((body, check))
+    // The paperclip is guessed from BODYSTRUCTURE (or, on servers whose structure
+    // we can't parse, from the top-level Content-Type), and both guesses miss
+    // shapes like Apple Mail's inline PDF nested under an alternative (issue #9).
+    // The whole message is in hand here, so the guess can be replaced with fact
+    // — at no extra network cost.
+    let has_attachments = raw.map(|r| !extract_attachments(r).is_empty()).unwrap_or(false);
+    Ok((body, check, has_attachments))
 }
 
 /// Fetch BODYSTRUCTURE and return the IMAP section number of the preferred text
@@ -4834,6 +4859,80 @@ mod tests {
     fn short_text_is_not_mistaken_for_base64() {
         // "Meeting" is all base64 characters, but far too short to be a body.
         assert_eq!(preview_from_part(b"Meeting"), "Meeting");
+    }
+
+    /// Issue #9's message: an Apple Mail PDF marked `inline` with a filename and
+    /// no Content-ID, inside a top-level multipart/mixed.
+    const INLINE_PDF: &str = concat!(
+        "Content-Type: multipart/mixed; boundary=\"Apple-Mail=_A9BB\"\r\n\r\n",
+        "--Apple-Mail=_A9BB\r\nContent-Type: text/plain\r\n\r\nSee attached.\r\n",
+        "--Apple-Mail=_A9BB\r\n",
+        "Content-Disposition: inline;\r\n\tfilename=\"Report.pdf\"\r\n",
+        "Content-Type: application/pdf;\r\n\tname=\"Report.pdf\"\r\n",
+        "Content-Transfer-Encoding: base64\r\n\r\n",
+        "JVBERi0xLjQNCiWio4+T\r\n",
+        "--Apple-Mail=_A9BB--\r\n",
+    );
+
+    /// The same file, but nested under a multipart/alternative — the shape a
+    /// forwarded Apple Mail message takes, where the top-level Content-Type says
+    /// nothing about attachments.
+    const NESTED_INLINE_PDF: &str = concat!(
+        "Content-Type: multipart/alternative; boundary=outer\r\n\r\n",
+        "--outer\r\nContent-Type: text/plain\r\n\r\nPlease see attached.\r\n",
+        "--outer\r\nContent-Type: multipart/mixed; boundary=inner\r\n\r\n",
+        "--inner\r\nContent-Type: text/html\r\n\r\n<p>Please see attached.</p>\r\n",
+        "--inner\r\nContent-Type: application/pdf; name=\"Report.pdf\"\r\n",
+        "Content-Disposition: inline; filename=\"Report.pdf\"\r\n",
+        "Content-Transfer-Encoding: base64\r\n\r\n",
+        "JVBERi0xLjQNCiWio4+T\r\n",
+        "--inner--\r\n--outer--\r\n",
+    );
+
+    #[test]
+    fn an_inline_pdf_is_listed_as_an_attachment() {
+        // Both shapes: the file is `inline` with no Content-ID, which is what the
+        // reporter's Apple Mail message looked like.
+        for (name, raw) in [("top level", INLINE_PDF), ("nested", NESTED_INLINE_PDF)] {
+            let found = extract_attachments(raw.as_bytes());
+            assert_eq!(found.len(), 1, "{name}");
+            assert_eq!(found[0].name, "Report.pdf", "{name}");
+            assert!(found[0].data.starts_with(b"%PDF-1.4"), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_body_load_reports_the_attachments_the_summary_missed() {
+        // The paperclip is guessed before the body is fetched, and the guess
+        // misses the nested shape: the top-level type is multipart/alternative,
+        // which says nothing. Fetching the body is what settles it — the same
+        // check `load_body` runs before emitting HasAttachments.
+        let has_attachments = |raw: &str| !extract_attachments(raw.as_bytes()).is_empty();
+        assert!(has_attachments(NESTED_INLINE_PDF));
+        assert!(has_attachments(INLINE_PDF));
+
+        // The header-only guess, for comparison: right about the first, wrong
+        // about the second — which is why the body has the last word.
+        let top_level_says_mixed = |raw: &str| {
+            mail_parser::MessageParser::default()
+                .parse(raw.as_bytes())
+                .and_then(|p| {
+                    p.header("Content-Type").and_then(|h| h.as_content_type()).map(|ct| {
+                        ct.ctype().eq_ignore_ascii_case("multipart")
+                            && ct.subtype().is_some_and(|s| s.eq_ignore_ascii_case("mixed"))
+                    })
+                })
+                .unwrap_or(false)
+        };
+        assert!(top_level_says_mixed(INLINE_PDF));
+        assert!(!top_level_says_mixed(NESTED_INLINE_PDF));
+    }
+
+    #[test]
+    fn decoration_still_does_not_earn_a_paperclip() {
+        // The correction must not undo 1.4.1's fix: a newsletter whose only extra
+        // parts are small inline `cid:` images has no attachments.
+        assert!(extract_attachments(CID_NEWSLETTER.as_bytes()).is_empty());
     }
 
     #[test]
