@@ -557,7 +557,11 @@ impl Component for MessageView {
                     return;
                 }
                 let path = dir.join(format!("{name}.pdf"));
-                let uri = format!("file://{}", path.display());
+                // Build the URI with GIO, not with `format!`: a subject becomes a
+                // filename, and mail subjects are full of spaces and brackets. An
+                // unescaped URI parses as nothing, so the PDF was written and then
+                // silently never opened.
+                let uri = gtk::gio::File::for_path(&path).uri().to_string();
 
                 // Naming the file printer literally ("Print to File") fails:
                 // that name is translated, and GTK enumerates printers
@@ -588,10 +592,12 @@ impl Component for MessageView {
                     // file descriptor, so a viewer outside the sandbox can read a
                     // file that only exists inside it. A plain OpenURI with this
                     // path would point the viewer at nothing.
-                    let _ = gtk::gio::AppInfo::launch_default_for_uri(
+                    if let Err(e) = gtk::gio::AppInfo::launch_default_for_uri(
                         &uri,
                         None::<&gtk::gio::AppLaunchContext>,
-                    );
+                    ) {
+                        tracing::warn!("could not open the preview: {e}");
+                    }
                 });
                 print.print();
             }
@@ -1340,6 +1346,17 @@ mod tests {
         // page would be unreadable and a waste of toner.
         assert!(PRINT_STYLES.contains("color-scheme:light"));
         assert!(PRINT_STYLES.contains("background:#fff"));
+    }
+
+    #[test]
+    fn a_preview_uri_is_escaped() {
+        // Subjects become filenames, and mail subjects are full of spaces and
+        // brackets: "file://" + path is not a URI, and GIO opens nothing.
+        let path = std::path::Path::new("/tmp/vireo-print/[hyprlab] Sync 1.11.0.pdf");
+        let uri = gtk::gio::File::for_path(path).uri().to_string();
+        assert!(!uri.contains(' '), "{uri}");
+        assert!(uri.contains("%20"), "{uri}");
+        assert!(uri.starts_with("file:///tmp/vireo-print/"), "{uri}");
     }
 
     #[test]
