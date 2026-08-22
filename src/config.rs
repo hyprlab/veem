@@ -339,6 +339,10 @@ struct PrivacyFile {
     /// a hash of each sender's email to a third party).
     #[serde(default)]
     gravatar: bool,
+    /// Whether the coloured sender circles are drawn in the message list and the
+    /// reader (#29 — they cost horizontal room on a small screen).
+    #[serde(default = "default_avatars")]
+    avatars: bool,
     /// Seconds between automatic mail checks; 0 = manual only.
     #[serde(default = "default_fetch_interval")]
     fetch_interval_secs: u64,
@@ -416,11 +420,16 @@ fn default_preview_lines() -> u32 {
     1
 }
 
+fn default_avatars() -> bool {
+    true
+}
+
 impl Default for PrivacyFile {
     fn default() -> Self {
         Self {
             allowed_senders: Vec::new(),
             gravatar: false,
+            avatars: default_avatars(),
             fetch_interval_secs: default_fetch_interval(),
             push: default_push(),
             blacklist: Vec::new(),
@@ -460,6 +469,11 @@ pub fn load_allowed_senders() -> Vec<String> {
 /// Whether Gravatar avatar loading is enabled.
 pub fn load_gravatar() -> bool {
     load_privacy().gravatar
+}
+
+/// Whether the sender circles are shown in the list and the reader.
+pub fn load_avatars() -> bool {
+    load_privacy().avatars
 }
 
 /// Seconds between automatic mail checks (0 = manual only).
@@ -534,6 +548,7 @@ pub fn load_autostart() -> bool {
 pub fn save_privacy(
     senders: &[String],
     gravatar: bool,
+    avatars: bool,
     fetch_interval_secs: u64,
     push: bool,
     blacklist: &[String],
@@ -557,6 +572,7 @@ pub fn save_privacy(
     let file = PrivacyFile {
         allowed_senders: senders.to_vec(),
         gravatar,
+        avatars,
         fetch_interval_secs,
         push,
         blacklist: blacklist.to_vec(),

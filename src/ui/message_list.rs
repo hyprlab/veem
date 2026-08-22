@@ -30,6 +30,8 @@ pub enum RowAction {
 pub struct RowInit {
     pub msg: Message,
     pub gravatar: bool,
+    /// Whether the sender circle is drawn at all (#29).
+    pub avatars: bool,
     /// How many lines of the message's text the row shows (1–3).
     pub preview_lines: u32,
     pub ring_class: Option<String>,
@@ -54,6 +56,7 @@ pub struct RowInit {
 pub struct MessageRow {
     msg: Message,
     gravatar: bool,
+    avatars: bool,
     preview_lines: u32,
     avatar_texture: Option<gtk::gdk::Texture>,
     ring_class: Option<String>,
@@ -144,12 +147,15 @@ impl FactoryComponent for MessageRow {
             // the list's edge, and the unread dot's gutter is narrow enough that
             // the sender's name still reads as the start of the row.
             set_spacing: 8,
-            add_css_class: "message-row",
+            set_css_classes: &self.content_css(),
 
             adw::Avatar {
                 set_size: 38,
                 set_valign: gtk::Align::Center,
                 set_show_initials: true,
+                // Hidden, not faded: the point of turning these off is to get the
+                // width back, so the row must give up the slot entirely (#29).
+                set_visible: self.avatars,
                 // Account colour ring (unified view only).
                 set_css_classes: &self.ring_classes(),
                 #[watch]
@@ -362,6 +368,7 @@ impl FactoryComponent for MessageRow {
         let RowInit {
             msg,
             gravatar,
+            avatars,
             preview_lines,
             ring_class,
             palette_collapse_secs,
@@ -374,6 +381,7 @@ impl FactoryComponent for MessageRow {
         let mut model = Self {
             msg,
             gravatar,
+            avatars,
             preview_lines,
             avatar_texture: None,
             ring_class,
@@ -388,7 +396,9 @@ impl FactoryComponent for MessageRow {
             thread_unread,
         };
 
-        if model.gravatar {
+        // No point fetching a Gravatar for a circle that isn't drawn — and it
+        // would send a hash of the sender's address for nothing.
+        if model.gravatar && model.avatars {
             let email = model.msg.from_addr.clone();
             if let Some(tex) = crate::avatar::cached(&email) {
                 model.avatar_texture = Some(tex);
@@ -505,6 +515,18 @@ impl MessageRow {
         match &self.ring_class {
             Some(c) => vec![c.as_str()],
             None => Vec::new(),
+        }
+    }
+
+    /// Classes for the row's content box. Without the sender circle the unread
+    /// dot becomes the row's first element, and the wide inset that kept the
+    /// circle clear of the list's edge would leave the dot lopsided — sitting
+    /// twice as far from the edge as from the text beside it.
+    fn content_css(&self) -> Vec<&'static str> {
+        if self.avatars {
+            vec!["message-row"]
+        } else {
+            vec!["message-row", "no-avatar"]
         }
     }
 
@@ -679,6 +701,8 @@ pub struct MessageList {
     gravatar: bool,
     /// Lines of preview text per row (1–3), from Preferences.
     preview_lines: u32,
+    /// Whether the coloured sender circles are drawn (#29).
+    avatars: bool,
     /// Tint each row by its account (used in the unified inbox view).
     colorize: bool,
     /// account_id → avatar colour, for tinting rows.
@@ -793,6 +817,8 @@ pub enum MessageListInput {
     /// Whether conversations start expanded (true) or collapsed (false).
     SetThreadsExpanded(bool),
     SetGravatar(bool),
+    /// Show or hide the coloured sender circles (#29).
+    SetAvatars(bool),
     /// How many lines of preview text each row shows (1–3).
     SetPreviewLines(u32),
     SetColorize(bool),
@@ -1135,6 +1161,7 @@ impl SimpleComponent for MessageList {
             query: String::new(),
             title: String::new(),
             gravatar: false,
+            avatars: true,
             preview_lines: 1,
             colorize: false,
             account_colors: std::collections::HashMap::new(),
@@ -1294,6 +1321,14 @@ impl SimpleComponent for MessageList {
                     // drop them so everything follows the new one.
                     self.expanded_threads.clear();
                     self.rebuild();
+                }
+            }
+            MessageListInput::SetAvatars(on) => {
+                if self.avatars != on {
+                    self.avatars = on;
+                    // The circle is built with the row, so the rows have to be
+                    // built again for the width to come back.
+                    self.rebuild_preserving_scroll();
                 }
             }
             MessageListInput::SetGravatar(on) => {
@@ -1967,6 +2002,7 @@ impl MessageList {
                 guard.push_back(RowInit {
                     msg: m.clone(),
                     gravatar: self.gravatar,
+                    avatars: self.avatars,
                     preview_lines: self.preview_lines,
                     ring_class,
                     palette_collapse_secs: self.palette_collapse_secs.clone(),

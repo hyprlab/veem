@@ -177,6 +177,8 @@ pub struct AppModel {
     palette_collapse_secs: u64,
     /// Whether to load sender avatars from Gravatar.
     gravatar: bool,
+    /// Whether the coloured sender circles are drawn at all (#29).
+    avatars: bool,
     /// Seconds between automatic mail checks (0 = manual only).
     fetch_interval_secs: u64,
     /// Whether IMAP IDLE push is enabled.
@@ -328,6 +330,7 @@ pub enum AppMsg {
     RemoveBlacklist(String),
     MarkSpam,
     SetGravatar(bool),
+    SetAvatars(bool),
     SetThreading(bool),
     SetThreadsExpanded(bool),
     SetFetchInterval(u64),
@@ -1036,6 +1039,7 @@ impl SimpleComponent for AppModel {
             blacklist: config::load_blacklist(),
             palette_collapse_secs: config::load_palette_collapse(),
             gravatar: config::load_gravatar(),
+            avatars: config::load_avatars(),
             fetch_interval_secs: config::load_fetch_interval(),
             push: config::load_push(),
             notifications_enabled: config::load_notifications(),
@@ -1092,6 +1096,9 @@ impl SimpleComponent for AppModel {
         model
             .message_list
             .emit(MessageListInput::SetGravatar(model.gravatar));
+        model
+            .message_list
+            .emit(MessageListInput::SetAvatars(model.avatars));
         model
             .message_list
             .emit(MessageListInput::SetPreviewLines(model.preview_lines));
@@ -2068,6 +2075,18 @@ impl SimpleComponent for AppModel {
 
             AppMsg::MarkSpam => self.mark_spam(),
 
+            AppMsg::SetAvatars(on) => {
+                if self.avatars != on {
+                    self.avatars = on;
+                    self.save_settings();
+                    self.message_list.emit(MessageListInput::SetAvatars(on));
+                    self.message_view.emit(MessageViewInput::SetAvatars(on));
+                    for p in self.popouts.values() {
+                        p.controller.emit(MessageWindowInput::SetAvatars(on));
+                    }
+                }
+            }
+
             AppMsg::SetGravatar(on) => {
                 if self.gravatar != on {
                     self.gravatar = on;
@@ -2438,6 +2457,7 @@ impl SimpleComponent for AppModel {
                 let init = PrefInit {
                     allowed_senders: self.allowed_senders.clone(),
                     gravatar: self.gravatar,
+                    avatars: self.avatars,
                     fetch_interval_secs: self.fetch_interval_secs,
                     push: self.push,
                     blacklist: self.blacklist.clone(),
@@ -2461,6 +2481,7 @@ impl SimpleComponent for AppModel {
                         PrefOutput::AddBlacklist(addr) => AppMsg::AddBlacklist(addr),
                         PrefOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
                         PrefOutput::SetGravatar(on) => AppMsg::SetGravatar(on),
+                        PrefOutput::SetAvatars(on) => AppMsg::SetAvatars(on),
                         PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
                         PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
@@ -2866,6 +2887,7 @@ impl AppModel {
         config::save_privacy(
             &self.allowed_senders,
             self.gravatar,
+            self.avatars,
             self.fetch_interval_secs,
             self.push,
             &self.blacklist,
@@ -3698,6 +3720,7 @@ impl AppModel {
         let init = MessageWindowInit {
             message: display,
             gravatar: self.gravatar,
+            avatars: self.avatars,
             account_name: Some(self.account_name(account_id)),
             account_color: Some(self.account_color(account_id)),
             allow_remote,

@@ -17,6 +17,8 @@ use crate::ui::message_view::{MessageView, MessageViewInput, MessageViewOutput};
 pub struct MessageWindowInit {
     pub message: Message,
     pub gravatar: bool,
+    /// Whether the sender circle is drawn (#29).
+    pub avatars: bool,
     pub account_name: Option<String>,
     pub account_color: Option<String>,
     pub allow_remote: bool,
@@ -46,6 +48,8 @@ pub struct MessageWindow {
 
 #[derive(Debug)]
 pub enum MessageWindowInput {
+    /// Show or hide the sender circle.
+    SetAvatars(bool),
     /// Print this message (Ctrl+P), the same as in the main window.
     Print,
     /// Preview it as a PDF (Ctrl+Shift+P).
@@ -248,6 +252,8 @@ impl Component for MessageWindow {
         // Apply the message-content theme before the first render.
         view.emit(MessageViewInput::SetContentTheme(init.content_dark));
 
+        view.emit(MessageViewInput::SetAvatars(init.avatars));
+
         let model = MessageWindow {
             msg: init.message,
             view,
@@ -296,6 +302,9 @@ impl Component for MessageWindow {
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>, root: &Self::Root) {
         match msg {
             MessageWindowInput::Ignore => {}
+            MessageWindowInput::SetAvatars(on) => {
+                self.view.emit(MessageViewInput::SetAvatars(on));
+            }
             MessageWindowInput::SetContentTheme(o) => {
                 self.view.emit(MessageViewInput::SetContentTheme(o));
             }

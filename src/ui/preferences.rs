@@ -13,6 +13,7 @@ use crate::config::MessageTheme;
 pub struct PrefInit {
     pub allowed_senders: Vec<String>,
     pub gravatar: bool,
+    pub avatars: bool,
     pub fetch_interval_secs: u64,
     pub push: bool,
     pub blacklist: Vec<String>,
@@ -99,6 +100,7 @@ pub enum PrefInput {
     AddBlacklistText(String),
     RemoveBlacklistRow(String),
     ToggleGravatar(bool),
+    ToggleAvatars(bool),
     ToggleThreading(bool),
     ToggleThreadsExpanded(bool),
     ChangeFetchInterval(u32),
@@ -120,6 +122,7 @@ pub enum PrefOutput {
     AddBlacklist(String),
     RemoveBlacklist(String),
     SetGravatar(bool),
+    SetAvatars(bool),
     SetThreading(bool),
     SetThreadsExpanded(bool),
     SetFetchInterval(u64),
@@ -239,6 +242,17 @@ impl Component for Preferences {
                                            r to reply, a to archive. Press Ctrl+? for the full list.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleSingleKey(row.is_active()));
+                            },
+                        },
+
+                        #[name = "avatars_row"]
+                        adw::SwitchRow {
+                            set_title: "Sender circles",
+                            set_subtitle: "The coloured circle of initials beside each message, in \
+                                           the list and above the message. Turning it off gives \
+                                           the sender and subject more room.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleAvatars(row.is_active()));
                             },
                         },
 
@@ -400,6 +414,7 @@ impl Component for Preferences {
         let blacklist_box = model.blacklist.widget();
         let widgets = view_output!();
         widgets.gravatar_row.set_active(init.gravatar);
+        widgets.avatars_row.set_active(init.avatars);
 
         // Mail-check interval combo.
         let labels: Vec<&str> = FETCH_INTERVALS.iter().map(|(l, _)| *l).collect();
@@ -453,6 +468,9 @@ impl Component for Preferences {
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>, _root: &Self::Root) {
         match message {
+            PrefInput::ToggleAvatars(on) => {
+                let _ = sender.output(PrefOutput::SetAvatars(on));
+            }
             PrefInput::ToggleGravatar(on) => {
                 let _ = sender.output(PrefOutput::SetGravatar(on));
             }

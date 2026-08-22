@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.12.3" date="2026-08-22" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.12.3</url>
+      <description>
+        <p>The coloured sender circles can now be turned off, in the message list and the reader.</p>
+      </description>
+    </release>
     <release version="1.12.2" date="2026-08-22" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.12.2</url>
       <description>

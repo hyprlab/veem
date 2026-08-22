@@ -22,6 +22,8 @@ pub struct MessageView {
     blocked: bool,
     /// Whether Gravatar loading is enabled.
     gravatar: bool,
+    /// Whether the sender circle is drawn at all (#29).
+    avatars: bool,
     /// Decoded Gravatar for the current sender, if any.
     avatar_texture: Option<gtk::gdk::Texture>,
     /// Owning account's display name (header chip).
@@ -61,6 +63,8 @@ impl MessageView {
 
 #[derive(Debug)]
 pub enum MessageViewInput {
+    /// Show or hide the sender circle (#29).
+    SetAvatars(bool),
     Show {
         /// The conversation, newest first. A single message for a normal open;
         /// several for a threaded conversation.
@@ -231,6 +235,8 @@ impl Component for MessageView {
                             set_valign: gtk::Align::Center,
                             set_show_initials: true,
                             #[watch]
+                            set_visible: model.avatars,
+                            #[watch]
                             set_text: model.current.as_ref().map(|m| m.from_name.as_str()),
                             #[watch]
                             set_custom_image: model.avatar_texture.as_ref(),
@@ -370,6 +376,7 @@ impl Component for MessageView {
             thread: Vec::new(),
             blocked: false,
             gravatar: false,
+            avatars: true,
             avatar_texture: None,
             account_name: None,
             chip_provider,
@@ -519,6 +526,9 @@ impl Component for MessageView {
                     self.render();
                 }
             }
+            MessageViewInput::SetAvatars(on) => {
+                self.avatars = on;
+            }
             MessageViewInput::SetContentTheme(o) => {
                 if self.content_dark != o {
                     self.content_dark = o;
@@ -573,7 +583,9 @@ impl MessageView {
     /// Gravatar is enabled) kick off a background fetch keyed to this message.
     fn load_avatar(&mut self, sender: &ComponentSender<Self>) {
         self.avatar_texture = None;
-        if !self.gravatar {
+        // Nothing to fetch when the circle isn't drawn (#29), and no reason to
+        // send a hash of the sender's address for it.
+        if !self.gravatar || !self.avatars {
             return;
         }
         let Some(m) = self.current.as_ref() else {

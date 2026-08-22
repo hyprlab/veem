@@ -359,6 +359,17 @@ headerbar.rail-header {
   padding: 10px 12px 10px 16px;
 }
 
+/* Sender circles off (#29): the unread dot leads the row, so it gets the same
+   gap on each side — 12px to the list's edge, and 8px of box spacing plus this
+   margin to the sender's name. */
+.message-row.no-avatar {
+  padding-left: 12px;
+}
+
+.message-row.no-avatar .unread-dot {
+  margin-right: 4px;
+}
+
 /* Conversation threading: count chip + compact expand/collapse chevron on the
    thread head, and an indented, accent-edged look for nested replies. */
 .thread-count {
