@@ -559,10 +559,16 @@ impl Component for MessageView {
                 let path = dir.join(format!("{name}.pdf"));
                 let uri = format!("file://{}", path.display());
 
+                // Naming the file printer literally ("Print to File") fails:
+                // that name is translated, and GTK enumerates printers
+                // asynchronously, so the guess may also not exist yet — which is
+                // what "Printer not found" meant the first time this shipped.
+                let Some(printer) = file_printer() else {
+                    tracing::warn!("no printer available that can write a PDF");
+                    return;
+                };
                 let settings = gtk::PrintSettings::new();
-                // The "Print to File" backend is what turns a print job into a
-                // PDF; without naming it, this would go to the default printer.
-                settings.set_printer("Print to File");
+                settings.set_printer(&printer);
                 settings.set(gtk::PRINT_SETTINGS_OUTPUT_URI, Some(&uri));
                 settings.set(gtk::PRINT_SETTINGS_OUTPUT_FILE_FORMAT, Some("pdf"));
                 settings.set(gtk::PRINT_SETTINGS_OUTPUT_BASENAME, Some(&name));
@@ -1131,6 +1137,30 @@ fn message_frame(body: &str, blocked: bool, dark: bool) -> String {
         "<iframe class=\"vireo-frame\" sandbox=\"allow-same-origin allow-popups\" srcdoc=\"{}\"></iframe>",
         attr_escape(&doc)
     )
+}
+
+/// The name of a printer that writes to a file, for the PDF preview.
+///
+/// Asks GTK rather than assuming: the file printer's name is translated, and
+/// enumeration is asynchronous — `wait = true` blocks until the backends have
+/// answered, which is why a literal name can fail even when the printer exists.
+fn file_printer() -> Option<String> {
+    let found = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let collector = found.clone();
+    gtk::enumerate_printers(
+        move |printer| {
+            if printer.is_virtual() && printer.accepts_pdf() {
+                if let Ok(mut slot) = collector.lock() {
+                    *slot = Some(printer.name().to_string());
+                }
+                return true; // stop at the first one
+            }
+            false
+        },
+        true,
+    );
+    let name = found.lock().ok()?.clone();
+    name
 }
 
 /// Print-only rules for the wrapper document.
