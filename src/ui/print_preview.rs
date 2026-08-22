@@ -56,6 +56,88 @@ pub fn print_webview(webview: &webkit6::WebView, job_name: &str, parent: Option<
     );
 }
 
+/// The name of a printer that writes to a file, for saving a PDF.
+///
+/// Asks GTK rather than assuming: the file printer's name is translated, and
+/// enumeration is asynchronous — `wait = true` blocks until the backends have
+/// answered, which is why a literal "Print to File" can fail even when the
+/// printer exists.
+fn file_printer() -> Option<String> {
+    let found = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let collector = found.clone();
+    gtk::enumerate_printers(
+        move |printer| {
+            if printer.is_virtual() && printer.accepts_pdf() {
+                if let Ok(mut slot) = collector.lock() {
+                    *slot = Some(printer.name().to_string());
+                }
+                return true; // stop at the first one
+            }
+            false
+        },
+        true,
+    );
+    let name = found.lock().ok()?.clone();
+    name
+}
+
+/// Write the view to a PDF the user picks, with no print dialog in the way.
+///
+/// The file comes from the portal's file chooser, so the path handed back is one
+/// the sandbox may write to; its URI comes from GIO rather than being built by
+/// hand, because a mail subject makes a filename full of spaces.
+fn save_as_pdf(
+    webview: &webkit6::WebView,
+    suggested_name: &str,
+    parent: &adw::Window,
+    toasts: &adw::ToastOverlay,
+) {
+    let Some(printer) = file_printer() else {
+        toasts.add_toast(adw::Toast::new("No PDF writer is available on this system"));
+        tracing::warn!("no printer available that can write a PDF");
+        return;
+    };
+
+    let chooser = gtk::FileDialog::new();
+    chooser.set_title("Save as PDF");
+    chooser.set_initial_name(Some(&format!("{suggested_name}.pdf")));
+
+    let webview = webview.clone();
+    let toasts = toasts.clone();
+    chooser.save(Some(parent), gtk::gio::Cancellable::NONE, move |result| {
+        let Ok(file) = result else {
+            // Cancelled: the ordinary way to change one's mind.
+            return;
+        };
+        let uri = file.uri().to_string();
+        let name = file
+            .basename()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "PDF".to_string());
+
+        let settings = gtk::PrintSettings::new();
+        settings.set_printer(&printer);
+        settings.set(gtk::PRINT_SETTINGS_OUTPUT_URI, Some(&uri));
+        settings.set(gtk::PRINT_SETTINGS_OUTPUT_FILE_FORMAT, Some("pdf"));
+
+        let print = webkit6::PrintOperation::new(&webview);
+        print.set_print_settings(&settings);
+        let failed_toasts = toasts.clone();
+        print.connect_failed(move |_, error| {
+            tracing::warn!("saving the PDF failed: {error}");
+            failed_toasts.add_toast(adw::Toast::new("Could not save the PDF"));
+        });
+        let keep = std::cell::RefCell::new(Some(print.clone()));
+        let done_toasts = toasts.clone();
+        print.connect_finished(move |_| {
+            keep.borrow_mut().take();
+            tracing::info!(%uri, "saved a PDF");
+            done_toasts.add_toast(adw::Toast::new(&format!("Saved {name}")));
+        });
+        print.print();
+    });
+}
+
 /// Show `html` as a print preview, with a Print button that prints it.
 pub fn open(parent: &adw::ApplicationWindow, html: &str, job_name: &str) {
     let win = adw::Window::builder()
@@ -69,6 +151,10 @@ pub fn open(parent: &adw::ApplicationWindow, html: &str, job_name: &str) {
     let webview = crate::ui::message_view::new_preview_webview();
     webview.set_vexpand(true);
     webview.load_html(html, Some("https://vireo.localhost/print-preview"));
+
+    // Toasts confirm a save without stealing focus from the preview.
+    let toasts = adw::ToastOverlay::new();
+    toasts.set_child(Some(&webview));
 
     let header = adw::HeaderBar::new();
     let print_btn = gtk::Button::builder()
@@ -86,9 +172,21 @@ pub fn open(parent: &adw::ApplicationWindow, html: &str, job_name: &str) {
     }
     header.pack_end(&print_btn);
 
+    let save_btn = gtk::Button::builder().label("Save as PDF…").build();
+    {
+        let webview = webview.clone();
+        let job = job_name.to_string();
+        let win = win.clone();
+        let toasts = toasts.clone();
+        save_btn.connect_clicked(move |_| {
+            save_as_pdf(&webview, &job, &win, &toasts);
+        });
+    }
+    header.pack_start(&save_btn);
+
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&webview));
+    toolbar.set_content(Some(&toasts));
     win.set_content(Some(&toolbar));
 
     // Escape closes it, as it does the shortcuts window.

@@ -1089,30 +1089,6 @@ fn message_frame(body: &str, blocked: bool, dark: bool) -> String {
     )
 }
 
-/// The name of a printer that writes to a file, for the PDF preview.
-///
-/// Asks GTK rather than assuming: the file printer's name is translated, and
-/// enumeration is asynchronous — `wait = true` blocks until the backends have
-/// answered, which is why a literal name can fail even when the printer exists.
-fn file_printer() -> Option<String> {
-    let found = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
-    let collector = found.clone();
-    gtk::enumerate_printers(
-        move |printer| {
-            if printer.is_virtual() && printer.accepts_pdf() {
-                if let Ok(mut slot) = collector.lock() {
-                    *slot = Some(printer.name().to_string());
-                }
-                return true; // stop at the first one
-            }
-            false
-        },
-        true,
-    );
-    let name = found.lock().ok()?.clone();
-    name
-}
-
 /// Print-only rules for the wrapper document.
 ///
 /// Printing a dark-themed message would put white text on a black page, so paper
