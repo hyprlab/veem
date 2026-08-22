@@ -2,7 +2,11 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.10.2
+## What's new in 1.10.3
+
+- **Fixed: some accounts imported from GNOME Online Accounts couldn't sign in.** Accounts that use a password (rather than a Google-style sign-in) could end up without one, with no way to correct it. Vireo now asks GNOME Online Accounts for the password each time it connects, so those accounts start working without being re-added — and if the system genuinely has no password stored, Vireo says so and points you to Settings → Online Accounts.
+
+## In 1.10.2
 
 - **Accounts from GNOME Online Accounts are now read-only in Vireo.** Their address, servers and password belong to the system, so Vireo greys those fields out and points you to Settings → Online Accounts, where changing them actually works. Your display name, signature, colour and label are still yours to edit here, and the switch at the top of the account still hides an account in Vireo without removing it from your system.
 
