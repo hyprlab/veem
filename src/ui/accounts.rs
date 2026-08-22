@@ -271,27 +271,41 @@ impl Component for AccountsWindow {
                             // credentials; Vireo only mirrors them. Saying so where
                             // the greyed-out fields are is worth more than leaving
                             // the user to work out why they can't type.
+                            // GNOME Online Accounts owns this account's servers and
+                            // credentials; Vireo only mirrors them, and can hide it
+                            // locally. Both facts belong together, above the fields
+                            // they explain.
                             #[name = "goa_banner"]
                             add = &adw::PreferencesGroup {
                                 set_visible: false,
+                                set_title: "GNOME Online Account",
+
+                                #[name = "goa_enabled_row"]
+                                adw::SwitchRow {
+                                    set_title: "Enabled in Vireo",
+                                    set_subtitle: "Hides the account here without removing it from your system.",
+                                    connect_active_notify[sender] => move |row| {
+                                        sender.input(AccountsInput::ToggleCurrentEnabled(row.is_active()));
+                                    },
+                                },
 
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Vertical,
                                     set_spacing: 12,
-                                    set_halign: gtk::Align::Center,
-                                    set_margin_bottom: 6,
+                                    set_halign: gtk::Align::Start,
+                                    set_margin_top: 12,
 
                                     gtk::Label {
-                                        set_label: "This account is managed by GNOME Online Accounts.\nIts address, servers and password are changed in Settings \u{2192} Online Accounts.\nTurn it off below to hide it in Vireo without touching your system account.",
-                                        set_justify: gtk::Justification::Center,
-                                        set_halign: gtk::Align::Center,
+                                        set_label: "This account is managed by GNOME Online Accounts.\nIts address, servers and password are changed in Settings \u{2192} Online Accounts.",
+                                        set_xalign: 0.0,
+                                        set_halign: gtk::Align::Start,
                                         set_wrap: true,
                                         add_css_class: "dim-label",
                                     },
 
                                     gtk::Button {
                                         set_label: "Open Online Accounts\u{2026}",
-                                        set_halign: gtk::Align::Center,
+                                        set_halign: gtk::Align::Start,
                                         connect_clicked => AccountsInput::OpenOnlineAccounts,
                                     },
                                 },
@@ -502,21 +516,6 @@ impl Component for AccountsWindow {
                             // GOA-imported accounts: you can't meaningfully "remove"
                             // one from Vireo while it still lives in GNOME Online
                             // Accounts — so disable it here, or open GOA to change it.
-                            #[name = "goa_manage_group"]
-                            add = &adw::PreferencesGroup {
-                                set_visible: false,
-                                set_title: "GNOME Online Account",
-
-                                #[name = "goa_enabled_row"]
-                                adw::SwitchRow {
-                                    set_title: "Enabled in Vireo",
-                                    set_subtitle: "Hides the account here without removing it from your system.",
-                                    connect_active_notify[sender] => move |row| {
-                                        sender.input(AccountsInput::ToggleCurrentEnabled(row.is_active()));
-                                    },
-                                },
-                            },
-
                             #[name = "remove_group"]
                             add = &adw::PreferencesGroup {
                                 gtk::Button {
@@ -623,7 +622,6 @@ impl Component for AccountsWindow {
                 widgets.color_btn.set_rgba(&parse_color(DEFAULT_COLOR));
                 widgets.emoji_btn.set_label("Add");
                 widgets.remove_group.set_visible(false);
-                widgets.goa_manage_group.set_visible(false);
                 widgets.nav.push_by_tag("editor");
             }
 
@@ -650,7 +648,6 @@ impl Component for AccountsWindow {
                 set_connection_editable(widgets, !is_goa);
                 widgets.goa_banner.set_visible(is_goa);
                 widgets.remove_group.set_visible(!is_goa);
-                widgets.goa_manage_group.set_visible(is_goa);
                 widgets.goa_enabled_row.set_active(acc.enabled);
                 widgets.nav.push_by_tag("editor");
             }
