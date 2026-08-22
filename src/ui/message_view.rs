@@ -481,9 +481,15 @@ impl Component for MessageView {
                 }
             }
             MessageViewInput::Print => {
-                // WebKit prints the document it is showing — the message as it is
-                // rendered here, quoting, images and all — through the system
-                // print dialog, which under Flatpak is the portal's.
+                // Printing is deliberately split in two: GTK's async print dialog
+                // collects the settings, then WebKit prints with them.
+                //
+                // WebKit's own `run_dialog` would be one call, but it spins a
+                // nested main loop, and polling a glib future from inside one
+                // aborts the process ("Polling futures only allowed if the thread
+                // is owning the MainContext") — which is exactly what happened
+                // the first time this shipped. GtkPrintDialog exists because of
+                // that class of bug: it returns through a callback instead.
                 let print = webkit6::PrintOperation::new(&self.webview);
                 let job = self
                     .current
@@ -491,26 +497,42 @@ impl Component for MessageView {
                     .map(|m| m.subject.clone())
                     .filter(|s| !s.trim().is_empty())
                     .unwrap_or_else(|| "Message".to_string());
+                let parent = self.webview.root().and_downcast::<gtk::Window>();
+
+                let dialog = gtk::PrintDialog::new();
+                dialog.set_title("Print Message");
+                // Names the job in the queue and seeds the filename when printing
+                // to a file, which is otherwise "unknown".
                 let settings = gtk::PrintSettings::new();
-                // Names the job in the print queue and seeds the filename when
-                // printing to a file, which is otherwise "unknown".
-                settings.set(gtk::PRINT_SETTINGS_OUTPUT_BASENAME, Some(&sanitize_filename(&job)));
-                print.set_print_settings(&settings);
-                print.connect_failed(|_, error| {
-                    tracing::warn!("printing failed: {error}");
-                });
-                let parent = self
-                    .webview
-                    .root()
-                    .and_downcast::<gtk::Window>();
-                print.run_dialog(parent.as_ref());
-                // The operation must outlive this scope or the dialog vanishes
-                // with it; the signal handler below drops the reference once the
-                // job is done.
-                let keep = std::cell::RefCell::new(Some(print.clone()));
-                print.connect_finished(move |_| {
-                    keep.borrow_mut().take();
-                });
+                settings.set(
+                    gtk::PRINT_SETTINGS_OUTPUT_BASENAME,
+                    Some(&sanitize_filename(&job)),
+                );
+                dialog.set_print_settings(&settings);
+
+                dialog.setup(
+                    parent.as_ref(),
+                    gtk::gio::Cancellable::NONE,
+                    move |result| match result {
+                        Ok(setup) => {
+                            print.set_print_settings(&setup.print_settings());
+                            print.set_page_setup(&setup.page_setup());
+                            print.connect_failed(|_, error| {
+                                tracing::warn!("printing failed: {error}");
+                            });
+                            // Keep the operation alive until WebKit says it is
+                            // done; dropping it here would cancel the job.
+                            let keep = std::cell::RefCell::new(Some(print.clone()));
+                            print.connect_finished(move |_| {
+                                keep.borrow_mut().take();
+                            });
+                            print.print();
+                        }
+                        // Dismissing the dialog arrives here as an error; it is
+                        // the ordinary way to change your mind, not a failure.
+                        Err(e) => tracing::debug!("print dialog dismissed: {e}"),
+                    },
+                );
             }
 
             MessageViewInput::ThemeChanged => {

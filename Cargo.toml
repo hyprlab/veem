@@ -8,7 +8,10 @@ repository = "https://github.com/hyprlab/vireo"
 homepage = "https://vireo.hyprlab.co"
 
 [dependencies]
-gtk = { package = "gtk4", version = "0.9", features = ["v4_10"] }
+# v4_14 for GtkPrintDialog: printing needs an async dialog, because the older
+# blocking one spins a nested main loop and glib's future executor aborts when
+# re-entered (see MessageViewInput::Print). The GNOME 50 runtime has GTK 4.20.
+gtk = { package = "gtk4", version = "0.9", features = ["v4_14"] }
 adw = { package = "libadwaita", version = "0.7", features = ["v1_4"] }
 relm4 = { version = "0.9", features = ["macros", "libadwaita"] }
 relm4-components = "0.9"
