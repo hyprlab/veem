@@ -42,10 +42,23 @@ jobs:
       - name: Install the GNOME runtime and Rust SDK extension
         run: |
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y --noninteractive flathub \
-            org.gnome.Platform//50 \
-            org.gnome.Sdk//50 \
-            org.freedesktop.Sdk.Extension.rust-stable//25.08
+          # `--disable-static-deltas`: Flathub's aarch64 mirror periodically
+          # serves a summary listing a ref whose delta objects 404, which fails
+          # the install even though the ref exists (it did for v1.10.0). Pulling
+          # plain objects goes around it. Retried because it is a CDN, and a
+          # release shouldn't hinge on one request.
+          for attempt in 1 2 3; do
+            if flatpak install --user -y --noninteractive --disable-static-deltas flathub \
+              org.gnome.Platform//50 \
+              org.gnome.Sdk//50 \
+              org.freedesktop.Sdk.Extension.rust-stable//25.08
+            then
+              exit 0
+            fi
+            echo "install attempt $attempt failed; retrying"
+            sleep 30
+          done
+          exit 1
 
       - name: Vendor the crate sources
         # cargo-sources.json is generated, not committed — it pins every crate
