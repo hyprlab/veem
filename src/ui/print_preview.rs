@@ -122,15 +122,24 @@ fn save_as_pdf(
 
         let print = webkit6::PrintOperation::new(&webview);
         print.set_print_settings(&settings);
+        // `finished` fires whether or not the job worked, and after `failed`, so
+        // success has to be remembered rather than assumed — otherwise a failed
+        // save still says "Saved", which is worse than saying nothing.
+        let failed = std::rc::Rc::new(std::cell::Cell::new(false));
         let failed_toasts = toasts.clone();
+        let mark = failed.clone();
         print.connect_failed(move |_, error| {
+            mark.set(true);
             tracing::warn!("saving the PDF failed: {error}");
-            failed_toasts.add_toast(adw::Toast::new("Could not save the PDF"));
+            failed_toasts.add_toast(adw::Toast::new(&format!("Could not save the PDF: {error}")));
         });
         let keep = std::cell::RefCell::new(Some(print.clone()));
         let done_toasts = toasts.clone();
         print.connect_finished(move |_| {
             keep.borrow_mut().take();
+            if failed.get() {
+                return;
+            }
             tracing::info!(%uri, "saved a PDF");
             done_toasts.add_toast(adw::Toast::new(&format!("Saved {name}")));
         });
