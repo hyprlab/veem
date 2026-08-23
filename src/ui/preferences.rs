@@ -12,6 +12,7 @@ use crate::config::{ClockStyle, DateStyle, MessageTheme};
 #[derive(Debug)]
 pub struct PrefInit {
     pub allowed_senders: Vec<String>,
+    pub auto_remote_content: bool,
     pub gravatar: bool,
     pub avatars: bool,
     pub sender_logos: bool,
@@ -121,6 +122,7 @@ pub enum PrefInput {
     RemoveSenderRow(String),
     AddBlacklistText(String),
     RemoveBlacklistRow(String),
+    ToggleAutoRemoteContent(bool),
     ToggleGravatar(bool),
     ToggleAvatars(bool),
     ToggleSenderLogos(bool),
@@ -147,6 +149,7 @@ pub enum PrefOutput {
     RemoveSender(String),
     AddBlacklist(String),
     RemoveBlacklist(String),
+    SetAutoRemoteContent(bool),
     SetGravatar(bool),
     SetAvatars(bool),
     SetSenderLogos(bool),
@@ -370,9 +373,22 @@ impl Component for Preferences {
                         set_title: "Privacy",
                         set_description: Some(
                             "Vireo collects no telemetry and sends no analytics. Remote \
-                             content (images, trackers) is blocked by default; you can allow \
-                             it per message, or trust a sender to always load it."
+                             content (images, trackers) is blocked by default. Allow it per \
+                             message, trust a sender to always load it, or turn on \"Always \
+                             load remote content\" below."
                         ),
+
+                        #[name = "auto_remote_content_row"]
+                        adw::SwitchRow {
+                            set_title: "Always load remote content",
+                            set_subtitle: "Show images and other remote content in every new \
+                                           message without asking. Off by default, since \
+                                           remote content can be used to track when and where \
+                                           you read a message.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleAutoRemoteContent(row.is_active()));
+                            },
+                        },
 
                         #[name = "gravatar_row"]
                         adw::SwitchRow {
@@ -492,6 +508,7 @@ impl Component for Preferences {
         let senders_box = model.senders.widget();
         let blacklist_box = model.blacklist.widget();
         let widgets = view_output!();
+        widgets.auto_remote_content_row.set_active(init.auto_remote_content);
         widgets.gravatar_row.set_active(init.gravatar);
         widgets.avatars_row.set_active(init.avatars);
         widgets.sender_logos_row.set_active(init.sender_logos);
@@ -589,6 +606,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleGravatar(on) => {
                 let _ = sender.output(PrefOutput::SetGravatar(on));
+            }
+            PrefInput::ToggleAutoRemoteContent(on) => {
+                let _ = sender.output(PrefOutput::SetAutoRemoteContent(on));
             }
             PrefInput::ToggleThreading(on) => {
                 let _ = sender.output(PrefOutput::SetThreading(on));

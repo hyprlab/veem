@@ -21,6 +21,11 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
         "chrispouliot",
         "Proton Bridge connections (STARTTLS, local certificates)",
     ),
+    (
+        "Isaac",
+        "thecalamityjoe87",
+        "The option to always load remote content",
+    ),
 ];
 
 /// Width of the collapsed, icon-only sidebar rail.
@@ -179,6 +184,8 @@ pub struct AppModel {
     current: Option<Message>,
     /// Sender addresses allowed to auto-load remote content (lowercased).
     allowed_senders: Vec<String>,
+    /// Whether remote content is auto-loaded for every new message.
+    auto_remote_content: bool,
     /// Addresses/domains whose incoming inbox mail is auto-deleted (lowercased).
     blacklist: Vec<String>,
     /// Seconds the message-list Actions Palette stays open after the cursor leaves.
@@ -344,6 +351,7 @@ pub enum AppMsg {
     AddBlacklist(String),
     RemoveBlacklist(String),
     MarkSpam,
+    SetAutoRemoteContent(bool),
     SetGravatar(bool),
     SetAvatars(bool),
     SetSenderLogos(bool),
@@ -1058,6 +1066,7 @@ impl SimpleComponent for AppModel {
             sidebar_anim: None,
             current: None,
             allowed_senders: config::load_allowed_senders(),
+            auto_remote_content: config::load_auto_remote_content(),
             blacklist: config::load_blacklist(),
             palette_collapse_secs: config::load_palette_collapse(),
             gravatar: config::load_gravatar(),
@@ -2131,8 +2140,21 @@ impl SimpleComponent for AppModel {
                     for p in self.popouts.values() {
                         p.controller.emit(MessageWindowInput::SetSenderLogos(on));
                     }
-                    let current = self.current.clone();
-                    self.show_message(current, false);
+                }
+            }
+
+            AppMsg::SetAutoRemoteContent(on) => {
+                if self.auto_remote_content != on {
+                    self.auto_remote_content = on;
+                    self.save_settings();
+                    // Re-render what is open so the change takes effect there too:
+                    // on, the blocked content loads; off, it is stripped again.
+                    if self.current_thread.len() > 1 {
+                        self.show_thread();
+                    } else {
+                        let current = self.current.clone();
+                        self.show_message(current, false);
+                    }
                 }
             }
 
@@ -2528,6 +2550,7 @@ impl SimpleComponent for AppModel {
                 }
                 let init = PrefInit {
                     allowed_senders: self.allowed_senders.clone(),
+                    auto_remote_content: self.auto_remote_content,
                     gravatar: self.gravatar,
                     avatars: self.avatars,
                     sender_logos: self.sender_logos,
@@ -2556,6 +2579,7 @@ impl SimpleComponent for AppModel {
                         PrefOutput::RemoveSender(addr) => AppMsg::RemoveSender(addr),
                         PrefOutput::AddBlacklist(addr) => AppMsg::AddBlacklist(addr),
                         PrefOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
+                        PrefOutput::SetAutoRemoteContent(on) => AppMsg::SetAutoRemoteContent(on),
                         PrefOutput::SetGravatar(on) => AppMsg::SetGravatar(on),
                         PrefOutput::SetAvatars(on) => AppMsg::SetAvatars(on),
                         PrefOutput::SetSenderLogos(on) => AppMsg::SetSenderLogos(on),
@@ -2977,6 +3001,7 @@ impl AppModel {
     fn save_settings(&self) {
         config::save_privacy(
             &self.allowed_senders,
+            self.auto_remote_content,
             self.gravatar,
             self.avatars,
             self.sender_logos,
@@ -3507,6 +3532,9 @@ impl AppModel {
     }
 
     fn remote_allowed(&self, m: &Message) -> bool {
+        if self.auto_remote_content {
+            return true;
+        }
         let addr = m.from_addr.to_lowercase();
         self.allowed_senders.iter().any(|s| *s == addr)
     }

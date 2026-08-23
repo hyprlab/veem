@@ -214,6 +214,9 @@ upstream — their work ships in the app and is credited in the About window:
   setting.
 - [**Chris Pouliot**](https://github.com/chrispouliot) ([#13](https://github.com/hyprlab/vireo/pull/13)) — Proton
   Bridge connections: IMAP STARTTLS and locally signed certificates.
+- [**Isaac**](https://github.com/thecalamityjoe87) ([#31](https://github.com/hyprlab/vireo/pull/31)) — the
+  preference to always load remote content, for people who would rather not be
+  asked.
 
 Pull requests are welcome. There's no CLA — by opening one you agree your
 contribution ships under the [AGPL-3.0-or-later](LICENSE), and it may be adapted
