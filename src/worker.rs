@@ -2764,9 +2764,11 @@ async fn fetch_window(
     // the caller retries with `use_envelope = false`, and we instead pull the raw
     // header block — opaque to the IMAP parser — and parse it with mail-parser.
     // `BODY.PEEK[1]<0.2048>` rides along for the list preview. Section 1 is the
-    // first body part of a multipart message — text/plain in the usual
-    // alternative and mixed layouts — and the whole body of a single-part one, so
-    // one query covers both without a second round trip per message.
+    // first body part of a multipart message and the whole body of a single-part
+    // one, so one query covers both without a second round trip per message.
+    // When that first part is itself a multipart — `mixed(alternative(text, html),
+    // attachment)`, which is what ProtonMail sends — what comes back is the nested
+    // MIME rather than any text, and [`preview_from_part`] descends into it.
     //
     // With previews switched off it is left out altogether: the setting exists
     // partly to avoid downloading a slice of every message, so honouring it only
@@ -2835,6 +2837,12 @@ fn preview_from_part(bytes: &[u8]) -> String {
         return String::new();
     }
     let text = String::from_utf8_lossy(bytes);
+    // Section 1 can be a whole nested multipart rather than a body: descend to the
+    // text inside it, which also carries the encoding in its own headers instead
+    // of leaving it to be guessed.
+    if let Some(inner) = text_in_multipart(&text, 0) {
+        return finish_preview(inner);
+    }
     let decoded = if looks_like_base64(&text) {
         // Only whole 4-character groups can be decoded; the tail of a truncated
         // fetch is dropped rather than turned into noise.
@@ -2849,6 +2857,11 @@ fn preview_from_part(bytes: &[u8]) -> String {
         text.to_string()
     };
 
+    finish_preview(decoded)
+}
+
+/// Tidy decoded body text into the single line the list shows.
+fn finish_preview(decoded: String) -> String {
     // An HTML part becomes readable text; a plain part passes through.
     let plain = if decoded.contains('<') && decoded.contains('>') {
         crate::app::message_text(&decoded)
@@ -2861,9 +2874,138 @@ fn preview_from_part(bytes: &[u8]) -> String {
         .lines()
         .filter(|line| !line.trim_start().starts_with('>'))
         .collect::<Vec<_>>()
-        .join(" ");
+        .join("\n");
+    let body = strip_link_noise(&body);
     let collapsed = body.split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed.chars().take(PREVIEW_CHARS).collect()
+}
+
+/// Drop the link furniture that plain-text alternatives are built from, so the
+/// preview starts where the message does.
+///
+/// A converter renders a link as `text ( url )`, so a mail whose first element is
+/// a linked logo — every marketing template — begins with a bare tracking URL.
+/// Vireo showed that URL as the preview where Apple Mail shows the greeting. The
+/// parenthesised URLs go, and any URL-only lines left at the front go with them;
+/// if that is the whole message, it stays as it was, since a link is better than
+/// an empty row.
+fn strip_link_noise(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('(') {
+        let after = rest[open + 1..].trim_start();
+        let is_url = after.starts_with("http://") || after.starts_with("https://");
+        let close = rest[open..].find(')').map(|i| open + i);
+        match (is_url, close) {
+            // `( https://… )` — a rendered link, and nothing else in the brackets.
+            (true, Some(close)) if !rest[open..close].trim_end_matches(')').contains('\n') => {
+                out.push_str(&rest[..open]);
+                rest = &rest[close + 1..];
+            }
+            _ => {
+                out.push_str(&rest[..=open]);
+                rest = &rest[open + 1..];
+            }
+        }
+    }
+    out.push_str(rest);
+
+    // Whatever is left at the top that is only a link.
+    let trimmed: String = out
+        .lines()
+        .skip_while(|line| {
+            let l = line.trim();
+            l.is_empty() || (is_url(l) && l.split_whitespace().count() == 1)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if trimmed.trim().is_empty() {
+        text.to_string()
+    } else {
+        trimmed
+    }
+}
+
+/// Whether a word is a bare URL.
+fn is_url(word: &str) -> bool {
+    word.starts_with("http://") || word.starts_with("https://")
+}
+
+/// The text of the first readable part of a MIME multipart, or `None` if this
+/// isn't one.
+///
+/// `text/plain` is preferred and `text/html` taken only if there is no plain
+/// alternative, which matches what the reader shows. Nesting is followed a couple
+/// of levels deep — enough for `mixed(alternative(…))` — and no further, since a
+/// preview is not worth unbounded recursion through a hostile message.
+fn text_in_multipart(text: &str, depth: usize) -> Option<String> {
+    if depth > 3 {
+        return None;
+    }
+    let boundary = text.lines().next()?.trim_end();
+    // A boundary delimiter, not a message that merely opens with a dash.
+    if !boundary.starts_with("--") || boundary.len() < 3 || boundary.contains(' ') {
+        return None;
+    }
+    let mut html: Option<String> = None;
+    for chunk in text.split(boundary).skip(1) {
+        let chunk = chunk.trim_start_matches(['\r', '\n']);
+        if chunk.starts_with("--") {
+            break; // closing delimiter: no more parts
+        }
+        let Some((headers, body)) = split_mime_headers(chunk) else {
+            continue;
+        };
+        let ctype = mime_header(headers, "content-type").unwrap_or_default();
+        let encoding = mime_header(headers, "content-transfer-encoding").unwrap_or_default();
+        if ctype.starts_with("multipart/") {
+            if let Some(inner) = text_in_multipart(body, depth + 1) {
+                return Some(inner);
+            }
+        } else if ctype.starts_with("text/plain") {
+            return Some(decode_mime_body(body, &encoding));
+        } else if ctype.starts_with("text/html") && html.is_none() {
+            html = Some(decode_mime_body(body, &encoding));
+        }
+    }
+    html
+}
+
+/// Split a MIME part into its header block and its body.
+fn split_mime_headers(part: &str) -> Option<(&str, &str)> {
+    if let Some(i) = part.find("\r\n\r\n") {
+        return Some((&part[..i], &part[i + 4..]));
+    }
+    part.find("\n\n").map(|i| (&part[..i], &part[i + 2..]))
+}
+
+/// One header's value, lowercased, from a MIME part's header block.
+fn mime_header(headers: &str, name: &str) -> Option<String> {
+    headers
+        .lines()
+        .find(|l| {
+            l.len() > name.len()
+                && l[..name.len()].eq_ignore_ascii_case(name)
+                && l[name.len()..].trim_start().starts_with(':')
+        })
+        .map(|l| l[name.len()..].trim_start()[1..].trim().to_ascii_lowercase())
+}
+
+/// Decode a part's body according to the encoding it declares.
+fn decode_mime_body(body: &str, encoding: &str) -> String {
+    if encoding.starts_with("base64") {
+        // A truncated fetch ends mid-group; only whole groups can be decoded.
+        let clean: String = body.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+        let usable = &clean[..clean.len() - clean.len() % 4];
+        crate::oauth::base64_decode(usable)
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+            .unwrap_or_default()
+    } else if encoding.starts_with("quoted-printable") {
+        decode_quoted_printable(body)
+    } else {
+        body.to_string()
+    }
 }
 
 /// Whether a chunk looks like base64 rather than text: base64's alphabet only,
@@ -4830,6 +4972,112 @@ mod tests {
         assert_eq!(editable.attachments[0].name, "report.pdf");
         assert_eq!(editable.attachments[0].data, [0x25, 0x50, 0x44, 0x46, 0x00, 0xff]);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn preview_skips_the_link_a_marketing_mail_opens_with() {
+        // Cloudways' text/plain alternative, verbatim in shape: the header logo's
+        // link renders as a bare URL above the greeting, and that URL was the
+        // whole preview.
+        let part = concat!(
+            "--751d69df691580924654d5924db69f0ae9507550b8b16fd8b2d83daf1d3f\r\n",
+            "Content-Transfer-Encoding: quoted-printable\r\n",
+            "Content-Type: text/plain; charset=utf-8\r\n",
+            "\r\n",
+            "( https://www.cloudways.com/en?utm_campaign=3DAPI+Keys+being+replaced+by+Ac=\r\n",
+            "cess+Tokens&utm_medium=3Demail_action )\r\n",
+            "\r\n",
+            "Hi Camp crystal clear,\r\n",
+            "\r\n",
+            "We have a quick update on how you connect your AI agent to Cloudways.\r\n",
+            "--751d69df691580924654d5924db69f0ae9507550b8b16fd8b2d83daf1d3f--\r\n",
+        );
+        let preview = preview_from_part(part.as_bytes());
+        assert!(preview.starts_with("Hi Camp crystal clear,"), "{preview}");
+        assert!(!preview.contains("utm_campaign"), "{preview}");
+    }
+
+    #[test]
+    fn preview_drops_rendered_links_but_keeps_their_text() {
+        assert_eq!(
+            preview_from_part(b"Generate your Access Token ( https://example.com/api?a=1 )Got questions?"),
+            "Generate your Access Token Got questions?"
+        );
+        // Brackets that are not a link are left exactly as written.
+        assert_eq!(
+            preview_from_part(b"Lunch (the usual place) at noon"),
+            "Lunch (the usual place) at noon"
+        );
+        // A message that is nothing but a link still shows it: better than a
+        // blank row.
+        assert_eq!(
+            preview_from_part(b"https://example.com/only"),
+            "https://example.com/only"
+        );
+    }
+
+    #[test]
+    fn preview_descends_into_a_nested_multipart() {
+        // ProtonMail sends mixed(alternative(plain, html), attachment), so
+        // `BODY[1]` is the whole alternative container rather than any text — and
+        // the preview showed its boundary line ("--b2=_cipkIEq1…") instead of the
+        // message. The bytes below are that fetch, verbatim in shape.
+        let part = concat!(
+            "--b2=_cipkIEq1WkCIMIbpGDVyYc52x8YElrqa8uRU7GKJ8\r\n",
+            "Content-Type: text/plain; charset=utf-8\r\n",
+            "Content-Transfer-Encoding: base64\r\n",
+            "\r\n",
+            "SGVsbG8sIEkgcmVjZW50bHkgaW5zdGFsbGVkIFZpcmVvIGFmdGVyIHJlYWRpbmcgYWJvdXQgaXQg\r\n",
+            "b24gdGhlIG9tZyF1YnVudHUgd2Vic2l0ZS4=\r\n",
+            "\r\n",
+            "--b2=_cipkIEq1WkCIMIbpGDVyYc52x8YElrqa8uRU7GKJ8\r\n",
+            "Content-Type: text/html; charset=utf-8\r\n",
+            "Content-Transfer-Encoding: base64\r\n",
+            "\r\n",
+            "PGRpdj5IZWxsbzwvZGl2Pg==\r\n",
+            "--b2=_cipkIEq1WkCIMIbpGDVyYc52x8YElrqa8uRU7GKJ8--\r\n",
+        );
+        assert_eq!(
+            preview_from_part(part.as_bytes()),
+            "Hello, I recently installed Vireo after reading about it on the omg!ubuntu website."
+        );
+        // Nothing of the MIME machinery reaches the list.
+        assert!(!preview_from_part(part.as_bytes()).contains("--b2="));
+    }
+
+    #[test]
+    fn preview_prefers_plain_text_but_settles_for_html() {
+        let html_only = concat!(
+            "--x\r\n",
+            "Content-Type: text/html; charset=utf-8\r\n",
+            "\r\n",
+            "<div>Only markup here</div>\r\n",
+            "--x--\r\n",
+        );
+        assert_eq!(preview_from_part(html_only.as_bytes()), "Only markup here");
+        // Two levels of nesting — mixed(alternative(...)) — are followed.
+        let nested = concat!(
+            "--outer\r\n",
+            "Content-Type: multipart/alternative; boundary=\"inner\"\r\n",
+            "\r\n",
+            "--inner\r\n",
+            "Content-Type: text/plain\r\n",
+            "\r\n",
+            "Buried but readable\r\n",
+            "--inner--\r\n",
+            "--outer--\r\n",
+        );
+        assert_eq!(preview_from_part(nested.as_bytes()), "Buried but readable");
+    }
+
+    #[test]
+    fn a_message_that_merely_starts_with_dashes_is_not_a_multipart() {
+        // A signature separator, or a line of dashes, must still read as text.
+        assert_eq!(
+            preview_from_part(b"-- \r\nRegards,\r\nSteve"),
+            "-- Regards, Steve"
+        );
+        assert_eq!(preview_from_part(b"--\r\nsigned off"), "-- signed off");
     }
 
     #[test]

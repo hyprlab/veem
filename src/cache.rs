@@ -158,6 +158,15 @@ impl Cache {
         // dropping the index, which would cost every user a full re-sync; the
         // error when it is already there is the expected outcome, not a problem.
         let _ = conn.execute("ALTER TABLE messages ADD COLUMN preview TEXT NOT NULL DEFAULT ''", []);
+        // Previews cached by a build that showed MIME machinery or a tracking
+        // link instead of the message: a multipart's boundary ("--b2=_cipk…") or
+        // the rendered link a marketing mail opens with ("( https://…"). Clearing
+        // them shows nothing until the folder syncs again, which beats showing
+        // either.
+        let _ = conn.execute(
+            "UPDATE messages SET preview = ''              WHERE preview LIKE '--%' OR preview LIKE '( http%'",
+            [],
+        );
         if upgrading_index {
             Self::redecode_encoded_subjects(&conn);
         }
@@ -361,10 +370,28 @@ impl Cache {
         let run = || -> rusqlite::Result<()> {
             let tx = self.conn.unchecked_transaction()?;
             for m in messages {
+                // Upsert rather than REPLACE so an empty preview cannot erase one
+                // already stored: the background backfill re-fetches summaries
+                // without asking for a body slice, and every message it touched
+                // lost its preview.
                 tx.execute(
-                    "INSERT OR REPLACE INTO messages
+                    "INSERT INTO messages
                      (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, preview)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                     ON CONFLICT(account_id, folder_path, uid) DO UPDATE SET
+                       from_name = excluded.from_name,
+                       from_addr = excluded.from_addr,
+                       subject = excluded.subject,
+                       date = excluded.date,
+                       ts = excluded.ts,
+                       unread = excluded.unread,
+                       starred = excluded.starred,
+                       has_attachment = excluded.has_attachment,
+                       recipients = excluded.recipients,
+                       cc = excluded.cc,
+                       message_id = excluded.message_id,
+                       references_ = excluded.references_,
+                       preview = CASE WHEN excluded.preview = '' THEN messages.preview ELSE excluded.preview END",
                     params![
                         account_id, folder_path, m.uid, m.from_name, m.from_addr, m.subject,
                         m.date, m.timestamp, m.unread, m.starred, m.has_attachment, m.to, m.cc,
