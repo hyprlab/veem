@@ -266,6 +266,15 @@ pub struct AppModel {
     /// Messages awaiting a deferred permanent delete (same spinner-first trick as
     /// `pending_bulk`).
     pending_purge: Option<Vec<Message>>,
+    /// Ids handed to conversation messages pulled in from another folder,
+    /// allocated downwards from the top of the range. A message's id is its UID,
+    /// which is only unique within its own folder — and the reader keys bodies by
+    /// (account, id), so a Sent reply sharing a UID with the Inbox message it
+    /// answers would otherwise be handed the wrong body.
+    related_id_seq: u32,
+    /// The id issued to each such message, keyed by where it really lives
+    /// (account, folder, uid). Stable across re-opens so its body stays cached.
+    related_ids: HashMap<(u32, u32, u32), u32>,
 }
 
 /// A message displayed in its own top-level window (double-click to pop out).
@@ -340,6 +349,8 @@ pub enum AppMsg {
     Delete,
     /// Erase messages for good (confirmed "Delete permanently" in Trash).
     PurgeMessages(Vec<Message>),
+    /// The rest of an open message's conversation, found in other folders.
+    Related { account_id: u32, message_id: u32, messages: Vec<Message> },
     RowAction { action: RowAction, message: Box<Message> },
     /// A bulk action applied to every selected message.
     Bulk { action: BulkAction, messages: Vec<Message> },
@@ -1063,6 +1074,8 @@ impl SimpleComponent for AppModel {
             bulk_pending: 0,
             pending_bulk: None,
             pending_purge: None,
+            related_id_seq: u32::MAX,
+            related_ids: HashMap::new(),
             folder_unread: HashMap::new(),
             sidebar_split: None,
             app_title: None,
@@ -1772,6 +1785,20 @@ impl SimpleComponent for AppModel {
                 }
                 self.current = Some(current.clone());
 
+                // The folder being read holds only its half of the conversation:
+                // your own replies are filed in Sent, and older parts may have
+                // been archived. Ask for the rest from the cache (#21).
+                if self.threading {
+                    let solo = [m.clone()];
+                    let ids = thread_ids(if thread.is_empty() { &solo[..] } else { &thread });
+                    if !ids.is_empty() {
+                        self.send_to(account_id, MailRequest::LoadRelated {
+                            message_id: m.id,
+                            ids,
+                        });
+                    }
+                }
+
                 if thread.len() > 1 {
                     // Conversation: assemble the thread with any cached bodies,
                     // request the rest, and render it as a scrollable conversation.
@@ -1900,6 +1927,10 @@ impl SimpleComponent for AppModel {
                         self.delete_messages(vec![m], &sender);
                     }
                 }
+            }
+
+            AppMsg::Related { account_id, message_id, messages } => {
+                self.merge_related(account_id, message_id, messages);
             }
 
             AppMsg::PurgeMessages(messages) => {
@@ -3785,6 +3816,8 @@ impl AppModel {
             account_name,
             account_color,
             loading,
+            primary: None, // a single message is its own primary
+            folder_labels: HashMap::new(),
         });
         // After `Show`, which clears the outgoing message's verdict.
         if let Some(check) = stored_check {
@@ -3794,12 +3827,17 @@ impl AppModel {
     }
 
     /// Render the current conversation (thread) in the reader, newest first.
+    ///
+    /// The header follows the message the user selected, not whatever sorted to
+    /// the top: a conversation can now include replies of your own pulled in from
+    /// Sent, and one of those being the newest shouldn't retitle the reader.
     fn show_thread(&self) {
-        let Some(primary) = self.current_thread.first() else {
+        let Some(head) = self.current_thread.first() else {
             return;
         };
+        let primary = self.current.clone().unwrap_or_else(|| head.clone());
         let account_id = primary.account_id;
-        let allow_remote = self.remote_allowed(primary);
+        let allow_remote = self.remote_allowed(&primary);
         let loading = primary.body.is_empty();
         self.message_view.emit(MessageViewInput::Show {
             thread: self.current_thread.clone(),
@@ -3808,7 +3846,29 @@ impl AppModel {
             account_name: Some(self.account_name(account_id)),
             account_color: Some(self.account_color(account_id)),
             loading,
+            folder_labels: self.thread_folder_labels(),
+            primary: Some(Box::new(primary)),
         });
+    }
+
+    /// Name the folder each conversation message came from, for the ones that
+    /// aren't from the folder on screen. The message list only ever shows one
+    /// folder, so anything else was pulled in from the cache (#21).
+    fn thread_folder_labels(&self) -> HashMap<(u32, u32), String> {
+        let shown_folder = self.current.as_ref().map(|m| m.folder_id);
+        self.current_thread
+            .iter()
+            .filter(|m| Some(m.folder_id) != shown_folder)
+            .filter_map(|m| {
+                let name = self
+                    .folders
+                    .get(&m.account_id)?
+                    .iter()
+                    .find(|f| f.id == m.folder_id)
+                    .map(|f| f.name.clone())?;
+                Some(((m.account_id, m.id), name))
+            })
+            .collect()
     }
 
     /// Pop a message out into its own standalone window with a dedicated reader.
@@ -4269,6 +4329,60 @@ impl AppModel {
             .and_then(|fs| fs.iter().find(|f| f.kind == kind))
             .map(|f| f.path.clone())
             .or_else(|| self.default_folder_path(account_id, kind))
+    }
+
+    /// Fold the rest of a conversation — messages from the account's other
+    /// folders, chiefly the replies you sent — into the open one (#21).
+    ///
+    /// Ignored unless it answers the message still on screen: the lookup is
+    /// asynchronous and the user may have moved on. Messages already in the
+    /// conversation are skipped, so this is safe to apply more than once.
+    fn merge_related(&mut self, account_id: u32, message_id: u32, messages: Vec<Message>) {
+        let Some(current) = self.current.clone() else { return };
+        if current.account_id != account_id || current.id != message_id || !self.threading {
+            return;
+        }
+        let mut conv = if self.current_thread.is_empty() {
+            vec![current.clone()]
+        } else {
+            self.current_thread.clone()
+        };
+        let mut added = Vec::new();
+        for mut r in messages {
+            if conv.iter().any(|m| m.folder_id == r.folder_id && m.uid == r.uid) {
+                continue; // already in the conversation, from this folder's own index
+            }
+            let key = (r.account_id, r.folder_id, r.uid);
+            r.id = match self.related_ids.get(&key) {
+                Some(id) => *id,
+                None => {
+                    self.related_id_seq = self.related_id_seq.saturating_sub(1);
+                    self.related_ids.insert(key, self.related_id_seq);
+                    self.related_id_seq
+                }
+            };
+            r.unread = false;
+            if let Some(b) = self.body_cache.get(&(r.account_id, r.id)) {
+                r.body = b.clone();
+            }
+            added.push(r);
+        }
+        if added.is_empty() {
+            return;
+        }
+        conv.extend(added);
+        conv.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)); // newest first, as the list threads
+        self.current_thread = conv;
+        let to_load: Vec<(u32, u32, u32, String)> = self
+            .current_thread
+            .iter()
+            .filter(|tm| tm.body.is_empty())
+            .filter_map(|tm| self.resolve_folder_path(tm).map(|p| (tm.account_id, tm.id, tm.uid, p)))
+            .collect();
+        for (aid, mid, uid, path) in to_load {
+            self.send_to(aid, MailRequest::LoadBody { message_id: mid, path, uid });
+        }
+        self.show_thread();
     }
 
     /// Whether a message already lives in its account's Trash — where "delete"
@@ -5694,6 +5808,9 @@ fn register_icons() {
 fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
     match event {
         WorkerEvent::BulkComplete => AppMsg::BulkComplete,
+        WorkerEvent::Related { message_id, messages } => {
+            AppMsg::Related { account_id, message_id, messages }
+        }
         WorkerEvent::Account(a) => AppMsg::SetAccount(a),
         WorkerEvent::Folders(folders) => AppMsg::SetFolders { account_id, folders },
         WorkerEvent::Messages { folder_id, messages } => {
@@ -5897,6 +6014,25 @@ fn kind_label(kind: FolderKind) -> &'static str {
     }
 }
 
+/// Every Message-ID that identifies a conversation: the messages' own ids plus
+/// the ones they reference. This is what the cache is searched by to find the
+/// parts of the thread filed in other folders.
+fn thread_ids(msgs: &[Message]) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    let mut push = |id: &str| {
+        if !id.is_empty() && !ids.iter().any(|x| x == id) {
+            ids.push(id.to_string());
+        }
+    };
+    for m in msgs {
+        push(&m.message_id);
+        for r in m.references.split_whitespace() {
+            push(r);
+        }
+    }
+    ids
+}
+
 /// Flatten every folder's indexed messages into one pool for cross-folder search.
 /// The map is keyed by `(account_id, folder_id)`, so a flat concatenation already
 /// spans every folder of every account with no duplicates.
@@ -6072,6 +6208,24 @@ mod tests {
             message_id: String::new(),
             references: String::new(),
         }
+    }
+
+    #[test]
+    fn thread_ids_collect_own_and_referenced_ids_once() {
+        let mut a = msg(1, 1, 10);
+        a.message_id = "root@x".into();
+        let mut b = msg(1, 1, 11);
+        b.message_id = "reply@x".into();
+        b.references = "root@x parent@x".into();
+        let ids = thread_ids(&[a, b]);
+        assert_eq!(ids, vec!["root@x", "reply@x", "parent@x"]);
+    }
+
+    #[test]
+    fn thread_ids_skips_messages_with_no_headers() {
+        // Nothing to search the cache by — better an empty list than a lookup
+        // that would match every message with an empty message_id.
+        assert!(thread_ids(&[msg(1, 1, 10)]).is_empty());
     }
 
     #[test]
