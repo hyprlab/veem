@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.13.0" date="2026-08-23" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.13.0</url>
+      <description>
+        <p>Security release. Fixes a flaw that let a sender run JavaScript in the reader and read a conversation, closes several ways remote content could load while the interface reported nothing blocked, and tightens file permissions, the Flatpak sandbox and OAuth.</p>
+      </description>
+    </release>
     <release version="1.12.7" date="2026-08-23" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.12.7</url>
       <description>

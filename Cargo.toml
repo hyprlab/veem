@@ -1,6 +1,6 @@
 [package]
 name = "vireo"
-version = "1.12.7"
+version = "1.13.0"
 edition = "2021"
 description = "A clean, fast GNOME-native email client"
 license = "AGPL-3.0-or-later"
@@ -35,6 +35,13 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 dirs = "5"
+
+# OAuth: PKCE S256 (RFC 7636) needs SHA-256 + base64url, and every token and
+# CSP nonce comes from the OS CSPRNG. All three are already in the dependency
+# graph via keyring, so naming them here adds no new downloads.
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.2"
 
 # Gravatar (opt-in): MD5 of the email + a simple blocking HTTPS fetch
 md5 = "0.7"

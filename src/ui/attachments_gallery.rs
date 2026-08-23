@@ -902,17 +902,129 @@ pub(crate) fn icon_color_class(name: &str) -> &'static str {
 }
 
 /// Write bytes to a temp file and open it in the default application.
+///
+/// The filename comes from an email, so it comes from whoever sent it. The
+/// sanitizer below removes every path separator, which is what stops traversal;
+/// the rest of the care here is about `/tmp` being shared on a native install
+/// (under Flatpak it is per-app): the directory is created private and its
+/// ownership checked, and each file is created fresh rather than written
+/// through whatever already sits at a guessable path.
 pub(crate) fn open_bytes(name: &str, data: &[u8]) {
     let safe: String = name
         .chars()
         .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
         .collect();
+    let Some(dir) = attachment_dir() else { return };
+    let base = if safe.is_empty() { "attachment".to_string() } else { safe };
+    let Some((mut file, path)) = create_private(&dir, &base) else {
+        tracing::warn!("could not open a temporary file for the attachment");
+        return;
+    };
+    // Write through the handle rather than reopening by path: the checks below
+    // are about what is at that name, and going back through it would hand the
+    // result to whatever is there by the time we look again.
+    if let Err(e) = std::io::Write::write_all(&mut file, data) {
+        tracing::warn!("could not write the attachment: {e}");
+        return;
+    }
+    drop(file);
+    let uri = format!("file://{}", path.to_string_lossy());
+    let _ = gtk::gio::AppInfo::launch_default_for_uri(&uri, gtk::gio::AppLaunchContext::NONE);
+}
+
+/// The private directory opened attachments are staged in, created if needed.
+///
+/// Returns `None` if the path exists but is not a directory we own with nobody
+/// else's access — an attacker who pre-creates it on a shared host would
+/// otherwise get every attachment the user opens.
+fn attachment_dir() -> Option<std::path::PathBuf> {
     let dir = std::env::temp_dir().join("vireo-attachments");
-    let _ = std::fs::create_dir_all(&dir);
-    let path = dir.join(if safe.is_empty() { "attachment".into() } else { safe });
-    if std::fs::write(&path, data).is_ok() {
-        let uri = format!("file://{}", path.to_string_lossy());
-        let _ = gtk::gio::AppInfo::launch_default_for_uri(&uri, gtk::gio::AppLaunchContext::NONE);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        if !dir.exists() {
+            let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir);
+        }
+        // `symlink_metadata`, so a symlink pointing at somewhere friendlier is
+        // seen for what it is rather than followed.
+        let md = std::fs::symlink_metadata(&dir).ok()?;
+        if !md.is_dir() || md.uid() != our_uid() {
+            tracing::warn!("{} is not ours; not staging attachments", dir.display());
+            return None;
+        }
+        if md.permissions().mode() & 0o077 != 0 {
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = std::fs::create_dir_all(&dir);
+    }
+    Some(dir)
+}
+
+/// Create a new 0600 file for `base` in `dir`, returning it open with its path.
+///
+/// `create_new` means an existing file — or a symlink planted at a guessable
+/// name — makes the call fail rather than being written through, so the next
+/// candidate name is tried instead. Overwriting the user's previous copy of the
+/// same attachment silently would also be wrong.
+fn create_private(
+    dir: &std::path::Path,
+    base: &str,
+) -> Option<(std::fs::File, std::path::PathBuf)> {
+    for n in 0..64 {
+        let name = if n == 0 {
+            base.to_string()
+        } else {
+            match base.rsplit_once('.') {
+                Some((stem, ext)) if !stem.is_empty() => format!("{stem}-{n}.{ext}"),
+                _ => format!("{base}-{n}"),
+            }
+        };
+        let path = dir.join(&name);
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+            // Refuse to follow a symlink instead of racing to check for one.
+            opts.custom_flags(0o200000 /* O_NOFOLLOW */);
+        }
+        if let Ok(file) = opts.open(&path) {
+            return Some((file, path));
+        }
+    }
+    None
+}
+
+/// This process's real user ID.
+///
+/// Vireo has no libc dependency; `getuid` is always available and cannot fail,
+/// so declaring it directly is cheaper than taking one on.
+#[cfg(unix)]
+fn our_uid() -> u32 {
+    extern "C" {
+        fn getuid() -> u32;
+    }
+    unsafe { getuid() }
+}
+
+/// Delete anything left in the attachment staging directory.
+///
+/// Opened attachments used to accumulate in `/tmp` for the life of the machine —
+/// decrypted, readable, and long past the point the user considers them gone.
+/// Called once at startup, because the helper application the user opened a file
+/// with may still have it open while Vireo is running.
+pub fn purge_attachment_dir() {
+    let dir = std::env::temp_dir().join("vireo-attachments");
+    if !dir.exists() {
+        return;
+    }
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => tracing::debug!("cleared staged attachments in {}", dir.display()),
+        Err(e) => tracing::warn!("could not clear {}: {e}", dir.display()),
     }
 }
 

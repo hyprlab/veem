@@ -10,6 +10,34 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// Write a config file that only its owner can read, without ever having
+/// existed as anything else.
+///
+/// `fs::write` then `set_permissions` leaves a window in which the file sits on
+/// disk with whatever the umask allowed — brief, but these files carry
+/// hostnames, usernames, OAuth client secrets and correspondent lists. Creating
+/// with the mode already set closes it.
+fn write_private(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(path)?;
+    f.write_all(contents.as_bytes())?;
+    // An existing file keeps its old mode through `OpenOptions::mode`, which
+    // only applies at creation — so tighten regardless.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
 /// Service name used for keyring entries; password items are keyed by email.
 const KEYRING_SERVICE: &str = "co.hyprlab.Vireo";
 
@@ -208,13 +236,7 @@ fn write_config(accounts: &[AccountConfig]) -> std::io::Result<()> {
     };
     let toml =
         toml::to_string_pretty(&file).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
-    std::fs::write(&path, toml)?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-    }
+    write_private(&path, &toml)?;
 
     tracing::info!("saved {} account(s) to {}", accounts.len(), path.display());
     Ok(())
@@ -408,6 +430,11 @@ struct PrivacyFile {
     /// Whether to post desktop notifications (new mail, error alerts).
     #[serde(default = "default_notifications")]
     notifications: bool,
+    /// Whether new-mail notifications name the sender and subject. On by
+    /// default — that is what makes them useful — but GNOME draws notifications
+    /// on the lock screen, so turning it off is worth offering.
+    #[serde(default = "default_notification_content")]
+    notification_content: bool,
     /// Whether the sidebar shows the "Attachments" row (the gallery of every
     /// account's attachments).
     #[serde(default = "default_show_attachments")]
@@ -445,6 +472,10 @@ fn default_palette_collapse() -> u64 {
     5
 }
 
+fn default_notification_content() -> bool {
+    true
+}
+
 fn default_notifications() -> bool {
     true
 }
@@ -478,6 +509,7 @@ impl Default for PrivacyFile {
             threads_expanded: false,
             message_theme: MessageTheme::default(),
             notifications: default_notifications(),
+            notification_content: default_notification_content(),
             show_attachments: default_show_attachments(),
             preview_lines: default_preview_lines(),
             single_key_shortcuts: false,
@@ -567,6 +599,11 @@ pub fn load_notifications() -> bool {
     load_privacy().notifications
 }
 
+/// Whether new-mail notifications may name the sender and subject.
+pub fn load_notification_content() -> bool {
+    load_privacy().notification_content
+}
+
 /// Whether the sidebar shows the "Attachments" row.
 pub fn load_show_attachments() -> bool {
     load_privacy().show_attachments
@@ -611,6 +648,7 @@ pub fn save_privacy(
     threads_expanded: bool,
     message_theme: MessageTheme,
     notifications: bool,
+    notification_content: bool,
     show_attachments: bool,
     preview_lines: u32,
     single_key_shortcuts: bool,
@@ -638,6 +676,7 @@ pub fn save_privacy(
         threads_expanded,
         message_theme,
         notifications,
+        notification_content,
         show_attachments,
         preview_lines,
         single_key_shortcuts,
@@ -646,7 +685,7 @@ pub fn save_privacy(
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {
-            if let Err(e) = std::fs::write(&path, toml) {
+            if let Err(e) = write_private(&path, &toml) {
                 tracing::warn!("could not save privacy settings: {e}");
             }
         }
@@ -723,7 +762,7 @@ pub fn save_sidebar_state(state: &SidebarState) {
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {
-            if let Err(e) = std::fs::write(&path, toml) {
+            if let Err(e) = write_private(&path, &toml) {
                 tracing::warn!("could not save sidebar state: {e}");
             }
         }

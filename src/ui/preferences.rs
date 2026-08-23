@@ -25,6 +25,7 @@ pub struct PrefInit {
     pub threads_expanded: bool,
     pub message_theme: MessageTheme,
     pub notifications: bool,
+    pub notification_content: bool,
     pub show_attachments: bool,
     pub preview_lines: u32,
     pub single_key_shortcuts: bool,
@@ -109,6 +110,9 @@ pub struct Preferences {
     sender_addrs: Vec<String>,
     blacklist: FactoryVecDeque<SenderRow>,
     blacklist_addrs: Vec<String>,
+    /// Mirrors the notifications switch, so the "show sender and subject" row
+    /// below it can grey out when nothing is being posted at all.
+    notifications: bool,
 }
 
 #[derive(Debug)]
@@ -127,6 +131,7 @@ pub enum PrefInput {
     ChangeFetchInterval(u32),
     TogglePush(bool),
     ToggleNotifications(bool),
+    ToggleNotificationContent(bool),
     ToggleShowAttachments(bool),
     ChangePreviewLines(u32),
     ToggleSingleKey(bool),
@@ -152,6 +157,7 @@ pub enum PrefOutput {
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
+    SetNotificationContent(bool),
     SetShowAttachments(bool),
     SetPreviewLines(u32),
     SetSingleKey(bool),
@@ -213,6 +219,17 @@ impl Component for Preferences {
                             set_subtitle: "Show system notifications for new mail and error alerts when Vireo isn't focused.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleNotifications(row.is_active()));
+                            },
+                        },
+
+                        #[name = "notification_content_row"]
+                        adw::SwitchRow {
+                            #[watch]
+                            set_sensitive: model.notifications,
+                            set_title: "Show sender and subject",
+                            set_subtitle: "Name who wrote and what about in the notification. Turn this off to keep both off the lock screen.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleNotificationContent(row.is_active()));
                             },
                         },
 
@@ -454,6 +471,7 @@ impl Component for Preferences {
             sender_addrs: Vec::new(),
             blacklist,
             blacklist_addrs: Vec::new(),
+            notifications: init.notifications,
         };
 
         {
@@ -488,6 +506,7 @@ impl Component for Preferences {
         widgets.fetch_row.set_selected(selected as u32);
         widgets.push_row.set_active(init.push);
         widgets.notifications_row.set_active(init.notifications);
+        widgets.notification_content_row.set_active(init.notification_content);
         widgets.show_attachments_row.set_active(init.show_attachments);
         let preview_labels = ["Off", "1 line", "2 lines", "3 lines"];
         widgets
@@ -588,7 +607,11 @@ impl Component for Preferences {
                 let _ = sender.output(PrefOutput::SetPush(on));
             }
             PrefInput::ToggleNotifications(on) => {
+                self.notifications = on;
                 let _ = sender.output(PrefOutput::SetNotifications(on));
+            }
+            PrefInput::ToggleNotificationContent(on) => {
+                let _ = sender.output(PrefOutput::SetNotificationContent(on));
             }
             PrefInput::ToggleShowAttachments(on) => {
                 let _ = sender.output(PrefOutput::SetShowAttachments(on));

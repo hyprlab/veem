@@ -17,6 +17,7 @@ mod notify;
 mod oauth;
 mod platform;
 mod power;
+mod rng;
 mod ui;
 mod verify;
 mod worker;
@@ -44,6 +45,9 @@ fn main() {
         .init();
 
     migrate_legacy_dirs();
+    // Attachments the user opened in a previous session were decrypted to a temp
+    // directory and left there. Clear it before anything else runs.
+    ui::attachments_gallery::purge_attachment_dir();
     register_resources();
 
     // `--hidden` starts without showing the window: the autostart entry written

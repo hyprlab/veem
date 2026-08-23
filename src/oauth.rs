@@ -346,18 +346,24 @@ pub fn run_flow(settings: &OAuthSettings) -> Result<FlowResult, String> {
     };
     let redirect = format!("http://{host}:{port}/");
 
-    // PKCE "plain" (no crypto dep): challenge == verifier.
-    let verifier = random_token(64);
-    let state = random_token(24);
+    // PKCE S256 (RFC 7636 §4.2). With `plain` the challenge *is* the verifier, so
+    // anyone who gets to read the authorization URL — browser history, an
+    // extension, another local process — can redeem a stolen code, which is the
+    // one thing PKCE exists to prevent. RFC 8252 requires S256 of any client that
+    // can compute SHA-256.
+    let entropy = |e| format!("no secure randomness available: {e}");
+    let verifier = crate::rng::token(64).map_err(entropy)?;
+    let state = crate::rng::token(24).map_err(entropy)?;
+    let challenge = pkce_challenge(&verifier);
     let auth_url = format!(
         "{base}?response_type=code&client_id={cid}&redirect_uri={redir}&scope={scope}\
-         &code_challenge={chal}&code_challenge_method=plain&state={state}\
+         &code_challenge={chal}&code_challenge_method=S256&state={state}\
          &access_type=offline&prompt=consent",
         base = settings.auth_url,
         cid = pct(&settings.client_id),
         redir = pct(&redirect),
         scope = pct(&settings.scopes),
-        chal = pct(&verifier),
+        chal = pct(&challenge),
         state = pct(&state),
     );
 
@@ -476,16 +482,14 @@ fn parse_redirect(request_line: &str) -> (Option<String>, Option<String>) {
 
 const UNRESERVED: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
 
-/// A random URL-safe token of `len` unreserved characters (from `/dev/urandom`).
-fn random_token(len: usize) -> String {
-    let mut bytes = vec![0u8; len];
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        let _ = f.read_exact(&mut bytes);
-    }
-    bytes
-        .iter()
-        .map(|b| UNRESERVED[(*b as usize) % UNRESERVED.len()] as char)
-        .collect()
+/// The PKCE S256 code challenge for a verifier: base64url(SHA-256(verifier)),
+/// without padding (RFC 7636 §4.2).
+fn pkce_challenge(verifier: &str) -> String {
+    use sha2::Digest;
+    base64::Engine::encode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        sha2::Sha256::digest(verifier.as_bytes()),
+    )
 }
 
 /// Percent-encode a query value (encode everything but the unreserved set).
@@ -535,3 +539,20 @@ fn pct_decode(s: &str) -> String {
 
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::pkce_challenge;
+
+    #[test]
+    fn the_pkce_challenge_matches_the_rfc_7636_vector() {
+        // RFC 7636 appendix B. With `plain` the challenge *was* the verifier, so
+        // reading the authorization URL was enough to redeem a stolen code.
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = pkce_challenge(verifier);
+        assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+        assert_ne!(challenge, verifier);
+        // base64url without padding: no `+`, `/` or `=` to percent-encode.
+        assert!(!challenge.contains(['+', '/', '=']), "{challenge}");
+    }
+}

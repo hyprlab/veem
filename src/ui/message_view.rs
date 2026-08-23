@@ -18,8 +18,17 @@ pub struct MessageView {
     /// The whole conversation, newest first. One entry = a single message (shown
     /// exactly as before); more = a scrollable conversation in the body view.
     thread: Vec<Message>,
-    /// Remote content is present and currently withheld.
+    /// Remote content was detected and is currently withheld — this drives the
+    /// "blocked" banner, and nothing else.
     blocked: bool,
+    /// Whether the user has actually permitted remote content for what is on
+    /// screen (settings, "Load once", or "Always allow sender").
+    ///
+    /// Kept separate from `blocked` on purpose. `blocked` depends on a detector
+    /// guessing whether a message references remote resources; this does not.
+    /// Stripping and the CSP key off *this*, so a detector miss costs a banner
+    /// rather than the protection itself.
+    remote_allowed: bool,
     /// Whether Gravatar loading is enabled.
     gravatar: bool,
     /// Whether the sender circle is drawn at all (#29).
@@ -379,6 +388,7 @@ impl Component for MessageView {
             current: None,
             thread: Vec::new(),
             blocked: false,
+            remote_allowed: false,
             gravatar: false,
             avatars: true,
             sender_logos: false,
@@ -465,6 +475,7 @@ impl Component for MessageView {
                     );
                     self.chip_provider.load_from_data(&css);
                 }
+                self.remote_allowed = allow_remote;
                 let has_remote = self
                     .thread
                     .iter()
@@ -478,6 +489,7 @@ impl Component for MessageView {
                 }
             }
             MessageViewInput::LoadRemoteOnce => {
+                self.remote_allowed = true;
                 self.blocked = false;
                 self.render();
             }
@@ -485,6 +497,7 @@ impl Component for MessageView {
                 if let Some(m) = &self.current {
                     let _ = sender.output(MessageViewOutput::AllowSender(m.from_addr.clone()));
                 }
+                self.remote_allowed = true;
                 self.blocked = false;
                 self.render();
             }
@@ -668,17 +681,27 @@ impl MessageView {
         }
     }
 
-    /// The wrapper document: one sandboxed iframe per message (so each email's CSS
-    /// is fully isolated and its scripts can't run), with per-message headers in
-    /// conversation mode. A small script sizes each iframe to its content.
+    /// The wrapper document for what is currently on screen.
     fn document_html(&self, dark: bool) -> String {
-        let conversation = self.thread.len() > 1;
+        Self::conversation_document(&self.thread, !self.remote_allowed, dark)
+    }
+
+    /// The wrapper document: one sandboxed iframe per message (so each email's
+    /// CSS is fully isolated and its scripts can't run), with per-message
+    /// headers in conversation mode. A small script sizes each iframe to its
+    /// content.
+    ///
+    /// Takes the thread rather than `&self` so it can be exercised without a GTK
+    /// display: what it emits is a security boundary, and one that needs
+    /// regression cover.
+    fn conversation_document(thread: &[Message], restrict: bool, dark: bool) -> String {
+        let conversation = thread.len() > 1;
         let mut sections = String::new();
-        for m in &self.thread {
+        for m in thread {
             let body = if m.body.trim().is_empty() {
                 "<div class=\"vireo-loading\">Loading…</div>".to_string()
             } else {
-                message_frame(&m.body, self.blocked, dark)
+                message_frame(&m.body, restrict, dark)
             };
             if conversation {
                 sections.push_str(&format!(
@@ -690,13 +713,18 @@ impl MessageView {
                        </header>{body}</section>",
                     aid = m.account_id,
                     id = m.id,
-                    from = attr_escape(&m.from_name),
+                    // `escape_text`, not `attr_escape`: these land in element
+                    // text content, where `<` and `>` are structural. A `From:`
+                    // display name is attacker-controlled (and RFC 2047-decoded,
+                    // so any byte sequence can be delivered), and this document
+                    // is the trusted wrapper — not a sandboxed message frame.
+                    from = escape_text(&m.from_name),
                     addr = if m.from_addr.is_empty() {
                         String::new()
                     } else {
-                        format!("<span class=\"vireo-addr\">&lt;{}&gt;</span>", attr_escape(&m.from_addr))
+                        format!("<span class=\"vireo-addr\">&lt;{}&gt;</span>", escape_text(&m.from_addr))
                     },
-                    date = attr_escape(&m.datetime_full()),
+                    date = escape_text(&m.datetime_full()),
                     body = body,
                 ));
             } else {
@@ -707,8 +735,36 @@ impl MessageView {
         // Paint the wrapper and the (still-loading) iframes in the theme colour so
         // there's no white flash before each message's content renders.
         let bg = if dark { "#1e1e1e" } else { "#ffffff" };
+        // Defence in depth for the wrapper: the only script allowed to run is the
+        // one carrying this render's nonce, which is ours. Anything a message
+        // manages to smuggle into this document — an injected `<script>`, an
+        // `onerror=` handler — is refused by the engine even if the escaping
+        // above is ever wrong again.
+        //
+        // Deliberately *only* `script-src`/`object-src`/`base-uri`: no
+        // `default-src`. A wrapper policy is inherited by the `srcdoc` frames, so
+        // restricting images or styles here would silently re-block the remote
+        // content the user has chosen to load. Each frame carries its own
+        // `default-src 'none'` policy for that.
+        let nonce = crate::rng::nonce(24).ok();
+        let csp = match &nonce {
+            Some(n) => format!(
+                "<meta http-equiv=\"Content-Security-Policy\" content=\"\
+                 script-src 'nonce-{n}'; object-src 'none'; base-uri 'none'\">"
+            ),
+            // No entropy, no nonce we can trust — allow no script at all. The
+            // iframes render at their default height instead of resizing, which
+            // is a visual degradation, not a security one.
+            None => "<meta http-equiv=\"Content-Security-Policy\" content=\"\
+                     script-src 'none'; object-src 'none'; base-uri 'none'\">"
+                .to_string(),
+        };
+        let sizer = match &nonce {
+            Some(n) => format!("<script nonce=\"{n}\">{SIZE_SCRIPT}</script>"),
+            None => String::new(),
+        };
         format!(
-            "<!doctype html><html><head><meta charset=\"utf-8\">\
+            "<!doctype html><html><head><meta charset=\"utf-8\">{csp}\
              <meta name=\"color-scheme\" content=\"{scheme}\">\
              <style>\
                :root{{color-scheme:{scheme};}}\
@@ -721,8 +777,7 @@ impl MessageView {
                .vireo-addr{{opacity:0.55;font-size:0.9em;}}\
                .vireo-date{{margin-left:auto;opacity:0.55;font-size:0.85em;}}\
                .vireo-loading{{opacity:0.5;padding:16px;}}\
-             </style>\
-             <script>{SIZE_SCRIPT}</script>\
+             </style>{sizer}\
              </head><body>{sections}</body></html>"
         )
     }
@@ -753,7 +808,7 @@ impl MessageView {
             .iter()
             .map(|m| {
                 let doc = body_html(&m.body);
-                let doc = if self.blocked { strip_remote(&doc) } else { doc };
+                let doc = if self.remote_allowed { doc } else { strip_remote(&doc) };
                 let head = if conversation {
                     print_message_header_html(m)
                 } else {
@@ -762,7 +817,7 @@ impl MessageView {
                 (head, doc)
             })
             .collect();
-        print_document(&self.print_header_html(), &messages, !self.blocked)
+        print_document(&self.print_header_html(), &messages, self.remote_allowed)
     }
 
     /// That same document, dressed as a page for the preview window.
@@ -885,10 +940,22 @@ fn new_webview() -> webkit6::WebView {
                         || action.navigation_type() == webkit6::NavigationType::LinkClicked;
                     if clicked {
                         if let Some(uri) = action.request().and_then(|r| r.uri()) {
-                            let _ = gtk::gio::AppInfo::launch_default_for_uri(
-                                &uri,
-                                None::<&gtk::gio::AppLaunchContext>,
-                            );
+                            // Only web and mail links reach the desktop's handlers.
+                            // An HTML body keeps its own `href` values verbatim, so
+                            // without this a message could hand `file://`, `smb://`
+                            // or any scheme a third-party app has registered to that
+                            // app on a single click.
+                            if is_launchable_uri(&uri) {
+                                let _ = gtk::gio::AppInfo::launch_default_for_uri(
+                                    &uri,
+                                    None::<&gtk::gio::AppLaunchContext>,
+                                );
+                            } else {
+                                tracing::warn!(
+                                    "refused to open a link with an unsupported scheme: {}",
+                                    uri.split(':').next().unwrap_or("?")
+                                );
+                            }
                         }
                         decision.ignore();
                         return true;
@@ -931,6 +998,23 @@ fn new_webview() -> webkit6::WebView {
     });
 
     webview
+}
+
+/// Whether a clicked link may be handed to the desktop's default handler.
+///
+/// An allowlist, not a blocklist: every scheme a desktop registers is a program
+/// that would be started with a sender-controlled argument, and there is no way
+/// to enumerate the dangerous ones ahead of time.
+fn is_launchable_uri(uri: &str) -> bool {
+    match uri.split_once(':') {
+        Some((scheme, rest)) => {
+            matches!(
+                scheme.to_ascii_lowercase().as_str(),
+                "http" | "https" | "mailto"
+            ) && !rest.is_empty()
+        }
+        None => false,
+    }
 }
 
 /// What to show in the link preview: the destination, plus an explicit warning
@@ -1033,22 +1117,289 @@ fn cc_line(m: Option<&Message>) -> String {
     }
 }
 
+/// Every URL in `html` that would cause a fetch from a remote host, as byte
+/// ranges into `html`.
+///
+/// One walk feeds both the detector and the stripper, so the banner and the
+/// blocking can no longer disagree about what counts as remote. The pair of
+/// substring lists this replaces had already drifted: `SRC="HTTP://…"` was
+/// detected but not stripped, and `src = "http://…"` (whitespace around `=`,
+/// which HTML permits) was neither.
+fn remote_url_spans(html: &str) -> Vec<(usize, usize)> {
+    let b = html.as_bytes();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        let closing = j < b.len() && b[j] == b'/';
+        if closing {
+            j += 1;
+        }
+        let name_start = j;
+        while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'-' || b[j] == b':') {
+            j += 1;
+        }
+        if j == name_start {
+            // Not a tag (a comment, a stray `<`, an entity) — nothing to parse.
+            i += 1;
+            continue;
+        }
+        let tag = html[name_start..j].to_ascii_lowercase();
+
+        // Attributes, up to the closing `>`.
+        while j < b.len() && b[j] != b'>' {
+            if b[j].is_ascii_whitespace() || b[j] == b'/' {
+                j += 1;
+                continue;
+            }
+            let an_start = j;
+            while j < b.len()
+                && !matches!(b[j], b'=' | b'>' | b'/')
+                && !b[j].is_ascii_whitespace()
+            {
+                j += 1;
+            }
+            if j == an_start {
+                j += 1;
+                continue;
+            }
+            let attr = String::from_utf8_lossy(&b[an_start..j]).to_ascii_lowercase();
+
+            // `=` may be surrounded by whitespace; an attribute may have no value.
+            let mut k = j;
+            while k < b.len() && b[k].is_ascii_whitespace() {
+                k += 1;
+            }
+            if k >= b.len() || b[k] != b'=' {
+                continue;
+            }
+            k += 1;
+            while k < b.len() && b[k].is_ascii_whitespace() {
+                k += 1;
+            }
+            let (vs, ve) = if k < b.len() && (b[k] == b'"' || b[k] == b'\'') {
+                let q = b[k];
+                k += 1;
+                let start = k;
+                while k < b.len() && b[k] != q {
+                    k += 1;
+                }
+                let end = k;
+                if k < b.len() {
+                    k += 1;
+                }
+                (start, end)
+            } else {
+                let start = k;
+                while k < b.len() && b[k] != b'>' && !b[k].is_ascii_whitespace() {
+                    k += 1;
+                }
+                (start, k)
+            };
+            j = k;
+
+            match attr.as_str() {
+                // "url 1x, url 2x, …" — the URL is each candidate's first token.
+                "srcset" | "imagesrcset" => {
+                    let mut at = vs;
+                    while at < ve {
+                        let mut end = at;
+                        while end < ve && b[end] != b',' {
+                            end += 1;
+                        }
+                        push_url(b, at, end, &mut spans);
+                        at = end + 1;
+                    }
+                }
+                "style" => push_css(b, vs, ve, &mut spans),
+                _ if fetches(&tag, &attr) => push_url(b, vs, ve, &mut spans),
+                _ => {}
+            }
+        }
+
+        // A `<style>` element's body carries `url()` and `@import`. Only the
+        // opening tag starts one — treating `</style>` as another would take the
+        // rest of the document for stylesheet text and skip past everything in
+        // it, which is how the `<img>` after a `<style>` block went unstripped.
+        if tag == "style" && !closing {
+            let start = (j + 1).min(b.len());
+            let end = find_ci(b, b"</style", start).unwrap_or(b.len());
+            push_css(b, start, end, &mut spans);
+            j = end;
+        }
+
+        i = if j > i { j } else { i + 1 };
+    }
+
+    // Only spans that land on character boundaries can be sliced or replaced.
+    spans.retain(|(s, e)| s < e && html.is_char_boundary(*s) && html.is_char_boundary(*e));
+    spans.sort_unstable();
+    spans.dedup();
+    spans
+}
+
+/// Whether an attribute on this element causes a fetch on its own.
+fn fetches(tag: &str, attr: &str) -> bool {
+    match attr {
+        "src" | "poster" | "background" | "lowsrc" | "dynsrc" | "codebase" | "xlink:href" => true,
+        "data" => tag == "object",
+        // `href` fetches on `<link>` (stylesheets, preloads, icons) and on SVG
+        // `<image>`/`<use>`. On `<a>` it is a destination the user must click,
+        // and treating those as remote content would put the banner on nearly
+        // every message and so teach people to ignore it.
+        "href" => matches!(tag, "link" | "image" | "use"),
+        _ => false,
+    }
+}
+
+/// Record `b[start..end]` (trimmed) if it points at a remote host.
+fn push_url(b: &[u8], start: usize, end: usize, spans: &mut Vec<(usize, usize)>) {
+    let mut s = start;
+    let mut e = end.min(b.len());
+    while s < e && b[s].is_ascii_whitespace() {
+        s += 1;
+    }
+    // For `srcset` the candidate is "<url> <descriptor>"; the URL ends at the
+    // first space. For a plain attribute there is no descriptor to trim.
+    let mut u = s;
+    while u < e && !b[u].is_ascii_whitespace() {
+        u += 1;
+    }
+    e = u;
+    if s < e && is_remote_url(&b[s..e]) {
+        spans.push((s, e));
+    }
+}
+
+/// Record every remote `url(…)` and `@import "…"` in a stylesheet or `style=`.
+fn push_css(b: &[u8], start: usize, end: usize, spans: &mut Vec<(usize, usize)>) {
+    let end = end.min(b.len());
+    let mut at = start;
+    while let Some(p) = find_ci(&b[..end], b"url(", at) {
+        if p >= end {
+            break;
+        }
+        let mut k = p + 4;
+        while k < end && b[k].is_ascii_whitespace() {
+            k += 1;
+        }
+        let quote = if k < end && (b[k] == b'"' || b[k] == b'\'') {
+            let q = b[k];
+            k += 1;
+            Some(q)
+        } else {
+            None
+        };
+        let term = quote.unwrap_or(b')');
+        let vs = k;
+        while k < end && b[k] != term && !(quote.is_none() && b[k].is_ascii_whitespace()) {
+            k += 1;
+        }
+        if vs < k && is_remote_url(&b[vs..k]) {
+            spans.push((vs, k));
+        }
+        at = (p + 4).max(k);
+    }
+    let mut at = start;
+    while let Some(p) = find_ci(&b[..end], b"@import", at) {
+        if p >= end {
+            break;
+        }
+        let mut k = p + 7;
+        while k < end && b[k].is_ascii_whitespace() {
+            k += 1;
+        }
+        // The `url(…)` form is already covered by the loop above; this is the
+        // bare-string form, `@import "//host/x.css"`.
+        if k < end && (b[k] == b'"' || b[k] == b'\'') {
+            let q = b[k];
+            k += 1;
+            let vs = k;
+            while k < end && b[k] != q {
+                k += 1;
+            }
+            if vs < k && is_remote_url(&b[vs..k]) {
+                spans.push((vs, k));
+            }
+        }
+        at = p + 7;
+    }
+}
+
+/// Whether a URL reaches a remote host.
+///
+/// `data:` and `cid:` carry their own bytes, and a path-relative or root-relative
+/// URL resolves against `vireo.localhost`, which serves nothing. A
+/// protocol-relative `//host/x` does reach the network — that one is the bypass
+/// the old substring list missed.
+fn is_remote_url(u: &[u8]) -> bool {
+    let u = std::str::from_utf8(u).unwrap_or("").trim();
+    if u.starts_with("//") {
+        return true;
+    }
+    match u.split_once(':') {
+        Some((scheme, _)) if !scheme.is_empty() && scheme.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')
+        }) => !matches!(
+            scheme.to_ascii_lowercase().as_str(),
+            "data" | "cid" | "blocked" | "mailto" | "tel" | "about" | "javascript"
+        ),
+        _ => false,
+    }
+}
+
+/// Case-insensitive byte search from `from`.
+fn find_ci(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if from >= hay.len() || needle.is_empty() {
+        return None;
+    }
+    hay[from..]
+        .windows(needle.len())
+        .position(|w| w.eq_ignore_ascii_case(needle))
+        .map(|p| p + from)
+}
+
 /// Neutralize remote resource references so nothing is fetched while blocked.
 /// Targets resource-loading attributes only; `<a href>` links are left intact.
 fn strip_remote(html: &str) -> String {
-    html.replace("src=\"http", "src=\"blocked://")
-        .replace("src='http", "src='blocked://")
-        .replace("src=http", "src=blocked://")
-        .replace("srcset=", "data-blocked-srcset=")
-        .replace("background=\"http", "background=\"blocked://")
-        .replace("url(http", "url(blocked://")
-        .replace("url('http", "url('blocked://")
-        .replace("url(\"http", "url(\"blocked://")
+    let spans = remote_url_spans(html);
+    if spans.is_empty() {
+        return html.to_string();
+    }
+    let mut out = String::with_capacity(html.len());
+    let mut at = 0usize;
+    for (s, e) in spans {
+        if s < at {
+            continue; // overlapping match already rewritten
+        }
+        out.push_str(&html[at..s]);
+        out.push_str("blocked://");
+        at = e;
+    }
+    out.push_str(&html[at..]);
+    out
 }
 
-/// Inject a Content-Security-Policy `<meta>` into the document head as a second
-/// line of defense. When remote content is disallowed only inline styles and
-/// `data:` URIs are permitted.
+/// Does the HTML reference remote (network-reachable) resources?
+///
+/// This decides whether the "remote content was blocked" banner appears, and
+/// nothing more — the blocking itself follows the user's setting, not this. A
+/// miss here is a missing banner, not a leaked request.
+fn has_remote_resources(html: &str) -> bool {
+    !remote_url_spans(html).is_empty()
+}
+
+/// Inject a Content-Security-Policy `<meta>` into the document head. When remote
+/// content is disallowed only inline styles and `data:` URIs are permitted.
+///
+/// `allow_remote` is the user's own choice, never the output of
+/// [`has_remote_resources`]. That is what makes this an independent second line
+/// of defence: if the detector fails to spot a reference, the engine still
+/// refuses the fetch.
 fn inject_csp(html: &str, allow_remote: bool, dark: bool) -> String {
     let policy = if allow_remote {
         "default-src 'none'; img-src http: https: data: cid:; \
@@ -1104,20 +1455,6 @@ fn inject_csp(html: &str, allow_remote: bool, dark: bool) -> String {
     format!("<!doctype html><html><head>{meta}</head><body>{html}</body></html>")
 }
 
-/// Heuristic: does the HTML reference remote (http/https) resources?
-fn has_remote_resources(html: &str) -> bool {
-    let h = html.to_ascii_lowercase();
-    h.contains("src=\"http")
-        || h.contains("src='http")
-        || h.contains("src=http")
-        || h.contains("srcset=")
-        || h.contains("url(http")
-        || h.contains("url('http")
-        || h.contains("url(\"http")
-        || h.contains("background=\"http")
-        || (h.contains("<link") && h.contains("stylesheet") && h.contains("http"))
-}
-
 /// Wrapper-document script: size each message iframe to its content height so the
 /// whole conversation scrolls as one page (the iframes have no inner scrollbars).
 /// Re-measures as images load and as content reflows.
@@ -1141,10 +1478,10 @@ window.addEventListener('resize',function(){var fs=all();for(var i=0;i<fs.length
 /// One message body as a sandboxed iframe: its own document (so CSS can't leak to
 /// other messages) with no `allow-scripts` (so the email can't run JavaScript).
 /// `allow-same-origin` lets the wrapper script measure its height.
-fn message_frame(body: &str, blocked: bool, dark: bool) -> String {
+fn message_frame(body: &str, restrict: bool, dark: bool) -> String {
     let doc = body_html(body);
-    let doc = if blocked { strip_remote(&doc) } else { doc };
-    let doc = inject_csp(&doc, !blocked, dark);
+    let doc = if restrict { strip_remote(&doc) } else { doc };
+    let doc = inject_csp(&doc, !restrict, dark);
     format!(
         // `allow-same-origin` lets our wrapper script measure the frame height;
         // `allow-popups` lets `_blank` links reach the policy handler (which opens
@@ -1342,19 +1679,19 @@ fn print_document(
 /// Who sent one message of a printed conversation, and when.
 fn print_message_header_html(m: &Message) -> String {
     let from = if m.from_addr.is_empty() {
-        attr_escape(&m.from_name)
+        escape_text(&m.from_name)
     } else if m.from_name.trim().is_empty() {
-        attr_escape(&m.from_addr)
+        escape_text(&m.from_addr)
     } else {
         format!(
             "{} &lt;{}&gt;",
-            attr_escape(&m.from_name),
-            attr_escape(&m.from_addr)
+            escape_text(&m.from_name),
+            escape_text(&m.from_addr)
         )
     };
     format!(
         "<div class=\"vireo-print-msghdr\">{from} — {date}</div>",
-        date = attr_escape(&m.datetime_full())
+        date = escape_text(&m.datetime_full())
     )
 }
 
@@ -1405,7 +1742,13 @@ fn escape_text(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// Escape a string for use inside a double-quoted HTML attribute (e.g. `srcdoc`).
+/// Escape a string for use inside a double-quoted HTML **attribute** value
+/// (e.g. `srcdoc`), and nothing else.
+///
+/// This deliberately leaves `<` and `>` alone — inside a quoted attribute they
+/// are ordinary characters, and the `srcdoc` payload is a whole HTML document
+/// that must survive intact. It is therefore **not** safe for element text
+/// content: use [`escape_text`] there.
 fn attr_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('"', "&quot;")
 }
@@ -1467,6 +1810,284 @@ mod tests {
             message_id: String::new(),
             references: String::new(),
         }
+    }
+
+    #[test]
+    fn a_sender_cannot_put_markup_in_the_conversation_header() {
+        // The wrapper document has JavaScript enabled (it sizes the message
+        // iframes) and the iframes are same-origin, so anything that executes
+        // here can read every message body in the thread. A `From:` display name
+        // is attacker-controlled and RFC 2047-decoded, so it can carry any bytes
+        // at all — it has to reach the page as text, never as markup.
+        let mut a = msg_for_print();
+        a.from_name = "<script>x=1</script>".into();
+        a.from_addr = "<img src=y onerror=z>@example.com".into();
+        let mut b = msg_for_print();
+        b.id = 2;
+        // Two messages: the per-message headers only render in conversation mode.
+        let doc = MessageView::conversation_document(&[a, b], true, false);
+
+        assert!(!doc.contains("<script>x=1"), "{doc}");
+        assert!(!doc.contains("<img src=y"), "{doc}");
+        assert!(doc.contains("&lt;script&gt;x=1&lt;/script&gt;"), "{doc}");
+        assert!(doc.contains("onerror=z&gt;"), "{doc}");
+    }
+
+    #[test]
+    fn the_wrapper_only_runs_its_own_script() {
+        let mut a = msg_for_print();
+        a.from_name = "Ada".into();
+        let mut b = msg_for_print();
+        b.id = 2;
+        let doc = MessageView::conversation_document(&[a, b], true, false);
+
+        // A nonce'd CSP, so an injected `<script>` or `onerror=` is refused by
+        // the engine even if the escaping above ever regresses.
+        // The wrapper's own policy — not one of the frames', which are embedded
+        // in this same string as escaped `srcdoc` payloads.
+        let policy = doc
+            .split("<meta http-equiv=\"Content-Security-Policy\" content=\"")
+            .nth(1)
+            .and_then(|r| r.split('"').next())
+            .expect("the wrapper declares a CSP");
+        let nonce = policy
+            .split("script-src 'nonce-")
+            .nth(1)
+            .and_then(|r| r.split('\'').next())
+            .expect("wrapper CSP declares a nonce");
+        assert!(nonce.len() >= 16, "nonce is {} chars", nonce.len());
+        assert!(doc.contains(&format!("<script nonce=\"{nonce}\">")), "{doc}");
+        // The sizing script is the *only* script, and it carries the nonce.
+        assert_eq!(doc.matches("<script").count(), 1, "{doc}");
+        // No `default-src` here: a wrapper policy is inherited by the srcdoc
+        // frames, and one would re-block content the user has allowed. Each
+        // frame brings its own `default-src 'none'`.
+        assert!(!policy.contains("default-src"), "{policy}");
+        // Two renders never share a nonce.
+        let again =
+            MessageView::conversation_document(&[msg_for_print(), msg_for_print()], true, false);
+        assert!(!again.contains(nonce), "nonce was reused across renders");
+    }
+
+    #[test]
+    fn the_remote_detector_sees_past_the_obvious_spellings() {
+        // Every row here loaded a tracking pixel with no banner shown, because
+        // the old detector matched fixed substrings like `src="http`.
+        for html in [
+            // Protocol-relative: resolves against https://vireo.localhost.
+            r#"<img src="//tracker.example/p.gif">"#,
+            // HTML permits whitespace around `=`.
+            r#"<img src = "http://tracker.example/p.gif">"#,
+            // Neither `<svg><image href>` nor `poster` was in the attribute list.
+            r#"<svg><image href="http://tracker.example/p.gif"/></svg>"#,
+            r#"<video poster="http://tracker.example/p.gif">"#,
+            // `@import` was only matched in its `url(http…)` spelling.
+            r#"<style>@import url(//tracker.example/x.css)</style>"#,
+            r#"<style>@import "https://tracker.example/x.css"</style>"#,
+            // Case: the detector lowercased, the stripper did not.
+            r#"<IMG SRC="HTTP://tracker.example/p.gif">"#,
+            // Unquoted, and quoted with single quotes.
+            r#"<img src=http://tracker.example/p.gif>"#,
+            r#"<img src='//tracker.example/p.gif'>"#,
+            r#"<div style="background:url('//tracker.example/p.gif')">"#,
+            r#"<img srcset="//tracker.example/p.gif 1x, /local.gif 2x">"#,
+            r#"<link rel="stylesheet" href="//tracker.example/x.css">"#,
+        ] {
+            assert!(has_remote_resources(html), "not detected: {html}");
+            let stripped = strip_remote(html);
+            assert!(
+                !stripped.contains("tracker.example"),
+                "not stripped: {html} -> {stripped}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stylesheet_does_not_hide_what_follows_it() {
+        // The walk has to resume after `</style>`, not treat the closing tag as
+        // opening another stylesheet and take the rest of the document for CSS.
+        let html = "<html><head><style>.a{background:url(https://cdn.example/b.png)}</style>\
+                    </head><body><img src=\"https://cdn.example/i.png\"></body></html>";
+        let out = strip_remote(html);
+        assert!(!out.contains("cdn.example"), "{out}");
+        assert_eq!(out.matches("blocked://").count(), 2, "{out}");
+    }
+
+    #[test]
+    fn the_detector_leaves_self_contained_messages_alone() {
+        // A false banner on ordinary mail teaches people to ignore the real one.
+        for html in [
+            r#"<img src="data:image/png;base64,iVBOR">"#,
+            r#"<img src="cid:part1@example.com">"#,
+            r#"<p>plain text, no resources at all</p>"#,
+            // A link is a destination the user must click, not a fetch.
+            r#"<a href="https://example.com/read-more">more</a>"#,
+            r#"<div style="color:#333;font-weight:bold">styled</div>"#,
+        ] {
+            assert!(!has_remote_resources(html), "false positive: {html}");
+            assert_eq!(strip_remote(html), html, "needlessly rewritten: {html}");
+        }
+    }
+
+    #[test]
+    fn blocking_follows_the_users_choice_not_the_detector() {
+        // The point of the split: even for a body the detector says nothing
+        // about, a frame built while remote content is disallowed carries the
+        // restrictive policy. A detector miss costs a banner, not the blocking.
+        let sneaky = r#"<img data-x="y" src="//tracker.example/p.gif">"#;
+        let frame = message_frame(sneaky, true, false);
+        assert!(frame.contains("img-src data: cid:"), "{frame}");
+        assert!(!frame.contains("img-src http:"), "{frame}");
+        assert!(!frame.contains("tracker.example"), "{frame}");
+
+        // And once the user allows it, the same body renders untouched.
+        let allowed = message_frame(sneaky, false, false);
+        assert!(allowed.contains("img-src http: https:"), "{allowed}");
+        assert!(allowed.contains("tracker.example"), "{allowed}");
+    }
+
+    #[test]
+    fn only_web_and_mail_links_reach_the_desktop() {
+        // An HTML body keeps its own `href` values, so a message can name any
+        // scheme a third-party application has registered.
+        for uri in ["http://example.com/", "https://example.com/", "MAILTO:a@b.c"] {
+            assert!(is_launchable_uri(uri), "{uri}");
+        }
+        for uri in [
+            "file:///etc/passwd",
+            "smb://host/share",
+            "nfs://host/export",
+            "javascript:alert(1)",
+            "data:text/html,<script>x</script>",
+            "vscode://file/etc/passwd",
+            "https:",
+            "no-scheme-at-all",
+        ] {
+            assert!(!is_launchable_uri(uri), "{uri}");
+        }
+    }
+
+    /// Renders the real wrapper document in a real WebView and reports what
+    /// actually happened in the engine.
+    ///
+    /// Ignored by default: it needs a display and a WebKit process, which a CI
+    /// runner has no business requiring. Run it by hand after touching the
+    /// wrapper's CSP or its sizing script:
+    ///
+    /// ```text
+    /// cargo test -- --ignored the_wrapper_in_a_real_engine
+    /// ```
+    #[test]
+    #[ignore = "needs a display and a WebKit process"]
+    fn the_wrapper_in_a_real_engine_sizes_frames_and_refuses_injected_script() {
+        use gtk::prelude::*;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        gtk::init().expect("a display");
+
+        let mut a = msg_for_print();
+        // If this ever executes, the assertions below see it.
+        a.from_name = "<script>window.__pwned = 1</script>".into();
+        a.body = "<p style=\"height:400px\">first</p>".into();
+        let mut b = msg_for_print();
+        b.id = 2;
+        b.body = "<p style=\"height:300px\">second</p>".into();
+        let html = MessageView::conversation_document(&[a, b], true, false);
+
+        let view = webkit6::WebView::new();
+        let settings = webkit6::Settings::new();
+        settings.set_enable_javascript(true);
+        view.set_settings(&settings);
+        // Off-screen is enough; WebKit still lays out and runs scripts.
+        let win = gtk::Window::new();
+        win.set_child(Some(&view));
+        win.set_default_size(800, 600);
+        win.present();
+        view.load_html(&html, Some("https://vireo.localhost/message/1"));
+
+        let answer: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let ctx = gtk::glib::MainContext::default();
+        // Run the main loop until `done`, yielding when there is nothing to
+        // dispatch. Spinning on a non-blocking iteration instead starves the
+        // WebKit web process on a busy machine, which made this fail at random.
+        let pump = |done: &dyn Fn() -> bool| {
+            while !done() && std::time::Instant::now() < deadline {
+                if !ctx.iteration(false) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+        };
+
+        // Give the load and the two deferred `s(f)` passes time to run.
+        let ready = Rc::new(std::cell::Cell::new(false));
+        let r = ready.clone();
+        view.connect_load_changed(move |_, ev| {
+            if ev == webkit6::LoadEvent::Finished {
+                r.set(true);
+            }
+        });
+        pump(&|| ready.get());
+        assert!(ready.get(), "the document never finished loading");
+        // The sizing script measures on DOMContentLoaded and again on deferred
+        // passes, so poll for the result rather than sampling once — sampling
+        // made this fail under load, which is a flaky test, not a finding.
+        // `ours` — not the frame heights — is what says the nonce'd script ran.
+        // Heights come from `scrollHeight`, which is 0 until the window is
+        // mapped and laid out, and whether a compositor has got round to that
+        // has nothing to do with the CSP. The sizing script's top-level
+        // functions become properties of `window` the moment it executes.
+        let probe = "JSON.stringify({\
+               pwned: typeof window.__pwned !== 'undefined',\
+               ours: ['s','init','all'].every(f => typeof window[f] === 'function'),\
+               heights: [...document.querySelectorAll('iframe.vireo-frame')]\
+                          .map(f => f.style.height),\
+               readable: (function(){ try { \
+                 return document.querySelector('iframe.vireo-frame')\
+                          .contentDocument.body.innerText.trim(); \
+               } catch (e) { return 'blocked'; } })(),\
+               from: document.querySelector('.vireo-from').textContent\
+             })";
+        let mut json = String::new();
+        while std::time::Instant::now() < deadline {
+            answer.replace(None);
+            let out = answer.clone();
+            view.evaluate_javascript(
+                probe,
+                None,
+                None,
+                gtk::gio::Cancellable::NONE,
+                move |res| {
+                    *out.borrow_mut() = Some(match res {
+                        Ok(v) => v.to_str().to_string(),
+                        Err(e) => format!("ERROR {e}"),
+                    });
+                },
+            );
+            pump(&|| answer.borrow().is_some());
+            json = answer.borrow().clone().expect("the engine answered");
+            if json.contains("\"ours\":true") {
+                break;
+            }
+            let pause = std::time::Instant::now() + std::time::Duration::from_millis(250);
+            pump(&|| std::time::Instant::now() >= pause);
+        }
+
+        // The injected script is inert: it survives as text in the header and
+        // never runs.
+        assert!(json.contains("\"pwned\":false"), "injected script ran: {json}");
+        assert!(
+            json.contains("<script>window.__pwned = 1</script>"),
+            "the display name should read back as text: {json}"
+        );
+        // And our own nonce'd script did run.
+        assert!(
+            json.contains("\"ours\":true"),
+            "the sizing script did not run, so the CSP nonce is not working: {json}"
+        );
+        // The frames are still same-origin, which is what the sizing relies on.
+        assert!(json.contains("first"), "frame content unreadable: {json}");
     }
 
     #[test]
@@ -1672,5 +2293,42 @@ mod tests {
         assert_eq!(default_image_name("image/jpeg"), "image.jpg");
         assert_eq!(default_image_name("image/png"), "image.png");
         assert_eq!(default_image_name("image/svg+xml"), "image.svg");
+    }
+}
+
+#[cfg(test)]
+mod scan_perf {
+    use super::*;
+    #[test]
+    #[ignore = "timing-sensitive"]
+    fn scanning_a_large_message_is_quick() {
+        // A big marketing email: lots of tags, a large stylesheet, many images.
+        let mut html = String::from("<html><head><style>");
+        for i in 0..2000 {
+            html.push_str(&format!(
+                ".c{i}{{background:url(https://cdn.example/bg{i}.png);color:#333}}"
+            ));
+        }
+        html.push_str("</style></head><body>");
+        for i in 0..5000 {
+            html.push_str(&format!(
+                "<div class=\"c{i}\" style=\"padding:2px\"><img src=\"https://cdn.example/i{i}.png\"><a href=\"https://example.com/{i}\">x</a></div>"
+            ));
+        }
+        html.push_str("</body></html>");
+        eprintln!("body is {} KB", html.len() / 1024);
+
+        let t = std::time::Instant::now();
+        assert!(has_remote_resources(&html));
+        let detect = t.elapsed();
+        let t = std::time::Instant::now();
+        let stripped = strip_remote(&html);
+        let strip = t.elapsed();
+        eprintln!("detect {detect:?}, strip {strip:?}");
+        assert!(!stripped.contains("cdn.example"));
+        // Links are left alone.
+        assert!(stripped.contains("https://example.com/4999"));
+        assert!(detect.as_millis() < 250, "detection took {detect:?}");
+        assert!(strip.as_millis() < 250, "stripping took {strip:?}");
     }
 }

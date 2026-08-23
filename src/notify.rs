@@ -16,7 +16,26 @@ pub const OPEN_MESSAGE_ACTION: &str = "open-message";
 
 /// Build the (title, body) for a new-mail notification. `others` is how many
 /// *additional* new messages arrived beyond the newest one shown.
-fn compose_new_mail(from: &str, subject: &str, others: usize) -> (String, String) {
+///
+/// With `show_content` off, neither the sender nor the subject appears: a
+/// notification is drawn on the lock screen by default on GNOME, where a shoulder
+/// is all it takes to read who is writing to you about what.
+fn compose_new_mail(
+    from: &str,
+    subject: &str,
+    others: usize,
+    show_content: bool,
+) -> (String, String) {
+    if !show_content {
+        return (
+            if others == 0 {
+                "New message".to_string()
+            } else {
+                format!("{} new messages", others + 1)
+            },
+            String::new(),
+        );
+    }
     if others == 0 {
         (
             if from.is_empty() { "New message".to_string() } else { from.to_string() },
@@ -47,7 +66,12 @@ pub fn new_mail(
     subject: &str,
     others: usize,
 ) {
-    let (title, body) = compose_new_mail(from, subject, others);
+    let (title, body) = compose_new_mail(
+        from,
+        subject,
+        others,
+        crate::config::load_notification_content(),
+    );
     let n = gio::Notification::new(&title);
     if !body.is_empty() {
         n.set_body(Some(&body));
@@ -84,21 +108,31 @@ mod tests {
 
     #[test]
     fn single_message_shows_sender_and_subject() {
-        let (t, b) = compose_new_mail("Alice", "Lunch?", 0);
+        let (t, b) = compose_new_mail("Alice", "Lunch?", 0, true);
         assert_eq!(t, "Alice");
         assert_eq!(b, "Lunch?");
     }
 
     #[test]
     fn multiple_messages_summarize_with_count() {
-        let (t, b) = compose_new_mail("Bob", "Re: report", 2);
+        let (t, b) = compose_new_mail("Bob", "Re: report", 2, true);
         assert_eq!(t, "3 new messages");
         assert_eq!(b, "Bob — Re: report");
     }
 
     #[test]
+    fn content_free_notifications_name_nobody() {
+        let (t, b) = compose_new_mail("Alice", "Lunch?", 0, false);
+        assert_eq!(t, "New message");
+        assert!(b.is_empty());
+        let (t, b) = compose_new_mail("Alice", "Lunch?", 2, false);
+        assert_eq!(t, "3 new messages");
+        assert!(b.is_empty());
+    }
+
+    #[test]
     fn missing_sender_falls_back() {
-        let (t, _) = compose_new_mail("", "Hi", 0);
+        let (t, _) = compose_new_mail("", "Hi", 0, true);
         assert_eq!(t, "New message");
     }
 }

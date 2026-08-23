@@ -198,6 +198,8 @@ pub struct AppModel {
     push: bool,
     /// Whether desktop notifications (new mail, error alerts) are posted.
     notifications_enabled: bool,
+    /// Whether new-mail notifications may name the sender and subject.
+    notification_content: bool,
     /// Whether the sidebar shows the "Attachments" row.
     show_attachments: bool,
     /// Lines of preview text per message-list row (1–3).
@@ -352,6 +354,7 @@ pub enum AppMsg {
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
+    SetNotificationContent(bool),
     SetShowAttachments(bool),
     SetPreviewLines(u32),
     SetSingleKey(bool),
@@ -1065,6 +1068,7 @@ impl SimpleComponent for AppModel {
             fetch_interval_secs: config::load_fetch_interval(),
             push: config::load_push(),
             notifications_enabled: config::load_notifications(),
+            notification_content: config::load_notification_content(),
             show_attachments,
             preview_lines: config::load_preview_lines(),
             shortcuts_win: None,
@@ -2183,6 +2187,13 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetNotificationContent(on) => {
+                if self.notification_content != on {
+                    self.notification_content = on;
+                    self.save_settings();
+                }
+            }
+
             AppMsg::SetRunInBackground(on) => {
                 if self.run_in_background.get() != on {
                     self.run_in_background.set(on);
@@ -2530,6 +2541,7 @@ impl SimpleComponent for AppModel {
                     threads_expanded: self.threads_expanded,
                     message_theme: self.message_theme,
                     notifications: self.notifications_enabled,
+                    notification_content: self.notification_content,
                     show_attachments: self.show_attachments,
                     preview_lines: self.preview_lines,
                     single_key_shortcuts: self.single_key.get(),
@@ -2554,6 +2566,9 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                         PrefOutput::SetPush(on) => AppMsg::SetPush(on),
                         PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
+                        PrefOutput::SetNotificationContent(on) => {
+                            AppMsg::SetNotificationContent(on)
+                        }
                         PrefOutput::SetShowAttachments(on) => AppMsg::SetShowAttachments(on),
                         PrefOutput::SetPreviewLines(n) => AppMsg::SetPreviewLines(n),
                         PrefOutput::SetSingleKey(on) => AppMsg::SetSingleKey(on),
@@ -2975,6 +2990,7 @@ impl AppModel {
             self.threads_expanded,
             self.message_theme,
             self.notifications_enabled,
+            self.notification_content,
             self.show_attachments,
             self.preview_lines,
             self.single_key.get(),

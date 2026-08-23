@@ -120,14 +120,42 @@ pub struct Cache {
     conn: Connection,
 }
 
+/// Narrow an existing path's permissions to `mode`, if it exists.
+///
+/// Best-effort by design: a missing sidecar or a filesystem without Unix modes
+/// is not a reason to refuse to open the cache.
+#[cfg(unix)]
+fn restrict(path: &std::path::Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    if path.exists() {
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+    }
+}
+
+#[cfg(not(unix))]
+fn restrict(_path: &std::path::Path, _mode: u32) {}
+
 impl Cache {
     /// Open (creating if needed) the cache DB at `~/.local/share/vireo/cache.db`.
     pub fn open() -> rusqlite::Result<Cache> {
+        // No `temp_dir` fallback: this database holds message bodies, attachment
+        // bytes and the harvested address book, and a shared world-writable
+        // directory is the wrong place for any of it. Without a data dir there
+        // is no acceptable location, so fail instead of picking a bad one.
         let path = dirs::data_dir()
-            .unwrap_or_else(std::env::temp_dir)
+            .ok_or_else(|| {
+                rusqlite::Error::InvalidPath(std::path::PathBuf::from(
+                    "no XDG data directory for the mail cache",
+                ))
+            })?
             .join("vireo");
         let _ = std::fs::create_dir_all(&path);
-        let conn = Connection::open(path.join("cache.db"))?;
+        restrict(&path, 0o700);
+        let db = path.join("cache.db");
+        let conn = Connection::open(&db)?;
+        // The whole mailbox lives here, so it gets at least the care
+        // `accounts.toml` gets.
+        restrict(&db, 0o600);
 
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -175,6 +203,17 @@ impl Cache {
         // Concurrency: multiple account workers share this file.
         let _ = conn.pragma_update(None, "journal_mode", "WAL");
         let _ = conn.busy_timeout(Duration::from_secs(5));
+
+        // SQLite creates the WAL sidecars itself, and only once WAL mode is on —
+        // hence here rather than beside the `Connection::open` above. They hold
+        // the same message data mid-transaction, so they get the same mode. The
+        // 0700 on the directory is what actually keeps other users out; this is
+        // in case the cache is ever moved somewhere less private.
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let mut side = db.clone().into_os_string();
+            side.push(suffix);
+            restrict(std::path::Path::new(&side), 0o600);
+        }
 
         Ok(Cache { conn })
     }
@@ -884,6 +923,54 @@ mod tests {
             conn.execute_batch(SCHEMA).unwrap();
             Cache { conn }
         }
+    }
+
+    /// The cache holds message bodies, attachment bytes and the address book, so
+    /// it should be no more readable than `accounts.toml` is.
+    ///
+    /// Ignored by default: it sets `XDG_DATA_HOME`, which is process-global and
+    /// would leak into tests running beside it. Run it on its own:
+    ///
+    /// ```text
+    /// cargo test -- --ignored --test-threads=1 the_cache_is_not_world_readable
+    /// ```
+    #[test]
+    #[ignore = "mutates process-global environment"]
+    #[cfg(unix)]
+    fn the_cache_is_not_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!("vireo-cache-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        std::env::set_var("XDG_DATA_HOME", &base);
+
+        let dir = base.join("vireo");
+        // Start from the permissions the old code left behind, to prove an
+        // existing cache is tightened rather than only a freshly created one.
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(dir.join("cache.db"), b"").unwrap();
+        std::fs::set_permissions(dir.join("cache.db"), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+
+        let cache = Cache::open().expect("cache opens");
+        drop(cache);
+
+        let mode = |p: &std::path::Path| {
+            std::fs::metadata(p).unwrap().permissions().mode() & 0o777
+        };
+        assert_eq!(mode(&dir), 0o700, "cache directory");
+        assert_eq!(mode(&dir.join("cache.db")), 0o600, "cache.db");
+        for side in ["cache.db-wal", "cache.db-shm"] {
+            let p = dir.join(side);
+            if p.exists() {
+                assert_eq!(mode(&p), 0o600, "{side}");
+            }
+        }
+
+        std::env::remove_var("XDG_DATA_HOME");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

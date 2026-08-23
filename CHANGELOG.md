@@ -1,5 +1,76 @@
 # Changelog
 
+## 1.13.0 — 2026-08-23 — security
+
+Reported privately by [Alexander Lubovenko](https://github.com/typedev), who
+reviewed the whole tree and wrote it up properly. Thank you.
+
+- **Fixed: a sender could run JavaScript in the reader.** The `From:` display
+  name was escaped for an *attribute* value — `&` and `"` — but it is rendered
+  as element text, where `<` and `>` are structural. The message bodies sit in
+  sandboxed frames that cannot run scripts, but the headers are drawn in the
+  wrapper document around them, which does run one script of its own and can
+  read every frame in the thread. So a display name of `<script>…</script>`,
+  delivered as an RFC 2047 encoded-word, executed as soon as a conversation was
+  opened: no click, nothing visible, and from there every message in that thread
+  could be read and sent anywhere. Header text is now escaped as text.
+- **The wrapper document also has a Content-Security-Policy now**, so the script
+  that sizes the message frames is the only script that can run in it — it
+  carries a per-render nonce, and nothing else in that document does. Escaping is
+  the fix; this is what stands behind it if the escaping is ever wrong again.
+  Confirmed against the engine rather than assumed: with the escaping bug put
+  back deliberately, the injected `<script>` is parsed into the page and WebKit
+  still refuses to run it.
+- **Fixed: remote content could load while the UI said nothing was blocked.**
+  Whether a message referenced remote resources was decided by searching for
+  fixed strings like `src="http`, so `src="//host/p.gif"` (a protocol-relative
+  URL, which resolves perfectly well), `src = "http://…"` with spaces around the
+  `=`, `<video poster>`, SVG `<image href>` and `@import "//…"` all went unseen.
+  Worse, that same guess also chose the content policy — so a miss switched off
+  the stripping, relaxed the policy *and* hid the banner, all at once, and a
+  tracking pixel loaded silently.
+- **Blocking now follows your setting, not that guess.** The detector decides
+  only whether the "Remote content was blocked" banner appears; what is stripped
+  and what the policy permits come from your own choice. A detector miss now
+  costs a banner rather than the blocking. The detector itself was rewritten to
+  walk the markup rather than search it, so the cases above are caught — and so
+  detection and stripping can no longer disagree, which they previously did.
+- **Links only open if they are `http`, `https` or `mailto`.** An HTML message
+  keeps its own `href` values, so it could name `file://`, `smb://`, or any
+  scheme some installed application had registered, and one click handed it over.
+- **Dropped `--talk-name=org.freedesktop.Flatpak` from the Flatpak manifest.** It
+  permits `flatpak-spawn --host` — arbitrary commands outside the sandbox — which
+  made the rest of the sandboxing advisory. It was only a fallback for the "Open
+  GNOME Contacts" button, which reaches the host app by D-Bus activation anyway.
+- **The mail cache is no longer world-readable.** `cache.db` holds message
+  bodies, attachment bytes and the harvested address book, and it was `0644`
+  inside a `0755` directory while `accounts.toml` — which by design holds no
+  passwords at all — was correctly `0600`. The directory is now `0700` and the
+  database and its sidecars `0600`, existing caches included. The fallback that
+  put the cache in a shared temp directory when there was no data directory is
+  gone; there is no acceptable location in that case.
+- **Attachments you open are cleaned up, and are no longer readable by other
+  users.** They were written `0644` into a predictable `/tmp/vireo-attachments`
+  and left there indefinitely. The directory is now created `0700` and checked to
+  be ours, each file is created fresh with `O_EXCL`/`O_NOFOLLOW` at `0600` rather
+  than written through whatever sits at a guessable name, and the whole directory
+  is cleared at startup. Under Flatpak `/tmp` is per-app, so only the
+  accumulation applied there; the RPM and Arch packages had all of it.
+- **OAuth now uses PKCE `S256` instead of `plain`.** With `plain` the challenge
+  *is* the verifier, so anyone able to read the authorization URL — browser
+  history, an extension, another local process — could redeem a stolen code,
+  which is the one thing PKCE exists to prevent.
+- **A failure to read randomness is now an error instead of a silent constant.**
+  If `/dev/urandom` could not be read the buffer stayed all zeroes and the
+  function returned the same string every time — as both the anti-CSRF `state`
+  and the PKCE verifier, with nothing logged. Sign-in now fails and says so.
+- **`accounts.toml`, `privacy.toml` and `sidebar.toml` are created `0600`**
+  rather than written with the umask's permissions and tightened a moment later.
+- **New: notifications can leave out the sender and subject.** GNOME draws
+  notifications on the lock screen, and the only control was on/off.
+  **Preferences → Mail → Show sender and subject.** On by default.
+- Added a `SECURITY.md` with a documented private reporting channel.
+
 ## 1.12.7 — 2026-08-23
 - **New: sender logos** (#30, asked for by [@doodoobug-dot](https://github.com/doodoobug-dot)). The sender circle can carry the brand's own icon instead of coloured initials, so mail from Capital One, US Bank, GitHub or Amazon is recognisable at a glance. **Preferences → Privacy → Show sender logos.**
 - No third-party service and no bundled logo database: the icon comes from the sender's own domain, best first — `apple-touch-icon.png` (180px, what a site publishes when it cares how it looks as an icon), then `favicon.ico`, each tried bare and at `www.`. The domain is the registrable one, so `usbank@notifications.usbank.com` asks `usbank.com`, with three labels kept for country-code pairs like `bbc.co.uk`.

@@ -2953,13 +2953,15 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vireo"
-version = "1.12.7"
+version = "1.13.0"
 dependencies = [
  "async-imap",
  "async-native-tls",
+ "base64",
  "chrono",
  "dirs",
  "futures",
+ "getrandom 0.2.17",
  "glib-build-tools",
  "gtk4",
  "keyring",
@@ -2973,6 +2975,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "toml 0.8.23",
  "tracing",

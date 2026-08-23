@@ -109,14 +109,15 @@ pub fn present(parent: &impl IsA<gtk::Window>, on_choose: impl Fn(Contact) + 'st
 pub fn launch_gnome_contacts() {
     // Inside a Flatpak sandbox `gnome-contacts` isn't on the path, so a plain
     // exec fails. Reach the host app by D-Bus-activating it (it's a
-    // DBusActivatable GApplication), falling back to spawning it on the host.
+    // DBusActivatable GApplication).
     if crate::platform::is_flatpak() {
-        if activate_host_contacts().is_ok() {
-            return;
+        if let Err(e) = activate_host_contacts() {
+            // No `flatpak-spawn --host` fallback: reaching it needs
+            // --talk-name=org.freedesktop.Flatpak, which is a general-purpose
+            // "run anything on the host" permission and not worth holding for a
+            // button. D-Bus activation is the supported path.
+            tracing::warn!("could not activate GNOME Contacts: {e}");
         }
-        let _ = std::process::Command::new("flatpak-spawn")
-            .args(["--host", "gnome-contacts"])
-            .spawn();
         return;
     }
     if let Ok(app) = gtk::gio::AppInfo::create_from_commandline(

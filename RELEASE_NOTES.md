@@ -2,7 +2,42 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.12.0
+## What's new in 1.13.0 — security release
+
+**Please update.** This release fixes a flaw that let someone who could send you
+mail run their own code inside Vireo's reader, simply by your opening the
+conversation — no click, nothing visible. From there they could read every
+message in that thread and send it elsewhere. Nothing suggests this was ever
+used, and it was reported privately rather than found in the wild.
+
+- **Fixed: a sender could run code in the reader.** A sender's *display name* was
+  put into the page around the message without being fully neutralised first.
+  Message bodies were never the problem — those have always been sealed off and
+  unable to run anything — but the name above them was not. It is now, and the
+  page itself has been given a second, independent lock so that even if the
+  first check were ever wrong again, nothing can run.
+- **Fixed: tracking pixels could load while Vireo said nothing was blocked.**
+  Whether a message pulled in remote content was worked out by looking for a few
+  exact spellings, and several ordinary ways of writing an image address slipped
+  past — which switched off the blocking *and* hid the banner at the same time.
+  Blocking now follows your setting rather than that guess, so the worst a miss
+  can cost you is a missing notice, never a silent request.
+- **Links only open if they're ordinary web or mail links.** A message could
+  previously hand any address to whichever application had claimed it.
+- **Tightened the Flatpak sandbox.** A permission that allowed running commands
+  outside it has been dropped.
+- **Your mail cache is no longer readable by other accounts on the machine**,
+  and files you open from an attachment are now private and cleared away when
+  Vireo starts, instead of piling up.
+- **Sign-in is more secure**, and Vireo now refuses to sign in at all rather than
+  proceeding if it cannot generate a proper secret.
+- **New: notifications can leave out the sender and subject**, since GNOME shows
+  them on the lock screen. Preferences → Mail → *Show sender and subject*.
+
+Found and reported privately by [Alexander Lubovenko](https://github.com/typedev),
+who reviewed the whole codebase and wrote it up carefully. Thank you.
+
+## In 1.12.0
 
 - **You can print a message.** Press **Ctrl+P**, use the printer button in the toolbar, or Main Menu → Print Message… What comes out is the message as you see it, with a header carrying the subject, who it is from and to, and the date — and it always prints on white, even if you read in dark mode.
 - **Print preview, inside Vireo.** The toolbar's printer button opens a preview on a page-shaped sheet, so you can see what will come out before spending paper. **Print…** sends it to the printer, and **Save as PDF…** writes it straight to a file without going through the print dialog at all.
