@@ -2,23 +2,7 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.13.3
-
-- **Conversations actually group now.** Vireo was reading only half of what
-  decides whether two messages belong together, so replies kept landing as
-  separate messages instead of one conversation. It now reads the whole thread
-  history each message carries. Mail that arrived before this update is repaired
-  quietly in the background, a folder at a time, so old conversations knit
-  themselves back together without you re-syncing anything.
-- **Your own replies appear in the conversation.** Reading a message in the
-  Inbox used to show only their side of it, because your replies live in Sent.
-  They are now woven in by date, each labelled with the folder it came from.
-  Nothing is fetched over the network for this — it comes from mail Vireo has
-  already indexed — and messages you have moved to Trash or Junk stay out of it.
-
-Reported in [#21](https://github.com/hyprlab/vireo/issues/21). Thank you.
-
-## In 1.13.2
+## What's new in 1.13.2
 
 - **You can now delete messages from Trash.** Deleting anything already in Trash
   used to do nothing at all — the message stayed put, on every kind of account.

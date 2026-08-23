@@ -403,8 +403,6 @@ impl MessageWindow {
             gravatar: self.gravatar,
             account_name: self.account_name.clone(),
             account_color: self.account_color.clone(),
-            primary: None,
-            folder_labels: std::collections::HashMap::new(),
             loading: self.loading,
         });
     }

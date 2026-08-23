@@ -1,39 +1,5 @@
 # Changelog
 
-## 1.13.3 — 2026-08-23
-
-- **Fixed: conversations hardly ever grouped.** Threading works off the
-  Message-ID graph, which is right, but it was never given the graph: the list
-  fetch asks for the IMAP ENVELOPE, and the ENVELOPE carries `In-Reply-To` but
-  not `References`. In-Reply-To names only the immediate parent, and for an
-  incoming reply that parent is usually your own message, filed in Sent — so the
-  link pointed at something that wasn't in the folder and each message started a
-  thread of its own ([#21](https://github.com/hyprlab/vireo/issues/21)). Of the
-  102k messages in one real cache, 99.6k held a single reference id or none.
-  `BODY.PEEK[HEADER.FIELDS (REFERENCES)]` now rides along with the ENVELOPE on
-  both the window fetch and the background backfill, merged with In-Reply-To and
-  deduplicated. (Accounts on the raw-header fallback path — iCloud — already
-  parsed References, and threaded better for it.)
-- **Messages indexed by earlier builds are repaired in place.** They can't gain
-  References without asking the server, so a background pass walks each folder
-  newest-first, fetches that one header for the rows that could still improve,
-  and merges it into the index. A per-folder watermark in a new `refs_repair`
-  table makes it resumable and run exactly once; it needs no schema bump, so
-  nobody re-syncs a mailbox. Repaired rows re-thread the next time the folder is
-  loaded.
-- **New: a conversation now spans folders.** Opening a message asks the worker
-  for the rest of its thread from the local cache across the account's folders —
-  matched on Message-ID and references — and interleaves what it finds by date,
-  each message badged with the folder it came from. So the replies you sent
-  appear inside the conversation you're reading in the Inbox. It is cache-only
-  and never touches the network; Trash and Junk are left out, since binning a
-  message shouldn't be undone by opening a thread. Two details this needed:
-  messages pulled in from elsewhere are given ids allocated from the top of the
-  range, because a UID is unique only within its own folder and the reader keys
-  bodies by (account, id); and the reader's header now follows the message you
-  selected rather than whichever sorted newest, so a reply of your own on top
-  doesn't retitle the pane.
-
 ## 1.13.2 — 2026-08-23
 
 - **Fixed: messages could not be deleted from Trash.** Every delete route ended

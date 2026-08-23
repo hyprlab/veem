@@ -34,16 +34,6 @@ const PAGE_SIZE: u32 = 50;
 /// browsing is immediate and search fills in shortly after — like Apple Mail.
 const FIRST_PAGE: u32 = 200;
 
-/// The threading headers to pull alongside the ENVELOPE.
-///
-/// The IMAP ENVELOPE carries In-Reply-To but *not* References, and In-Reply-To
-/// alone only links a reply to its immediate parent. When that parent isn't in
-/// the folder being listed — the usual case, since your own replies are filed in
-/// Sent — the chain breaks and each incoming message starts a thread of its own,
-/// which is why conversations hardly ever grouped (#21). References carries the
-/// whole ancestry, so one of its ids is almost always present locally.
-const REFS_FETCH_ITEM: &str = " BODY.PEEK[HEADER.FIELDS (REFERENCES)]";
-
 /// Background index backfill: how many messages to fetch per idle drain step.
 /// Bigger = fewer round-trips; smaller = more responsive to interleaved requests.
 const BACKFILL_CHUNK: usize = 1_000;
@@ -118,10 +108,6 @@ pub enum MailRequest {
         uids: Vec<u32>,
         dest: String,
     },
-    /// Assemble a conversation from the local cache across every folder of the
-    /// account: the messages whose Message-ID or references match `ids`. Answers
-    /// with [`WorkerEvent::Related`]; never touches the network.
-    LoadRelated { message_id: u32, ids: Vec<String> },
     /// Permanently erase messages from `path` (flag `\Deleted` + EXPUNGE), used
     /// when "delete" is asked for in Trash, where there is nowhere left to move to.
     PurgeMessages { path: String, uids: Vec<u32> },
@@ -185,11 +171,6 @@ pub enum WorkerEvent {
     /// Additional indexed message summaries for a folder, produced by the
     /// background backfill. Merged into the existing index without replacing it.
     MessagesAppend { folder_id: u32, messages: Vec<Message> },
-    /// The rest of a conversation, gathered from the cache across the account's
-    /// folders in answer to [`MailRequest::LoadRelated`]. `message_id` echoes the
-    /// message it was asked for, so a late answer to a message the user has
-    /// already moved on from can be ignored.
-    Related { message_id: u32, messages: Vec<Message> },
     /// Cached attachments for an inbox, for the attachments gallery.
     Gallery { items: Vec<crate::models::GalleryItem> },
     /// The background backfill for a folder finished — its whole index is now
@@ -396,9 +377,6 @@ async fn run_imap(
     // the fast first page), and the set already enqueued this session.
     let mut backfill: std::collections::VecDeque<Backfill> = std::collections::VecDeque::new();
     let mut backfill_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    // Folders queued for the one-time References repair (see [`run_one_refs_repair`]).
-    let mut refs_repair: std::collections::VecDeque<(u32, String)> =
-        std::collections::VecDeque::new();
     // IMAP IDLE push: watch the most recently loaded folder for new mail.
     let push_enabled = crate::config::load_push();
     let mut idle_folder: Option<(u32, String)> = None;
@@ -423,14 +401,6 @@ async fn run_imap(
         .unwrap_or_default()
     {
         if backfill_seen.insert(f.path.clone()) {
-            // Messages indexed before Vireo fetched References thread by their
-            // immediate parent alone; queue the folder for a one-time repair.
-            if cache
-                .as_ref()
-                .is_some_and(|c| !c.refs_repair_state(account_id, &f.path).1)
-            {
-                refs_repair.push_back((f.id, f.path.clone()));
-            }
             backfill.push_back(Backfill {
                 folder_id: f.id,
                 gallery: gallery_folder(f.kind),
@@ -540,17 +510,6 @@ async fn run_imap(
                         .await;
                         continue;
                     }
-                } else if !refs_repair.is_empty() && session.is_some() {
-                    // Lower priority than indexing new mail: repair the threading
-                    // references of already-indexed messages, a chunk at a time.
-                    run_one_refs_repair(
-                        &mut refs_repair,
-                        &mut session,
-                        account_id,
-                        cache.as_ref(),
-                    )
-                    .await;
-                    continue;
                 } else if push_enabled && session.is_some() && idle_folder.is_some() {
                     let (fid, fpath) = idle_folder.clone().unwrap();
                     // Catch mail delivered while the connection was busy prefetching.
@@ -642,34 +601,6 @@ async fn run_imap(
                 }
                 continue; // cache-only, never hits the network
             }
-            MailRequest::LoadRelated { message_id, ids } => {
-                // Folder ids are positional over the same ordered folder list the
-                // UI was given, so a cached row's path maps back to the id the app
-                // knows it by — which is what lets the reader fetch a related
-                // message's body and say which folder it came from.
-                let messages = cache
-                    .as_ref()
-                    .map(|c| {
-                        let folders = c.load_folders(account_id);
-                        c.messages_by_thread_ids(account_id, ids)
-                            .into_iter()
-                            .filter_map(|(path, mut m)| {
-                                let f = folders.iter().find(|f| f.path == path)?;
-                                // Deleting or binning a message is a decision about
-                                // it; a conversation shouldn't quietly put it back
-                                // on screen.
-                                if matches!(f.kind, FolderKind::Trash | FolderKind::Junk) {
-                                    return None;
-                                }
-                                m.folder_id = f.id;
-                                Some(m)
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                emit(WorkerEvent::Related { message_id: *message_id, messages });
-                continue; // cache-only, never hits the network
-            }
             MailRequest::LoadBody {
                 message_id,
                 path,
@@ -727,7 +658,7 @@ async fn run_imap(
 
         match req {
             // Served from cache before this network match; never reached here.
-            MailRequest::LoadGallery | MailRequest::LoadRelated { .. } => {}
+            MailRequest::LoadGallery => {}
             MailRequest::LoadMessages { folder_id, path } => {
                 emit(WorkerEvent::Status("Syncing…".into()));
                 // Fast first page (or a recent-window refresh over the cached
@@ -2907,9 +2838,7 @@ async fn fetch_window(
         String::new()
     };
     let mut messages: Vec<Message> = if use_envelope {
-        let query = format!(
-            "(UID ENVELOPE FLAGS BODYSTRUCTURE INTERNALDATE{REFS_FETCH_ITEM}{preview_part})"
-        );
+        let query = format!("(UID ENVELOPE FLAGS BODYSTRUCTURE INTERNALDATE{preview_part})");
         let fetches: Vec<Fetch> = session.fetch(&range, query).await?.try_collect().await?;
         fetches
             .iter()
@@ -3331,79 +3260,6 @@ fn merge_index(cached: Vec<Message>, recent: Vec<Message>) -> Vec<Message> {
     out
 }
 
-/// How many messages one References-repair step asks the server about. Each row
-/// costs only its References header, so this can be larger than an envelope
-/// chunk without making the connection unresponsive to real requests.
-const REFS_REPAIR_CHUNK: usize = 500;
-
-/// One step of the one-time References repair for the folder at the head of the
-/// queue (#21).
-///
-/// Messages indexed by an earlier build carry only In-Reply-To, because that is
-/// all the IMAP ENVELOPE offers — enough to link a reply to its parent, useless
-/// when that parent sits in another folder. This walks a folder's cached rows
-/// newest-first, fetching just `References` for the ones that could still
-/// improve and merging it with what's already stored. The watermark is persisted
-/// per folder, so a pass resumes where it stopped and runs only once; the
-/// repaired rows re-thread the next time the folder is loaded from cache.
-///
-/// The job is dropped (and marked done) when a chunk comes back empty. On a
-/// fetch failure it is requeued untouched, so nothing is skipped.
-async fn run_one_refs_repair(
-    queue: &mut std::collections::VecDeque<(u32, String)>,
-    session: &mut Option<ImapSession>,
-    account_id: u32,
-    cache: Option<&Cache>,
-) {
-    let Some((folder_id, path)) = queue.pop_front() else {
-        return;
-    };
-    let Some(c) = cache else { return }; // nothing to repair without a cache
-    let Some(mut s) = session.take() else {
-        queue.push_front((folder_id, path));
-        return;
-    };
-
-    let (below, _) = c.refs_repair_state(account_id, &path);
-    let chunk = c.uids_needing_references(account_id, &path, below, REFS_REPAIR_CHUNK);
-    if chunk.is_empty() {
-        c.set_refs_repair_state(account_id, &path, 0, true);
-        *session = Some(s); // folder done — don't requeue
-        return;
-    }
-
-    let set = chunk.iter().map(|(uid, _)| uid.to_string()).collect::<Vec<_>>().join(",");
-    let fetched: Result<Vec<Fetch>, _> = async {
-        s.select(&path).await?;
-        s.uid_fetch(&set, format!("(UID{REFS_FETCH_ITEM})")).await?.try_collect().await
-    }
-    .await;
-    let Ok(fetches) = fetched else {
-        // Leave the watermark alone and try this folder again later.
-        queue.push_back((folder_id, path));
-        *session = Some(s);
-        return;
-    };
-
-    let found: std::collections::HashMap<u32, String> = fetches
-        .iter()
-        .filter_map(|f| f.uid.map(|uid| (uid, references_of(f))))
-        .collect();
-    for (uid, existing) in &chunk {
-        if let Some(refs) = found.get(uid) {
-            let merged = merge_msgids(refs, existing);
-            if &merged != existing {
-                c.set_references(account_id, &path, *uid, &merged);
-            }
-        }
-    }
-    // Walk on from the oldest uid this chunk covered.
-    let lowest = chunk.iter().map(|(uid, _)| *uid).min().unwrap_or(0);
-    c.set_refs_repair_state(account_id, &path, lowest, false);
-    queue.push_back((folder_id, path));
-    *session = Some(s);
-}
-
 /// A background job to index the rest of a folder (everything past the fast first
 /// page) so search covers the whole mailbox. `remaining` is the still-to-fetch
 /// UIDs (newest first), computed lazily on the first drain.
@@ -3455,10 +3311,10 @@ async fn fetch_summaries_by_uid(
     }
     session.select(path).await?;
     let set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
-    let items: String = if use_envelope {
-        format!("(UID ENVELOPE FLAGS BODYSTRUCTURE INTERNALDATE{REFS_FETCH_ITEM})")
+    let items = if use_envelope {
+        "(UID ENVELOPE FLAGS BODYSTRUCTURE INTERNALDATE)"
     } else {
-        "(UID FLAGS BODY.PEEK[HEADER] INTERNALDATE)".to_string()
+        "(UID FLAGS BODY.PEEK[HEADER] INTERNALDATE)"
     };
     let fetches: Vec<Fetch> = session.uid_fetch(set, items).await?.try_collect().await?;
     Ok(fetches
@@ -3742,19 +3598,16 @@ fn build_summary(account_id: u32, fetch: &Fetch, folder_id: u32) -> Message {
         .map(structure_has_attachment)
         .unwrap_or(false);
 
-    // Message-ID + References + In-Reply-To drive accurate threading. References
-    // isn't in the ENVELOPE, so it rides along as its own header fetch
-    // ([`REFS_FETCH_ITEM`]) — without it only the immediate parent is known, and
-    // threads break wherever that parent lives in another folder.
+    // Message-ID + In-Reply-To drive accurate threading (References isn't in the
+    // IMAP ENVELOPE, but In-Reply-To links each reply to its parent).
     let message_id = env
         .and_then(|e| e.message_id.as_deref())
         .map(normalize_msgid)
         .unwrap_or_default();
-    let in_reply_to = env
+    let references = env
         .and_then(|e| e.in_reply_to.as_deref())
         .map(normalize_msgids)
         .unwrap_or_default();
-    let references = merge_msgids(&references_of(fetch), &in_reply_to);
 
     Message {
         id: uid,
@@ -3792,40 +3645,6 @@ fn normalize_msgids(raw: &[u8]) -> String {
         .filter(|t| !t.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// The `References:` value from a fetch that asked for [`REFS_FETCH_ITEM`],
-/// normalized into the same space-separated form as the ENVELOPE ids.
-///
-/// What comes back is a small header block — the one requested header, folded
-/// across lines like any other, terminated by a blank line — or nothing at all
-/// when the message has no References.
-fn references_of(fetch: &Fetch) -> String {
-    use async_imap::imap_proto::types::{MessageSection, SectionPath};
-    let Some(raw) = fetch.section(&SectionPath::Full(MessageSection::Header)) else {
-        return String::new();
-    };
-    let text = String::from_utf8_lossy(raw);
-    let Some((name, value)) = text.split_once(':') else {
-        return String::new();
-    };
-    if !name.trim().eq_ignore_ascii_case("references") {
-        return String::new();
-    }
-    normalize_msgids(value.as_bytes())
-}
-
-/// Combine two normalized Message-ID lists, keeping the first list's order and
-/// dropping duplicates. References already contains In-Reply-To on a well-formed
-/// message; on a malformed one either may hold the only usable link.
-fn merge_msgids(a: &str, b: &str) -> String {
-    let mut out: Vec<&str> = Vec::new();
-    for id in a.split_whitespace().chain(b.split_whitespace()) {
-        if !out.contains(&id) {
-            out.push(id);
-        }
-    }
-    out.join(" ")
 }
 
 /// Whether an IMAP BODYSTRUCTURE contains a part marked as an attachment.
@@ -4153,11 +3972,6 @@ async fn run_pop3(
                     emit(WorkerEvent::Gallery { items });
                 }
             }
-            // POP3 keeps everything in the inbox, so a conversation never spans
-            // folders and the reader already has all of it.
-            MailRequest::LoadRelated { message_id, .. } => {
-                emit(WorkerEvent::Related { message_id, messages: Vec::new() });
-            }
             MailRequest::LoadMessages { folder_id, path } => {
                 if path != INBOX {
                     emit(WorkerEvent::Messages { folder_id, messages: Vec::new() });
@@ -4470,9 +4284,6 @@ async fn run_mock(
             // The mock backend has no attachment cache.
             MailRequest::LoadGallery => {
                 emit(WorkerEvent::Gallery { items: Vec::new() });
-            }
-            MailRequest::LoadRelated { message_id, .. } => {
-                emit(WorkerEvent::Related { message_id, messages: Vec::new() });
             }
             MailRequest::LoadMessages { folder_id, .. } => {
                 emit(WorkerEvent::Messages {
@@ -5592,34 +5403,6 @@ mod tests {
     #[test]
     fn decode_header_leaves_plain_text_untouched() {
         assert_eq!(decode_header(b"Just a normal subject"), "Just a normal subject");
-    }
-
-    #[test]
-    fn references_and_in_reply_to_merge_without_duplicates() {
-        // A well-formed reply: In-Reply-To repeats the last id of References, and
-        // the ancestry it adds is what lets a thread survive a parent kept in
-        // another folder (#21).
-        assert_eq!(
-            merge_msgids("a@x b@y", "b@y"),
-            "a@x b@y",
-            "the repeated parent should not be listed twice"
-        );
-        // Either side may be the only one present.
-        assert_eq!(merge_msgids("", "b@y"), "b@y");
-        assert_eq!(merge_msgids("a@x", ""), "a@x");
-        assert_eq!(merge_msgids("", ""), "");
-        // A malformed reply whose In-Reply-To names an ancestor References omits.
-        assert_eq!(merge_msgids("a@x", "c@z"), "a@x c@z");
-    }
-
-    #[test]
-    fn header_references_are_normalized_like_envelope_ids() {
-        // Folded exactly as a server sends it, angle brackets and mixed case.
-        assert_eq!(
-            normalize_msgids(b"<A@x>\r\n <b@Y>\r\n"),
-            "a@x b@y",
-            "ids should be unwrapped, lowercased and space-joined"
-        );
     }
 
     #[test]
