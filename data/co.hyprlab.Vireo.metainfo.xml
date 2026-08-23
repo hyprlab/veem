@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.12.4" date="2026-08-23" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.12.4</url>
+      <description>
+        <p>The message list can be made much narrower, and the reader's toolbar icons no longer fall off the window.</p>
+      </description>
+    </release>
     <release version="1.12.3" date="2026-08-22" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.12.3</url>
       <description>

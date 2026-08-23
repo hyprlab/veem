@@ -24,6 +24,14 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
 ];
 
 /// Width of the collapsed, icon-only sidebar rail.
+/// The message list's width when the window opens: the room a row needs for its
+/// Actions Palette, padding and unread dot.
+const LIST_PALETTE_WIDTH: i32 = 350;
+
+/// The narrowest the reader pane may be squeezed: the width its header needs to
+/// hold a full complement of actions without any falling off the right edge.
+const READER_MIN_WIDTH: i32 = 535;
+
 const SIDEBAR_RAIL_WIDTH: f64 = 80.0;
 
 /// Selection size at/above which a bulk archive/delete/spam shows a spinner and
@@ -506,22 +514,22 @@ impl SimpleComponent for AppModel {
                         // Thin handle so the panes sit flush (just a 1px divider),
                         // no wide-handle gap between them.
                         set_wide_handle: false,
-                        // Launch at the list's minimum width. `shrink_start_child`
-                        // is false, so GtkPaned clamps this up to the start child's
-                        // natural minimum — exactly wide enough for a row's Actions
-                        // Palette to fit — instead of a hardcoded, slightly-too-wide
-                        // value. The reader (end child) absorbs the remaining width.
-                        set_position: 1,
+                        // Launch wide enough for a row's Actions Palette. That is
+                        // also the list's minimum while the sender circles are on,
+                        // so `shrink_start_child: false` clamps to the same figure
+                        // either way. With the circles off the minimum drops to what
+                        // the sender and subject need (#29) — a fine width to be
+                        // able to drag down to, but a poor one to open at.
+                        set_position: LIST_PALETTE_WIDTH,
                         // The list keeps its width as the window resizes (the
-                        // reader absorbs the change), and can't be dragged
-                        // narrower than its natural minimum — which is exactly the
-                        // width needed to show the hover control palette. The reader
-                        // may shrink below its natural minimum, though, so the whole
-                        // window can be tiled to a screen half (GNOME edge-snapping).
+                        // reader absorbs the change), and can't be dragged narrower
+                        // than its own minimum. The reader has a floor of its own:
+                        // its header carries a full row of actions, and squeezing it
+                        // pushed them off the right-hand edge of the window.
                         set_resize_start_child: false,
                         set_shrink_start_child: false,
                         set_resize_end_child: true,
-                        set_shrink_end_child: true,
+                        set_shrink_end_child: false,
 
                         #[wrap(Some)]
                         set_start_child = &adw::ToolbarView {
@@ -605,6 +613,9 @@ impl SimpleComponent for AppModel {
 
                         #[wrap(Some)]
                         set_end_child = &adw::ToolbarView {
+                            // The narrowest the reader may become: enough for every
+                            // action in its header at once.
+                            set_size_request: (READER_MIN_WIDTH, -1),
                             add_top_bar = &adw::HeaderBar {
                                 add_css_class: "flat",
                                 // Empty title so the window's "Vireo" title isn't

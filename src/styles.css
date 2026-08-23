@@ -370,6 +370,15 @@ headerbar.rail-header {
   margin-right: 4px;
 }
 
+/* ...and the palette line stops reserving its 260px, so the pane can be dragged
+   down to what the sender and subject need. Turning the circles off is a request
+   for a narrow list, and that reservation — which keeps opening the palette from
+   shoving the pane wider — is the only thing standing in the way. Below the
+   palette's own width it is clipped by the row rather than pushing the pane. */
+.message-row.no-avatar .actions-line {
+  min-width: 0;
+}
+
 /* Conversation threading: count chip + compact expand/collapse chevron on the
    thread head, and an indented, accent-edged look for nested replies. */
 .thread-count {

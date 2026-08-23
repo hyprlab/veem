@@ -148,6 +148,9 @@ impl FactoryComponent for MessageRow {
             // the sender's name still reads as the start of the row.
             set_spacing: 8,
             set_css_classes: &self.content_css(),
+            // A palette wider than the row it sits in is clipped here rather than
+            // painted across the divider into the reader.
+            set_overflow: gtk::Overflow::Hidden,
 
             adw::Avatar {
                 set_size: 38,
@@ -205,6 +208,10 @@ impl FactoryComponent for MessageRow {
                     gtk::Label {
                         set_label: &self.msg.datetime_list(),
                         set_halign: gtk::Align::End,
+                        // Ellipsized so it stops being the row's floor: it is the
+                        // one item on this line with no give, and it held the list
+                        // ~40px wider than the palette needs (#29).
+                        set_ellipsize: gtk::pango::EllipsizeMode::End,
                         add_css_class: "message-date",
                     },
                     // Conversation size + expand/collapse (thread heads only).
@@ -926,6 +933,9 @@ impl SimpleComponent for MessageList {
                         set_label: &model.title,
                         set_halign: gtk::Align::Start,
                         set_hexpand: true,
+                        // The folder's name gives way as the pane narrows rather
+                        // than holding it open (#29).
+                        set_ellipsize: gtk::pango::EllipsizeMode::End,
                         add_css_class: "list-title",
                     },
                     gtk::Label {
@@ -949,6 +959,8 @@ impl SimpleComponent for MessageList {
                     #[name = "search_entry"]
                     gtk::SearchEntry {
                         set_hexpand: true,
+                        // Its own default minimum is wider than the rows need.
+                        set_width_chars: 3,
                         #[watch]
                         set_placeholder_text: Some(model.search_placeholder()),
                         connect_search_changed[sender] => move |entry| {
@@ -981,6 +993,18 @@ impl SimpleComponent for MessageList {
                 #[watch]
                 set_reveal_child: model.selection_count > 1,
 
+                // A revealer sliding *down* still reserves its child's width while
+                // collapsed, so this bar of seven buttons was setting the whole
+                // pane's minimum width — 340px — however narrow the rows became
+                // (#29). Scrolled, its minimum is nothing and its natural size is
+                // unchanged, so it only clips when the list is genuinely too narrow
+                // to hold it.
+                gtk::ScrolledWindow {
+                    set_vscrollbar_policy: gtk::PolicyType::Never,
+                    set_hscrollbar_policy: gtk::PolicyType::External,
+                    set_propagate_natural_width: true,
+                    set_propagate_natural_height: true,
+
                 gtk::Box {
                     add_css_class: "bulk-bar",
                     set_spacing: 2,
@@ -990,6 +1014,7 @@ impl SimpleComponent for MessageList {
                         set_label: &format!("{} selected", model.selection_count),
                         set_hexpand: true,
                         set_halign: gtk::Align::Start,
+                        set_ellipsize: gtk::pango::EllipsizeMode::End,
                         add_css_class: "bulk-count",
                     },
                     gtk::Button {
@@ -1037,6 +1062,7 @@ impl SimpleComponent for MessageList {
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::ClearSelection,
                     },
+                },
                 },
             },
 
@@ -1212,6 +1238,34 @@ impl SimpleComponent for MessageList {
         model.scroller = Some(widgets.scroller.clone());
         model.search_entry = Some(widgets.search_entry.clone());
 
+        // The scope picker sizes itself to its widest entry ("All folders"), which
+        // made it — not the messages — the narrowest the list could ever be (#29).
+        // An ellipsizing label on the button lets it give way; the drop-down list
+        // keeps its own factory, so the choices are still spelled out in full.
+        let button_factory = gtk::SignalListItemFactory::new();
+        button_factory.connect_setup(|_, item| {
+            let label = gtk::Label::new(None);
+            label.set_xalign(0.0);
+            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+                item.set_child(Some(&label));
+            }
+        });
+        button_factory.connect_bind(|_, item| {
+            let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+                return;
+            };
+            let text = item
+                .item()
+                .and_downcast::<gtk::StringObject>()
+                .map(|s| s.string().to_string())
+                .unwrap_or_default();
+            if let Some(label) = item.child().and_downcast::<gtk::Label>() {
+                label.set_label(&text);
+            }
+        });
+        widgets.scope_dropdown.set_factory(Some(&button_factory));
+
         // Sort menu: a stateful "order" action drives a radio-style menu, so the
         // active sort shows a checkmark.
         let sort_group = gtk::gio::SimpleActionGroup::new();
@@ -1329,6 +1383,7 @@ impl SimpleComponent for MessageList {
                     // The circle is built with the row, so the rows have to be
                     // built again for the width to come back.
                     self.rebuild_preserving_scroll();
+
                 }
             }
             MessageListInput::SetGravatar(on) => {
