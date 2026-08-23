@@ -8,6 +8,7 @@ mod cache;
 mod color;
 mod config;
 mod contacts;
+mod datefmt;
 mod goa;
 mod models;
 mod mutf7;

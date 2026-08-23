@@ -187,6 +187,9 @@ pub struct AppModel {
     gravatar: bool,
     /// Whether the coloured sender circles are drawn at all (#29).
     avatars: bool,
+    /// How dates are written, and on what clock (#32).
+    date_style: crate::config::DateStyle,
+    clock_style: crate::config::ClockStyle,
     /// Seconds between automatic mail checks (0 = manual only).
     fetch_interval_secs: u64,
     /// Whether IMAP IDLE push is enabled.
@@ -339,6 +342,8 @@ pub enum AppMsg {
     MarkSpam,
     SetGravatar(bool),
     SetAvatars(bool),
+    SetDateStyle(crate::config::DateStyle),
+    SetClockStyle(crate::config::ClockStyle),
     SetThreading(bool),
     SetThreadsExpanded(bool),
     SetFetchInterval(u64),
@@ -1051,6 +1056,8 @@ impl SimpleComponent for AppModel {
             palette_collapse_secs: config::load_palette_collapse(),
             gravatar: config::load_gravatar(),
             avatars: config::load_avatars(),
+            date_style: config::load_date_format().0,
+            clock_style: config::load_date_format().1,
             fetch_interval_secs: config::load_fetch_interval(),
             push: config::load_push(),
             notifications_enabled: config::load_notifications(),
@@ -1110,6 +1117,9 @@ impl SimpleComponent for AppModel {
         model
             .message_list
             .emit(MessageListInput::SetAvatars(model.avatars));
+        // The formatter is a free function, so the preference has to be handed to
+        // it before anything draws a date.
+        crate::datefmt::set_style(model.date_style, model.clock_style);
         model
             .message_list
             .emit(MessageListInput::SetPreviewLines(model.preview_lines));
@@ -2098,6 +2108,22 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetDateStyle(style) => {
+                if self.date_style != style {
+                    self.date_style = style;
+                    self.save_settings();
+                    self.apply_date_style();
+                }
+            }
+
+            AppMsg::SetClockStyle(style) => {
+                if self.clock_style != style {
+                    self.clock_style = style;
+                    self.save_settings();
+                    self.apply_date_style();
+                }
+            }
+
             AppMsg::SetGravatar(on) => {
                 if self.gravatar != on {
                     self.gravatar = on;
@@ -2469,6 +2495,8 @@ impl SimpleComponent for AppModel {
                     allowed_senders: self.allowed_senders.clone(),
                     gravatar: self.gravatar,
                     avatars: self.avatars,
+                    date_style: self.date_style,
+                    clock_style: self.clock_style,
                     fetch_interval_secs: self.fetch_interval_secs,
                     push: self.push,
                     blacklist: self.blacklist.clone(),
@@ -2493,6 +2521,8 @@ impl SimpleComponent for AppModel {
                         PrefOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
                         PrefOutput::SetGravatar(on) => AppMsg::SetGravatar(on),
                         PrefOutput::SetAvatars(on) => AppMsg::SetAvatars(on),
+                        PrefOutput::SetDateStyle(style) => AppMsg::SetDateStyle(style),
+                        PrefOutput::SetClockStyle(style) => AppMsg::SetClockStyle(style),
                         PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
                         PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
@@ -2893,12 +2923,23 @@ impl SimpleComponent for AppModel {
 }
 
 impl AppModel {
+    /// Push the date and clock preference into the formatter and redraw whatever
+    /// shows a date: every row carries one, as does the open message.
+    fn apply_date_style(&self) {
+        crate::datefmt::set_style(self.date_style, self.clock_style);
+        self.message_list.emit(MessageListInput::RefreshDates);
+        let current = self.current.clone();
+        self.show_message(current, false);
+    }
+
     /// Persist all app settings together.
     fn save_settings(&self) {
         config::save_privacy(
             &self.allowed_senders,
             self.gravatar,
             self.avatars,
+            self.date_style,
+            self.clock_style,
             self.fetch_interval_secs,
             self.push,
             &self.blacklist,

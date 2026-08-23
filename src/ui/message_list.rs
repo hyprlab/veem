@@ -826,6 +826,9 @@ pub enum MessageListInput {
     SetGravatar(bool),
     /// Show or hide the coloured sender circles (#29).
     SetAvatars(bool),
+    /// The date or clock preference changed: every row's date is built with the
+    /// row, so they are built again (#32).
+    RefreshDates,
     /// How many lines of preview text each row shows (1–3).
     SetPreviewLines(u32),
     SetColorize(bool),
@@ -1377,6 +1380,7 @@ impl SimpleComponent for MessageList {
                     self.rebuild();
                 }
             }
+            MessageListInput::RefreshDates => self.rebuild_preserving_scroll(),
             MessageListInput::SetAvatars(on) => {
                 if self.avatars != on {
                     self.avatars = on;

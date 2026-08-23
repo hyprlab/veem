@@ -361,17 +361,13 @@ impl GalleryItem {
     /// Compact date of the source message for the gallery meta, e.g. "Jul 12"
     /// (or "Jul 12, 2025" if not this year). Empty when the date is unknown.
     pub fn date_label(&self) -> String {
-        use chrono::{Datelike, TimeZone};
         if self.timestamp <= 0 {
             return String::new();
         }
-        let Some(local) = chrono::Local.timestamp_opt(self.timestamp, 0).single() else {
-            return String::new();
-        };
-        if local.year() == chrono::Local::now().year() {
-            local.format("%b %-d").to_string()
+        if crate::datefmt::year(self.timestamp) == crate::datefmt::year(crate::datefmt::now()) {
+            crate::datefmt::day_month(self.timestamp)
         } else {
-            local.format("%b %-d, %Y").to_string()
+            crate::datefmt::day_month_year(self.timestamp)
         }
     }
 }
@@ -380,34 +376,34 @@ impl Message {
     /// Full receipt date and time for the reader header, e.g.
     /// "Jun 27, 2026 at 3:15 PM". Falls back to the short label if unknown.
     pub fn datetime_full(&self) -> String {
-        use chrono::TimeZone;
         if self.timestamp <= 0 {
             return self.date.clone();
         }
-        chrono::Local
-            .timestamp_opt(self.timestamp, 0)
-            .single()
-            .map(|dt| dt.format("%b %-d, %Y at %-I:%M %p").to_string())
-            .unwrap_or_else(|| self.date.clone())
+        let full = crate::datefmt::date_time(self.timestamp);
+        if full.trim().is_empty() {
+            self.date.clone()
+        } else {
+            full
+        }
     }
 
     /// Compact date + time for list rows: always shows the time, with the day
     /// (and year, if not this year).
     pub fn datetime_list(&self) -> String {
-        use chrono::{Datelike, TimeZone};
         if self.timestamp <= 0 {
             return self.date.clone();
         }
-        let Some(dt) = chrono::Local.timestamp_opt(self.timestamp, 0).single() else {
+        let now = crate::datefmt::now();
+        let time = crate::datefmt::time(self.timestamp);
+        if time.is_empty() {
             return self.date.clone();
-        };
-        let now = chrono::Local::now();
-        if dt.date_naive() == now.date_naive() {
-            dt.format("Today, %-I:%M %p").to_string()
-        } else if dt.year() == now.year() {
-            dt.format("%b %-d, %-I:%M %p").to_string()
+        }
+        if crate::datefmt::day_key(self.timestamp) == crate::datefmt::day_key(now) {
+            format!("Today, {time}")
+        } else if crate::datefmt::year(self.timestamp) == crate::datefmt::year(now) {
+            format!("{}, {time}", crate::datefmt::day_month(self.timestamp))
         } else {
-            dt.format("%b %-d %Y, %-I:%M %p").to_string()
+            format!("{}, {time}", crate::datefmt::day_month_year(self.timestamp))
         }
     }
 

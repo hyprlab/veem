@@ -6,7 +6,7 @@ use adw::prelude::*;
 use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
 
-use crate::config::MessageTheme;
+use crate::config::{ClockStyle, DateStyle, MessageTheme};
 
 /// Initial data for the settings window.
 #[derive(Debug)]
@@ -14,6 +14,8 @@ pub struct PrefInit {
     pub allowed_senders: Vec<String>,
     pub gravatar: bool,
     pub avatars: bool,
+    pub date_style: DateStyle,
+    pub clock_style: ClockStyle,
     pub fetch_interval_secs: u64,
     pub push: bool,
     pub blacklist: Vec<String>,
@@ -34,6 +36,21 @@ const MESSAGE_THEMES: &[(&str, MessageTheme)] = &[
     ("Follow system", MessageTheme::System),
     ("Light", MessageTheme::Light),
     ("Dark", MessageTheme::Dark),
+];
+
+/// Date arrangements, in combo order. The examples are what each writes.
+const DATE_STYLES: &[(&str, DateStyle)] = &[
+    ("Follow system", DateStyle::System),
+    ("Aug 23, 2026", DateStyle::MonthFirst),
+    ("23 Aug 2026", DateStyle::DayFirst),
+    ("2026 Aug 23", DateStyle::YearFirst),
+];
+
+/// Clock options, in combo order.
+const CLOCK_STYLES: &[(&str, ClockStyle)] = &[
+    ("Follow system", ClockStyle::System),
+    ("12-hour (5:40 PM)", ClockStyle::Twelve),
+    ("24-hour (17:40)", ClockStyle::TwentyFour),
 ];
 
 /// Selectable mail-check intervals (label, seconds). 0 = manual only.
@@ -101,6 +118,8 @@ pub enum PrefInput {
     RemoveBlacklistRow(String),
     ToggleGravatar(bool),
     ToggleAvatars(bool),
+    ChangeDateStyle(u32),
+    ChangeClockStyle(u32),
     ToggleThreading(bool),
     ToggleThreadsExpanded(bool),
     ChangeFetchInterval(u32),
@@ -123,6 +142,8 @@ pub enum PrefOutput {
     RemoveBlacklist(String),
     SetGravatar(bool),
     SetAvatars(bool),
+    SetDateStyle(DateStyle),
+    SetClockStyle(ClockStyle),
     SetThreading(bool),
     SetThreadsExpanded(bool),
     SetFetchInterval(u64),
@@ -288,6 +309,31 @@ impl Component for Preferences {
                     },
 
                     add = &adw::PreferencesGroup {
+                        set_title: "Date and Time",
+                        set_description: Some(
+                            "By default dates follow the system's own arrangement — its \
+                             field order, month names and clock. Choose a format here to \
+                             use it whatever the system is set to."
+                        ),
+
+                        #[name = "date_style_row"]
+                        adw::ComboRow {
+                            set_title: "Date format",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeDateStyle(row.selected()));
+                            },
+                        },
+
+                        #[name = "clock_style_row"]
+                        adw::ComboRow {
+                            set_title: "Clock",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeClockStyle(row.selected()));
+                            },
+                        },
+                    },
+
+                    add = &adw::PreferencesGroup {
                         set_title: "Reading",
 
                         #[name = "message_theme_row"]
@@ -447,6 +493,28 @@ impl Component for Preferences {
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
 
+        // Date and clock combos.
+        let date_labels: Vec<&str> = DATE_STYLES.iter().map(|(l, _)| *l).collect();
+        widgets
+            .date_style_row
+            .set_model(Some(&gtk::StringList::new(&date_labels)));
+        widgets.date_style_row.set_selected(
+            DATE_STYLES
+                .iter()
+                .position(|(_, s)| *s == init.date_style)
+                .unwrap_or(0) as u32,
+        );
+        let clock_labels: Vec<&str> = CLOCK_STYLES.iter().map(|(l, _)| *l).collect();
+        widgets
+            .clock_style_row
+            .set_model(Some(&gtk::StringList::new(&clock_labels)));
+        widgets.clock_style_row.set_selected(
+            CLOCK_STYLES
+                .iter()
+                .position(|(_, s)| *s == init.clock_style)
+                .unwrap_or(0) as u32,
+        );
+
         // Message-content appearance combo.
         let theme_labels: Vec<&str> = MESSAGE_THEMES.iter().map(|(l, _)| *l).collect();
         widgets
@@ -468,6 +536,16 @@ impl Component for Preferences {
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>, _root: &Self::Root) {
         match message {
+            PrefInput::ChangeDateStyle(i) => {
+                if let Some((_, style)) = DATE_STYLES.get(i as usize) {
+                    let _ = sender.output(PrefOutput::SetDateStyle(*style));
+                }
+            }
+            PrefInput::ChangeClockStyle(i) => {
+                if let Some((_, style)) = CLOCK_STYLES.get(i as usize) {
+                    let _ = sender.output(PrefOutput::SetClockStyle(*style));
+                }
+            }
             PrefInput::ToggleAvatars(on) => {
                 let _ = sender.output(PrefOutput::SetAvatars(on));
             }

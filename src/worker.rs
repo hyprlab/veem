@@ -13,7 +13,6 @@ use std::time::Duration;
 use async_imap::types::{Fetch, Flag, NameAttribute};
 use async_imap::Session;
 use async_native_tls::TlsStream;
-use chrono::Datelike;
 use futures::TryStreamExt;
 use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
@@ -3776,17 +3775,13 @@ fn hash_uid(uid: &str) -> u32 {
 
 /// Format a unix timestamp the same way [`format_date`] labels mail dates.
 fn label_from_timestamp(ts: i64) -> String {
-    use chrono::{Datelike, TimeZone};
-    let Some(dt) = chrono::Local.timestamp_opt(ts, 0).single() else {
-        return String::new();
-    };
-    let now = chrono::Local::now();
-    if dt.date_naive() == now.date_naive() {
-        dt.format("%-I:%M %p").to_string()
-    } else if dt.year() == now.year() {
-        dt.format("%b %-d").to_string()
+    let now = crate::datefmt::now();
+    if crate::datefmt::day_key(ts) == crate::datefmt::day_key(now) {
+        crate::datefmt::time(ts)
+    } else if crate::datefmt::year(ts) == crate::datefmt::year(now) {
+        crate::datefmt::day_month(ts)
     } else {
-        dt.format("%b %-d, %Y").to_string()
+        crate::datefmt::day_month_year(ts)
     }
 }
 
@@ -4391,21 +4386,10 @@ pub(crate) fn decode_header(raw: &[u8]) -> String {
 
 /// Compact date label from a unix timestamp (same style as [`format_date`]).
 fn format_timestamp(ts: i64) -> String {
-    use chrono::{Datelike, TimeZone};
     if ts <= 0 {
         return String::new();
     }
-    let Some(local) = chrono::Local.timestamp_opt(ts, 0).single() else {
-        return String::new();
-    };
-    let now = chrono::Local::now();
-    if local.date_naive() == now.date_naive() {
-        local.format("%-I:%M %p").to_string()
-    } else if local.year() == now.year() {
-        local.format("%b %-d").to_string()
-    } else {
-        local.format("%b %-d, %Y").to_string()
-    }
+    label_from_timestamp(ts)
 }
 
 /// Fall back to the server's `INTERNALDATE` (the delivery date) when a message
@@ -4430,16 +4414,7 @@ fn format_date(raw: &[u8]) -> (String, i64) {
     let Ok(dt) = chrono::DateTime::parse_from_rfc2822(s) else {
         return (s.to_string(), 0);
     };
-    let now = chrono::Local::now();
-    let local = dt.with_timezone(&chrono::Local);
-    let label = if local.date_naive() == now.date_naive() {
-        local.format("%-I:%M %p").to_string()
-    } else if local.year() == now.year() {
-        local.format("%b %-d").to_string()
-    } else {
-        local.format("%b %-d, %Y").to_string()
-    };
-    (label, dt.timestamp())
+    (label_from_timestamp(dt.timestamp()), dt.timestamp())
 }
 
 /// Extract a renderable HTML body from a raw RFC 822 message. A lone HTML part is

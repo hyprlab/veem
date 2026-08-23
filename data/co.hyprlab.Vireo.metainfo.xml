@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.12.6" date="2026-08-23" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.12.6</url>
+      <description>
+        <p>Dates and times follow the system format, and can be set independently of it.</p>
+      </description>
+    </release>
     <release version="1.12.5" date="2026-08-23" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.12.5</url>
       <description>

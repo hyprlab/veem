@@ -331,6 +331,34 @@ impl MessageTheme {
     }
 }
 
+/// How dates are written: the system's own arrangement, or one the user picked
+/// regardless of it (#32).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DateStyle {
+    /// Follow the locale: its field order, month names and separators.
+    #[default]
+    System,
+    /// Aug 23, 2026
+    MonthFirst,
+    /// 23 Aug 2026
+    DayFirst,
+    /// 2026 Aug 23
+    YearFirst,
+}
+
+/// Whether the clock runs to 12 or 24, or follows the system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClockStyle {
+    #[default]
+    System,
+    /// 5:40 PM
+    Twelve,
+    /// 17:40
+    TwentyFour,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 struct PrivacyFile {
     #[serde(default)]
@@ -343,6 +371,12 @@ struct PrivacyFile {
     /// reader (#29 — they cost horizontal room on a small screen).
     #[serde(default = "default_avatars")]
     avatars: bool,
+    /// How dates are written (#32).
+    #[serde(default)]
+    date_style: DateStyle,
+    /// Whether the clock runs to 12 or 24 (#32).
+    #[serde(default)]
+    clock_style: ClockStyle,
     /// Seconds between automatic mail checks; 0 = manual only.
     #[serde(default = "default_fetch_interval")]
     fetch_interval_secs: u64,
@@ -430,6 +464,8 @@ impl Default for PrivacyFile {
             allowed_senders: Vec::new(),
             gravatar: false,
             avatars: default_avatars(),
+            date_style: DateStyle::default(),
+            clock_style: ClockStyle::default(),
             fetch_interval_secs: default_fetch_interval(),
             push: default_push(),
             blacklist: Vec::new(),
@@ -474,6 +510,12 @@ pub fn load_gravatar() -> bool {
 /// Whether the sender circles are shown in the list and the reader.
 pub fn load_avatars() -> bool {
     load_privacy().avatars
+}
+
+/// How dates are written, and on what clock.
+pub fn load_date_format() -> (DateStyle, ClockStyle) {
+    let p = load_privacy();
+    (p.date_style, p.clock_style)
 }
 
 /// Seconds between automatic mail checks (0 = manual only).
@@ -549,6 +591,8 @@ pub fn save_privacy(
     senders: &[String],
     gravatar: bool,
     avatars: bool,
+    date_style: DateStyle,
+    clock_style: ClockStyle,
     fetch_interval_secs: u64,
     push: bool,
     blacklist: &[String],
@@ -573,6 +617,8 @@ pub fn save_privacy(
         allowed_senders: senders.to_vec(),
         gravatar,
         avatars,
+        date_style,
+        clock_style,
         fetch_interval_secs,
         push,
         blacklist: blacklist.to_vec(),
