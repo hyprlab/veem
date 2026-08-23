@@ -187,6 +187,8 @@ pub struct AppModel {
     gravatar: bool,
     /// Whether the coloured sender circles are drawn at all (#29).
     avatars: bool,
+    /// Whether a sender's site icon may fill their circle (#30).
+    sender_logos: bool,
     /// How dates are written, and on what clock (#32).
     date_style: crate::config::DateStyle,
     clock_style: crate::config::ClockStyle,
@@ -342,6 +344,7 @@ pub enum AppMsg {
     MarkSpam,
     SetGravatar(bool),
     SetAvatars(bool),
+    SetSenderLogos(bool),
     SetDateStyle(crate::config::DateStyle),
     SetClockStyle(crate::config::ClockStyle),
     SetThreading(bool),
@@ -1056,6 +1059,7 @@ impl SimpleComponent for AppModel {
             palette_collapse_secs: config::load_palette_collapse(),
             gravatar: config::load_gravatar(),
             avatars: config::load_avatars(),
+            sender_logos: config::load_sender_logos(),
             date_style: config::load_date_format().0,
             clock_style: config::load_date_format().1,
             fetch_interval_secs: config::load_fetch_interval(),
@@ -1119,6 +1123,12 @@ impl SimpleComponent for AppModel {
             .emit(MessageListInput::SetAvatars(model.avatars));
         // The formatter is a free function, so the preference has to be handed to
         // it before anything draws a date.
+        model
+            .message_list
+            .emit(MessageListInput::SetSenderLogos(model.sender_logos));
+        model
+            .message_view
+            .emit(MessageViewInput::SetSenderLogos(model.sender_logos));
         crate::datefmt::set_style(model.date_style, model.clock_style);
         model
             .message_list
@@ -2108,6 +2118,20 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetSenderLogos(on) => {
+                if self.sender_logos != on {
+                    self.sender_logos = on;
+                    self.save_settings();
+                    self.message_list.emit(MessageListInput::SetSenderLogos(on));
+                    self.message_view.emit(MessageViewInput::SetSenderLogos(on));
+                    for p in self.popouts.values() {
+                        p.controller.emit(MessageWindowInput::SetSenderLogos(on));
+                    }
+                    let current = self.current.clone();
+                    self.show_message(current, false);
+                }
+            }
+
             AppMsg::SetDateStyle(style) => {
                 if self.date_style != style {
                     self.date_style = style;
@@ -2495,6 +2519,7 @@ impl SimpleComponent for AppModel {
                     allowed_senders: self.allowed_senders.clone(),
                     gravatar: self.gravatar,
                     avatars: self.avatars,
+                    sender_logos: self.sender_logos,
                     date_style: self.date_style,
                     clock_style: self.clock_style,
                     fetch_interval_secs: self.fetch_interval_secs,
@@ -2521,6 +2546,7 @@ impl SimpleComponent for AppModel {
                         PrefOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
                         PrefOutput::SetGravatar(on) => AppMsg::SetGravatar(on),
                         PrefOutput::SetAvatars(on) => AppMsg::SetAvatars(on),
+                        PrefOutput::SetSenderLogos(on) => AppMsg::SetSenderLogos(on),
                         PrefOutput::SetDateStyle(style) => AppMsg::SetDateStyle(style),
                         PrefOutput::SetClockStyle(style) => AppMsg::SetClockStyle(style),
                         PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
@@ -2938,6 +2964,7 @@ impl AppModel {
             &self.allowed_senders,
             self.gravatar,
             self.avatars,
+            self.sender_logos,
             self.date_style,
             self.clock_style,
             self.fetch_interval_secs,
@@ -3773,6 +3800,7 @@ impl AppModel {
             message: display,
             gravatar: self.gravatar,
             avatars: self.avatars,
+            sender_logos: self.sender_logos,
             account_name: Some(self.account_name(account_id)),
             account_color: Some(self.account_color(account_id)),
             allow_remote,

@@ -24,6 +24,8 @@ pub struct MessageView {
     gravatar: bool,
     /// Whether the sender circle is drawn at all (#29).
     avatars: bool,
+    /// Whether the sender's own site icon may fill it (#30).
+    sender_logos: bool,
     /// Decoded Gravatar for the current sender, if any.
     avatar_texture: Option<gtk::gdk::Texture>,
     /// Owning account's display name (header chip).
@@ -65,6 +67,8 @@ impl MessageView {
 pub enum MessageViewInput {
     /// Show or hide the sender circle (#29).
     SetAvatars(bool),
+    /// Fill it with the sender's own site icon, or stop (#30).
+    SetSenderLogos(bool),
     Show {
         /// The conversation, newest first. A single message for a normal open;
         /// several for a threaded conversation.
@@ -118,7 +122,7 @@ impl Component for MessageView {
     type Input = MessageViewInput;
     type Output = MessageViewOutput;
     /// (message id, fetched Gravatar bytes) — id guards against stale results.
-    type CommandOutput = (u32, Option<Vec<u8>>);
+    type CommandOutput = (u32, Option<crate::ui::message_list::Face>);
 
     view! {
         gtk::Stack {
@@ -377,6 +381,7 @@ impl Component for MessageView {
             blocked: false,
             gravatar: false,
             avatars: true,
+            sender_logos: false,
             avatar_texture: None,
             account_name: None,
             chip_provider,
@@ -529,6 +534,10 @@ impl Component for MessageView {
             MessageViewInput::SetAvatars(on) => {
                 self.avatars = on;
             }
+            MessageViewInput::SetSenderLogos(on) => {
+                self.sender_logos = on;
+                self.load_avatar(&sender);
+            }
             MessageViewInput::SetContentTheme(o) => {
                 if self.content_dark != o {
                     self.content_dark = o;
@@ -560,7 +569,7 @@ impl Component for MessageView {
 
     fn update_cmd(
         &mut self,
-        (message_id, bytes): Self::CommandOutput,
+        (message_id, face): Self::CommandOutput,
         _sender: ComponentSender<Self>,
         _root: &Self::Root,
     ) {
@@ -572,20 +581,35 @@ impl Component for MessageView {
         if !still_current {
             return;
         }
-        if let (Some(bytes), Some(m)) = (bytes, self.current.as_ref()) {
-            self.avatar_texture = crate::avatar::decode_and_cache(&m.from_addr, &bytes);
-        }
+        let Some(m) = self.current.as_ref() else {
+            return;
+        };
+        let addr = m.from_addr.clone();
+        self.avatar_texture = match face {
+            Some(crate::ui::message_list::Face::Gravatar(b)) => {
+                crate::avatar::decode_and_cache(&addr, &b)
+            }
+            Some(crate::ui::message_list::Face::Logo(b)) => {
+                crate::logo::decode_and_cache(&addr, &b)
+            }
+            None => {
+                if self.sender_logos {
+                    crate::logo::remember_missing(&addr);
+                }
+                None
+            }
+        };
     }
 }
 
 impl MessageView {
-    /// Set the sender avatar: cached texture if available, otherwise (when
-    /// Gravatar is enabled) kick off a background fetch keyed to this message.
+    /// Set the sender's face: a cached one if known, otherwise a background look
+    /// keyed to this message — the sender's Gravatar, or the icon their domain
+    /// publishes (#30), whichever is enabled and answers.
     fn load_avatar(&mut self, sender: &ComponentSender<Self>) {
         self.avatar_texture = None;
-        // Nothing to fetch when the circle isn't drawn (#29), and no reason to
-        // send a hash of the sender's address for it.
-        if !self.gravatar || !self.avatars {
+        // Nothing to fetch when the circle isn't drawn (#29).
+        if !self.avatars {
             return;
         }
         let Some(m) = self.current.as_ref() else {
@@ -595,17 +619,21 @@ impl MessageView {
         if email.is_empty() {
             return;
         }
-        if let Some(tex) = crate::avatar::cached(&email) {
+        if let Some(tex) = crate::avatar::cached(&email).or_else(|| crate::logo::cached(&email)) {
             self.avatar_texture = Some(tex);
             return;
         }
+        let want_logo = self.sender_logos && !crate::logo::known_missing(&email);
+        if !self.gravatar && !want_logo {
+            return;
+        }
         let id = m.id;
+        let gravatar = self.gravatar;
         sender.oneshot_command(async move {
-            let bytes = tokio::task::spawn_blocking(move || crate::avatar::fetch(&email))
-                .await
-                .ok()
-                .flatten();
-            (id, bytes)
+            (
+                id,
+                crate::ui::message_list::find_face(email, gravatar, want_logo).await,
+            )
         });
     }
 

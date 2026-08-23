@@ -371,6 +371,9 @@ struct PrivacyFile {
     /// reader (#29 — they cost horizontal room on a small screen).
     #[serde(default = "default_avatars")]
     avatars: bool,
+    /// Whether a sender's site icon may be fetched to fill their circle (#30).
+    #[serde(default)]
+    sender_logos: bool,
     /// How dates are written (#32).
     #[serde(default)]
     date_style: DateStyle,
@@ -464,6 +467,7 @@ impl Default for PrivacyFile {
             allowed_senders: Vec::new(),
             gravatar: false,
             avatars: default_avatars(),
+            sender_logos: false,
             date_style: DateStyle::default(),
             clock_style: ClockStyle::default(),
             fetch_interval_secs: default_fetch_interval(),
@@ -510,6 +514,11 @@ pub fn load_gravatar() -> bool {
 /// Whether the sender circles are shown in the list and the reader.
 pub fn load_avatars() -> bool {
     load_privacy().avatars
+}
+
+/// Whether sender logos are fetched from senders' own domains.
+pub fn load_sender_logos() -> bool {
+    load_privacy().sender_logos
 }
 
 /// How dates are written, and on what clock.
@@ -591,6 +600,7 @@ pub fn save_privacy(
     senders: &[String],
     gravatar: bool,
     avatars: bool,
+    sender_logos: bool,
     date_style: DateStyle,
     clock_style: ClockStyle,
     fetch_interval_secs: u64,
@@ -617,6 +627,7 @@ pub fn save_privacy(
         allowed_senders: senders.to_vec(),
         gravatar,
         avatars,
+        sender_logos,
         date_style,
         clock_style,
         fetch_interval_secs,

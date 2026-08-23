@@ -19,6 +19,8 @@ pub struct MessageWindowInit {
     pub gravatar: bool,
     /// Whether the sender circle is drawn (#29).
     pub avatars: bool,
+    /// Whether a sender's site icon may fill it (#30).
+    pub sender_logos: bool,
     pub account_name: Option<String>,
     pub account_color: Option<String>,
     pub allow_remote: bool,
@@ -50,6 +52,8 @@ pub struct MessageWindow {
 pub enum MessageWindowInput {
     /// Show or hide the sender circle.
     SetAvatars(bool),
+    /// Turn sender logos on or off.
+    SetSenderLogos(bool),
     /// Print this message (Ctrl+P), the same as in the main window.
     Print,
     /// Preview it as a PDF (Ctrl+Shift+P).
@@ -253,6 +257,7 @@ impl Component for MessageWindow {
         view.emit(MessageViewInput::SetContentTheme(init.content_dark));
 
         view.emit(MessageViewInput::SetAvatars(init.avatars));
+        view.emit(MessageViewInput::SetSenderLogos(init.sender_logos));
 
         let model = MessageWindow {
             msg: init.message,
@@ -304,6 +309,9 @@ impl Component for MessageWindow {
             MessageWindowInput::Ignore => {}
             MessageWindowInput::SetAvatars(on) => {
                 self.view.emit(MessageViewInput::SetAvatars(on));
+            }
+            MessageWindowInput::SetSenderLogos(on) => {
+                self.view.emit(MessageViewInput::SetSenderLogos(on));
             }
             MessageWindowInput::SetContentTheme(o) => {
                 self.view.emit(MessageViewInput::SetContentTheme(o));

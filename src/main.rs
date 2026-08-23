@@ -10,6 +10,7 @@ mod config;
 mod contacts;
 mod datefmt;
 mod goa;
+mod logo;
 mod models;
 mod mutf7;
 mod notify;

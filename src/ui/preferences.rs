@@ -14,6 +14,7 @@ pub struct PrefInit {
     pub allowed_senders: Vec<String>,
     pub gravatar: bool,
     pub avatars: bool,
+    pub sender_logos: bool,
     pub date_style: DateStyle,
     pub clock_style: ClockStyle,
     pub fetch_interval_secs: u64,
@@ -118,6 +119,7 @@ pub enum PrefInput {
     RemoveBlacklistRow(String),
     ToggleGravatar(bool),
     ToggleAvatars(bool),
+    ToggleSenderLogos(bool),
     ChangeDateStyle(u32),
     ChangeClockStyle(u32),
     ToggleThreading(bool),
@@ -142,6 +144,7 @@ pub enum PrefOutput {
     RemoveBlacklist(String),
     SetGravatar(bool),
     SetAvatars(bool),
+    SetSenderLogos(bool),
     SetDateStyle(DateStyle),
     SetClockStyle(ClockStyle),
     SetThreading(bool),
@@ -364,6 +367,18 @@ impl Component for Preferences {
                             },
                         },
 
+                        #[name = "sender_logos_row"]
+                        adw::SwitchRow {
+                            set_title: "Show sender logos",
+                            set_subtitle: "Fills the sender circle with the brand's own site \
+                                           icon, fetched from the sender's domain. That domain \
+                                           learns your IP address, which is what blocking \
+                                           remote content otherwise avoids.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleSenderLogos(row.is_active()));
+                            },
+                        },
+
                         #[name = "add_sender_row"]
                         adw::EntryRow {
                             set_title: "Always allow sender (email address)",
@@ -461,6 +476,7 @@ impl Component for Preferences {
         let widgets = view_output!();
         widgets.gravatar_row.set_active(init.gravatar);
         widgets.avatars_row.set_active(init.avatars);
+        widgets.sender_logos_row.set_active(init.sender_logos);
 
         // Mail-check interval combo.
         let labels: Vec<&str> = FETCH_INTERVALS.iter().map(|(l, _)| *l).collect();
@@ -536,6 +552,9 @@ impl Component for Preferences {
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>, _root: &Self::Root) {
         match message {
+            PrefInput::ToggleSenderLogos(on) => {
+                let _ = sender.output(PrefOutput::SetSenderLogos(on));
+            }
             PrefInput::ChangeDateStyle(i) => {
                 if let Some((_, style)) = DATE_STYLES.get(i as usize) {
                     let _ = sender.output(PrefOutput::SetDateStyle(*style));

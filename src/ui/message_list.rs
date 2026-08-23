@@ -32,6 +32,8 @@ pub struct RowInit {
     pub gravatar: bool,
     /// Whether the sender circle is drawn at all (#29).
     pub avatars: bool,
+    /// Whether a sender's site icon may fill it (#30).
+    pub sender_logos: bool,
     /// How many lines of the message's text the row shows (1–3).
     pub preview_lines: u32,
     pub ring_class: Option<String>,
@@ -52,11 +54,51 @@ pub struct RowInit {
     pub thread_unread: bool,
 }
 
+/// What was found for a sender's circle, and where it came from — the two are
+/// cached separately, by address and by domain.
+#[derive(Debug)]
+pub enum Face {
+    /// The sender's own Gravatar.
+    Gravatar(Vec<u8>),
+    /// The icon their domain publishes (#30).
+    Logo(Vec<u8>),
+}
+
+/// Look for a face for `email`, off the main thread: the sender's Gravatar
+/// first, since it is theirs rather than their employer's, then the brand icon.
+/// `None` when neither is enabled, both are missing, or the cache already says
+/// so.
+pub fn find_face(
+    email: String,
+    gravatar: bool,
+    sender_logos: bool,
+) -> impl std::future::Future<Output = Option<Face>> + Send + 'static {
+    async move {
+        tokio::task::spawn_blocking(move || {
+            if gravatar {
+                if let Some(bytes) = crate::avatar::fetch(&email) {
+                    return Some(Face::Gravatar(bytes));
+                }
+            }
+            if sender_logos {
+                if let Some(bytes) = crate::logo::fetch(&email) {
+                    return Some(Face::Logo(bytes));
+                }
+            }
+            None
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+}
+
 /// One message summary row.
 pub struct MessageRow {
     msg: Message,
     gravatar: bool,
     avatars: bool,
+    sender_logos: bool,
     preview_lines: u32,
     avatar_texture: Option<gtk::gdk::Texture>,
     ring_class: Option<String>,
@@ -114,7 +156,7 @@ impl FactoryComponent for MessageRow {
     type Init = RowInit;
     type Input = MessageRowInput;
     type Output = MessageRowOutput;
-    type CommandOutput = Option<Vec<u8>>;
+    type CommandOutput = Option<Face>;
     type ParentWidget = gtk::ListBox;
 
     view! {
@@ -376,6 +418,7 @@ impl FactoryComponent for MessageRow {
             msg,
             gravatar,
             avatars,
+            sender_logos,
             preview_lines,
             ring_class,
             palette_collapse_secs,
@@ -389,6 +432,7 @@ impl FactoryComponent for MessageRow {
             msg,
             gravatar,
             avatars,
+            sender_logos,
             preview_lines,
             avatar_texture: None,
             ring_class,
@@ -403,20 +447,10 @@ impl FactoryComponent for MessageRow {
             thread_unread,
         };
 
-        // No point fetching a Gravatar for a circle that isn't drawn — and it
-        // would send a hash of the sender's address for nothing.
-        if model.gravatar && model.avatars {
-            let email = model.msg.from_addr.clone();
-            if let Some(tex) = crate::avatar::cached(&email) {
-                model.avatar_texture = Some(tex);
-            } else if !email.is_empty() {
-                sender.oneshot_command(async move {
-                    tokio::task::spawn_blocking(move || crate::avatar::fetch(&email))
-                        .await
-                        .ok()
-                        .flatten()
-                });
-            }
+        // No point fetching anything for a circle that isn't drawn — and a
+        // Gravatar lookup would send a hash of the sender's address for nothing.
+        if model.avatars {
+            model.load_face(&sender);
         }
 
         model
@@ -463,10 +497,23 @@ impl FactoryComponent for MessageRow {
         }
     }
 
-    fn update_cmd(&mut self, bytes: Self::CommandOutput, _sender: FactorySender<Self>) {
-        if let Some(bytes) = bytes {
-            self.avatar_texture = crate::avatar::decode_and_cache(&self.msg.from_addr, &bytes);
-        }
+    fn update_cmd(&mut self, face: Self::CommandOutput, _sender: FactorySender<Self>) {
+        self.avatar_texture = match face {
+            Some(Face::Gravatar(bytes)) => {
+                crate::avatar::decode_and_cache(&self.msg.from_addr, &bytes)
+            }
+            Some(Face::Logo(bytes)) => {
+                crate::logo::decode_and_cache(&self.msg.from_addr, &bytes)
+            }
+            // Nothing to show: remember it, so the sender's other rows and the
+            // next sync don't ask the same domain again.
+            None => {
+                if self.sender_logos {
+                    crate::logo::remember_missing(&self.msg.from_addr);
+                }
+                None
+            }
+        };
     }
 
     fn shutdown(&mut self, _widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
@@ -523,6 +570,26 @@ impl MessageRow {
             Some(c) => vec![c.as_str()],
             None => Vec::new(),
         }
+    }
+
+    /// Fill the circle: a cached face if one is known, otherwise go and look.
+    fn load_face(&mut self, sender: &FactorySender<Self>) {
+        let email = self.msg.from_addr.clone();
+        if email.is_empty() {
+            return;
+        }
+        if let Some(tex) = crate::avatar::cached(&email).or_else(|| crate::logo::cached(&email)) {
+            self.avatar_texture = Some(tex);
+            return;
+        }
+        // A domain already asked about is not asked again, so a sender with no
+        // icon costs one request a session rather than one a row.
+        let want_logo = self.sender_logos && !crate::logo::known_missing(&email);
+        if !self.gravatar && !want_logo {
+            return;
+        }
+        let gravatar = self.gravatar;
+        sender.oneshot_command(find_face(email, gravatar, want_logo));
     }
 
     /// Classes for the row's content box. Without the sender circle the unread
@@ -710,6 +777,8 @@ pub struct MessageList {
     preview_lines: u32,
     /// Whether the coloured sender circles are drawn (#29).
     avatars: bool,
+    /// Whether a sender's site icon may fill one (#30).
+    sender_logos: bool,
     /// Tint each row by its account (used in the unified inbox view).
     colorize: bool,
     /// account_id → avatar colour, for tinting rows.
@@ -826,6 +895,8 @@ pub enum MessageListInput {
     SetGravatar(bool),
     /// Show or hide the coloured sender circles (#29).
     SetAvatars(bool),
+    /// Fill them with senders' own site icons, or stop (#30).
+    SetSenderLogos(bool),
     /// The date or clock preference changed: every row's date is built with the
     /// row, so they are built again (#32).
     RefreshDates,
@@ -1191,6 +1262,7 @@ impl SimpleComponent for MessageList {
             title: String::new(),
             gravatar: false,
             avatars: true,
+            sender_logos: false,
             preview_lines: 1,
             colorize: false,
             account_colors: std::collections::HashMap::new(),
@@ -1381,6 +1453,13 @@ impl SimpleComponent for MessageList {
                 }
             }
             MessageListInput::RefreshDates => self.rebuild_preserving_scroll(),
+            MessageListInput::SetSenderLogos(on) => {
+                if self.sender_logos != on {
+                    self.sender_logos = on;
+                    // The circle is filled when the row is built.
+                    self.rebuild_preserving_scroll();
+                }
+            }
             MessageListInput::SetAvatars(on) => {
                 if self.avatars != on {
                     self.avatars = on;
@@ -2062,6 +2141,7 @@ impl MessageList {
                     msg: m.clone(),
                     gravatar: self.gravatar,
                     avatars: self.avatars,
+                    sender_logos: self.sender_logos,
                     preview_lines: self.preview_lines,
                     ring_class,
                     palette_collapse_secs: self.palette_collapse_secs.clone(),
