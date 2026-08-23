@@ -357,13 +357,13 @@ impl Component for Preferences {
                         set_description: Some(
                             "Vireo collects no telemetry and sends no analytics. Remote \
                              content (images, trackers) is blocked by default. Allow it per \
-                             message, trust a sender to always load it, or turn on \"Load \
-                             remote content automatically\" below to always load it."
+                             message, trust a sender to always load it, or turn on \"Always \
+                             load remote content\" below."
                         ),
 
                         #[name = "auto_remote_content_row"]
                         adw::SwitchRow {
-                            set_title: "Load remote content automatically",
+                            set_title: "Always load remote content",
                             set_subtitle: "Show images and other remote content in every new \
                                            message without asking. Off by default, since \
                                            remote content can be used to track when and where \
