@@ -108,6 +108,9 @@ pub enum MailRequest {
         uids: Vec<u32>,
         dest: String,
     },
+    /// Permanently erase messages from `path` (flag `\Deleted` + EXPUNGE), used
+    /// when "delete" is asked for in Trash, where there is nowhere left to move to.
+    PurgeMessages { path: String, uids: Vec<u32> },
     /// Create a new mailbox (folder) at `path`.
     CreateFolder { path: String },
     /// Delete a mailbox, first moving its contents to `trash` (if set).
@@ -898,6 +901,28 @@ async fn run_imap(
                     Err(e) => {
                         emit(WorkerEvent::Error {
                             text: format!("Could not move {} messages: {e}", uids.len()),
+                            connectivity: false,
+                        });
+                        lost = true;
+                    }
+                }
+                // Always signal completion so the UI's bulk spinner clears.
+                emit(WorkerEvent::BulkComplete);
+            }
+
+            MailRequest::PurgeMessages { path, uids } => {
+                let sess = session.as_mut().unwrap();
+                match purge_messages(sess, &path, &uids).await {
+                    Ok(()) => {
+                        if let Some(c) = cache.as_ref() {
+                            for uid in &uids {
+                                c.delete_message(account_id, &path, *uid);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        emit(WorkerEvent::Error {
+                            text: format!("Could not delete permanently: {e}"),
                             connectivity: false,
                         });
                         lost = true;
@@ -2219,6 +2244,39 @@ async fn delete_draft(
         .try_collect()
         .await;
     let _: Vec<u32> = session.expunge().await?.try_collect().await?;
+    Ok(())
+}
+
+/// Permanently erase messages from a mailbox: flag them `\Deleted`, then expunge.
+///
+/// `UID EXPUNGE` (RFC 4315) removes only the UIDs we asked for, leaving alone
+/// anything another client flagged `\Deleted` in the meantime. Servers without
+/// UIDPLUS reject it, so fall back to a plain `EXPUNGE`.
+async fn purge_messages(
+    session: &mut ImapSession,
+    path: &str,
+    uids: &[u32],
+) -> Result<(), async_imap::error::Error> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+    session.select(path).await?;
+    let _: Vec<Fetch> = session
+        .uid_store(&set, "+FLAGS (\\Deleted)")
+        .await?
+        .try_collect()
+        .await?;
+    // A server without UIDPLUS answers `BAD`, which surfaces while draining the
+    // response stream rather than from the call itself — so judge it on the
+    // collected result, not with `?`.
+    let uid_expunged = match session.uid_expunge(&set).await {
+        Ok(stream) => stream.try_collect::<Vec<u32>>().await.is_ok(),
+        Err(_) => false,
+    };
+    if !uid_expunged {
+        let _: Vec<u32> = session.expunge().await?.try_collect().await?;
+    }
     Ok(())
 }
 
@@ -4033,7 +4091,7 @@ async fn run_pop3(
                     }),
                 }
             }
-            MailRequest::MoveMessages { uids, .. } => {
+            MailRequest::MoveMessages { uids, .. } | MailRequest::PurgeMessages { uids, .. } => {
                 for uid in uids {
                     if pop3_delete(&account, uid).await.is_ok() {
                         if let Some(c) = cache.as_ref() {
@@ -4258,7 +4316,9 @@ async fn run_mock(
             // The demo backend sends nothing, so its Outbox is always empty.
             MailRequest::LoadOutbox => emit(WorkerEvent::Outbox { items: Vec::new() }),
             // Signal completion so the demo's bulk spinner clears.
-            MailRequest::MoveMessages { .. } => emit(WorkerEvent::BulkComplete),
+            MailRequest::MoveMessages { .. } | MailRequest::PurgeMessages { .. } => {
+                emit(WorkerEvent::BulkComplete)
+            }
             MailRequest::SaveDraft { .. } => emit(WorkerEvent::DraftSaved),
             // Pretend the send succeeded so the compose flow is demoable offline.
             MailRequest::Send { .. } => emit(WorkerEvent::Sent),

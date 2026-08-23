@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.13.2 — 2026-08-23
+
+- **Fixed: messages could not be deleted from Trash.** Every delete route ended
+  at `move_to(m, FolderKind::Trash)`, and the move is a no-op when the source
+  and the destination are the same folder — so in Trash the request was dropped
+  before it reached the worker and nothing happened at all, on IMAP and Gmail
+  alike ([#20](https://github.com/hyprlab/vireo/issues/20)). Deleting something
+  already in Trash now erases it: `UID STORE +FLAGS (\Deleted)` followed by
+  `UID EXPUNGE` (RFC 4315), so only the messages you picked go and anything
+  another client flagged in the meantime is left alone; servers without UIDPLUS
+  answer `BAD` while the response stream is drained, which is caught and
+  retried as a plain `EXPUNGE`. Because there is no undo it always asks first.
+  A mixed selection splits — whatever is still outside Trash moves there as
+  before, and only the messages already in Trash prompt. The purge is grouped
+  by folder into one request each, drops the messages from the local cache so
+  they don't reappear on the next load, and reuses the bulk spinner for large
+  selections. All three entry points go through it: the reader and popped-out
+  windows, the row palette, and multi-select.
+
 ## 1.13.1 — 2026-08-23
 
 - **New: an option to always load remote content.** Preferences → Privacy →

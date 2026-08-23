@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.13.2" date="2026-08-23" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.13.2</url>
+      <description>
+        <p>Fixes deleting messages from Trash, which previously did nothing. Deleting there now erases the message from the server, after asking.</p>
+      </description>
+    </release>
     <release version="1.13.1" date="2026-08-23" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.13.1</url>
       <description>

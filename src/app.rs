@@ -263,6 +263,9 @@ pub struct AppModel {
     /// A large bulk archive/delete/spam deferred one tick so its spinner paints
     /// before the (blocking) apply runs.
     pending_bulk: Option<(BulkAction, Vec<Message>)>,
+    /// Messages awaiting a deferred permanent delete (same spinner-first trick as
+    /// `pending_bulk`).
+    pending_purge: Option<Vec<Message>>,
 }
 
 /// A message displayed in its own top-level window (double-click to pop out).
@@ -335,6 +338,8 @@ pub enum AppMsg {
     ToggleStar,
     Archive,
     Delete,
+    /// Erase messages for good (confirmed "Delete permanently" in Trash).
+    PurgeMessages(Vec<Message>),
     RowAction { action: RowAction, message: Box<Message> },
     /// A bulk action applied to every selected message.
     Bulk { action: BulkAction, messages: Vec<Message> },
@@ -1057,6 +1062,7 @@ impl SimpleComponent for AppModel {
             current_thread: Vec::new(),
             bulk_pending: 0,
             pending_bulk: None,
+            pending_purge: None,
             folder_unread: HashMap::new(),
             sidebar_split: None,
             app_title: None,
@@ -1891,8 +1897,25 @@ impl SimpleComponent for AppModel {
                         self.current = None;
                         self.show_message(None, false);
                     } else {
-                        self.move_to(m, FolderKind::Trash);
+                        self.delete_messages(vec![m], &sender);
                     }
+                }
+            }
+
+            AppMsg::PurgeMessages(messages) => {
+                if messages.len() >= BULK_SPINNER_MIN {
+                    self.message_list.emit(MessageListInput::SetBusy(Some(format!(
+                        "Deleting {} messages…",
+                        messages.len()
+                    ))));
+                    self.pending_purge = Some(messages);
+                    let s = sender.clone();
+                    gtk::glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(16),
+                        move || s.input(AppMsg::BulkApply),
+                    );
+                } else {
+                    self.purge_messages(messages);
                 }
             }
 
@@ -1929,7 +1952,7 @@ impl SimpleComponent for AppModel {
                     RowAction::ToggleRead => self.set_read(&m, m.unread),
                     RowAction::Spam => self.mark_spam_msg(m),
                     RowAction::Archive => self.move_to(m, FolderKind::Archive),
-                    RowAction::Delete => self.move_to(m, FolderKind::Trash),
+                    RowAction::Delete => self.delete_messages(vec![m], &sender),
                     RowAction::ViewSource => {
                         if let Some(path) = self.resolve_folder_path(&m) {
                             self.send_to(m.account_id, MailRequest::LoadSource {
@@ -1963,6 +1986,15 @@ impl SimpleComponent for AppModel {
                     // Batch it; for big selections show a spinner and defer the apply
                     // one tick so the spinner paints before the blocking work runs.
                     BulkAction::Archive | BulkAction::Spam | BulkAction::Delete => {
+                        // Deleting in Trash means erasing, not moving — split the
+                        // selection so each half takes the right path (and the
+                        // erasures get their confirmation).
+                        if matches!(action, BulkAction::Delete)
+                            && messages.iter().any(|m| self.in_trash(m))
+                        {
+                            self.delete_messages(messages, &sender);
+                            return;
+                        }
                         if messages.len() >= BULK_SPINNER_MIN {
                             self.message_list.emit(MessageListInput::SetBusy(Some(
                                 bulk_busy_label(action, messages.len()),
@@ -1981,14 +2013,17 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::BulkApply => {
+                if let Some(messages) = self.pending_purge.take() {
+                    self.purge_messages(messages);
+                }
                 if let Some((action, messages)) = self.pending_bulk.take() {
                     self.apply_bulk_move(action, messages);
-                    // The optimistic removal is done; keep the spinner up until the
-                    // server-side moves finish (BulkComplete). If nothing was sent,
-                    // clear it now.
-                    if self.bulk_pending == 0 {
-                        self.message_list.emit(MessageListInput::SetBusy(None));
-                    }
+                }
+                // The optimistic removal is done; keep the spinner up until the
+                // server-side work finishes (BulkComplete). If nothing was sent,
+                // clear it now.
+                if self.bulk_pending == 0 {
+                    self.message_list.emit(MessageListInput::SetBusy(None));
                 }
             }
 
@@ -4234,6 +4269,81 @@ impl AppModel {
             .and_then(|fs| fs.iter().find(|f| f.kind == kind))
             .map(|f| f.path.clone())
             .or_else(|| self.default_folder_path(account_id, kind))
+    }
+
+    /// Whether a message already lives in its account's Trash — where "delete"
+    /// can't mean "move to Trash" any more, so it has to mean erase for good.
+    fn in_trash(&self, m: &Message) -> bool {
+        self.folders.get(&m.account_id).is_some_and(|fs| {
+            fs.iter().any(|f| f.id == m.folder_id && f.kind == FolderKind::Trash)
+        })
+    }
+
+    /// Delete `messages`: the ones still outside Trash are moved there, and any
+    /// already in Trash are erased for good once the user confirms.
+    fn delete_messages(&mut self, messages: Vec<Message>, sender: &ComponentSender<Self>) {
+        let (purge, move_out): (Vec<Message>, Vec<Message>) =
+            messages.into_iter().partition(|m| self.in_trash(m));
+        match move_out.len() {
+            0 => {}
+            1 => self.move_to(move_out.into_iter().next().unwrap(), FolderKind::Trash),
+            _ => self.apply_bulk_move(BulkAction::Delete, move_out),
+        }
+        if !purge.is_empty() {
+            self.confirm_purge(purge, sender);
+        }
+    }
+
+    /// Confirm erasing messages that are already in Trash — there's no undo, so
+    /// this always asks first.
+    fn confirm_purge(&self, messages: Vec<Message>, sender: &ComponentSender<Self>) {
+        let n = messages.len();
+        let heading = if n == 1 {
+            "Delete this message permanently?".to_string()
+        } else {
+            format!("Delete {n} messages permanently?")
+        };
+        let body = if n == 1 {
+            "It is already in Trash, so it will be erased from the server. This can’t be undone."
+        } else {
+            "They are already in Trash, so they will be erased from the server. \
+             This can’t be undone."
+        };
+        let dialog = adw::MessageDialog::new(Some(&self.window), Some(&heading), Some(body));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("delete", "Delete");
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        let s = sender.clone();
+        let messages = std::cell::RefCell::new(Some(messages));
+        dialog.connect_response(None, move |_, resp| {
+            if resp == "delete" {
+                if let Some(msgs) = messages.borrow_mut().take() {
+                    s.input(AppMsg::PurgeMessages(msgs));
+                }
+            }
+        });
+        dialog.present();
+    }
+
+    /// Erase messages from the server for good (flag `\Deleted` + EXPUNGE),
+    /// grouped by source folder so each folder takes a single request.
+    fn purge_messages(&mut self, messages: Vec<Message>) {
+        let mut groups: HashMap<(u32, String), Vec<u32>> = HashMap::new();
+        let mut removed_ids = Vec::with_capacity(messages.len());
+        for m in &messages {
+            let Some(src) = self.resolve_folder_path(m) else { continue };
+            groups.entry((m.account_id, src)).or_default().push(m.uid);
+            self.discard_message_local(m);
+            removed_ids.push(m.id);
+        }
+        self.bulk_pending += groups.len();
+        for ((account_id, path), uids) in groups {
+            self.send_to(account_id, MailRequest::PurgeMessages { path, uids });
+        }
+        self.message_list.emit(MessageListInput::RemoveMany(removed_ids));
+        self.push_unread_counts();
     }
 
     fn move_to(&mut self, m: Message, kind: FolderKind) {

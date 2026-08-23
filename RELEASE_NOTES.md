@@ -2,7 +2,19 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.13.1
+## What's new in 1.13.2
+
+- **You can now delete messages from Trash.** Deleting anything already in Trash
+  used to do nothing at all — the message stayed put, on every kind of account.
+  It now erases the message from the server for good. Because there is no undo,
+  Vireo asks first; and if you have selected a mix, whatever isn't in Trash yet
+  simply moves there as before, so only the messages that would be erased get
+  the question. Deleting from anywhere else still means "move to Trash", exactly
+  as it did.
+
+Reported in [#20](https://github.com/hyprlab/vireo/issues/20). Thank you.
+
+## In 1.13.1
 
 - **You can now choose to always load remote content.** Vireo still blocks
   images and other remote content by default, and you can still load a single
