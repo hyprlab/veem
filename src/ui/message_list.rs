@@ -52,7 +52,15 @@ pub struct RowInit {
     /// Any message in this conversation is unread (thread heads only) — keeps
     /// the head marked unread while unread replies are hidden beneath it.
     pub thread_unread: bool,
+    /// Every currently shown row as (account, folder, uid, id), in list order.
+    /// Shared with the list so a drag can turn the ListBox's selected row
+    /// *indices* into message ids and carry the whole selection (#23).
+    pub drag_keys: DragKeys,
 }
+
+/// The shown rows' (account, folder, uid, id) keys, in list order — rebuilt with
+/// the list and read live when a drag starts.
+pub type DragKeys = std::rc::Rc<std::cell::RefCell<Vec<(u32, u32, u32, u32)>>>;
 
 /// What was found for a sender's circle, and where it came from — the two are
 /// cached separately, by address and by domain.
@@ -121,6 +129,8 @@ pub struct MessageRow {
     thread_key: Option<(u32, String)>,
     /// Any message in this conversation is unread (heads only).
     thread_unread: bool,
+    /// Shared row keys, so a drag from this row can carry the whole selection.
+    drag_keys: DragKeys,
 }
 
 #[derive(Debug)]
@@ -151,6 +161,20 @@ pub enum MessageRowOutput {
     ToggleThread((u32, String)),
 }
 
+/// The keys of every selected row in the ListBox this drag started from, in list
+/// order. Empty when the row has no list parent yet or nothing is selected — the
+/// caller then falls back to the dragged row alone.
+fn drag_selection(src: &gtk::DragSource, keys: &DragKeys) -> Vec<(u32, u32, u32, u32)> {
+    let Some(list) = src.widget().and_then(|w| w.parent()).and_downcast::<gtk::ListBox>() else {
+        return Vec::new();
+    };
+    let keys = keys.borrow();
+    list.selected_rows()
+        .iter()
+        .filter_map(|r| keys.get(r.index() as usize).copied())
+        .collect()
+}
+
 #[relm4::factory(pub)]
 impl FactoryComponent for MessageRow {
     type Init = RowInit;
@@ -173,11 +197,23 @@ impl FactoryComponent for MessageRow {
             },
 
             // Drag a message onto a sidebar folder to move it there. The payload
-            // carries the account, source folder, UID and id.
+            // carries one (account, source folder, UID, id) group per message —
+            // the *whole* selection when this row is part of it, so dragging a
+            // multi-selection moves every message, not just the row under the
+            // pointer (#23).
             add_controller = gtk::DragSource {
                 set_actions: gtk::gdk::DragAction::MOVE,
-                connect_prepare[aid = self.msg.account_id, fid = self.msg.folder_id, uid = self.msg.uid, id = self.msg.id] => move |_, _, _| {
-                    let payload = format!("vireo-move\t{aid}\t{fid}\t{uid}\t{id}");
+                connect_prepare[aid = self.msg.account_id, fid = self.msg.folder_id, uid = self.msg.uid, id = self.msg.id, keys = self.drag_keys.clone()] => move |src, _, _| {
+                    let mut items = drag_selection(src, &keys);
+                    // Dragging a row outside the selection (or before the list has
+                    // published its keys) moves just that row.
+                    if !items.iter().any(|k| k.0 == aid && k.3 == id) {
+                        items = vec![(aid, fid, uid, id)];
+                    }
+                    let mut payload = String::from("vireo-move");
+                    for (a, f, u, i) in items {
+                        payload.push_str(&format!("\t{a}\t{f}\t{u}\t{i}"));
+                    }
                     Some(gtk::gdk::ContentProvider::for_value(&payload.to_value()))
                 },
             },
@@ -427,6 +463,7 @@ impl FactoryComponent for MessageRow {
             thread_expanded,
             thread_key,
             thread_unread,
+            drag_keys,
         } = init;
         let mut model = Self {
             msg,
@@ -445,6 +482,7 @@ impl FactoryComponent for MessageRow {
             thread_expanded,
             thread_key,
             thread_unread,
+            drag_keys,
         };
 
         // No point fetching anything for a circle that isn't drawn — and a
@@ -793,6 +831,9 @@ pub struct MessageList {
     /// Keyed by (account_id, id) since UIDs collide across accounts in the
     /// unified "All Inboxes" view.
     selected_id: Option<(u32, u32)>,
+    /// The shown rows' (account, folder, uid, id) keys, handed to every row so a
+    /// drag can carry the whole selection (#23).
+    drag_keys: DragKeys,
     /// Every selected message key, so the whole selection survives list rebuilds
     /// (background syncs) until the user clicks away.
     selected_ids: Vec<(u32, u32)>,
@@ -1269,6 +1310,7 @@ impl SimpleComponent for MessageList {
             color_provider,
             context_popover,
             palette_collapse_secs: std::rc::Rc::new(std::cell::Cell::new(5)),
+            drag_keys: DragKeys::default(),
             selected_id: None,
             selected_ids: Vec::new(),
             selection_count: 0,
@@ -1708,6 +1750,7 @@ impl SimpleComponent for MessageList {
                 if let Some(idx) = removed_idx {
                     self.shown.remove(idx);
                     self.rows.guard().remove(idx);
+                    self.publish_drag_keys();
                 }
 
                 if was_viewed {
@@ -1753,6 +1796,7 @@ impl SimpleComponent for MessageList {
                         }
                     }
                 }
+                self.publish_drag_keys();
                 self.selection_count = self.selected_ids.len();
                 if was_viewed {
                     match first_removed {
@@ -2127,6 +2171,9 @@ impl MessageList {
             }
         }
         self.shown = shown;
+        // Republish the row keys before the rows are built, so a drag starting on
+        // any of them can map selected row indices back to messages.
+        self.publish_drag_keys();
 
         {
             let mut guard = self.rows.guard();
@@ -2150,12 +2197,24 @@ impl MessageList {
                     thread_expanded: meta.expanded,
                     thread_key: meta.key,
                     thread_unread: meta.unread,
+                    drag_keys: self.drag_keys.clone(),
                 });
             }
         }
 
         // Restore the highlight on the message being viewed, if it's still shown.
         self.select_current();
+    }
+
+    /// Republish the shown rows' keys for drag-and-drop. Row indices shift
+    /// whenever rows are added or removed, so this must follow every change to
+    /// `shown` — a stale mapping would drag the wrong messages (#23).
+    fn publish_drag_keys(&self) {
+        *self.drag_keys.borrow_mut() = self
+            .shown
+            .iter()
+            .map(|m| (m.account_id, m.folder_id, m.uid, m.id))
+            .collect();
     }
 
     /// The conversation to show for a selected message: when `m` is the newest

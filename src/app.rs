@@ -301,8 +301,9 @@ pub enum AppMsg {
     ToggleCustomFolders(u32),
     SidebarCollapsed(bool),
     SidebarContext(CtxAction),
-    /// A message was dropped on a sidebar folder — move it there.
-    DropMoveMessage { account_id: u32, folder_id: u32, uid: u32, id: u32, dest: String },
+    /// Messages were dropped on a sidebar folder — move them there. `items` is
+    /// the dragged selection as (account, folder, uid, id).
+    DropMoveMessages { dest_account: u32, dest: String, items: Vec<(u32, u32, u32, u32)> },
     /// Create a custom folder under an account (from the right-click menu).
     CreateFolder { account_id: u32, name: String },
     /// Delete a custom folder (its contents are moved to Trash first).
@@ -955,8 +956,8 @@ impl SimpleComponent for AppModel {
                 SidebarOutput::CollapsedChanged(collapsed) => AppMsg::SidebarCollapsed(collapsed),
                 SidebarOutput::AddAccount => AppMsg::AddFirstAccount,
                 SidebarOutput::Context(action) => AppMsg::SidebarContext(action),
-                SidebarOutput::MoveMessage { account_id, folder_id, uid, id, dest } => {
-                    AppMsg::DropMoveMessage { account_id, folder_id, uid, id, dest }
+                SidebarOutput::MoveMessages { dest_account, dest, items } => {
+                    AppMsg::DropMoveMessages { dest_account, dest, items }
                 }
             });
 
@@ -1506,18 +1507,41 @@ impl SimpleComponent for AppModel {
                 self.attachments_available = false;
                 self.sync_attachment_drawer();
                 self.show_message(None, false);
-                self.unified_by_account.clear();
                 self.message_list.emit(MessageListInput::SetSelected(None));
                 self.message_list.emit(MessageListInput::SetColorize(true));
                 self.message_list.emit(MessageListInput::ResetPaging);
-                self.message_list
-                    .emit(MessageListInput::SetLoading { title: "All Inboxes".into() });
-                // Request every account's inbox; results are merged as they arrive.
                 let reqs: Vec<(u32, u32, String)> = self
                     .accounts
                     .iter()
                     .filter_map(|a| self.inbox_of(a.id).map(|f| (a.id, f.id, f.path.clone())))
                     .collect();
+                // Keep every account's last known inbox and top it up from the
+                // folder caches, the way opening a single folder does. This used
+                // to clear the lot and wait: an account whose worker was slow to
+                // answer — busy backfilling a large mailbox, reconnecting, or
+                // offline — was simply absent from "All Inboxes", while its own
+                // Inbox, served from cache, still listed its mail. Each account's
+                // slice is replaced when its load lands.
+                for (account_id, folder_id, _) in &reqs {
+                    if let Some(cached) = self.message_cache.get(&(*account_id, *folder_id)) {
+                        if !cached.is_empty() {
+                            self.unified_by_account.insert(*account_id, cached.clone());
+                        }
+                    }
+                }
+                // Forget accounts that no longer have an inbox to contribute
+                // (removed or disabled since the last visit).
+                let live: std::collections::HashSet<u32> =
+                    reqs.iter().map(|(a, _, _)| *a).collect();
+                self.unified_by_account.retain(|a, _| live.contains(a));
+                if self.unified_by_account.is_empty() {
+                    self.message_list
+                        .emit(MessageListInput::SetLoading { title: "All Inboxes".into() });
+                } else {
+                    self.emit_unified();
+                }
+                // Request every account's inbox; each result replaces that
+                // account's slice as it arrives.
                 for (account_id, folder_id, path) in reqs {
                     self.send_to(account_id, MailRequest::LoadMessages { folder_id, path });
                 }
@@ -1633,20 +1657,8 @@ impl SimpleComponent for AppModel {
                 }
             },
 
-            AppMsg::DropMoveMessage { account_id, folder_id, uid, id, dest } => {
-                if let Some(m) = self.find_cached_message(account_id, id) {
-                    self.move_to_path(m, dest);
-                } else if let Some(src) = self
-                    .folders
-                    .get(&account_id)
-                    .and_then(|fs| fs.iter().find(|f| f.id == folder_id))
-                    .map(|f| f.path.clone())
-                {
-                    if src != dest {
-                        self.send_to(account_id, MailRequest::MoveMessage { path: src, uid, dest });
-                        self.message_list.emit(MessageListInput::Remove(id));
-                    }
-                }
+            AppMsg::DropMoveMessages { dest_account, dest, items } => {
+                self.drop_move(dest_account, dest, items);
             }
 
             AppMsg::CreateFolder { account_id, name } => {
@@ -2726,17 +2738,7 @@ impl SimpleComponent for AppModel {
                     // Accept only each account's inbox; merge all by recency.
                     if self.inbox_of(account_id).map(|f| f.id) == Some(folder_id) {
                         self.unified_by_account.insert(account_id, messages);
-                        let mut merged: Vec<Message> = self
-                            .unified_by_account
-                            .values()
-                            .flatten()
-                            .cloned()
-                            .collect();
-                        merged.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-                        self.message_list.emit(MessageListInput::SetMessages {
-                            title: "All Inboxes".into(),
-                            messages: merged,
-                        });
+                        self.emit_unified();
                     }
                 } else if let Some(sel) = self.selected.as_ref() {
                     if sel.account_id == account_id && sel.folder_id == folder_id {
@@ -4371,6 +4373,68 @@ impl AppModel {
         self.discard_message(&m);
     }
 
+    /// Move a dropped drag selection into `dest` on `dest_account`. Messages are
+    /// grouped by source folder and each group moved in a single `MoveMessages`
+    /// request, so dragging a multi-selection moves all of it (#23). IMAP can't
+    /// move mail between accounts, so anything from another account — possible
+    /// when the drag started in the unified inbox — stays put and is reported
+    /// rather than silently dropped.
+    fn drop_move(&mut self, dest_account: u32, dest: String, items: Vec<(u32, u32, u32, u32)>) {
+        let mut groups: HashMap<String, Vec<u32>> = HashMap::new();
+        let mut removed_ids: Vec<u32> = Vec::new();
+        let mut foreign = 0usize;
+        for (aid, fid, uid, id) in items {
+            if aid != dest_account {
+                foreign += 1;
+                continue;
+            }
+            // Prefer the cached message: it knows its own source folder (in the
+            // unified inbox that isn't the folder the row was listed under) and
+            // lets the caches be cleaned up optimistically.
+            let cached = self.find_cached_message(aid, id);
+            let src = match &cached {
+                Some(m) => self.resolve_folder_path(m),
+                None => self
+                    .folders
+                    .get(&aid)
+                    .and_then(|fs| fs.iter().find(|f| f.id == fid))
+                    .map(|f| f.path.clone()),
+            };
+            let Some(src) = src else { continue };
+            if src == dest {
+                continue; // already in that folder
+            }
+            if let Some(m) = &cached {
+                self.discard_message_local(m);
+            }
+            groups.entry(src).or_default().push(uid);
+            removed_ids.push(id);
+        }
+        if foreign > 0 {
+            self.notifications.emit(NotifyInput::Push {
+                text: if foreign == 1 {
+                    "One message stayed put — mail can't be moved between accounts".to_string()
+                } else {
+                    format!("{foreign} messages stayed put — mail can't be moved between accounts")
+                },
+                error: true,
+                connectivity: false,
+            });
+        }
+        if removed_ids.is_empty() {
+            return;
+        }
+        self.bulk_pending += groups.len();
+        for (src, uids) in groups {
+            self.send_to(
+                dest_account,
+                MailRequest::MoveMessages { path: src, uids, dest: dest.clone() },
+            );
+        }
+        self.message_list.emit(MessageListInput::RemoveMany(removed_ids));
+        self.push_unread_counts();
+    }
+
     /// The mailbox namespace prefix for an account (e.g. "INBOX." if its folders
     /// nest under INBOX, otherwise ""), derived from an existing sub-folder.
     fn folder_namespace(&self, account_id: u32) -> String {
@@ -4611,19 +4675,22 @@ impl AppModel {
 
     /// Re-emit the currently-visible folder/unified list from the caches, so
     /// in-place changes (e.g. mark-all-read) show without a server round-trip.
+    /// Push every account's inbox slice to the list as one date-sorted run. The
+    /// slices arrive independently (cache seed, then each account's load), so the
+    /// whole merged list is re-emitted each time one of them changes.
+    fn emit_unified(&self) {
+        let mut merged: Vec<Message> =
+            self.unified_by_account.values().flatten().cloned().collect();
+        merged.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        self.message_list.emit(MessageListInput::SetMessages {
+            title: "All Inboxes".into(),
+            messages: merged,
+        });
+    }
+
     fn refresh_list_display(&self) {
         if self.unified {
-            let mut merged: Vec<Message> = self
-                .unified_by_account
-                .values()
-                .flatten()
-                .cloned()
-                .collect();
-            merged.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-            self.message_list.emit(MessageListInput::SetMessages {
-                title: "All Inboxes".into(),
-                messages: merged,
-            });
+            self.emit_unified();
         } else if let Some(sel) = self.selected.as_ref() {
             if let Some(msgs) = self.message_cache.get(&(sel.account_id, sel.folder_id)) {
                 self.message_list.emit(MessageListInput::SetMessages {

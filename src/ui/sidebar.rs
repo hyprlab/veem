@@ -170,13 +170,14 @@ pub enum SidebarOutput {
     AddAccount,
     /// A right-click context-menu action from a sidebar item.
     Context(CtxAction),
-    /// A message (identified by ids) was dropped on a folder to move it there.
-    MoveMessage {
-        account_id: u32,
-        folder_id: u32,
-        uid: u32,
-        id: u32,
+    /// Messages (identified by ids) were dropped on a folder to move them there.
+    /// `items` is the whole dragged selection as (account, folder, uid, id) — it
+    /// may include messages from other accounts when the drag started in the
+    /// unified inbox; the app filters and reports those (#23).
+    MoveMessages {
+        dest_account: u32,
         dest: String,
+        items: Vec<(u32, u32, u32, u32)>,
     },
 }
 
@@ -553,26 +554,9 @@ impl Component for Sidebar {
             }
 
             SidebarInput::DropOnFolder { account_id: dest_account, path: dest, payload } => {
-                let parts: Vec<&str> = payload.split('\t').collect();
-                if parts.len() == 5 && parts[0] == "vireo-move" {
-                    if let (Ok(aid), Ok(fid), Ok(uid), Ok(id)) = (
-                        parts[1].parse::<u32>(),
-                        parts[2].parse::<u32>(),
-                        parts[3].parse::<u32>(),
-                        parts[4].parse::<u32>(),
-                    ) {
-                        // Only move within the same account (cross-account IMAP
-                        // moves aren't supported), and not onto its own folder.
-                        if aid == dest_account {
-                            let _ = sender.output(SidebarOutput::MoveMessage {
-                                account_id: aid,
-                                folder_id: fid,
-                                uid,
-                                id,
-                                dest,
-                            });
-                        }
-                    }
+                let items = parse_move_payload(&payload);
+                if !items.is_empty() {
+                    let _ = sender.output(SidebarOutput::MoveMessages { dest_account, dest, items });
                 }
             }
         }
@@ -1372,6 +1356,29 @@ impl Sidebar {
     }
 }
 
+/// The dragged messages in a drop payload: the marker "vireo-move" followed by
+/// one tab-separated (account, folder, uid, id) group per message. A drag from a
+/// multi-selection carries every selected message (#23); anything malformed
+/// yields nothing rather than a partial move.
+fn parse_move_payload(payload: &str) -> Vec<(u32, u32, u32, u32)> {
+    let parts: Vec<&str> = payload.split('\t').collect();
+    if parts.first() != Some(&"vireo-move") || parts.len() < 5 || parts.len() % 4 != 1 {
+        return Vec::new();
+    }
+    let items: Vec<(u32, u32, u32, u32)> = parts[1..]
+        .chunks(4)
+        .filter_map(|c| {
+            Some((c[0].parse().ok()?, c[1].parse().ok()?, c[2].parse().ok()?, c[3].parse().ok()?))
+        })
+        .collect();
+    // All or nothing: a group that won't parse means the payload isn't ours.
+    if items.len() * 4 + 1 == parts.len() {
+        items
+    } else {
+        Vec::new()
+    }
+}
+
 /// A drop target that moves a dragged message into `dest_path` on account `id`.
 fn folder_drop_target(
     id: u32,
@@ -1627,4 +1634,35 @@ fn build_folder_row(folder: &Folder, collapsed: bool) -> (gtk::ListBoxRow, Optio
 
     row.set_child(Some(&hbox));
     (row, badge)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_move_payload;
+
+    #[test]
+    fn a_drop_payload_carries_every_dragged_message() {
+        // One message (the single-selection case).
+        assert_eq!(parse_move_payload("vireo-move\t1\t2\t3\t4"), vec![(1, 2, 3, 4)]);
+        // Three, as a multi-selection drag sends them — including a second
+        // account, which the app filters out (mail can't cross accounts).
+        assert_eq!(
+            parse_move_payload("vireo-move\t1\t2\t3\t4\t1\t2\t5\t6\t7\t8\t9\t10"),
+            vec![(1, 2, 3, 4), (1, 2, 5, 6), (7, 8, 9, 10)]
+        );
+    }
+
+    #[test]
+    fn a_payload_that_isnt_ours_moves_nothing() {
+        for bad in [
+            "",
+            "some dragged text",
+            "vireo-move",
+            "vireo-move\t1\t2\t3",       // short group
+            "vireo-move\t1\t2\t3\t4\t5",  // trailing partial group
+            "vireo-move\t1\t2\tx\t4",     // unparsable field
+        ] {
+            assert!(parse_move_payload(bad).is_empty(), "{bad:?} should parse to nothing");
+        }
+    }
 }
