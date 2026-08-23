@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS attachments (
     data        BLOB NOT NULL,
     PRIMARY KEY (account_id, folder_path, uid, idx)
 );
+CREATE TABLE IF NOT EXISTS refs_repair (
+    account_id  INTEGER NOT NULL,
+    folder_path TEXT    NOT NULL,
+    next_uid    INTEGER NOT NULL,
+    done        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, folder_path)
+);
 CREATE TABLE IF NOT EXISTS addresses (
     email TEXT PRIMARY KEY,
     name  TEXT NOT NULL DEFAULT '',
@@ -105,6 +112,12 @@ CREATE TABLE IF NOT EXISTS attachments_checked (
 /// moment the body is rendered, so dropping `bodies` re-fetches both together
 /// and every cached message gains a verdict.
 const SCHEMA_VERSION: i64 = 11;
+
+/// Most Message-IDs one cross-folder conversation lookup matches against. A
+/// thread's ancestry is short in practice, and the references half of that query
+/// is a scan — this keeps a pathological References header (some mailing lists
+/// accumulate hundreds) from turning a message-open into a long one.
+const THREAD_ID_LIMIT: usize = 24;
 
 /// (Adding a *new* table needs no bump: `SCHEMA` runs `CREATE TABLE IF NOT
 /// EXISTS` on every open, so an existing cache gains it in place. A bump is for
@@ -455,6 +468,147 @@ impl Cache {
             rows.collect()
         };
         run().unwrap_or_default()
+    }
+
+    /// Every cached message across the account's folders that belongs to the same
+    /// conversation as `ids` — messages naming one of those ids as their own
+    /// Message-ID (an ancestor), or referencing one (a descendant, e.g. the reply
+    /// you sent, filed away in Sent).
+    ///
+    /// Returns each message with the folder path it lives in, since the caller
+    /// needs that both to label it and to fetch its body. Cache-only: the point
+    /// is to assemble a conversation without going near the network (#21).
+    pub fn messages_by_thread_ids(
+        &self,
+        account_id: u32,
+        ids: &[String],
+    ) -> Vec<(String, Message)> {
+        let ids: Vec<&String> = ids.iter().filter(|i| !i.is_empty()).take(THREAD_ID_LIMIT).collect();
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        // One placeholder per id, twice: matched against message_id, then looked
+        // for inside the space-separated references list.
+        let slots = |offset: usize| -> String {
+            (0..ids.len()).map(|i| format!("?{}", offset + i + 1)).collect::<Vec<_>>().join(", ")
+        };
+        let refs_match = (0..ids.len())
+            .map(|i| format!("instr(' ' || references_ || ' ', ?{}) > 0", ids.len() + i + 2))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let sql = format!(
+            "SELECT folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred,                     has_attachment, recipients, cc, message_id, references_, preview              FROM messages              WHERE account_id = ?{account} AND (message_id IN ({in_list}) OR {refs_match})              ORDER BY ts DESC",
+            account = ids.len() * 2 + 1,
+            in_list = slots(0),
+            refs_match = refs_match,
+        );
+        let run = || -> rusqlite::Result<Vec<(String, Message)>> {
+            let mut stmt = self.conn.prepare(&sql)?;
+            // Bind order: the ids themselves, then each padded with spaces so a
+            // substring match can't half-match a longer id, then the account.
+            let padded: Vec<String> = ids.iter().map(|i| format!(" {i} ")).collect();
+            let mut binds: Vec<&dyn rusqlite::ToSql> = Vec::new();
+            for i in &ids {
+                binds.push(*i as &dyn rusqlite::ToSql);
+            }
+            for p in &padded {
+                binds.push(p as &dyn rusqlite::ToSql);
+            }
+            binds.push(&account_id as &dyn rusqlite::ToSql);
+            let rows = stmt.query_map(binds.as_slice(), |row| {
+                let uid: u32 = row.get(1)?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    Message {
+                        id: uid,
+                        account_id,
+                        folder_id: 0, // filled in by the caller, which knows the ids
+                        uid,
+                        from_name: row.get(2)?,
+                        from_addr: row.get(3)?,
+                        to: row.get(10)?,
+                        cc: row.get(11)?,
+                        subject: row.get(4)?,
+                        preview: row.get(14)?,
+                        body: String::new(),
+                        date: row.get(5)?,
+                        timestamp: row.get(6)?,
+                        unread: row.get(7)?,
+                        starred: row.get(8)?,
+                        has_attachment: row.get(9)?,
+                        message_id: row.get(12)?,
+                        references: row.get(13)?,
+                    },
+                ))
+            })?;
+            rows.collect()
+        };
+        run().unwrap_or_else(|e| {
+            tracing::warn!("cache messages_by_thread_ids failed: {e}");
+            Vec::new()
+        })
+    }
+
+    /// The next chunk of messages whose threading references are still the
+    /// In-Reply-To-only ones an ENVELOPE fetch gives (a single id, or none at
+    /// all) — the rows a one-time References repair can still improve (#21).
+    ///
+    /// Rows already holding two or more ids came from a full header parse and are
+    /// complete. "None at all" can equally mean a message that genuinely has no
+    /// References, which no query can tell apart from one never fetched — hence
+    /// the `next_uid` watermark: each pass walks strictly downwards so a message
+    /// with nothing to find is visited once and never again.
+    pub fn uids_needing_references(
+        &self,
+        account_id: u32,
+        folder_path: &str,
+        below_uid: u32,
+        limit: usize,
+    ) -> Vec<(u32, String)> {
+        let run = || -> rusqlite::Result<Vec<(u32, String)>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT uid, references_ FROM messages                  WHERE account_id = ?1 AND folder_path = ?2 AND uid < ?3                    AND instr(trim(references_), ' ') = 0                  ORDER BY uid DESC LIMIT ?4",
+            )?;
+            let rows = stmt.query_map(
+                params![account_id, folder_path, below_uid, limit as i64],
+                |row| Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?)),
+            )?;
+            rows.collect()
+        };
+        run().unwrap_or_default()
+    }
+
+    pub fn set_references(&self, account_id: u32, folder_path: &str, uid: u32, references: &str) {
+        let _ = self.conn.execute(
+            "UPDATE messages SET references_ = ?1              WHERE account_id = ?2 AND folder_path = ?3 AND uid = ?4",
+            params![references, account_id, folder_path, uid],
+        );
+    }
+
+    /// How far down a folder's References repair has walked: the uid to look
+    /// below next, and whether the pass has finished. A folder never touched
+    /// starts at the top (`u32::MAX`), so the first chunk is its newest mail.
+    pub fn refs_repair_state(&self, account_id: u32, folder_path: &str) -> (u32, bool) {
+        self.conn
+            .query_row(
+                "SELECT next_uid, done FROM refs_repair                  WHERE account_id = ?1 AND folder_path = ?2",
+                params![account_id, folder_path],
+                |row| Ok((row.get::<_, u32>(0)?, row.get::<_, i64>(1)? != 0)),
+            )
+            .unwrap_or((u32::MAX, false))
+    }
+
+    pub fn set_refs_repair_state(
+        &self,
+        account_id: u32,
+        folder_path: &str,
+        next_uid: u32,
+        done: bool,
+    ) {
+        let _ = self.conn.execute(
+            "INSERT INTO refs_repair (account_id, folder_path, next_uid, done)              VALUES (?1, ?2, ?3, ?4)              ON CONFLICT(account_id, folder_path) DO UPDATE SET next_uid = ?3, done = ?4",
+            params![account_id, folder_path, next_uid, done as i64],
+        );
     }
 
     pub fn load_body(&self, account_id: u32, folder_path: &str, uid: u32) -> Option<String> {
