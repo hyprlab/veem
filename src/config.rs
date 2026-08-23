@@ -363,6 +363,11 @@ pub enum ClockStyle {
 struct PrivacyFile {
     #[serde(default)]
     allowed_senders: Vec<String>,
+    /// Whether remote content (images, trackers) is auto-loaded for every new
+    /// message, not just those from allowed senders. Off by default, since
+    /// remote content can be used to track when and where a message is read.
+    #[serde(default)]
+    auto_remote_content: bool,
     /// Whether to load sender avatars from Gravatar (off by default — it sends
     /// a hash of each sender's email to a third party).
     #[serde(default)]
@@ -465,6 +470,7 @@ impl Default for PrivacyFile {
     fn default() -> Self {
         Self {
             allowed_senders: Vec::new(),
+            auto_remote_content: false,
             gravatar: false,
             avatars: default_avatars(),
             sender_logos: false,
@@ -504,6 +510,11 @@ fn load_privacy() -> PrivacyFile {
 /// Senders whose messages may auto-load remote content. Stored lowercased.
 pub fn load_allowed_senders() -> Vec<String> {
     load_privacy().allowed_senders
+}
+
+/// Whether remote content is auto-loaded for every new message.
+pub fn load_auto_remote_content() -> bool {
+    load_privacy().auto_remote_content
 }
 
 /// Whether Gravatar avatar loading is enabled.
@@ -598,6 +609,7 @@ pub fn load_autostart() -> bool {
 #[allow(clippy::too_many_arguments)]
 pub fn save_privacy(
     senders: &[String],
+    auto_remote_content: bool,
     gravatar: bool,
     avatars: bool,
     sender_logos: bool,
@@ -625,6 +637,7 @@ pub fn save_privacy(
     }
     let file = PrivacyFile {
         allowed_senders: senders.to_vec(),
+        auto_remote_content,
         gravatar,
         avatars,
         sender_logos,
