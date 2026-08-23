@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.13.1" date="2026-08-23" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.13.1</url>
+      <description>
+        <p>Adds an option to always load remote content, for people who would rather not be asked each time. Remote content stays blocked unless you turn it on.</p>
+      </description>
+    </release>
     <release version="1.13.0" date="2026-08-23" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.13.0</url>
       <description>

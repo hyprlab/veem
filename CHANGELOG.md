@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.13.1 — 2026-08-23
+
+- **New: an option to always load remote content.** Preferences → Privacy →
+  *Always load remote content*, off unless you turn it on. Blocking by default
+  stays, as do the two existing ways out — load once, or trust this sender —
+  but people who would rather not be asked no longer have to be. It hooks
+  `remote_allowed`, the single point every render path already funnels through,
+  so the reader, conversations, popped-out windows and printing all follow the
+  setting without a second gate to keep in sync; since 1.13.0 that same flag
+  decides what is stripped and what the content policy permits, so turning it on
+  relaxes both together. Toggling it re-renders whatever is open — a
+  conversation as a conversation, not collapsed to its first message.
+  Contributed by [Isaac](https://github.com/thecalamityjoe87) in
+  [#31](https://github.com/hyprlab/vireo/pull/31).
+
 ## 1.13.0 — 2026-08-23 — security
 
 Reported privately by [Alexander Lubovenko](https://github.com/typedev), who

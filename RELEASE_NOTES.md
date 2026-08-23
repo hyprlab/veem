@@ -2,7 +2,19 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.13.0 — security release
+## What's new in 1.13.1
+
+- **You can now choose to always load remote content.** Vireo still blocks
+  images and other remote content by default, and you can still load a single
+  message or trust a sender to always load it. But if you would rather not be
+  asked at all, there is now a switch for that: Preferences → Privacy →
+  *Always load remote content*. It is off unless you turn it on, because remote
+  content can be used to tell when and where you read a message.
+
+Contributed by [Isaac](https://github.com/thecalamityjoe87)
+([#31](https://github.com/hyprlab/vireo/pull/31)). Thank you.
+
+## In 1.13.0 — security release
 
 **Please update.** This release fixes a flaw that let someone who could send you
 mail run their own code inside Vireo's reader, simply by your opening the
