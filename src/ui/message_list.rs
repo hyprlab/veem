@@ -1018,7 +1018,11 @@ pub enum MessageListOutput {
     /// A message was selected. `thread` holds the whole conversation (newest
     /// first) when the newest/head row was chosen, so the reader can show it as a
     /// scrollable conversation; otherwise it's just `[message]`.
-    Selected { message: Message, thread: Vec<Message> },
+    /// A message was opened. `thread` is the conversation to render (just
+    /// `message` when it is not one). `solo` marks the deliberate case: the user
+    /// picked one reply *inside* a conversation shown in the list, and wants
+    /// only that message — so the reader must not go looking for its siblings.
+    Selected { message: Message, thread: Vec<Message>, solo: bool },
     /// A row was double-clicked: open the message in its own window.
     Activated(Message),
     /// A context-menu action chosen for a specific message.
@@ -1610,10 +1614,11 @@ impl SimpleComponent for MessageList {
                                 .find(|m| (m.account_id, m.id) == *key)
                                 .cloned()
                             {
-                                let thread = self.conversation_for(&m);
+                                let (thread, solo) = self.conversation_for(&m);
                                 let _ = sender.output(MessageListOutput::Selected {
                                     message: m,
                                     thread,
+                                    solo,
                                 });
                             }
                         }
@@ -1858,8 +1863,8 @@ impl SimpleComponent for MessageList {
                     self.selected_id = Some(key);
                     self.selected_ids = vec![key];
                     self.select_current();
-                    let thread = self.conversation_for(&m);
-                    let _ = sender.output(MessageListOutput::Selected { message: m, thread });
+                    let (thread, solo) = self.conversation_for(&m);
+                    let _ = sender.output(MessageListOutput::Selected { message: m, thread, solo });
                 }
             }
             MessageListInput::ContextMenu { x, y } => {
@@ -2242,16 +2247,16 @@ impl MessageList {
     /// The conversation to show for a selected message: when `m` is the oldest
     /// (head) of a multi-message thread, every message in it (oldest first);
     /// otherwise just `m` (so opening an individual reply shows only that one).
-    fn conversation_for(&self, m: &Message) -> Vec<Message> {
+    fn conversation_for(&self, m: &Message) -> (Vec<Message>, bool) {
         if !self.threading {
-            return vec![m.clone()];
+            return (vec![m.clone()], false);
         }
         // Thread within whatever set is on screen (the search pool while searching,
         // otherwise the current folder) so the conversation matches the rows shown.
         let source = self.active_source();
         let keys = compute_thread_keys(source, self.threading_since);
         let Some(key) = keys.get(&(m.account_id, m.id)).cloned() else {
-            return vec![m.clone()];
+            return (vec![m.clone()], false);
         };
         let mut members: Vec<Message> = source
             .iter()
@@ -2259,7 +2264,9 @@ impl MessageList {
             .cloned()
             .collect();
         if members.len() <= 1 {
-            return vec![m.clone()];
+            // Nothing else here to thread with. It may still have siblings in
+            // another folder, so this is *not* solo — the reader may look.
+            return (vec![m.clone()], false);
         }
         // Oldest first, matching the rows: the head is the message that opened
         // the conversation, and opening it shows the whole thread in order.
@@ -2268,9 +2275,11 @@ impl MessageList {
             .first()
             .is_some_and(|h| (h.account_id, h.id) == (m.account_id, m.id));
         if is_head {
-            members
+            (members, false)
         } else {
-            vec![m.clone()]
+            // A reply picked out of a conversation that is on screen: show it by
+            // itself and leave it that way.
+            (vec![m.clone()], true)
         }
     }
 

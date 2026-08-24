@@ -332,7 +332,9 @@ pub enum AppMsg {
     /// Delete a custom folder (its contents are moved to Trash first).
     DeleteFolder { account_id: u32, path: String },
     AccountsReordered(Vec<String>),
-    MessageSelected { message: Message, thread: Vec<Message> },
+    /// `solo` marks a reply the user picked out of a conversation on screen:
+    /// show that message alone and don't go looking for its siblings.
+    MessageSelected { message: Message, thread: Vec<Message>, solo: bool },
     /// A new-mail desktop notification was clicked — open that message.
     OpenMessageFromNotification { account_id: u32, folder_id: u32, message_id: u32 },
     /// The search field became active/inactive — supply or drop the cross-folder
@@ -995,8 +997,8 @@ impl SimpleComponent for AppModel {
             MessageList::builder()
                 .launch(())
                 .forward(sender.input_sender(), |out| match out {
-                    MessageListOutput::Selected { message, thread } => {
-                        AppMsg::MessageSelected { message, thread }
+                    MessageListOutput::Selected { message, thread, solo } => {
+                        AppMsg::MessageSelected { message, thread, solo }
                     }
                     MessageListOutput::Activated(m) => AppMsg::OpenMessageWindow(m),
                     MessageListOutput::Action { action, message } => {
@@ -1770,7 +1772,7 @@ impl SimpleComponent for AppModel {
                         .emit(MessageListInput::SetColorize(self.unified));
                 }
             }
-            AppMsg::MessageSelected { message: m, thread } => {
+            AppMsg::MessageSelected { message: m, thread, solo } => {
                 // Navigating away releases any inline reply (save-if-dirty, or keep
                 // it as an independent window if it was popped out).
                 self.release_reader_compose();
@@ -1829,9 +1831,12 @@ impl SimpleComponent for AppModel {
                 // Only for mail from the cutoff forward: an archived message's
                 // conversation can span years and hundreds of messages, and
                 // assembling it means reading every one of their bodies.
-                if self.threading && m.timestamp >= self.threading_since {
-                    let solo = [m.clone()];
-                    let ids = thread_ids(if thread.is_empty() { &solo[..] } else { &thread });
+                // …unless the user picked this reply out of a conversation already
+                // on screen. They asked for one message; assembling its thread
+                // again would swap the conversation back in under them.
+                if self.threading && !solo && m.timestamp >= self.threading_since {
+                    let only = [m.clone()];
+                    let ids = thread_ids(if thread.is_empty() { &only[..] } else { &thread });
                     if !ids.is_empty() {
                         self.send_to(account_id, MailRequest::LoadRelated {
                             message_id: m.id,
