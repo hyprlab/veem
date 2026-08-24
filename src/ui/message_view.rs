@@ -24,6 +24,11 @@ pub struct MessageView {
     /// Remote content was detected and is currently withheld — this drives the
     /// "blocked" banner, and nothing else.
     blocked: bool,
+    /// Messages the user deliberately marked unread while this conversation was
+    /// on screen. They keep their mark but get no scroll sentinel, so simply
+    /// having them in view can't undo the thing the user just asked for. Cleared
+    /// whenever a conversation is opened afresh.
+    no_autoread: std::collections::HashSet<(u32, u32)>,
     /// Draw the blocked-content banner in its quiet grey style.
     dim_banner: bool,
     /// Whether that banner is shown at all. It gates only the notice: `blocked`
@@ -134,6 +139,10 @@ pub enum MessageViewInput {
     /// A conversation message header was double-clicked — open that message in
     /// its own window.
     OpenHeader { account_id: u32, id: u32 },
+    /// The user marked this conversation message unread: keep the mark until the
+    /// conversation is opened again, rather than clearing it the moment the
+    /// message happens to be in view.
+    SuppressAutoRead { account_id: u32, id: u32 },
     /// One conversation message has been scrolled all the way through, so it
     /// has been read.
     MarkSeen { account_id: u32, id: u32 },
@@ -433,6 +442,7 @@ impl Component for MessageView {
             thread: Vec::new(),
             folder_labels: std::collections::HashMap::new(),
             blocked: false,
+            no_autoread: std::collections::HashSet::new(),
             dim_banner: crate::config::load_dim_remote_banner(),
             show_banner: crate::config::load_show_remote_banner(),
             remote_allowed: false,
@@ -540,6 +550,11 @@ impl Component for MessageView {
                 }
                 self.link_preview.set_visible(false);
                 self.current = shown;
+                // A fresh open: anything the user marked unread earlier can be
+                // read by scrolling again.
+                if !same_message {
+                    self.no_autoread.clear();
+                }
                 self.thread = thread;
                 self.folder_labels = folder_labels;
                 self.gravatar = gravatar;
@@ -649,6 +664,17 @@ impl Component for MessageView {
 
             MessageViewInput::Rendered => {
                 self.webview_ready = true;
+            }
+            MessageViewInput::SuppressAutoRead { account_id, id } => {
+                self.no_autoread.insert((account_id, id));
+                for m in self.thread.iter_mut() {
+                    if m.account_id == account_id && m.id == id {
+                        m.unread = true;
+                    }
+                }
+                if !self.loading {
+                    self.render();
+                }
             }
             MessageViewInput::MarkSeen { account_id, id } => {
                 // Keep the local copy in step so a later re-render doesn't put
@@ -791,7 +817,13 @@ impl MessageView {
 
     /// The wrapper document for what is currently on screen.
     fn document_html(&self, dark: bool) -> String {
-        Self::conversation_document(&self.thread, &self.folder_labels, !self.remote_allowed, dark)
+        Self::conversation_document(
+            &self.thread,
+            &self.folder_labels,
+            &self.no_autoread,
+            !self.remote_allowed,
+            dark,
+        )
     }
 
     /// The wrapper document: one sandboxed iframe per message (so each email's
@@ -805,6 +837,7 @@ impl MessageView {
     fn conversation_document(
         thread: &[Message],
         folder_labels: &std::collections::HashMap<(u32, u32), String>,
+        no_autoread: &std::collections::HashSet<(u32, u32)>,
         restrict: bool,
         dark: bool,
     ) -> String {
@@ -865,7 +898,7 @@ impl MessageView {
                     } else {
                         String::new()
                     },
-                    seen_mark = if m.unread {
+                    seen_mark = if m.unread && !no_autoread.contains(&(m.account_id, m.id)) {
                         format!("<div class=\"vireo-end\" data-key=\"{}:{}\"></div>", m.account_id, m.id)
                     } else {
                         String::new()
@@ -2008,6 +2041,7 @@ mod tests {
         let doc = MessageView::conversation_document(
             &[first, second],
             &std::collections::HashMap::new(),
+            &Default::default(),
             true,
             false,
         );
@@ -2035,6 +2069,7 @@ mod tests {
         let doc = MessageView::conversation_document(
             &[first, second],
             &std::collections::HashMap::new(),
+            &Default::default(),
             true,
             false,
         );
@@ -2063,6 +2098,7 @@ mod tests {
         let doc = MessageView::conversation_document(
             &[read, unread],
             &std::collections::HashMap::new(),
+            &Default::default(),
             true,
             false,
         );
@@ -2073,11 +2109,34 @@ mod tests {
         assert!(doc.contains("class=\"vireo-end\" data-key=\"1:2\""), "{doc}");
     }
 
+    /// Marking a message unread while its conversation is open must survive the
+    /// message being in view: it keeps its dot, but no sentinel, so nothing
+    /// reads it back until the conversation is opened afresh.
+    #[test]
+    fn a_deliberately_unread_message_keeps_its_mark() {
+        let read = msg_for_print();
+        let mut unread = msg_for_print();
+        unread.id = 2;
+        unread.unread = true;
+        let suppressed: std::collections::HashSet<(u32, u32)> = [(1u32, 2u32)].into();
+
+        let doc = MessageView::conversation_document(
+            &[read, unread],
+            &std::collections::HashMap::new(),
+            &suppressed,
+            true,
+            false,
+        );
+        assert_eq!(doc.matches("class=\"vireo-dot\"").count(), 1, "still marked: {doc}");
+        assert_eq!(doc.matches("class=\"vireo-end\"").count(), 0, "no sentinel: {doc}");
+    }
+
     #[test]
     fn a_single_message_is_not_drawn_as_a_card() {
         let doc = MessageView::conversation_document(
             &[msg_for_print()],
             &std::collections::HashMap::new(),
+            &Default::default(),
             true,
             false,
         );
@@ -2092,7 +2151,7 @@ mod tests {
         b.id = 2;
         b.folder_id = 3; // pulled in from Sent
         let labels = std::collections::HashMap::from([((1u32, 2u32), "Sent".to_string())]);
-        let doc = MessageView::conversation_document(&[a, b], &labels, true, false);
+        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), true, false);
         assert_eq!(
             doc.matches("vireo-folder").count(),
             // once in the stylesheet, once on the message that came from Sent —
@@ -2112,7 +2171,7 @@ mod tests {
         b.id = 2;
         let labels =
             std::collections::HashMap::from([((1u32, 2u32), "<img src=x onerror=alert(1)>".into())]);
-        let doc = MessageView::conversation_document(&[a, b], &labels, true, false);
+        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), true, false);
         assert!(!doc.contains("<img src=x"), "the label must be escaped, not rendered");
         assert!(doc.contains("&lt;img src=x"));
     }
@@ -2130,7 +2189,7 @@ mod tests {
         let mut b = msg_for_print();
         b.id = 2;
         // Two messages: the per-message headers only render in conversation mode.
-        let doc = MessageView::conversation_document(&[a, b], &Default::default(), true, false);
+        let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), true, false);
 
         assert!(!doc.contains("<script>x=1"), "{doc}");
         assert!(!doc.contains("<img src=y"), "{doc}");
@@ -2144,7 +2203,7 @@ mod tests {
         a.from_name = "Ada".into();
         let mut b = msg_for_print();
         b.id = 2;
-        let doc = MessageView::conversation_document(&[a, b], &Default::default(), true, false);
+        let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), true, false);
 
         // A nonce'd CSP, so an injected `<script>` or `onerror=` is refused by
         // the engine even if the escaping above ever regresses.
@@ -2172,6 +2231,7 @@ mod tests {
         let again =
             MessageView::conversation_document(
                 &[msg_for_print(), msg_for_print()],
+                &Default::default(),
                 &Default::default(),
                 true,
                 false,
@@ -2303,7 +2363,7 @@ mod tests {
         let mut b = msg_for_print();
         b.id = 2;
         b.body = "<p style=\"height:300px\">second</p>".into();
-        let html = MessageView::conversation_document(&[a, b], &Default::default(), true, false);
+        let html = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), true, false);
 
         let view = webkit6::WebView::new();
         let settings = webkit6::Settings::new();

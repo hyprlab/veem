@@ -5368,6 +5368,31 @@ impl AppModel {
                 cur.unread = !read;
             }
         }
+        // The reader shows a conversation's unread marks, so a message whose
+        // state changed while its thread is open has to be told about it —
+        // otherwise marking one unread does nothing visible until the thread is
+        // opened again.
+        let in_thread = self
+            .current_thread
+            .iter_mut()
+            .filter(|tm| tm.id == m.id && tm.account_id == m.account_id)
+            .fold(false, |_, tm| {
+                tm.unread = !read;
+                true
+            });
+        if in_thread && self.current_thread.len() > 1 {
+            if read {
+                self.show_thread();
+            } else {
+                // Marked unread deliberately: the reader keeps the mark until
+                // this conversation is opened afresh, so a message sitting in
+                // view can't immediately undo it.
+                self.message_view.emit(MessageViewInput::SuppressAutoRead {
+                    account_id: m.account_id,
+                    id: m.id,
+                });
+            }
+        }
         self.push_unread_counts();
     }
 
