@@ -230,6 +230,9 @@ pub struct AppModel {
     /// `config::threading_since`) — so an archive is never grouped, and never
     /// pulled into a conversation.
     threading_since: i64,
+    /// A conversation re-render is already scheduled, so further bodies arriving
+    /// in the same burst don't each queue one of their own.
+    thread_render_queued: bool,
     /// Whether conversation threads start expanded in the message list.
     threads_expanded: bool,
     /// How email content is themed (message content only, not the app UI).
@@ -314,6 +317,8 @@ pub enum AppMsg {
     ToggleCustomFolders(u32),
     SidebarCollapsed(bool),
     SidebarContext(CtxAction),
+    /// The conversation on screen has new bodies to show (coalesced).
+    RenderThread,
     /// Messages were dropped on a sidebar folder — move them there. `items` is
     /// the dragged selection as (account, folder, uid, id).
     DropMoveMessages { dest_account: u32, dest: String, items: Vec<(u32, u32, u32, u32)> },
@@ -447,7 +452,10 @@ pub enum AppMsg {
     /// A folder's background backfill finished — it's fully indexed now.
     BackfillDone { account_id: u32, folder_id: u32 },
     FolderUnread { account_id: u32, folder_id: u32, unread: u32 },
-    Body { account_id: u32, message_id: u32, body: String },
+    /// `path` is the folder the body was read from — a UID only identifies a
+    /// message within its own folder, so applying a body to a message means
+    /// checking the folder too.
+    Body { account_id: u32, message_id: u32, path: String, body: String },
     Source { text: String },
     Attachments { account_id: u32, message_id: u32, items: Vec<Attachment> },
     AttachmentsPending { account_id: u32, message_id: u32 },
@@ -1114,6 +1122,7 @@ impl SimpleComponent for AppModel {
             )),
             threading: config::load_threading(),
             threading_since: config::threading_since(),
+            thread_render_queued: false,
             threads_expanded: config::load_threads_expanded(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
@@ -2863,7 +2872,7 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::Body { account_id, message_id, body } => {
+            AppMsg::Body { account_id, message_id, path, body } => {
                 self.body_cache
                     .insert((account_id, message_id), body.clone());
                 // If this body was fetched to open a draft, open the editor now.
@@ -2874,36 +2883,58 @@ impl SimpleComponent for AppModel {
                     }
                     self.pending_draft = Some(pd);
                 }
+                // A UID is unique only within its folder, and the background
+                // prefetch pushes bodies from every folder it syncs. Matching on
+                // the number alone would let one folder's body overwrite a
+                // different message that happens to share it.
+                let folder = self
+                    .folders
+                    .get(&account_id)
+                    .and_then(|fs| fs.iter().find(|f| f.path == path))
+                    .map(|f| f.id);
+                let is_target = |m: &Message| {
+                    m.account_id == account_id
+                        && m.id == message_id
+                        && folder.is_none_or(|fid| m.folder_id == fid)
+                };
                 // Keep the primary's body up to date in either mode.
                 if let Some(current) = self.current.as_mut() {
-                    if current.id == message_id && current.account_id == account_id {
+                    if current.account_id == account_id
+                        && current.id == message_id
+                        && folder.is_none_or(|fid| current.folder_id == fid)
+                    {
                         current.body = body.clone();
                     }
                 }
                 if self.current_thread.len() > 1 {
-                    // Conversation mode: fill the matching message's body and
-                    // re-render the whole thread (placeholders fill in as they load).
+                    // Conversation mode: fill the matching message's body. The
+                    // whole conversation renders as one document holding every
+                    // body, so a burst of arrivals is coalesced into a single
+                    // re-render rather than one per body.
                     let mut changed = false;
                     for tm in self.current_thread.iter_mut() {
-                        if tm.id == message_id && tm.account_id == account_id {
+                        if is_target(tm) {
                             tm.body = body.clone();
                             changed = true;
                         }
                     }
                     if changed {
-                        self.show_thread();
+                        self.queue_thread_render(&sender);
                     }
-                } else if self
-                    .current
-                    .as_ref()
-                    .is_some_and(|c| c.id == message_id && c.account_id == account_id)
-                {
+                } else if self.current.as_ref().is_some_and(is_target) {
                     let current = self.current.clone();
                     self.show_message(current, false);
                 }
                 // Re-render any popped-out window showing this message.
                 if let Some(p) = self.popouts.get(&(account_id, message_id)) {
                     p.controller.emit(MessageWindowInput::SetBody(body));
+                }
+            }
+
+            AppMsg::RenderThread => {
+                self.thread_render_queued = false;
+                if self.current_thread.len() > 1 {
+                    self.show_thread();
                 }
             }
 
@@ -3845,6 +3876,23 @@ impl AppModel {
     /// The header follows the message the user selected, not whatever sorted to
     /// the top: a conversation can now include replies of your own pulled in from
     /// Sent, and one of those being the newest shouldn't retitle the reader.
+    /// Ask for one conversation re-render shortly from now, collapsing a burst of
+    /// arriving bodies into a single one.
+    ///
+    /// A conversation is rendered as one document with every member's body
+    /// inlined and handed to WebKit. Rendering per arriving body meant N loads of
+    /// an N-body document, issued far faster than WebKit could retire them.
+    fn queue_thread_render(&mut self, sender: &ComponentSender<Self>) {
+        if self.thread_render_queued {
+            return;
+        }
+        self.thread_render_queued = true;
+        let s = sender.clone();
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(120), move || {
+            s.input(AppMsg::RenderThread);
+        });
+    }
+
     fn show_thread(&self) {
         let Some(head) = self.current_thread.first() else {
             return;
@@ -5903,7 +5951,9 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
         WorkerEvent::FolderUnread { folder_id, unread } => {
             AppMsg::FolderUnread { account_id, folder_id, unread }
         }
-        WorkerEvent::Body { message_id, body } => AppMsg::Body { account_id, message_id, body },
+        WorkerEvent::Body { message_id, path, body } => {
+            AppMsg::Body { account_id, message_id, path, body }
+        }
         WorkerEvent::SenderChecked { message_id, check } => {
             AppMsg::SenderChecked { account_id, message_id, check: Box::new(check) }
         }

@@ -200,7 +200,10 @@ pub enum WorkerEvent {
     /// Server-side unread count for a folder (from STATUS/SEARCH, independent of
     /// the loaded window — accurate even for multi-thousand mailboxes).
     FolderUnread { folder_id: u32, unread: u32 },
-    Body { message_id: u32, body: String },
+    /// `path` is the folder the body was read from. A UID is unique only within
+    /// its folder, so without it a background prefetch's body can be applied to a
+    /// different message that happens to share the number.
+    Body { message_id: u32, path: String, body: String },
     /// Whether the message's From: address survived its provider's SPF/DKIM/DMARC
     /// checks. Sent right after `Body`, from the same fetch.
     SenderChecked { message_id: u32, check: crate::models::SenderCheck },
@@ -659,6 +662,7 @@ async fn run_imap(
                 {
                     emit(WorkerEvent::Body {
                         message_id: *message_id,
+                        path: path.clone(),
                         body,
                     });
                     if let Some(check) =
@@ -788,7 +792,7 @@ async fn run_imap(
                         c.save_sender_check(account_id, &path, uid, &check);
                         c.set_has_attachment(account_id, &path, uid, has_attachments);
                     }
-                    emit(WorkerEvent::Body { message_id, body });
+                    emit(WorkerEvent::Body { message_id, path: path.clone(), body });
                     emit(WorkerEvent::SenderChecked { message_id, check });
                     emit(if has_attachments {
                         WorkerEvent::HasAttachments { message_id }
@@ -1519,7 +1523,7 @@ async fn run_one_body_prefetch(
     // sender badge blank with no second chance to fill it.
     if let Some(body) = cache.and_then(|c| c.load_body(account_id, &path, uid)) {
         queue.pop_front();
-        emit(WorkerEvent::Body { message_id: uid, body });
+        emit(WorkerEvent::Body { message_id: uid, path: path.clone(), body });
         if let Some(check) = cache.and_then(|c| c.load_sender_check(account_id, &path, uid)) {
             emit(WorkerEvent::SenderChecked { message_id: uid, check });
         }
@@ -1541,7 +1545,7 @@ async fn run_one_body_prefetch(
             c.save_sender_check(account_id, &path, uid, &check);
             c.set_has_attachment(account_id, &path, uid, has_attachments);
         }
-        emit(WorkerEvent::Body { message_id: uid, body });
+        emit(WorkerEvent::Body { message_id: uid, path: path.clone(), body });
         emit(WorkerEvent::SenderChecked { message_id: uid, check });
         // The background prefetch reads the whole message anyway, so a wrong
         // paperclip corrects itself before the message is ever opened.
@@ -4094,7 +4098,7 @@ async fn run_pop3(
 
             MailRequest::LoadBody { message_id, path: _, uid } => {
                 if let Some(body) = cache.as_ref().and_then(|c| c.load_body(account_id, INBOX, uid)) {
-                    emit(WorkerEvent::Body { message_id, body });
+                    emit(WorkerEvent::Body { message_id, path: INBOX.to_string(), body });
                     continue;
                 }
                 match pop3_fetch_raw(&account, uid).await {
@@ -4103,7 +4107,7 @@ async fn run_pop3(
                         if let Some(c) = cache.as_ref() {
                             c.save_body(account_id, INBOX, uid, &body);
                         }
-                        emit(WorkerEvent::Body { message_id, body });
+                        emit(WorkerEvent::Body { message_id, path: INBOX.to_string(), body });
                     }
                     Err(e) => emit(WorkerEvent::Error {
                         text: format!("Could not load message: {e}"),
@@ -4387,9 +4391,9 @@ async fn run_mock(
                     messages: backend.messages(folder_id),
                 });
             }
-            MailRequest::LoadBody { message_id, .. } => {
+            MailRequest::LoadBody { message_id, ref path, .. } => {
                 let body = backend.message(message_id).map(|m| m.body).unwrap_or_default();
-                emit(WorkerEvent::Body { message_id, body });
+                emit(WorkerEvent::Body { message_id, path: path.clone(), body });
             }
             MailRequest::LoadSource { message_id, .. } => {
                 let text = backend.message(message_id).map(|m| m.body).unwrap_or_default();
