@@ -4474,7 +4474,7 @@ impl AppModel {
             return;
         }
         conv.extend(added);
-        conv.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)); // newest first, as the list threads
+        conv.sort_by(|a, b| a.timestamp.cmp(&b.timestamp)); // oldest first, as the list threads
         self.current_thread = conv;
         let to_load: Vec<(u32, u32, u32, String)> = self
             .current_thread

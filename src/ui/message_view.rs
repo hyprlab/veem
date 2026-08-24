@@ -786,6 +786,16 @@ impl MessageView {
         // Paint the wrapper and the (still-loading) iframes in the theme colour so
         // there's no white flash before each message's content renders.
         let bg = if dark { "#1e1e1e" } else { "#ffffff" };
+        // In a conversation each message is a card, which only reads as one
+        // against a slightly different ground. A single message keeps the plain
+        // full-bleed page — a lone card floating in a margin is just wasted
+        // width.
+        let page = match (conversation, dark) {
+            (false, _) => bg,
+            (true, true) => "#141414",
+            (true, false) => "#f1f1f1",
+        };
+        let body_class = if conversation { " class=\"vireo-conv\"" } else { "" };
         // Defence in depth for the wrapper: the only script allowed to run is the
         // one carrying this render's nonce, which is ours. Anything a message
         // manages to smuggle into this document — an injected `<script>`, an
@@ -819,10 +829,13 @@ impl MessageView {
              <meta name=\"color-scheme\" content=\"{scheme}\">\
              <style>\
                :root{{color-scheme:{scheme};}}\
-               body{{margin:0;padding:0;background:{bg};font:14px/1.55 system-ui,sans-serif;}}\
+               body{{margin:0;padding:0;background:{page};font:14px/1.55 system-ui,sans-serif;}}\
+               body.vireo-conv{{padding:14px;}}\
                iframe.vireo-frame{{width:100%;border:0;display:block;background:{bg};}}\
-               .vireo-msg{{border-bottom:1px solid rgba(128,128,128,0.25);}}\
-               .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;transition:background 120ms ease;}}\
+               .vireo-msg{{background:{bg};border:1px solid rgba(128,128,128,0.28);\
+                 border-radius:12px;overflow:hidden;margin-bottom:14px;}}\
+               .vireo-msg:last-child{{margin-bottom:0;}}\
+               .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;transition:background 120ms ease;border-bottom:1px solid rgba(128,128,128,0.2);}}\
                .vireo-msg-hdr:hover{{background:rgba(128,128,128,0.16);}}\
                .vireo-from{{font-weight:700;}}\
                .vireo-addr{{opacity:0.55;font-size:0.9em;}}\
@@ -831,7 +844,7 @@ impl MessageView {
                  font-size:0.78em;opacity:0.75;border:1px solid currentColor;}}\
                .vireo-loading{{opacity:0.5;padding:16px;}}\
              </style>{sizer}\
-             </head><body>{sections}</body></html>"
+             </head><body{body_class}>{sections}</body></html>"
         )
     }
 
@@ -1863,6 +1876,48 @@ mod tests {
             message_id: String::new(),
             references: String::new(),
         }
+    }
+
+    /// A conversation is a stack of cards in the order it is handed, so the
+    /// reader shows the message that started it first and the newest last.
+    #[test]
+    fn a_conversation_renders_one_card_per_message_in_order() {
+        let mut first = msg_for_print();
+        first.body = "<p>opening</p>".into();
+        let mut second = msg_for_print();
+        second.id = 2;
+        second.from_name = "Grace Hopper".into();
+        second.body = "<p>reply</p>".into();
+
+        let doc = MessageView::conversation_document(
+            &[first, second],
+            &std::collections::HashMap::new(),
+            true,
+            false,
+        );
+        assert_eq!(
+            doc.matches("<section class=\"vireo-msg\">").count(),
+            2,
+            "each message gets its own card: {doc}"
+        );
+        let ada = doc.find("Ada Lovelace").expect("first sender present");
+        let grace = doc.find("Grace Hopper").expect("second sender present");
+        assert!(ada < grace, "cards must keep the order they were handed");
+        assert!(doc.contains("<body class=\"vireo-conv\">"), "conversation padding");
+    }
+
+    /// A single message is not a conversation: no card chrome, no margin — it
+    /// keeps the full width of the reader.
+    #[test]
+    fn a_single_message_is_not_drawn_as_a_card() {
+        let doc = MessageView::conversation_document(
+            &[msg_for_print()],
+            &std::collections::HashMap::new(),
+            true,
+            false,
+        );
+        assert!(!doc.contains("<section class=\"vireo-msg\">"), "no card: {doc}");
+        assert!(!doc.contains("<body class=\"vireo-conv\">"), "no conversation padding");
     }
 
     #[test]

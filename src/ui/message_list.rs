@@ -2149,7 +2149,13 @@ impl MessageList {
         self.msg_thread.clear();
         self.thread_members.clear();
         for key in &order {
-            let msgs = groups.remove(key).unwrap();
+            let mut msgs = groups.remove(key).unwrap();
+            // A conversation reads like a transcript: the message that started it
+            // is the row on screen, and its replies descend beneath it to the
+            // newest. Where the *thread* sits among the other rows is still the
+            // list's sort order — recent activity keeps it near the top — but
+            // inside the thread, time only runs one way.
+            msgs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then(a.uid.cmp(&b.uid)));
             let count = msgs.len();
             // `expanded_threads` stores toggles away from the default state.
             let expanded = count > 1 && (self.expanded_threads.contains(key) != self.default_expanded);
@@ -2233,8 +2239,8 @@ impl MessageList {
             .collect();
     }
 
-    /// The conversation to show for a selected message: when `m` is the newest
-    /// (head) of a multi-message thread, every message in it (newest first);
+    /// The conversation to show for a selected message: when `m` is the oldest
+    /// (head) of a multi-message thread, every message in it (oldest first);
     /// otherwise just `m` (so opening an individual reply shows only that one).
     fn conversation_for(&self, m: &Message) -> Vec<Message> {
         if !self.threading {
@@ -2255,7 +2261,9 @@ impl MessageList {
         if members.len() <= 1 {
             return vec![m.clone()];
         }
-        members.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        // Oldest first, matching the rows: the head is the message that opened
+        // the conversation, and opening it shows the whole thread in order.
+        members.sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then(a.uid.cmp(&b.uid)));
         let is_head = members
             .first()
             .is_some_and(|h| (h.account_id, h.id) == (m.account_id, m.id));
