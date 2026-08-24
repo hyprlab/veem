@@ -2,7 +2,30 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.13.2
+## What's new in 1.13.4
+
+- **Conversations are back, and safe.** Vireo groups a message with its replies
+  again, and shows the rest of a conversation from your other folders — the
+  reply you sent appears inside the thread you're reading. The version that
+  first added this could exhaust your machine's memory when you opened a
+  message; that is fixed, and covered by tests.
+- **Threading starts from this release.** Mail that arrives from now on threads
+  normally. Your archive is left alone: grouping years of old mail meant reading
+  hundreds of messages to show one conversation, and it is not what threading is
+  for. Nothing is re-downloaded and no background repair runs over your mailbox.
+- **Dragging several messages now moves all of them** — previously only one
+  moved, and dragging from All Inboxes often did nothing at all.
+- **All Inboxes no longer drops an account.** An account that was still syncing
+  or offline could be missing from the merged view even though its own Inbox
+  showed its mail. It now appears immediately from the cache.
+- **Preferences: adding senders makes more sense.** The "always allow" field now
+  sits at the top of the Allowed Senders list it feeds, and both it and the
+  Blacklist add with a + button.
+- **The blocked-content warning can be quieter, or silent.** Choose a grey
+  banner with outlined buttons instead of the amber bar, or hide it entirely.
+  Hiding it changes only the notice — remote content stays blocked.
+
+## In 1.13.2
 
 - **You can now delete messages from Trash.** Deleting anything already in Trash
   used to do nothing at all — the message stayed put, on every kind of account.

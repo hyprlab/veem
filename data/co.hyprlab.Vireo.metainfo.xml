@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.13.4" date="2026-08-24" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.13.4</url>
+      <description>
+        <p>Brings back conversation threading without the memory exhaustion of 1.13.3, and applies it to mail from this release forward rather than your archive. Dragging several messages now moves all of them, All Inboxes no longer omits an account still syncing, and the blocked-remote-content banner can be quieter or hidden.</p>
+      </description>
+    </release>
     <release version="1.13.2" date="2026-08-23" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.13.2</url>
       <description>

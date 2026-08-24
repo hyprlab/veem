@@ -1,5 +1,61 @@
 # Changelog
 
+## 1.13.4 — 2026-08-24
+
+- **Conversation threading is back, and no longer exhausts memory.** 1.13.3
+  grouped messages into conversations and pulled in the rest of a thread from
+  other folders. Opening one message could then consume every byte of memory on
+  the machine. The cause was a single wrong index: `messages_by_thread_ids`
+  binds its parameters ids-then-padded-then-account, but read the `References`
+  comparisons from slot `n+2` instead of `n+1`. Every comparison shifted by one,
+  and the last ran against the *account id* — which SQLite coerced to text, so
+  `instr` matched every message whose References merely contained that digit. On
+  a real cache one click returned 6,278 "related" messages instead of 1, each
+  becoming a body to fetch and a re-render of a document holding all the others.
+  Two tests cover the query now; the first fails on the old index.
+- **Threading applies to mail from this release forward.** The cutoff is stamped
+  once into `state.toml` on first run. Older mail never groups and is never
+  pulled into a conversation: an archive's conversations run years and hundreds
+  of messages deep, and every member is a body the reader loads and renders.
+  Recent mail threads normally — in a real mailbox the largest conversation in
+  90 days is five messages. This also retires 1.13.3's References repair pass
+  entirely, along with its watermark table: old mail never threads, so it never
+  needs its headers backfilled. A conversation is additionally capped at 50
+  members.
+- **Conversation re-renders are coalesced.** A conversation renders as one
+  document holding every member's body, and each arriving body triggered one.
+  Bodies arrive in bursts — the background prefetch alone pushes fifty per
+  folder synced — so an N-message conversation meant N loads of an N-body
+  document, faster than WebKit could retire them. Arrivals now mark the reader
+  dirty and one render runs on a short timer.
+- **A body can no longer be applied to the wrong message.** `WorkerEvent::Body`
+  now carries the folder it was read from. A UID is unique only within its
+  folder, so matching on the number alone let a prefetched body from one folder
+  overwrite a different message that happened to share it.
+- **Fixed: dragging several messages moved only one** ([#23](https://github.com/hyprlab/vireo/issues/23)).
+  The drag payload was built from the dragged row alone, and the drop was
+  discarded outright when that row's account differed from the target folder's —
+  which is why dragging from the unified inbox often did nothing at all. The
+  list now publishes its rows' (account, folder, uid, id) keys, a drag maps the
+  selected indices through them and carries every selected message, and the app
+  groups them by source folder into one server-side `MoveMessages` per group.
+  Messages from another account stay put and say so.
+- **Fixed: "All Inboxes" could omit an account entirely.** It cleared every
+  account's slice on entry and rebuilt purely from what each worker sent back,
+  so an account busy backfilling, reconnecting, or offline was simply missing —
+  while its own Inbox, seeded from cache, still listed its mail. It now keeps
+  each account's last known inbox, tops it up from the folder caches the way
+  opening a single folder does, and replaces a slice only when that account's
+  load lands.
+- **Preferences: the sender fields sit with their lists.** "Always allow sender"
+  was in the Privacy group, nowhere near the list it fed; it is now the first
+  row of Allowed Senders. It and the Blacklist row both add with a + button
+  rather than a checkmark, so the two lists read and behave alike.
+- **A quieter blocked-content banner, and a switch to silence it.** The warning
+  can now be drawn in grey with outlined amber buttons instead of a full amber
+  bar, and can be hidden altogether. Hiding it gates the notice only — remote
+  content is still blocked exactly as before.
+
 ## 1.13.2 — 2026-08-23
 
 - **Fixed: messages could not be deleted from Trash.** Every delete route ended
