@@ -718,8 +718,11 @@ impl SimpleComponent for AppModel {
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox,
+                                    // A conversation is on screen: which message
+                                    // would this reply to? Each card carries its
+                                    // own Reply/Reply all/Forward instead.
                                     #[watch]
-                                    set_sensitive: model.current.is_some(),
+                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Reply),
                                 },
                                 pack_start = &gtk::Button {
@@ -728,8 +731,11 @@ impl SimpleComponent for AppModel {
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox,
+                                    // A conversation is on screen: which message
+                                    // would this reply to? Each card carries its
+                                    // own Reply/Reply all/Forward instead.
                                     #[watch]
-                                    set_sensitive: model.current.is_some(),
+                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ReplyAll),
                                 },
                                 pack_start = &gtk::Button {
@@ -738,8 +744,11 @@ impl SimpleComponent for AppModel {
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox,
+                                    // A conversation is on screen: which message
+                                    // would this reply to? Each card carries its
+                                    // own Reply/Reply all/Forward instead.
                                     #[watch]
-                                    set_sensitive: model.current.is_some(),
+                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Forward),
                                 },
                                 pack_start = &gtk::Button {
@@ -1018,6 +1027,11 @@ impl SimpleComponent for AppModel {
                     MessageViewOutput::AllowSender(addr) => AppMsg::AllowSender(addr),
                     MessageViewOutput::ComposeTo(addr) => AppMsg::ComposeTo(addr),
                     MessageViewOutput::OpenWindow(m) => AppMsg::OpenMessageWindow(*m),
+                    // A card's own Reply/Reply all/Forward: the same action the
+                    // list's row menu performs, aimed at that message.
+                    MessageViewOutput::CardAction { action, message } => {
+                        AppMsg::RowAction { action, message }
+                    }
                 });
 
         // The drawer owns a Paned whose top pane is the reader body, so hand it

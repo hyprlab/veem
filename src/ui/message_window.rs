@@ -250,8 +250,10 @@ impl Component for MessageWindow {
                 MessageViewOutput::AllowSender(addr) => MessageWindowInput::AllowSender(addr),
                 MessageViewOutput::ComposeTo(addr) => MessageWindowInput::ComposeTo(addr),
                 // A popout shows a single message (no conversation headers), so
-                // this never fires; map it to a no-op to keep the match total.
+                // neither of these fires; map them to a no-op to keep the match
+                // total. The window's own toolbar carries Reply and Forward.
                 MessageViewOutput::OpenWindow(_) => MessageWindowInput::Ignore,
+                MessageViewOutput::CardAction { .. } => MessageWindowInput::Ignore,
             });
         // Apply the message-content theme before the first render.
         view.emit(MessageViewInput::SetContentTheme(init.content_dark));

@@ -134,6 +134,13 @@ pub enum MessageViewInput {
     /// A conversation message header was double-clicked — open that message in
     /// its own window.
     OpenHeader { account_id: u32, id: u32 },
+    /// Reply / Reply all / Forward chosen on one card's header, so the action
+    /// applies to that message rather than to whichever the reader calls primary.
+    CardAction {
+        action: crate::ui::message_list::RowAction,
+        account_id: u32,
+        id: u32,
+    },
 }
 
 #[derive(Debug)]
@@ -144,6 +151,11 @@ pub enum MessageViewOutput {
     ComposeTo(String),
     /// Open a conversation message in its own window (header double-clicked).
     OpenWindow(Box<Message>),
+    /// An action chosen on one message's card in a conversation.
+    CardAction {
+        action: crate::ui::message_list::RowAction,
+        message: Box<Message>,
+    },
 }
 
 #[relm4::component(pub)]
@@ -445,11 +457,37 @@ impl Component for MessageView {
         if let Some(ucm) = model.webview.user_content_manager() {
             let open_sender = sender.clone();
             ucm.connect_script_message_received(Some("vireo"), move |_ucm, value| {
-                let key = value.to_str().to_string();
-                if let Some((a, i)) = key.split_once(':') {
-                    if let (Ok(account_id), Ok(id)) = (a.parse::<u32>(), i.parse::<u32>()) {
-                        open_sender.input(MessageViewInput::OpenHeader { account_id, id });
-                    }
+                // "verb:account:id" — the page only ever posts what this document
+                // put there, but it is still parsed strictly.
+                use crate::ui::message_list::RowAction;
+                let msg = value.to_str().to_string();
+                let mut parts = msg.splitn(3, ':');
+                let (Some(verb), Some(a), Some(i)) =
+                    (parts.next(), parts.next(), parts.next())
+                else {
+                    return;
+                };
+                let (Ok(account_id), Ok(id)) = (a.parse::<u32>(), i.parse::<u32>()) else {
+                    return;
+                };
+                match verb {
+                    "open" => open_sender.input(MessageViewInput::OpenHeader { account_id, id }),
+                    "reply" => open_sender.input(MessageViewInput::CardAction {
+                        action: RowAction::Reply,
+                        account_id,
+                        id,
+                    }),
+                    "replyall" => open_sender.input(MessageViewInput::CardAction {
+                        action: RowAction::ReplyAll,
+                        account_id,
+                        id,
+                    }),
+                    "forward" => open_sender.input(MessageViewInput::CardAction {
+                        action: RowAction::Forward,
+                        account_id,
+                        id,
+                    }),
+                    _ => {}
                 }
             });
         }
@@ -605,6 +643,18 @@ impl Component for MessageView {
             MessageViewInput::Rendered => {
                 self.webview_ready = true;
             }
+            MessageViewInput::CardAction { action, account_id, id } => {
+                if let Some(m) = self
+                    .thread
+                    .iter()
+                    .find(|m| m.account_id == account_id && m.id == id)
+                {
+                    let _ = sender.output(MessageViewOutput::CardAction {
+                        action,
+                        message: Box::new(m.clone()),
+                    });
+                }
+            }
             MessageViewInput::OpenHeader { account_id, id } => {
                 if let Some(m) = self
                     .thread
@@ -752,6 +802,14 @@ impl MessageView {
                          title=\"Double-click to open in a new window\">\
                          <span class=\"vireo-from\">{from}</span>{addr}{folder}\
                          <span class=\"vireo-date\">{date}</span>\
+                         <span class=\"vireo-acts\">\
+                           <button type=\"button\" class=\"vireo-act\" data-act=\"reply\" \
+                             data-key=\"{aid}:{id}\" title=\"Reply to this message\">Reply</button>\
+                           <button type=\"button\" class=\"vireo-act\" data-act=\"replyall\" \
+                             data-key=\"{aid}:{id}\" title=\"Reply to everyone on this message\">Reply all</button>\
+                           <button type=\"button\" class=\"vireo-act\" data-act=\"forward\" \
+                             data-key=\"{aid}:{id}\" title=\"Forward this message\">Forward</button>\
+                         </span>\
                        </header>{body}</section>",
                     aid = m.account_id,
                     id = m.id,
@@ -840,6 +898,13 @@ impl MessageView {
                .vireo-from{{font-weight:700;}}\
                .vireo-addr{{opacity:0.55;font-size:0.9em;}}\
                .vireo-date{{margin-left:auto;opacity:0.55;font-size:0.85em;}}\
+               .vireo-acts{{display:flex;gap:6px;}}\
+               .vireo-act{{font:inherit;font-size:0.8em;color:inherit;background:none;\
+                 border:1px solid rgba(128,128,128,0.45);border-radius:999px;\
+                 padding:2px 10px;cursor:pointer;opacity:0.75;\
+                 transition:opacity 120ms ease,background 120ms ease;}}\
+               .vireo-act:hover{{opacity:1;background:rgba(128,128,128,0.18);}}\
+               .vireo-act:active{{background:rgba(128,128,128,0.3);}}\
                .vireo-folder{{margin-left:0.5em;padding:0.05em 0.45em;border-radius:0.7em;\
                  font-size:0.78em;opacity:0.75;border:1px solid currentColor;}}\
                .vireo-loading{{opacity:0.5;padding:16px;}}\
@@ -1538,7 +1603,12 @@ if(f.contentDocument&&f.contentDocument.readyState==='complete'){init(f);}\
 f.addEventListener('load',function(){init(f);});})(fs[i]);}\
 var hs=document.querySelectorAll('.vireo-msg-hdr');\
 for(var j=0;j<hs.length;j++){hs[j].addEventListener('dblclick',function(){\
-try{window.webkit.messageHandlers.vireo.postMessage(this.dataset.key);}catch(_){}});}});\
+try{window.webkit.messageHandlers.vireo.postMessage('open:'+this.dataset.key);}catch(_){}});}\
+var as=document.querySelectorAll('.vireo-act');\
+for(var k=0;k<as.length;k++){as[k].addEventListener('click',function(e){\
+e.stopPropagation();e.preventDefault();\
+try{window.webkit.messageHandlers.vireo.postMessage(this.dataset.act+':'+this.dataset.key);}catch(_){}});\
+as[k].addEventListener('dblclick',function(e){e.stopPropagation();});}});\
 window.addEventListener('resize',function(){var fs=all();for(var i=0;i<fs.length;i++)s(fs[i]);});";
 
 /// One message body as a sandboxed iframe: its own document (so CSS can't leak to
@@ -1908,6 +1978,32 @@ mod tests {
 
     /// A single message is not a conversation: no card chrome, no margin — it
     /// keeps the full width of the reader.
+    /// Each card carries its own Reply/Reply all/Forward, keyed to that message
+    /// — the toolbar's buttons are disabled in a conversation precisely because
+    /// they could not say which message they meant.
+    #[test]
+    fn every_card_carries_its_own_actions_keyed_to_that_message() {
+        let first = msg_for_print();
+        let mut second = msg_for_print();
+        second.id = 2;
+        let doc = MessageView::conversation_document(
+            &[first, second],
+            &std::collections::HashMap::new(),
+            true,
+            false,
+        );
+        for act in ["reply", "replyall", "forward"] {
+            assert_eq!(
+                doc.matches(&format!("data-act=\"{act}\"")).count(),
+                2,
+                "one {act} button per card: {doc}"
+            );
+        }
+        // Keyed per message, so the action can't land on the wrong one.
+        assert!(doc.contains("data-act=\"reply\" data-key=\"1:1\""), "{doc}");
+        assert!(doc.contains("data-act=\"reply\" data-key=\"1:2\""), "{doc}");
+    }
+
     #[test]
     fn a_single_message_is_not_drawn_as_a_card() {
         let doc = MessageView::conversation_document(
