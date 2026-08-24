@@ -134,6 +134,9 @@ pub enum MessageViewInput {
     /// A conversation message header was double-clicked — open that message in
     /// its own window.
     OpenHeader { account_id: u32, id: u32 },
+    /// One conversation message has been scrolled all the way through, so it
+    /// has been read.
+    MarkSeen { account_id: u32, id: u32 },
     /// Reply / Reply all / Forward chosen on one card's header, so the action
     /// applies to that message rather than to whichever the reader calls primary.
     CardAction {
@@ -151,6 +154,9 @@ pub enum MessageViewOutput {
     ComposeTo(String),
     /// Open a conversation message in its own window (header double-clicked).
     OpenWindow(Box<Message>),
+    /// A conversation message has been read (scrolled through). The reader has
+    /// already dropped its mark; the app makes it stick.
+    MarkSeen { account_id: u32, id: u32 },
     /// An action chosen on one message's card in a conversation.
     CardAction {
         action: crate::ui::message_list::RowAction,
@@ -472,6 +478,7 @@ impl Component for MessageView {
                 };
                 match verb {
                     "open" => open_sender.input(MessageViewInput::OpenHeader { account_id, id }),
+                    "seen" => open_sender.input(MessageViewInput::MarkSeen { account_id, id }),
                     "reply" => open_sender.input(MessageViewInput::CardAction {
                         action: RowAction::Reply,
                         account_id,
@@ -643,6 +650,20 @@ impl Component for MessageView {
             MessageViewInput::Rendered => {
                 self.webview_ready = true;
             }
+            MessageViewInput::MarkSeen { account_id, id } => {
+                // Keep the local copy in step so a later re-render doesn't put
+                // the mark back on a message already read.
+                let mut found = false;
+                for m in self.thread.iter_mut() {
+                    if m.account_id == account_id && m.id == id && m.unread {
+                        m.unread = false;
+                        found = true;
+                    }
+                }
+                if found {
+                    let _ = sender.output(MessageViewOutput::MarkSeen { account_id, id });
+                }
+            }
             MessageViewInput::CardAction { action, account_id, id } => {
                 if let Some(m) = self
                     .thread
@@ -800,7 +821,7 @@ impl MessageView {
                     "<section class=\"vireo-msg\">\
                        <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
-                         <span class=\"vireo-from\">{from}</span>{addr}{folder}\
+                         {dot}<span class=\"vireo-from\">{from}</span>{addr}{folder}\
                          <span class=\"vireo-date\">{date}</span>\
                          <span class=\"vireo-acts\">\
                            <button type=\"button\" class=\"vireo-act\" data-act=\"reply\" \
@@ -810,7 +831,7 @@ impl MessageView {
                            <button type=\"button\" class=\"vireo-act\" data-act=\"forward\" \
                              data-key=\"{aid}:{id}\" title=\"Forward this message\">Forward</button>\
                          </span>\
-                       </header>{body}</section>",
+                       </header>{body}{seen_mark}</section>",
                     aid = m.account_id,
                     id = m.id,
                     // `escape_text`, not `attr_escape`: these land in element
@@ -835,6 +856,20 @@ impl MessageView {
                         None => String::new(),
                     },
                     body = body,
+                    // Unread messages in a conversation are marked, and the mark
+                    // is cleared by reading them: the sentinel below the body
+                    // reports when this message has been scrolled all the way
+                    // through, which is the moment it has actually been read.
+                    dot = if m.unread {
+                        format!("<span class=\"vireo-dot\" data-key=\"{}:{}\"></span>", m.account_id, m.id)
+                    } else {
+                        String::new()
+                    },
+                    seen_mark = if m.unread {
+                        format!("<div class=\"vireo-end\" data-key=\"{}:{}\"></div>", m.account_id, m.id)
+                    } else {
+                        String::new()
+                    },
                 ));
             } else {
                 sections.push_str(&body);
@@ -898,6 +933,9 @@ impl MessageView {
                .vireo-from{{font-weight:700;}}\
                .vireo-addr{{opacity:0.55;font-size:0.9em;}}\
                .vireo-date{{margin-left:auto;opacity:0.55;font-size:0.85em;}}\
+               .vireo-dot{{width:8px;height:8px;border-radius:50%;background:#3584e4;\
+                 flex:none;align-self:center;}}\
+               .vireo-end{{height:1px;}}\
                .vireo-acts{{display:flex;gap:6px;}}\
                .vireo-act{{font:inherit;font-size:0.8em;color:inherit;background:none;\
                  border:1px solid rgba(128,128,128,0.45);border-radius:999px;\
@@ -1608,7 +1646,15 @@ var as=document.querySelectorAll('.vireo-act');\
 for(var k=0;k<as.length;k++){as[k].addEventListener('click',function(e){\
 e.stopPropagation();e.preventDefault();\
 try{window.webkit.messageHandlers.vireo.postMessage(this.dataset.act+':'+this.dataset.key);}catch(_){}});\
-as[k].addEventListener('dblclick',function(e){e.stopPropagation();});}});\
+as[k].addEventListener('dblclick',function(e){e.stopPropagation();});}\
+var es=document.querySelectorAll('.vireo-end');\
+if(es.length&&window.IntersectionObserver){\
+var io=new IntersectionObserver(function(en,ob){\
+for(var n=0;n<en.length;n++){if(!en[n].isIntersecting)continue;\
+var t=en[n].target,k=t.dataset.key;ob.unobserve(t);\
+var d=document.querySelector('.vireo-dot[data-key=\"'+k+'\"]');if(d)d.remove();\
+try{window.webkit.messageHandlers.vireo.postMessage('seen:'+k);}catch(_){}}});\
+for(var m=0;m<es.length;m++)io.observe(es[m]);}});\
 window.addEventListener('resize',function(){var fs=all();for(var i=0;i<fs.length;i++)s(fs[i]);});";
 
 /// One message body as a sandboxed iframe: its own document (so CSS can't leak to
@@ -2002,6 +2048,29 @@ mod tests {
         // Keyed per message, so the action can't land on the wrong one.
         assert!(doc.contains("data-act=\"reply\" data-key=\"1:1\""), "{doc}");
         assert!(doc.contains("data-act=\"reply\" data-key=\"1:2\""), "{doc}");
+    }
+
+    /// An unread message in a conversation is marked, and carries the sentinel
+    /// that reports when it has been scrolled through. A message already read
+    /// carries neither — otherwise every re-render would re-mark it.
+    #[test]
+    fn only_unread_conversation_messages_are_marked() {
+        let read = msg_for_print();
+        let mut unread = msg_for_print();
+        unread.id = 2;
+        unread.unread = true;
+
+        let doc = MessageView::conversation_document(
+            &[read, unread],
+            &std::collections::HashMap::new(),
+            true,
+            false,
+        );
+        assert_eq!(doc.matches("class=\"vireo-dot\"").count(), 1, "one dot: {doc}");
+        assert_eq!(doc.matches("class=\"vireo-end\"").count(), 1, "one sentinel: {doc}");
+        // Both keyed to the unread message, so reading it can't clear the other's.
+        assert!(doc.contains("class=\"vireo-dot\" data-key=\"1:2\""), "{doc}");
+        assert!(doc.contains("class=\"vireo-end\" data-key=\"1:2\""), "{doc}");
     }
 
     #[test]

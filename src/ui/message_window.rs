@@ -254,6 +254,7 @@ impl Component for MessageWindow {
                 // total. The window's own toolbar carries Reply and Forward.
                 MessageViewOutput::OpenWindow(_) => MessageWindowInput::Ignore,
                 MessageViewOutput::CardAction { .. } => MessageWindowInput::Ignore,
+                MessageViewOutput::MarkSeen { .. } => MessageWindowInput::Ignore,
             });
         // Apply the message-content theme before the first render.
         view.emit(MessageViewInput::SetContentTheme(init.content_dark));

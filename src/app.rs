@@ -322,6 +322,9 @@ pub enum AppMsg {
     ToggleCustomFolders(u32),
     SidebarCollapsed(bool),
     SidebarContext(CtxAction),
+    /// A conversation message was scrolled all the way through — mark it read on
+    /// the server, in the caches and in the list.
+    ThreadMessageSeen { account_id: u32, id: u32 },
     /// The conversation on screen has new bodies to show (coalesced).
     RenderThread,
     /// Messages were dropped on a sidebar folder — move them there. `items` is
@@ -1031,6 +1034,9 @@ impl SimpleComponent for AppModel {
                     // list's row menu performs, aimed at that message.
                     MessageViewOutput::CardAction { action, message } => {
                         AppMsg::RowAction { action, message }
+                    }
+                    MessageViewOutput::MarkSeen { account_id, id } => {
+                        AppMsg::ThreadMessageSeen { account_id, id }
                     }
                 });
 
@@ -1866,8 +1872,11 @@ impl SimpleComponent for AppModel {
                     let mut conv: Vec<Message> = Vec::with_capacity(thread.len());
                     for tm in &thread {
                         let mut tm = tm.clone();
-                        tm.unread = false;
+                        // The others keep their real unread state: each is marked
+                        // in the reader until it is scrolled through. Only the one
+                        // just opened is read outright.
                         if tm.id == m.id && tm.account_id == account_id {
+                            tm.unread = false;
                             tm.body = current.body.clone();
                         } else if tm.body.is_empty() {
                             if let Some(b) = self.body_cache.get(&(tm.account_id, tm.id)) {
@@ -2983,6 +2992,35 @@ impl SimpleComponent for AppModel {
                 if let Some(p) = self.popouts.get(&(account_id, message_id)) {
                     p.controller.emit(MessageWindowInput::SetBody(body));
                 }
+            }
+
+            AppMsg::ThreadMessageSeen { account_id, id } => {
+                // Reading one message of a conversation marks only that message,
+                // exactly as opening it on its own would.
+                let target = self
+                    .current_thread
+                    .iter_mut()
+                    .find(|m| m.account_id == account_id && m.id == id)
+                    .filter(|m| m.unread)
+                    .map(|m| {
+                        m.unread = false;
+                        (m.uid, m.folder_id)
+                    });
+                let Some((uid, folder_id)) = target else { return };
+                if let Some(path) = self
+                    .folders
+                    .get(&account_id)
+                    .and_then(|fs| fs.iter().find(|f| f.id == folder_id))
+                    .map(|f| f.path.clone())
+                {
+                    self.send_to(account_id, MailRequest::SetSeen { path, uid, seen: true });
+                }
+                self.message_list.emit(MessageListInput::MarkRead(id));
+                self.mark_cached_read(account_id, id);
+                if let Some(n) = self.folder_unread.get_mut(&(account_id, folder_id)) {
+                    *n = n.saturating_sub(1);
+                }
+                self.push_unread_counts();
             }
 
             AppMsg::RenderThread => {
