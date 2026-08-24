@@ -18,9 +18,17 @@ pub struct MessageView {
     /// The whole conversation, newest first. One entry = a single message (shown
     /// exactly as before); more = a scrollable conversation in the body view.
     thread: Vec<Message>,
+    /// Which of the conversation's messages came from another folder, and what to
+    /// call that folder.
+    folder_labels: std::collections::HashMap<(u32, u32), String>,
     /// Remote content was detected and is currently withheld — this drives the
     /// "blocked" banner, and nothing else.
     blocked: bool,
+    /// Draw the blocked-content banner in its quiet grey style.
+    dim_banner: bool,
+    /// Whether that banner is shown at all. It gates only the notice: `blocked`
+    /// still governs what is withheld, so hiding it never loads anything.
+    show_banner: bool,
     /// Whether the user has actually permitted remote content for what is on
     /// screen (settings, "Load once", or "Always allow sender").
     ///
@@ -78,6 +86,9 @@ pub enum MessageViewInput {
     SetAvatars(bool),
     /// Fill it with the sender's own site icon, or stop (#30).
     SetSenderLogos(bool),
+    /// How (and whether) the blocked-remote-content banner is drawn. Neither
+    /// flag changes what is blocked — only what the reader says about it.
+    SetBannerStyle { dim: bool, show: bool },
     Show {
         /// The conversation, newest first. A single message for a normal open;
         /// several for a threaded conversation.
@@ -91,6 +102,16 @@ pub enum MessageViewInput {
         account_color: Option<String>,
         /// The body is still being fetched — show a spinner.
         loading: bool,
+        /// The message the user actually selected, which drives the header,
+        /// avatar and sender check. Without it the newest message would, and a
+        /// conversation can now open with a reply of your own on top (#21).
+        /// Boxed: a `Message` inline here would double the size of every message
+        /// this component sends.
+        primary: Option<Box<Message>>,
+        /// Labels for conversation messages that live in another folder, keyed by
+        /// (account, message id) — "Sent" beside a reply of yours read from the
+        /// Inbox. Messages from the folder on screen aren't in here.
+        folder_labels: std::collections::HashMap<(u32, u32), String>,
     },
     LoadRemoteOnce,
     AllowSenderAlways,
@@ -175,10 +196,15 @@ impl Component for MessageView {
                 gtk::Revealer {
                     set_transition_type: gtk::RevealerTransitionType::SlideDown,
                     #[watch]
-                    set_reveal_child: model.blocked,
+                    set_reveal_child: model.blocked && model.show_banner,
 
                     gtk::Box {
-                        add_css_class: "remote-alert",
+                        #[watch]
+                        set_css_classes: if model.dim_banner {
+                            &["remote-alert", "remote-alert-dim"]
+                        } else {
+                            &["remote-alert"]
+                        },
                         set_spacing: 8,
 
                         gtk::Image { set_icon_name: Some("co.hyprlab.Vireo-security-high-symbolic") },
@@ -387,7 +413,10 @@ impl Component for MessageView {
         let model = MessageView {
             current: None,
             thread: Vec::new(),
+            folder_labels: std::collections::HashMap::new(),
             blocked: false,
+            dim_banner: crate::config::load_dim_remote_banner(),
+            show_banner: crate::config::load_show_remote_banner(),
             remote_allowed: false,
             gravatar: false,
             avatars: true,
@@ -452,18 +481,22 @@ impl Component for MessageView {
                 account_name,
                 account_color,
                 loading,
+                primary,
+                folder_labels,
             } => {
+                let shown = primary.map(|p| *p).or_else(|| thread.first().cloned());
                 // A new message: the previous message's verdict must not linger
                 // on screen while this one's is still being fetched.
-                let same_message = self.current.as_ref().zip(thread.first()).is_some_and(
+                let same_message = self.current.as_ref().zip(shown.as_ref()).is_some_and(
                     |(a, b)| a.id == b.id && a.account_id == b.account_id,
                 );
                 if !same_message {
                     self.sender_check = None;
                 }
                 self.link_preview.set_visible(false);
-                self.current = thread.first().cloned();
+                self.current = shown;
                 self.thread = thread;
+                self.folder_labels = folder_labels;
                 self.gravatar = gravatar;
                 self.account_name = account_name;
                 self.loading = loading;
@@ -546,6 +579,10 @@ impl Component for MessageView {
             }
             MessageViewInput::SetAvatars(on) => {
                 self.avatars = on;
+            }
+            MessageViewInput::SetBannerStyle { dim, show } => {
+                self.dim_banner = dim;
+                self.show_banner = show;
             }
             MessageViewInput::SetSenderLogos(on) => {
                 self.sender_logos = on;
@@ -683,7 +720,7 @@ impl MessageView {
 
     /// The wrapper document for what is currently on screen.
     fn document_html(&self, dark: bool) -> String {
-        Self::conversation_document(&self.thread, !self.remote_allowed, dark)
+        Self::conversation_document(&self.thread, &self.folder_labels, !self.remote_allowed, dark)
     }
 
     /// The wrapper document: one sandboxed iframe per message (so each email's
@@ -694,7 +731,12 @@ impl MessageView {
     /// Takes the thread rather than `&self` so it can be exercised without a GTK
     /// display: what it emits is a security boundary, and one that needs
     /// regression cover.
-    fn conversation_document(thread: &[Message], restrict: bool, dark: bool) -> String {
+    fn conversation_document(
+        thread: &[Message],
+        folder_labels: &std::collections::HashMap<(u32, u32), String>,
+        restrict: bool,
+        dark: bool,
+    ) -> String {
         let conversation = thread.len() > 1;
         let mut sections = String::new();
         for m in thread {
@@ -708,7 +750,7 @@ impl MessageView {
                     "<section class=\"vireo-msg\">\
                        <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
-                         <span class=\"vireo-from\">{from}</span>{addr}\
+                         <span class=\"vireo-from\">{from}</span>{addr}{folder}\
                          <span class=\"vireo-date\">{date}</span>\
                        </header>{body}</section>",
                     aid = m.account_id,
@@ -725,6 +767,15 @@ impl MessageView {
                         format!("<span class=\"vireo-addr\">&lt;{}&gt;</span>", escape_text(&m.from_addr))
                     },
                     date = escape_text(&m.datetime_full()),
+                    // Where this message was read from, when that isn't the
+                    // folder on screen — the reply you sent, pulled in from Sent.
+                    folder = match folder_labels.get(&(m.account_id, m.id)) {
+                        Some(label) => format!(
+                            "<span class=\"vireo-folder\">{}</span>",
+                            escape_text(label)
+                        ),
+                        None => String::new(),
+                    },
                     body = body,
                 ));
             } else {
@@ -776,6 +827,8 @@ impl MessageView {
                .vireo-from{{font-weight:700;}}\
                .vireo-addr{{opacity:0.55;font-size:0.9em;}}\
                .vireo-date{{margin-left:auto;opacity:0.55;font-size:0.85em;}}\
+               .vireo-folder{{margin-left:0.5em;padding:0.05em 0.45em;border-radius:0.7em;\
+                 font-size:0.78em;opacity:0.75;border:1px solid currentColor;}}\
                .vireo-loading{{opacity:0.5;padding:16px;}}\
              </style>{sizer}\
              </head><body>{sections}</body></html>"
@@ -1813,6 +1866,38 @@ mod tests {
     }
 
     #[test]
+    fn a_message_from_another_folder_is_labelled_with_it() {
+        let a = msg_for_print(); // the message on screen
+        let mut b = msg_for_print();
+        b.id = 2;
+        b.folder_id = 3; // pulled in from Sent
+        let labels = std::collections::HashMap::from([((1u32, 2u32), "Sent".to_string())]);
+        let doc = MessageView::conversation_document(&[a, b], &labels, true, false);
+        assert_eq!(
+            doc.matches("vireo-folder").count(),
+            // once in the stylesheet, once on the message that came from Sent —
+            // and never on the one the reader is already showing the folder of.
+            2,
+            "only the message from another folder should carry a folder badge"
+        );
+        assert!(doc.contains(">Sent</span>"), "the badge should name the folder");
+    }
+
+    #[test]
+    fn a_folder_label_cannot_smuggle_markup_into_the_header() {
+        // Folder names come from the server (a mailbox can be called anything),
+        // and this document is the trusted wrapper around the sandboxed frames.
+        let a = msg_for_print();
+        let mut b = msg_for_print();
+        b.id = 2;
+        let labels =
+            std::collections::HashMap::from([((1u32, 2u32), "<img src=x onerror=alert(1)>".into())]);
+        let doc = MessageView::conversation_document(&[a, b], &labels, true, false);
+        assert!(!doc.contains("<img src=x"), "the label must be escaped, not rendered");
+        assert!(doc.contains("&lt;img src=x"));
+    }
+
+    #[test]
     fn a_sender_cannot_put_markup_in_the_conversation_header() {
         // The wrapper document has JavaScript enabled (it sizes the message
         // iframes) and the iframes are same-origin, so anything that executes
@@ -1825,7 +1910,7 @@ mod tests {
         let mut b = msg_for_print();
         b.id = 2;
         // Two messages: the per-message headers only render in conversation mode.
-        let doc = MessageView::conversation_document(&[a, b], true, false);
+        let doc = MessageView::conversation_document(&[a, b], &Default::default(), true, false);
 
         assert!(!doc.contains("<script>x=1"), "{doc}");
         assert!(!doc.contains("<img src=y"), "{doc}");
@@ -1839,7 +1924,7 @@ mod tests {
         a.from_name = "Ada".into();
         let mut b = msg_for_print();
         b.id = 2;
-        let doc = MessageView::conversation_document(&[a, b], true, false);
+        let doc = MessageView::conversation_document(&[a, b], &Default::default(), true, false);
 
         // A nonce'd CSP, so an injected `<script>` or `onerror=` is refused by
         // the engine even if the escaping above ever regresses.
@@ -1865,7 +1950,12 @@ mod tests {
         assert!(!policy.contains("default-src"), "{policy}");
         // Two renders never share a nonce.
         let again =
-            MessageView::conversation_document(&[msg_for_print(), msg_for_print()], true, false);
+            MessageView::conversation_document(
+                &[msg_for_print(), msg_for_print()],
+                &Default::default(),
+                true,
+                false,
+            );
         assert!(!again.contains(nonce), "nonce was reused across renders");
     }
 
@@ -1993,7 +2083,7 @@ mod tests {
         let mut b = msg_for_print();
         b.id = 2;
         b.body = "<p style=\"height:300px\">second</p>".into();
-        let html = MessageView::conversation_document(&[a, b], true, false);
+        let html = MessageView::conversation_document(&[a, b], &Default::default(), true, false);
 
         let view = webkit6::WebView::new();
         let settings = webkit6::Settings::new();
