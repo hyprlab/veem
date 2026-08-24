@@ -24,6 +24,11 @@ pub struct MessageView {
     /// Remote content was detected and is currently withheld — this drives the
     /// "blocked" banner, and nothing else.
     blocked: bool,
+    /// Draw the blocked-content banner in its quiet grey style.
+    dim_banner: bool,
+    /// Whether that banner is shown at all. It gates only the notice: `blocked`
+    /// still governs what is withheld, so hiding it never loads anything.
+    show_banner: bool,
     /// Whether the user has actually permitted remote content for what is on
     /// screen (settings, "Load once", or "Always allow sender").
     ///
@@ -81,6 +86,9 @@ pub enum MessageViewInput {
     SetAvatars(bool),
     /// Fill it with the sender's own site icon, or stop (#30).
     SetSenderLogos(bool),
+    /// How (and whether) the blocked-remote-content banner is drawn. Neither
+    /// flag changes what is blocked — only what the reader says about it.
+    SetBannerStyle { dim: bool, show: bool },
     Show {
         /// The conversation, newest first. A single message for a normal open;
         /// several for a threaded conversation.
@@ -188,10 +196,15 @@ impl Component for MessageView {
                 gtk::Revealer {
                     set_transition_type: gtk::RevealerTransitionType::SlideDown,
                     #[watch]
-                    set_reveal_child: model.blocked,
+                    set_reveal_child: model.blocked && model.show_banner,
 
                     gtk::Box {
-                        add_css_class: "remote-alert",
+                        #[watch]
+                        set_css_classes: if model.dim_banner {
+                            &["remote-alert", "remote-alert-dim"]
+                        } else {
+                            &["remote-alert"]
+                        },
                         set_spacing: 8,
 
                         gtk::Image { set_icon_name: Some("co.hyprlab.Vireo-security-high-symbolic") },
@@ -402,6 +415,8 @@ impl Component for MessageView {
             thread: Vec::new(),
             folder_labels: std::collections::HashMap::new(),
             blocked: false,
+            dim_banner: crate::config::load_dim_remote_banner(),
+            show_banner: crate::config::load_show_remote_banner(),
             remote_allowed: false,
             gravatar: false,
             avatars: true,
@@ -564,6 +579,10 @@ impl Component for MessageView {
             }
             MessageViewInput::SetAvatars(on) => {
                 self.avatars = on;
+            }
+            MessageViewInput::SetBannerStyle { dim, show } => {
+                self.dim_banner = dim;
+                self.show_banner = show;
             }
             MessageViewInput::SetSenderLogos(on) => {
                 self.sender_logos = on;

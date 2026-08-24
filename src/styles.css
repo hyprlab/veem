@@ -623,6 +623,42 @@ headerbar.rail-header {
   color: rgba(0, 0, 0, 0.75);
 }
 
+/* The allowed-sender and blacklist lists sit under the row that adds to them;
+   this separates the two so the entry doesn't read as part of the list. */
+.sender-list {
+  margin-top: 1rem;
+}
+
+/* Quieter variant of the same bar, for people who want the warning present but
+   not shouting. Grey ground, amber kept only where it carries meaning: the
+   shield icon and the two buttons, outlined rather than filled. Fixed colours
+   like the bar above — legible on both light and dark. */
+.remote-alert-dim {
+  background-color: #3a3a3a;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.remote-alert-dim image {
+  color: #ffca28;
+}
+
+.remote-alert-dim button {
+  background: none;
+  background-image: none;
+  border: 1px solid #ffca28;
+  color: #ffca28;
+  box-shadow: none;
+  text-shadow: none;
+}
+
+.remote-alert-dim button:hover {
+  background-color: rgba(255, 202, 40, 0.16);
+}
+
+.remote-alert-dim button:active {
+  background-color: rgba(255, 202, 40, 0.28);
+}
+
 /* ---- Sender authentication ---- */
 
 /* A failed or suspicious sender gets the loudest treatment in the reader — red,

@@ -13,6 +13,8 @@ use crate::config::{ClockStyle, DateStyle, MessageTheme};
 pub struct PrefInit {
     pub allowed_senders: Vec<String>,
     pub auto_remote_content: bool,
+    pub dim_remote_banner: bool,
+    pub show_remote_banner: bool,
     pub gravatar: bool,
     pub avatars: bool,
     pub sender_logos: bool,
@@ -120,6 +122,8 @@ pub struct Preferences {
 pub enum PrefInput {
     AddSenderText(String),
     RemoveSenderRow(String),
+    ToggleDimRemoteBanner(bool),
+    ToggleShowRemoteBanner(bool),
     AddBlacklistText(String),
     RemoveBlacklistRow(String),
     ToggleAutoRemoteContent(bool),
@@ -150,6 +154,8 @@ pub enum PrefOutput {
     AddBlacklist(String),
     RemoveBlacklist(String),
     SetAutoRemoteContent(bool),
+    SetDimRemoteBanner(bool),
+    SetShowRemoteBanner(bool),
     SetGravatar(bool),
     SetAvatars(bool),
     SetSenderLogos(bool),
@@ -390,6 +396,29 @@ impl Component for Preferences {
                             },
                         },
 
+                        #[name = "show_remote_banner_row"]
+                        adw::SwitchRow {
+                            set_title: "Warn when remote content is blocked",
+                            set_subtitle: "Shows the banner offering to load it. Turning this \
+                                           off only hides the notice — remote content is still \
+                                           blocked just the same.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleShowRemoteBanner(row.is_active()));
+                            },
+                        },
+
+                        #[name = "dim_remote_banner_row"]
+                        adw::SwitchRow {
+                            set_title: "Quieter blocked-content banner",
+                            set_subtitle: "Draws the warning in grey with outlined buttons \
+                                           instead of a full amber bar.",
+                            #[watch]
+                            set_sensitive: show_remote_banner_row.is_active(),
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleDimRemoteBanner(row.is_active()));
+                            },
+                        },
+
                         #[name = "gravatar_row"]
                         adw::SwitchRow {
                             set_title: "Load sender avatars (Gravatar)",
@@ -412,16 +441,6 @@ impl Component for Preferences {
                             },
                         },
 
-                        #[name = "add_sender_row"]
-                        adw::EntryRow {
-                            set_title: "Always allow sender (email address)",
-                            set_input_purpose: gtk::InputPurpose::Email,
-                            set_show_apply_button: true,
-                            connect_apply[sender] => move |row| {
-                                sender.input(PrefInput::AddSenderText(row.text().to_string()));
-                                row.set_text("");
-                            },
-                        },
                     },
 
                     add = &adw::PreferencesGroup {
@@ -430,9 +449,36 @@ impl Component for Preferences {
                             "Messages from these senders load remote content automatically."
                         ),
 
+                        #[name = "add_sender_row"]
+                        adw::EntryRow {
+                            set_title: "Email address",
+                            set_input_purpose: gtk::InputPurpose::Email,
+                            // The + is the apply button, so there is only one way
+                            // to add and it reads the same in both lists.
+                            set_show_apply_button: false,
+                            connect_entry_activated[sender] => move |row| {
+                                sender.input(PrefInput::AddSenderText(row.text().to_string()));
+                                row.set_text("");
+                            },
+
+                            add_suffix = &gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-list-add-symbolic",
+                                set_tooltip_text: Some("Allow this sender"),
+                                set_valign: gtk::Align::Center,
+                                add_css_class: "flat",
+                                connect_clicked[sender, add_sender_row] => move |_| {
+                                    sender.input(PrefInput::AddSenderText(
+                                        add_sender_row.text().to_string(),
+                                    ));
+                                    add_sender_row.set_text("");
+                                },
+                            },
+                        },
+
                         #[local_ref]
                         senders_box -> gtk::ListBox {
                             add_css_class: "boxed-list",
+                            add_css_class: "sender-list",
                             set_selection_mode: gtk::SelectionMode::None,
                         },
                     },
@@ -447,17 +493,31 @@ impl Component for Preferences {
 
                         #[name = "add_blacklist_row"]
                         adw::EntryRow {
-                            set_title: "Block address or domain",
-                            set_show_apply_button: true,
-                            connect_apply[sender] => move |row| {
+                            set_title: "Address or domain",
+                            set_show_apply_button: false,
+                            connect_entry_activated[sender] => move |row| {
                                 sender.input(PrefInput::AddBlacklistText(row.text().to_string()));
                                 row.set_text("");
+                            },
+
+                            add_suffix = &gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-list-add-symbolic",
+                                set_tooltip_text: Some("Block this sender"),
+                                set_valign: gtk::Align::Center,
+                                add_css_class: "flat",
+                                connect_clicked[sender, add_blacklist_row] => move |_| {
+                                    sender.input(PrefInput::AddBlacklistText(
+                                        add_blacklist_row.text().to_string(),
+                                    ));
+                                    add_blacklist_row.set_text("");
+                                },
                             },
                         },
 
                         #[local_ref]
                         blacklist_box -> gtk::ListBox {
                             add_css_class: "boxed-list",
+                            add_css_class: "sender-list",
                             set_selection_mode: gtk::SelectionMode::None,
                         },
                     },
@@ -509,6 +569,8 @@ impl Component for Preferences {
         let blacklist_box = model.blacklist.widget();
         let widgets = view_output!();
         widgets.auto_remote_content_row.set_active(init.auto_remote_content);
+        widgets.dim_remote_banner_row.set_active(init.dim_remote_banner);
+        widgets.show_remote_banner_row.set_active(init.show_remote_banner);
         widgets.gravatar_row.set_active(init.gravatar);
         widgets.avatars_row.set_active(init.avatars);
         widgets.sender_logos_row.set_active(init.sender_logos);
@@ -677,6 +739,12 @@ impl Component for Preferences {
                 }
             }
 
+            PrefInput::ToggleDimRemoteBanner(on) => {
+                let _ = sender.output(PrefOutput::SetDimRemoteBanner(on));
+            }
+            PrefInput::ToggleShowRemoteBanner(on) => {
+                let _ = sender.output(PrefOutput::SetShowRemoteBanner(on));
+            }
             PrefInput::AddBlacklistText(text) => {
                 let addr = text.trim().to_lowercase();
                 if !addr.is_empty() && !self.blacklist_addrs.contains(&addr) {
