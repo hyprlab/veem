@@ -4195,6 +4195,10 @@ impl AppModel {
             subject: editable.subject,
             body_html: editable.body_html,
             attachments,
+            // Re-editing a queued message: it keeps whatever thread it was
+            // already part of (carried in the raw MIME it was built from).
+            in_reply_to: String::new(),
+            references: String::new(),
             draft_origin: None,
             outbox_origin: Some(id),
         };
@@ -6031,8 +6035,24 @@ fn reply_prefill(m: &Message) -> ComposePrefill {
         cc: String::new(),
         subject,
         body_html: quote_block(&attribution, &text),
+        // What makes this a reply rather than a new conversation: In-Reply-To
+        // names the parent, References carries the chain it belongs to.
+        in_reply_to: m.message_id.clone(),
+        references: thread_chain(m),
         ..Default::default()
     }
+}
+
+/// The References chain for a reply to `m`: whatever `m` already referenced,
+/// with `m` itself appended, de-duplicated and in order.
+fn thread_chain(m: &Message) -> String {
+    let mut chain: Vec<&str> = Vec::new();
+    for id in m.references.split_whitespace().chain(std::iter::once(m.message_id.as_str())) {
+        if !id.is_empty() && !chain.contains(&id) {
+            chain.push(id);
+        }
+    }
+    chain.join(" ")
 }
 
 /// Reply-all: To = original sender; Cc = every other recipient (original To +

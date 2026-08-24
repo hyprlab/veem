@@ -80,6 +80,10 @@ pub struct ComposePrefill {
     /// Files to attach on open, already on disk (a queued message's attachments
     /// are written out before its composer opens).
     pub attachments: Vec<std::path::PathBuf>,
+    /// Threading headers for a reply: the parent's Message-ID, and the thread's
+    /// id chain. Both stored bare (no angle brackets).
+    pub in_reply_to: String,
+    pub references: String,
     /// When editing an existing draft, its origin (so saving/sending replaces it).
     pub draft_origin: Option<DraftOrigin>,
     /// When editing a queued Outbox message, the row this replaces.
@@ -124,6 +128,9 @@ pub struct Compose {
     completion_count: usize,
     /// Whether the popover is showing (read synchronously by the key handler).
     completion_open: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Threading headers carried from the message being replied to.
+    in_reply_to: String,
+    references: String,
     /// When editing an existing draft, its origin (replaced on save/send).
     draft_origin: Option<DraftOrigin>,
     /// Stable id the app uses to track this composer across host moves.
@@ -309,6 +316,8 @@ impl Component for Compose {
             windowed,
             can_toggle,
         } = init;
+        let in_reply_to = prefill.in_reply_to.clone();
+        let references = prefill.references.clone();
         let draft_origin = prefill.draft_origin.clone();
         let outbox_origin = prefill.outbox_origin;
         let prefill_attachments = prefill.attachments.clone();
@@ -344,6 +353,8 @@ impl Component for Compose {
             completion_selected: 0,
             completion_count: 0,
             completion_open: std::rc::Rc::new(std::cell::Cell::new(false)),
+            in_reply_to,
+            references,
             draft_origin,
             outbox_origin,
             compose_id,
@@ -746,6 +757,8 @@ impl Compose {
                 .iter()
                 .map(|p| p.to_string_lossy().to_string())
                 .collect(),
+            in_reply_to: self.in_reply_to.clone(),
+            references: self.references.clone(),
             draft_origin: self.draft_origin.clone(),
             outbox_origin: self.outbox_origin,
         }

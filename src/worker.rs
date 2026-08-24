@@ -169,6 +169,13 @@ pub struct OutgoingMessage {
     pub html: String,
     /// File paths to attach.
     pub attachments: Vec<String>,
+    /// The Message-ID this is a reply to, and the thread's id chain — both
+    /// normalized (no angle brackets), as [`crate::models::Message`] stores
+    /// them. Empty for a message that starts a conversation. Without these
+    /// headers a reply is a new thread to every client that receives it,
+    /// including Vireo.
+    pub in_reply_to: String,
+    pub references: String,
     /// When editing an existing draft, the draft being replaced (removed from the
     /// Drafts folder after this message is saved or sent).
     pub draft_origin: Option<crate::models::DraftOrigin>,
@@ -2077,7 +2084,20 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
     for (name, addr) in parse_recipients(&msg.bcc) {
         builder = builder.bcc(mailbox(&name, &addr)?);
     }
-    let builder = builder.subject(msg.subject.clone());
+    let mut builder = builder.subject(msg.subject.clone());
+    // Threading headers, re-wrapped in the angle brackets the wire format wants
+    // (they are stored stripped). References carries the whole chain so a client
+    // can place the reply even if it never saw the immediate parent.
+    if !msg.in_reply_to.trim().is_empty() {
+        builder = builder.header(lettre::message::header::InReplyTo::from(
+            bracketed(&msg.in_reply_to),
+        ));
+    }
+    if !msg.references.trim().is_empty() {
+        builder = builder.header(lettre::message::header::References::from(
+            bracketed(&msg.references),
+        ));
+    }
 
     use lettre::message::{header::ContentType, Attachment, MultiPart, SinglePart};
     let has_html = !msg.html.trim().is_empty();
@@ -2117,6 +2137,20 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
         builder.multipart(multipart)?
     };
     Ok(email)
+}
+
+/// Wrap each stored (bare) message id back in angle brackets for a header value.
+fn bracketed(ids: &str) -> String {
+    ids.split_whitespace()
+        .map(|id| {
+            if id.starts_with('<') {
+                id.to_string()
+            } else {
+                format!("<{id}>")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// TLS settings for an SMTP connection, matching [`tls_connector`]: a local
@@ -5003,9 +5037,41 @@ mod tests {
             body: "Body".into(),
             html: String::new(),
             attachments: Vec::new(),
+            in_reply_to: String::new(),
+            references: String::new(),
             draft_origin: None,
             outbox_origin: None,
         }
+    }
+
+    /// A reply with no In-Reply-To/References is a new conversation to every
+    /// client that receives it — including Vireo's own threading.
+    #[test]
+    fn a_reply_carries_its_threading_headers() {
+        let mut msg = sample_outgoing();
+        msg.to = "someone@example.com".into();
+        msg.in_reply_to = "parent@example.com".into();
+        msg.references = "root@example.com parent@example.com".into();
+        let email = build_email(&sample_account(), &msg).expect("builds");
+        let raw = String::from_utf8_lossy(&email.formatted()).to_string();
+        assert!(
+            raw.contains("In-Reply-To: <parent@example.com>"),
+            "In-Reply-To must be present and bracketed: {raw}"
+        );
+        assert!(
+            raw.contains("References: <root@example.com> <parent@example.com>"),
+            "References must carry the whole chain, bracketed: {raw}"
+        );
+    }
+
+    /// A message that starts a conversation must not carry empty headers.
+    #[test]
+    fn a_new_message_carries_no_threading_headers() {
+        let msg = OutgoingMessage { to: "someone@example.com".into(), ..sample_outgoing() };
+        let email = build_email(&sample_account(), &msg).expect("builds");
+        let raw = String::from_utf8_lossy(&email.formatted()).to_string();
+        assert!(!raw.contains("In-Reply-To"), "{raw}");
+        assert!(!raw.contains("References"), "{raw}");
     }
 
     #[test]
