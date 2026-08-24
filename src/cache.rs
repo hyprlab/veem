@@ -67,13 +67,6 @@ CREATE TABLE IF NOT EXISTS attachments (
     data        BLOB NOT NULL,
     PRIMARY KEY (account_id, folder_path, uid, idx)
 );
-CREATE TABLE IF NOT EXISTS refs_repair (
-    account_id  INTEGER NOT NULL,
-    folder_path TEXT    NOT NULL,
-    next_uid    INTEGER NOT NULL,
-    done        INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (account_id, folder_path)
-);
 CREATE TABLE IF NOT EXISTS addresses (
     email TEXT PRIMARY KEY,
     name  TEXT NOT NULL DEFAULT '',
@@ -118,6 +111,11 @@ const SCHEMA_VERSION: i64 = 11;
 /// is a scan — this keeps a pathological References header (some mailing lists
 /// accumulate hundreds) from turning a message-open into a long one.
 const THREAD_ID_LIMIT: usize = 24;
+
+/// How many messages one conversation may pull in from other folders. A
+/// conversation is rendered as a single document with every member's body
+/// inlined, so this bounds both the fetching and the rendering.
+const THREAD_MEMBER_LIMIT: usize = 50;
 
 /// (Adding a *new* table needs no bump: `SCHEMA` runs `CREATE TABLE IF NOT
 /// EXISTS` on every open, so an existing cache gains it in place. A bump is for
@@ -478,10 +476,14 @@ impl Cache {
     /// Returns each message with the folder path it lives in, since the caller
     /// needs that both to label it and to fetch its body. Cache-only: the point
     /// is to assemble a conversation without going near the network (#21).
+    /// `since` bounds the search to mail from the threading cutoff forward, and
+    /// [`THREAD_MEMBER_LIMIT`] caps what one conversation can drag in — every
+    /// member found is a body the reader will load and render.
     pub fn messages_by_thread_ids(
         &self,
         account_id: u32,
         ids: &[String],
+        since: i64,
     ) -> Vec<(String, Message)> {
         let ids: Vec<&String> = ids.iter().filter(|i| !i.is_empty()).take(THREAD_ID_LIMIT).collect();
         if ids.is_empty() {
@@ -492,13 +494,20 @@ impl Cache {
         let slots = |offset: usize| -> String {
             (0..ids.len()).map(|i| format!("?{}", offset + i + 1)).collect::<Vec<_>>().join(", ")
         };
+        // Binds are pushed ids-then-padded-then-account, so the padded copies sit
+        // at n+1..2n. Reading from n+2 shifted every one of these by a slot and
+        // ran the last comparison against the *account id* — which, coerced to
+        // text, matched every message whose References contained that digit. A
+        // one-message lookup came back with thousands.
         let refs_match = (0..ids.len())
-            .map(|i| format!("instr(' ' || references_ || ' ', ?{}) > 0", ids.len() + i + 2))
+            .map(|i| format!("instr(' ' || references_ || ' ', ?{}) > 0", ids.len() + i + 1))
             .collect::<Vec<_>>()
             .join(" OR ");
         let sql = format!(
-            "SELECT folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred,                     has_attachment, recipients, cc, message_id, references_, preview              FROM messages              WHERE account_id = ?{account} AND (message_id IN ({in_list}) OR {refs_match})              ORDER BY ts DESC",
+            "SELECT folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred,                     has_attachment, recipients, cc, message_id, references_, preview              FROM messages              WHERE account_id = ?{account} AND ts >= ?{since} AND (message_id IN ({in_list}) OR {refs_match})              ORDER BY ts DESC LIMIT ?{limit}",
             account = ids.len() * 2 + 1,
+            since = ids.len() * 2 + 2,
+            limit = ids.len() * 2 + 3,
             in_list = slots(0),
             refs_match = refs_match,
         );
@@ -515,6 +524,9 @@ impl Cache {
                 binds.push(p as &dyn rusqlite::ToSql);
             }
             binds.push(&account_id as &dyn rusqlite::ToSql);
+            binds.push(&since as &dyn rusqlite::ToSql);
+            let limit = THREAD_MEMBER_LIMIT as i64;
+            binds.push(&limit as &dyn rusqlite::ToSql);
             let rows = stmt.query_map(binds.as_slice(), |row| {
                 let uid: u32 = row.get(1)?;
                 Ok((
@@ -547,68 +559,6 @@ impl Cache {
             tracing::warn!("cache messages_by_thread_ids failed: {e}");
             Vec::new()
         })
-    }
-
-    /// The next chunk of messages whose threading references are still the
-    /// In-Reply-To-only ones an ENVELOPE fetch gives (a single id, or none at
-    /// all) — the rows a one-time References repair can still improve (#21).
-    ///
-    /// Rows already holding two or more ids came from a full header parse and are
-    /// complete. "None at all" can equally mean a message that genuinely has no
-    /// References, which no query can tell apart from one never fetched — hence
-    /// the `next_uid` watermark: each pass walks strictly downwards so a message
-    /// with nothing to find is visited once and never again.
-    pub fn uids_needing_references(
-        &self,
-        account_id: u32,
-        folder_path: &str,
-        below_uid: u32,
-        limit: usize,
-    ) -> Vec<(u32, String)> {
-        let run = || -> rusqlite::Result<Vec<(u32, String)>> {
-            let mut stmt = self.conn.prepare(
-                "SELECT uid, references_ FROM messages                  WHERE account_id = ?1 AND folder_path = ?2 AND uid < ?3                    AND instr(trim(references_), ' ') = 0                  ORDER BY uid DESC LIMIT ?4",
-            )?;
-            let rows = stmt.query_map(
-                params![account_id, folder_path, below_uid, limit as i64],
-                |row| Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?)),
-            )?;
-            rows.collect()
-        };
-        run().unwrap_or_default()
-    }
-
-    pub fn set_references(&self, account_id: u32, folder_path: &str, uid: u32, references: &str) {
-        let _ = self.conn.execute(
-            "UPDATE messages SET references_ = ?1              WHERE account_id = ?2 AND folder_path = ?3 AND uid = ?4",
-            params![references, account_id, folder_path, uid],
-        );
-    }
-
-    /// How far down a folder's References repair has walked: the uid to look
-    /// below next, and whether the pass has finished. A folder never touched
-    /// starts at the top (`u32::MAX`), so the first chunk is its newest mail.
-    pub fn refs_repair_state(&self, account_id: u32, folder_path: &str) -> (u32, bool) {
-        self.conn
-            .query_row(
-                "SELECT next_uid, done FROM refs_repair                  WHERE account_id = ?1 AND folder_path = ?2",
-                params![account_id, folder_path],
-                |row| Ok((row.get::<_, u32>(0)?, row.get::<_, i64>(1)? != 0)),
-            )
-            .unwrap_or((u32::MAX, false))
-    }
-
-    pub fn set_refs_repair_state(
-        &self,
-        account_id: u32,
-        folder_path: &str,
-        next_uid: u32,
-        done: bool,
-    ) {
-        let _ = self.conn.execute(
-            "INSERT INTO refs_repair (account_id, folder_path, next_uid, done)              VALUES (?1, ?2, ?3, ?4)              ON CONFLICT(account_id, folder_path) DO UPDATE SET next_uid = ?3, done = ?4",
-            params![account_id, folder_path, next_uid, done as i64],
-        );
     }
 
     pub fn load_body(&self, account_id: u32, folder_path: &str, uid: u32) -> Option<String> {
@@ -1271,5 +1221,49 @@ mod tests {
             add_att(&c, "INBOX", uid, 0, "f.png", &[0u8; 2]);
         }
         assert_eq!(c.gallery_items(1, 10, 3).len(), 3);
+    }
+
+    /// Insert a message carrying threading headers.
+    fn add_threaded(c: &Cache, folder: &str, uid: u32, ts: i64, msgid: &str, refs: &str) {
+        c.conn
+            .execute(
+                "INSERT INTO messages (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, message_id, references_) \
+                 VALUES (1, ?1, ?2, 'X', '', 'S', '', ?3, 0, 0, 0, ?4, ?5)",
+                params![folder, uid, ts, msgid, refs],
+            )
+            .unwrap();
+    }
+
+    /// A conversation lookup must return the messages that actually reference the
+    /// one being opened — nothing else.
+    ///
+    /// The bind indices for the `references_` comparisons were off by a slot, so
+    /// the last one ran against the *account id*. Coerced to text, `instr` then
+    /// matched every message whose References merely contained that digit, and
+    /// one click dragged thousands of messages into the reader — each of them a
+    /// body to fetch and re-render. That is worth a test.
+    #[test]
+    fn a_conversation_holds_only_messages_that_reference_it() {
+        let c = Cache::in_memory();
+        add_threaded(&c, "INBOX", 1, 500, "root@x", "");
+        add_threaded(&c, "Sent", 2, 600, "reply@x", "root@x");
+        // Unrelated, but its References contain the digit "1" — the account id.
+        add_threaded(&c, "Archive", 3, 550, "other@x", "31337@elsewhere");
+
+        let found = c.messages_by_thread_ids(1, &["root@x".to_string()], 0);
+        let ids: Vec<&str> = found.iter().map(|(_, m)| m.message_id.as_str()).collect();
+        assert_eq!(ids, vec!["reply@x", "root@x"], "only the real conversation");
+    }
+
+    #[test]
+    fn a_conversation_ignores_mail_from_before_the_threading_cutoff() {
+        let c = Cache::in_memory();
+        add_threaded(&c, "INBOX", 1, 500, "root@x", "");
+        add_threaded(&c, "Sent", 2, 400, "old-reply@x", "root@x"); // predates the cutoff
+        add_threaded(&c, "Sent", 3, 600, "new-reply@x", "root@x");
+
+        let found = c.messages_by_thread_ids(1, &["root@x".to_string()], 450);
+        let ids: Vec<&str> = found.iter().map(|(_, m)| m.message_id.as_str()).collect();
+        assert_eq!(ids, vec!["new-reply@x", "root@x"], "archive stays out");
     }
 }

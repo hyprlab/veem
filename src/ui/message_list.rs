@@ -733,6 +733,7 @@ fn normalize_subject(subject: &str) -> String {
 /// subject are never threaded together.
 fn compute_thread_keys(
     msgs: &[Message],
+    since: i64,
 ) -> std::collections::HashMap<(u32, u32), (u32, String)> {
     use std::collections::HashMap;
 
@@ -765,7 +766,7 @@ fn compute_thread_keys(
         }
     };
 
-    for m in msgs {
+    for m in msgs.iter().filter(|m| m.timestamp >= since) {
         let sn = self_node(m);
         parent.entry(sn.clone()).or_insert_with(|| sn.clone());
         for r in m.references.split_whitespace() {
@@ -776,10 +777,12 @@ fn compute_thread_keys(
     }
 
     let mut out = HashMap::new();
-    for m in msgs {
+    for m in msgs.iter().filter(|m| m.timestamp >= since) {
         let root = find(&mut parent, &self_node(m));
         out.insert((m.account_id, m.id), (m.account_id, root));
     }
+    // Anything older is simply absent: the caller keys it by its own uid, so it
+    // stands alone rather than joining a conversation.
     out
 }
 
@@ -864,6 +867,9 @@ pub struct MessageList {
     sort: SortOrder,
     /// Group messages into conversation threads (user preference).
     threading: bool,
+    /// Mail older than this (unix seconds) never threads — see
+    /// `config::threading_since`.
+    threading_since: i64,
     /// When `Some`, a spinner + this message overlays the list — shown while a
     /// large bulk action (archive/delete/spam) is applied.
     busy: Option<String>,
@@ -931,6 +937,8 @@ pub enum MessageListInput {
     AppendMessages { messages: Vec<Message> },
     SetLoading { title: String },
     SetThreading(bool),
+    /// The instant threading starts applying; older mail stands alone.
+    SetThreadingSince(i64),
     /// Whether conversations start expanded (true) or collapsed (false).
     SetThreadsExpanded(bool),
     SetGravatar(bool),
@@ -1322,6 +1330,8 @@ impl SimpleComponent for MessageList {
             scroller: None,
             sort: SortOrder::DateNewest,
             threading: true,
+            threading_since: i64::MAX, // until the app sends the real cutoff
+
             busy: None,
         };
 
@@ -1478,6 +1488,12 @@ impl SimpleComponent for MessageList {
             }
             MessageListInput::SetIndexComplete(complete) => {
                 self.index_complete = complete;
+            }
+            MessageListInput::SetThreadingSince(since) => {
+                if self.threading_since != since {
+                    self.threading_since = since;
+                    self.rebuild();
+                }
             }
             MessageListInput::SetThreading(on) => {
                 if self.threading != on {
@@ -2098,7 +2114,7 @@ impl MessageList {
         // message as the head; expanding reveals the older replies beneath it.
         // With threading off, every message is its own group.
         let keys = if self.threading {
-            compute_thread_keys(&capped)
+            compute_thread_keys(&capped, self.threading_since)
         } else {
             std::collections::HashMap::new()
         };
@@ -2227,7 +2243,7 @@ impl MessageList {
         // Thread within whatever set is on screen (the search pool while searching,
         // otherwise the current folder) so the conversation matches the rows shown.
         let source = self.active_source();
-        let keys = compute_thread_keys(source);
+        let keys = compute_thread_keys(source, self.threading_since);
         let Some(key) = keys.get(&(m.account_id, m.id)).cloned() else {
             return vec![m.clone()];
         };

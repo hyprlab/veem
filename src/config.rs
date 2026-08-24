@@ -845,6 +845,31 @@ struct StateFile {
     /// start at their defaults.
     #[serde(default)]
     drawer_collapsed: bool,
+    /// Threading applies only to mail that arrived at or after this instant
+    /// (unix seconds), stamped the first time a build with threading runs.
+    #[serde(default)]
+    threading_since: Option<i64>,
+}
+
+/// The instant threading starts applying, stamped once and then kept.
+///
+/// Conversations are built only from mail at or after it. An archive of tens of
+/// thousands of messages is left alone: grouping it would mean fetching every
+/// old message's References from the server, and a years-deep conversation puts
+/// hundreds of bodies into one reader document. Mail that arrives from here on
+/// threads normally, and those conversations are a handful of messages each.
+pub fn threading_since() -> i64 {
+    let mut state = load_state();
+    if let Some(ts) = state.threading_since {
+        return ts;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    state.threading_since = Some(now);
+    save_state(&state);
+    now
 }
 
 fn state_path() -> Option<PathBuf> {

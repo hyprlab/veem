@@ -226,6 +226,10 @@ pub struct AppModel {
     single_key: std::rc::Rc<std::cell::Cell<bool>>,
     /// Whether messages are grouped into conversation threads.
     threading: bool,
+    /// Mail older than this (unix seconds) never threads (see
+    /// `config::threading_since`) — so an archive is never grouped, and never
+    /// pulled into a conversation.
+    threading_since: i64,
     /// Whether conversation threads start expanded in the message list.
     threads_expanded: bool,
     /// How email content is themed (message content only, not the app UI).
@@ -1109,6 +1113,7 @@ impl SimpleComponent for AppModel {
                 config::load_single_key_shortcuts(),
             )),
             threading: config::load_threading(),
+            threading_since: config::threading_since(),
             threads_expanded: config::load_threads_expanded(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
@@ -1169,6 +1174,9 @@ impl SimpleComponent for AppModel {
         model
             .message_list
             .emit(MessageListInput::SetThreading(model.threading));
+        model
+            .message_list
+            .emit(MessageListInput::SetThreadingSince(model.threading_since));
         model
             .message_list
             .emit(MessageListInput::SetThreadsExpanded(model.threads_expanded));
@@ -1800,13 +1808,17 @@ impl SimpleComponent for AppModel {
                 // The folder being read holds only its half of the conversation:
                 // your own replies are filed in Sent, and older parts may have
                 // been archived. Ask for the rest from the cache (#21).
-                if self.threading {
+                // Only for mail from the cutoff forward: an archived message's
+                // conversation can span years and hundreds of messages, and
+                // assembling it means reading every one of their bodies.
+                if self.threading && m.timestamp >= self.threading_since {
                     let solo = [m.clone()];
                     let ids = thread_ids(if thread.is_empty() { &solo[..] } else { &thread });
                     if !ids.is_empty() {
                         self.send_to(account_id, MailRequest::LoadRelated {
                             message_id: m.id,
                             ids,
+                            since: self.threading_since,
                         });
                     }
                 }

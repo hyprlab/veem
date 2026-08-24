@@ -121,7 +121,9 @@ pub enum MailRequest {
     /// Assemble a conversation from the local cache across every folder of the
     /// account: the messages whose Message-ID or references match `ids`. Answers
     /// with [`WorkerEvent::Related`]; never touches the network.
-    LoadRelated { message_id: u32, ids: Vec<String> },
+    /// `since` bounds the search to mail from the threading cutoff forward, so
+    /// an archive is never pulled into a conversation.
+    LoadRelated { message_id: u32, ids: Vec<String>, since: i64 },
     /// Permanently erase messages from `path` (flag `\Deleted` + EXPUNGE), used
     /// when "delete" is asked for in Trash, where there is nowhere left to move to.
     PurgeMessages { path: String, uids: Vec<u32> },
@@ -396,9 +398,6 @@ async fn run_imap(
     // the fast first page), and the set already enqueued this session.
     let mut backfill: std::collections::VecDeque<Backfill> = std::collections::VecDeque::new();
     let mut backfill_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    // Folders queued for the one-time References repair (see [`run_one_refs_repair`]).
-    let mut refs_repair: std::collections::VecDeque<(u32, String)> =
-        std::collections::VecDeque::new();
     // IMAP IDLE push: watch the most recently loaded folder for new mail.
     let push_enabled = crate::config::load_push();
     let mut idle_folder: Option<(u32, String)> = None;
@@ -423,14 +422,6 @@ async fn run_imap(
         .unwrap_or_default()
     {
         if backfill_seen.insert(f.path.clone()) {
-            // Messages indexed before Vireo fetched References thread by their
-            // immediate parent alone; queue the folder for a one-time repair.
-            if cache
-                .as_ref()
-                .is_some_and(|c| !c.refs_repair_state(account_id, &f.path).1)
-            {
-                refs_repair.push_back((f.id, f.path.clone()));
-            }
             backfill.push_back(Backfill {
                 folder_id: f.id,
                 gallery: gallery_folder(f.kind),
@@ -540,17 +531,6 @@ async fn run_imap(
                         .await;
                         continue;
                     }
-                } else if !refs_repair.is_empty() && session.is_some() {
-                    // Lower priority than indexing new mail: repair the threading
-                    // references of already-indexed messages, a chunk at a time.
-                    run_one_refs_repair(
-                        &mut refs_repair,
-                        &mut session,
-                        account_id,
-                        cache.as_ref(),
-                    )
-                    .await;
-                    continue;
                 } else if push_enabled && session.is_some() && idle_folder.is_some() {
                     let (fid, fpath) = idle_folder.clone().unwrap();
                     // Catch mail delivered while the connection was busy prefetching.
@@ -642,7 +622,7 @@ async fn run_imap(
                 }
                 continue; // cache-only, never hits the network
             }
-            MailRequest::LoadRelated { message_id, ids } => {
+            MailRequest::LoadRelated { message_id, ids, since } => {
                 // Folder ids are positional over the same ordered folder list the
                 // UI was given, so a cached row's path maps back to the id the app
                 // knows it by — which is what lets the reader fetch a related
@@ -651,7 +631,7 @@ async fn run_imap(
                     .as_ref()
                     .map(|c| {
                         let folders = c.load_folders(account_id);
-                        c.messages_by_thread_ids(account_id, ids)
+                        c.messages_by_thread_ids(account_id, ids, *since)
                             .into_iter()
                             .filter_map(|(path, mut m)| {
                                 let f = folders.iter().find(|f| f.path == path)?;
@@ -3329,79 +3309,6 @@ fn merge_index(cached: Vec<Message>, recent: Vec<Message>) -> Vec<Message> {
     let mut out: Vec<Message> = map.into_values().collect();
     out.sort_by(|a, b| b.uid.cmp(&a.uid)); // newest first
     out
-}
-
-/// How many messages one References-repair step asks the server about. Each row
-/// costs only its References header, so this can be larger than an envelope
-/// chunk without making the connection unresponsive to real requests.
-const REFS_REPAIR_CHUNK: usize = 500;
-
-/// One step of the one-time References repair for the folder at the head of the
-/// queue (#21).
-///
-/// Messages indexed by an earlier build carry only In-Reply-To, because that is
-/// all the IMAP ENVELOPE offers — enough to link a reply to its parent, useless
-/// when that parent sits in another folder. This walks a folder's cached rows
-/// newest-first, fetching just `References` for the ones that could still
-/// improve and merging it with what's already stored. The watermark is persisted
-/// per folder, so a pass resumes where it stopped and runs only once; the
-/// repaired rows re-thread the next time the folder is loaded from cache.
-///
-/// The job is dropped (and marked done) when a chunk comes back empty. On a
-/// fetch failure it is requeued untouched, so nothing is skipped.
-async fn run_one_refs_repair(
-    queue: &mut std::collections::VecDeque<(u32, String)>,
-    session: &mut Option<ImapSession>,
-    account_id: u32,
-    cache: Option<&Cache>,
-) {
-    let Some((folder_id, path)) = queue.pop_front() else {
-        return;
-    };
-    let Some(c) = cache else { return }; // nothing to repair without a cache
-    let Some(mut s) = session.take() else {
-        queue.push_front((folder_id, path));
-        return;
-    };
-
-    let (below, _) = c.refs_repair_state(account_id, &path);
-    let chunk = c.uids_needing_references(account_id, &path, below, REFS_REPAIR_CHUNK);
-    if chunk.is_empty() {
-        c.set_refs_repair_state(account_id, &path, 0, true);
-        *session = Some(s); // folder done — don't requeue
-        return;
-    }
-
-    let set = chunk.iter().map(|(uid, _)| uid.to_string()).collect::<Vec<_>>().join(",");
-    let fetched: Result<Vec<Fetch>, _> = async {
-        s.select(&path).await?;
-        s.uid_fetch(&set, format!("(UID{REFS_FETCH_ITEM})")).await?.try_collect().await
-    }
-    .await;
-    let Ok(fetches) = fetched else {
-        // Leave the watermark alone and try this folder again later.
-        queue.push_back((folder_id, path));
-        *session = Some(s);
-        return;
-    };
-
-    let found: std::collections::HashMap<u32, String> = fetches
-        .iter()
-        .filter_map(|f| f.uid.map(|uid| (uid, references_of(f))))
-        .collect();
-    for (uid, existing) in &chunk {
-        if let Some(refs) = found.get(uid) {
-            let merged = merge_msgids(refs, existing);
-            if &merged != existing {
-                c.set_references(account_id, &path, *uid, &merged);
-            }
-        }
-    }
-    // Walk on from the oldest uid this chunk covered.
-    let lowest = chunk.iter().map(|(uid, _)| *uid).min().unwrap_or(0);
-    c.set_refs_repair_state(account_id, &path, lowest, false);
-    queue.push_back((folder_id, path));
-    *session = Some(s);
 }
 
 /// A background job to index the rest of a folder (everything past the fast first
