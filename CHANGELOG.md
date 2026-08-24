@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.13.5 — 2026-08-24
+
+- **Fixed: replies sent from Vireo were not part of any conversation.** Vireo
+  threaded incoming mail by its reply headers but never wrote them on the mail
+  it sent: `build_email` set From, To, Cc, Bcc and Subject and nothing else. A
+  reply composed in Vireo therefore began a new conversation for every client
+  that received it — Vireo included — so replying back and forth between two
+  accounts produced a pile of unrelated messages. The composer now carries the
+  parent's Message-ID and the thread's id chain from the reply prefill through
+  to the outgoing message, and `build_email` writes `In-Reply-To` and
+  `References`, re-wrapped in the angle brackets the wire format wants (they are
+  stored bare). References carries the whole chain rather than just the parent,
+  so a client can place the reply even if it never saw the immediate parent.
+  Tests cover both directions: a reply carries both headers, and a message that
+  starts a conversation carries neither. Mail already sent without them cannot
+  be repaired — there is nothing on the wire to reconstruct from. Forwards
+  deliberately stay out of the parent's thread.
+
 ## 1.13.4 — 2026-08-24
 
 - **Conversation threading is back, and no longer exhausts memory.** 1.13.3

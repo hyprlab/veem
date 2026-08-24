@@ -2,7 +2,16 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.13.4
+## What's new in 1.13.5
+
+- **Replies you send now stay in their conversation.** Vireo grouped incoming
+  mail correctly, but the replies it sent carried none of the headers that mark
+  them as replies — so they arrived as new conversations for whoever received
+  them, and for Vireo itself. Replies sent from here on thread properly, in
+  Vireo and in every other mail client. Messages already sent can't be
+  retrofitted: the information never left your machine.
+
+## In 1.13.4
 
 - **Conversations are back, and safe.** Vireo groups a message with its replies
   again, and shows the rest of a conversation from your other folders — the

@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.13.5" date="2026-08-24" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.13.5</url>
+      <description>
+        <p>Replies sent from Vireo now carry the In-Reply-To and References headers that mark them as replies, so they stay in their conversation for the recipient and in Vireo itself.</p>
+      </description>
+    </release>
     <release version="1.13.4" date="2026-08-24" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.13.4</url>
       <description>
