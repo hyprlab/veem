@@ -840,10 +840,13 @@ pub struct MessageList {
     /// Every selected message key, so the whole selection survives list rebuilds
     /// (background syncs) until the user clicks away.
     selected_ids: Vec<(u32, u32)>,
-    /// The selection was just set from the reader, which is already showing the
-    /// message: opening it again would swap the conversation for a single
-    /// message under the user.
-    from_reader: bool,
+    /// Selection changes still expected from a reader-driven selection, and what
+    /// that selection is. GTK reports each `select_row`/`unselect_all` separately
+    /// and a rebuild adds more, so a single flag would be consumed by the first
+    /// and let a later one re-open the message; only a change that matches what
+    /// the reader asked for is suppressed, and anything else ends it at once.
+    from_reader: u8,
+    reader_keys: Vec<(u32, u32)>,
     /// How many rows are currently selected (drives the bulk-action bar).
     selection_count: usize,
     /// Conversation keys the user has toggled away from the default state
@@ -1340,7 +1343,8 @@ impl SimpleComponent for MessageList {
             selected_id: None,
             selected_ids: Vec::new(),
             selection_count: 0,
-            from_reader: false,
+            from_reader: 0,
+            reader_keys: Vec::new(),
             expanded_threads: std::collections::HashSet::new(),
             default_expanded: false,
             msg_thread: std::collections::HashMap::new(),
@@ -1608,6 +1612,22 @@ impl SimpleComponent for MessageList {
             }
             MessageListInput::SelectFromReader { key, mode } => {
                 use crate::ui::message_view::SelectMode;
+                // The reader shows every message in a conversation; the list only
+                // shows the head while the thread is collapsed. Selecting a reply
+                // therefore has to open the thread first — otherwise there is no
+                // row to select, and only the head would ever answer a click.
+                if !self.shown.iter().any(|m| (m.account_id, m.id) == key) {
+                    if let Some(thread_key) = self.msg_thread.get(&key).cloned() {
+                        // `expanded_threads` records the departure from the
+                        // default, so which way to move it depends on that.
+                        if self.default_expanded {
+                            self.expanded_threads.remove(&thread_key);
+                        } else {
+                            self.expanded_threads.insert(thread_key);
+                        }
+                        self.rebuild_preserving_scroll();
+                    }
+                }
                 let Some(idx) = self.shown.iter().position(|m| (m.account_id, m.id) == key) else {
                     return;
                 };
@@ -1615,7 +1635,6 @@ impl SimpleComponent for MessageList {
                 let Some(row) = list.row_at_index(idx as i32) else {
                     return;
                 };
-                self.from_reader = true;
                 match mode {
                     SelectMode::Plain => {
                         list.unselect_all();
@@ -1645,10 +1664,14 @@ impl SimpleComponent for MessageList {
                         }
                     }
                 }
-                // GTK emits selected-rows-changed for each of those calls; the
-                // flag is consumed by the first, so make sure the final state is
-                // the one reported.
-                self.from_reader = true;
+                // What the reader asked for, so the changes GTK is about to
+                // report can be recognised as ours rather than the user's.
+                self.reader_keys = list
+                    .selected_rows()
+                    .iter()
+                    .filter_map(|r| self.shown.get(r.index() as usize).map(|m| (m.account_id, m.id)))
+                    .collect();
+                self.from_reader = 8;
                 sender.input(MessageListInput::SelectionChanged);
             }
             MessageListInput::SelectionChanged => {
@@ -1665,9 +1688,14 @@ impl SimpleComponent for MessageList {
                 let _ = sender.output(MessageListOutput::SelectionKeys(keys.clone()));
                 // Set from the reader, which is already showing this message:
                 // mirror the selection but leave the reader alone.
-                if std::mem::take(&mut self.from_reader) {
-                    self.selected_ids = keys;
-                    return;
+                if self.from_reader > 0 {
+                    self.from_reader -= 1;
+                    if keys == self.reader_keys {
+                        self.selected_ids = keys;
+                        return;
+                    }
+                    // Something else moved the selection — stop expecting ours.
+                    self.from_reader = 0;
                 }
                 match keys.as_slice() {
                     [] => self.selected_id = None,
