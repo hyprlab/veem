@@ -54,6 +54,9 @@ pub struct MessageView {
     /// False from when a render starts until the WebView reports it finished
     /// loading — a themed cover hides the WebView's white inter-document gap.
     webview_ready: bool,
+    /// Which message the document currently on screen was rendered for, so an
+    /// incremental re-render of the *same* one can skip the cover.
+    rendered_for: Option<(u32, u32)>,
     webview: webkit6::WebView,
     /// Bumped per render: each load gets a unique base URI so WebKit treats it
     /// as a fresh document and re-fetches resources (reusing `about:blank` does
@@ -426,6 +429,7 @@ impl Component for MessageView {
             chip_provider,
             loading: false,
             webview_ready: false,
+            rendered_for: None,
             webview,
             sender_check: None,
             link_preview: link_preview.clone(),
@@ -697,8 +701,16 @@ impl MessageView {
     fn render(&mut self) {
         let dark = self.effective_dark();
         self.apply_webview_bg(dark);
-        // Hide the WebView behind the themed cover until this load finishes.
-        self.webview_ready = false;
+        // Hide the WebView behind the themed cover until this load finishes —
+        // but only when the document on screen is being replaced by a different
+        // message. A conversation re-renders once per body that arrives, and
+        // covering it each time is what made a thread blink its way through
+        // loading; the old document stays up until WebKit swaps the new one in.
+        let target = self.current.as_ref().map(|m| (m.account_id, m.id));
+        if target.is_none() || target != self.rendered_for {
+            self.webview_ready = false;
+        }
+        self.rendered_for = target;
         let html = self.document_html(dark);
         let n = self.seq.get().wrapping_add(1);
         self.seq.set(n);

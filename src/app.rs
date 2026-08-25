@@ -1859,7 +1859,7 @@ impl SimpleComponent for AppModel {
                     }
                     self.current_thread = conv;
                     // Fetch the bodies we don't have yet (primary first via order).
-                    let to_load: Vec<(u32, u32, u32, String)> = self
+                    let to_load: Vec<MissingBody> = self
                         .current_thread
                         .iter()
                         .filter(|tm| tm.body.is_empty())
@@ -1868,8 +1868,8 @@ impl SimpleComponent for AppModel {
                                 .map(|p| (tm.account_id, tm.id, tm.uid, p))
                         })
                         .collect();
-                    for (aid, mid, uid, path) in to_load {
-                        self.send_to(aid, MailRequest::LoadBody { message_id: mid, path, uid });
+                    for ((aid, path), items) in batch_bodies_by_folder(to_load) {
+                        self.send_to(aid, MailRequest::LoadBodies { items, path });
                     }
                     self.show_thread();
                 } else {
@@ -6226,6 +6226,36 @@ fn build_search_pool(cache: &HashMap<(u32, u32), Vec<Message>>) -> Vec<Message> 
     cache.values().flatten().cloned().collect()
 }
 
+/// A conversation member still waiting for its body:
+/// `(account_id, message_id, uid, folder_path)`.
+type MissingBody = (u32, u32, u32, String);
+
+/// One `LoadBodies` request: the `(account_id, folder_path)` it goes to, and the
+/// `(message_id, uid)` of every member it covers.
+type BodyBatch = ((u32, String), Vec<(u32, u32)>);
+
+/// Group a conversation's missing bodies into one request per (account, folder).
+///
+/// Every member asked for on its own is a round trip each, and each arrival
+/// re-renders the reader; `LoadBodies` fetches a whole UID set at once. Members
+/// are kept in the order given — the primary is first, so it is first in its
+/// batch and renders first — and a conversation that spans folders (or, in the
+/// unified inbox, accounts) splits into one batch per folder rather than losing
+/// the members that don't fit the first one.
+fn batch_bodies_by_folder(to_load: Vec<MissingBody>) -> Vec<BodyBatch> {
+    let mut batches: Vec<BodyBatch> = Vec::new();
+    for (account_id, message_id, uid, path) in to_load {
+        match batches
+            .iter_mut()
+            .find(|((a, p), _)| *a == account_id && *p == path)
+        {
+            Some((_, items)) => items.push((message_id, uid)),
+            None => batches.push(((account_id, path), vec![(message_id, uid)])),
+        }
+    }
+    batches
+}
+
 /// Where to move the reader when its message disappeared from a sync (deleted or
 /// moved on another device): whatever now sits in the slot it occupied.
 ///
@@ -6248,6 +6278,38 @@ fn next_after_vanish(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_conversation_in_one_folder_becomes_a_single_fetch() {
+        let batches = batch_bodies_by_folder(vec![
+            (1, 10, 100, "INBOX".into()),
+            (1, 11, 101, "INBOX".into()),
+            (1, 12, 102, "INBOX".into()),
+        ]);
+        assert_eq!(batches.len(), 1, "one folder is one round trip");
+        assert_eq!(batches[0].0, (1, "INBOX".to_string()));
+        // Order is the thread's, so the primary is fetched and rendered first.
+        assert_eq!(batches[0].1, vec![(10, 100), (11, 101), (12, 102)]);
+    }
+
+    #[test]
+    fn members_from_other_folders_and_accounts_get_their_own_fetch() {
+        // A conversation pulled together across Inbox and Sent, plus a second
+        // account: batching must not drop the members that don't share the
+        // first one's folder.
+        let batches = batch_bodies_by_folder(vec![
+            (1, 10, 100, "INBOX".into()),
+            (1, 11, 55, "Sent".into()),
+            (1, 12, 101, "INBOX".into()),
+            (2, 13, 7, "INBOX".into()),
+        ]);
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[0], ((1, "INBOX".to_string()), vec![(10, 100), (12, 101)]));
+        assert_eq!(batches[1], ((1, "Sent".to_string()), vec![(11, 55)]));
+        assert_eq!(batches[2], ((2, "INBOX".to_string()), vec![(13, 7)]));
+        let members: usize = batches.iter().map(|(_, items)| items.len()).sum();
+        assert_eq!(members, 4, "every member is still requested");
+    }
 
     #[test]
     fn a_vanished_message_never_throws_you_to_the_top() {

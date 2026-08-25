@@ -76,6 +76,19 @@ pub enum MailRequest {
         path: String,
         uid: u32,
     },
+    /// Load several messages' bodies from one folder in a single IMAP fetch.
+    ///
+    /// Opening a conversation needs every member's body at once. Asked for one
+    /// at a time that is one round trip each — on a ten-message thread, ten
+    /// sequential waits on the server, and (because each arrival re-renders the
+    /// reader) ten redraws. `uid_fetch` takes a whole UID set, so the same work
+    /// is one round trip. Members cached on disk are served without touching the
+    /// network at all, and only the rest go into the set.
+    LoadBodies {
+        /// `(message_id, uid)` for each member, primary first.
+        items: Vec<(u32, u32)>,
+        path: String,
+    },
     /// Load the raw RFC 822 source of a single message.
     LoadSource {
         message_id: u32,
@@ -612,6 +625,10 @@ async fn run_imap(
             continue;
         }
 
+        // Bodies of a `LoadBodies` batch that the disk cache couldn't answer, so
+        // the network arm below fetches only those.
+        let mut pending_bodies: Vec<(u32, u32)> = Vec::new();
+
         // Serve from cache first so mail appears instantly (and offline).
         match &req {
             MailRequest::LoadMessages { folder_id, path } => {
@@ -678,6 +695,35 @@ async fn run_imap(
                         emit(WorkerEvent::SenderChecked { message_id: *message_id, check });
                     }
                     continue; // already cached; no network needed
+                }
+            }
+            MailRequest::LoadBodies { items, path } => {
+                // Serve every member the cache already has, and leave the rest
+                // for one fetch. A conversation reopened after its bodies were
+                // cached costs no network at all.
+                for (message_id, uid) in items {
+                    match cache.as_ref().and_then(|c| c.load_body(account_id, path, *uid)) {
+                        Some(body) => {
+                            emit(WorkerEvent::Body {
+                                message_id: *message_id,
+                                path: path.clone(),
+                                body,
+                            });
+                            if let Some(check) = cache
+                                .as_ref()
+                                .and_then(|c| c.load_sender_check(account_id, path, *uid))
+                            {
+                                emit(WorkerEvent::SenderChecked {
+                                    message_id: *message_id,
+                                    check,
+                                });
+                            }
+                        }
+                        None => pending_bodies.push((*message_id, *uid)),
+                    }
+                }
+                if pending_bodies.is_empty() {
+                    continue; // whole conversation was cached; no network needed
                 }
             }
             MailRequest::LoadAttachments {
@@ -814,6 +860,50 @@ async fn run_imap(
                     });
                 }
             },
+
+            MailRequest::LoadBodies { path, .. } => {
+                let uids: Vec<u32> = pending_bodies.iter().map(|(_, uid)| *uid).collect();
+                match load_bodies_retry(&mut session, &account, &path, &uids).await {
+                    Ok(mut fetched) => {
+                        for (message_id, uid) in &pending_bodies {
+                            let Some((body, check, has_attachments)) = fetched.remove(uid) else {
+                                // The server answered the set but not this UID —
+                                // the message is gone from the folder. Say so in
+                                // place, rather than leaving one member of the
+                                // conversation blank forever.
+                                emit(WorkerEvent::Body {
+                                    message_id: *message_id,
+                                    path: path.clone(),
+                                    body: "(empty message)".to_string(),
+                                });
+                                continue;
+                            };
+                            if let Some(c) = cache.as_ref() {
+                                c.save_body(account_id, &path, *uid, &body);
+                                c.save_sender_check(account_id, &path, *uid, &check);
+                                c.set_has_attachment(account_id, &path, *uid, has_attachments);
+                            }
+                            emit(WorkerEvent::Body {
+                                message_id: *message_id,
+                                path: path.clone(),
+                                body,
+                            });
+                            emit(WorkerEvent::SenderChecked { message_id: *message_id, check });
+                            emit(if has_attachments {
+                                WorkerEvent::HasAttachments { message_id: *message_id }
+                            } else {
+                                WorkerEvent::NoAttachments { message_id: *message_id }
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        emit(WorkerEvent::Error {
+                            text: format!("Could not load conversation: {e}"),
+                            connectivity: true,
+                        });
+                    }
+                }
+            }
 
             MailRequest::LoadSource { path, uid, .. } => match load_source_retry(
                 &mut session,
@@ -1327,6 +1417,30 @@ async fn load_body_retry(
         if let Ok(fresh) = connect(account).await {
             s = fresh;
             res = load_body(&mut s, path, uid).await;
+        }
+    }
+    if res.is_ok() {
+        *session = Some(s);
+    }
+    res
+}
+
+/// [`load_bodies`] with [`load_body_retry`]'s one reconnect-and-retry.
+async fn load_bodies_retry(
+    session: &mut Option<ImapSession>,
+    account: &AccountConfig,
+    path: &str,
+    uids: &[u32],
+) -> Result<
+    std::collections::HashMap<u32, (String, crate::models::SenderCheck, bool)>,
+    async_imap::error::Error,
+> {
+    let mut s = session.take().expect("session ensured before call");
+    let mut res = load_bodies(&mut s, path, uids).await;
+    if res.is_err() {
+        if let Ok(fresh) = connect(account).await {
+            s = fresh;
+            res = load_bodies(&mut s, path, uids).await;
         }
     }
     if res.is_ok() {
@@ -3550,6 +3664,50 @@ async fn load_body(
     Ok((body, check, has_attachments))
 }
 
+/// Fetch several messages' bodies from one folder in a single `uid_fetch`.
+///
+/// The per-message extraction is [`load_body`]'s, applied to each response in
+/// the set: body, sender check and the attachment fact all come off the raw
+/// message that is already in hand, at no extra network cost. A UID the server
+/// doesn't answer is simply absent from the map — the caller decides what to
+/// show in its place.
+async fn load_bodies(
+    session: &mut ImapSession,
+    path: &str,
+    uids: &[u32],
+) -> Result<
+    std::collections::HashMap<u32, (String, crate::models::SenderCheck, bool)>,
+    async_imap::error::Error,
+> {
+    session.select(path).await?;
+    let set = uids
+        .iter()
+        .map(|u| u.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let fetches: Vec<Fetch> = session
+        .uid_fetch(set, "(BODY.PEEK[])")
+        .await?
+        .try_collect()
+        .await?;
+    let mut out = std::collections::HashMap::new();
+    for f in &fetches {
+        let Some(uid) = f.uid else {
+            continue;
+        };
+        let raw = f.body();
+        let body = raw
+            .map(extract_body)
+            .unwrap_or_else(|| "(empty message)".to_string());
+        let check = raw.map(crate::verify::check_sender).unwrap_or_default();
+        let has_attachments = raw
+            .map(|r| !extract_attachments(r).is_empty())
+            .unwrap_or(false);
+        out.insert(uid, (body, check, has_attachments));
+    }
+    Ok(out)
+}
+
 /// Fetch BODYSTRUCTURE and return the IMAP section number of the preferred text
 /// part (HTML over plain). `None` for non-multipart messages (just fetch whole).
 #[allow(dead_code)]
@@ -4150,6 +4308,32 @@ async fn run_pop3(
                 }
             }
 
+            // POP3 has no set fetch — RETR is one message at a time — so a batch
+            // is the same work in a loop, saving only the per-message request hop.
+            MailRequest::LoadBodies { items, path: _ } => {
+                for (message_id, uid) in items {
+                    if let Some(body) =
+                        cache.as_ref().and_then(|c| c.load_body(account_id, INBOX, uid))
+                    {
+                        emit(WorkerEvent::Body { message_id, path: INBOX.to_string(), body });
+                        continue;
+                    }
+                    match pop3_fetch_raw(&account, uid).await {
+                        Ok(raw) => {
+                            let body = extract_body(&raw);
+                            if let Some(c) = cache.as_ref() {
+                                c.save_body(account_id, INBOX, uid, &body);
+                            }
+                            emit(WorkerEvent::Body { message_id, path: INBOX.to_string(), body });
+                        }
+                        Err(e) => emit(WorkerEvent::Error {
+                            text: format!("Could not load message: {e}"),
+                            connectivity: true,
+                        }),
+                    }
+                }
+            }
+
             MailRequest::LoadSource { message_id: _, path: _, uid } => {
                 match pop3_fetch_raw(&account, uid).await {
                     Ok(raw) => emit(WorkerEvent::Source {
@@ -4428,6 +4612,16 @@ async fn run_mock(
             MailRequest::LoadBody { message_id, ref path, .. } => {
                 let body = backend.message(message_id).map(|m| m.body).unwrap_or_default();
                 emit(WorkerEvent::Body { message_id, path: path.clone(), body });
+            }
+            MailRequest::LoadBodies { ref items, ref path } => {
+                for (message_id, _) in items {
+                    let body = backend.message(*message_id).map(|m| m.body).unwrap_or_default();
+                    emit(WorkerEvent::Body {
+                        message_id: *message_id,
+                        path: path.clone(),
+                        body,
+                    });
+                }
             }
             MailRequest::LoadSource { message_id, .. } => {
                 let text = backend.message(message_id).map(|m| m.body).unwrap_or_default();
