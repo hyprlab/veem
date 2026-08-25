@@ -163,6 +163,8 @@ pub enum MessageViewInput {
     /// conversation is opened again, rather than clearing it the moment the
     /// message happens to be in view.
     SuppressAutoRead { account_id: u32, id: u32 },
+    /// The page around the cards was clicked — nothing is selected any more.
+    ClearCards,
     /// A card was clicked, with whatever modifier was held.
     CardClicked { account_id: u32, id: u32, mode: SelectMode },
     /// Which messages the list has selected. Drawn as an accent outline on the
@@ -559,6 +561,7 @@ impl Component for MessageView {
                     // Every message frame has loaded and been sized: the layout
                     // has settled, so there is something worth revealing.
                     "ready" => open_sender.input(MessageViewInput::Rendered),
+                    "desel" => open_sender.input(MessageViewInput::ClearCards),
                     "sel" => {
                         let mode = match extra {
                             Some("t") => SelectMode::Toggle,
@@ -773,6 +776,13 @@ impl Component for MessageView {
                 }
                 if !self.loading {
                     self.render();
+                }
+            }
+            MessageViewInput::ClearCards => {
+                if !self.selected_cards.is_empty() {
+                    self.selected_cards.clear();
+                    self.apply_card_selection();
+                    let _ = sender.output(MessageViewOutput::SelectCards(Vec::new()));
                 }
             }
             MessageViewInput::CardClicked { account_id, id, mode } => {
@@ -1941,10 +1951,11 @@ var h=Math.max(b?b.scrollHeight:0,e?e.scrollHeight:0,b?b.offsetHeight:0);\
 if(h>0){f.style.height=h+'px';\
 if(f.dataset.key&&f._h!==h){f._h=h;\
 try{window.webkit.messageHandlers.vireo.postMessage('size:'+f.dataset.key+':'+h);}catch(_){}}}}catch(_){}}\
-function pick(k,e){try{var t=(e.view&&e.view.getSelection)?e.view.getSelection():null;\
-if(t&&String(t).length)return;}catch(_){}\
-var mo=e.shiftKey?'r':(e.ctrlKey||e.metaKey?'t':'p');\
-if(e.shiftKey){try{e.preventDefault();}catch(_){}}\
+function pick(k,e){var mo=e.shiftKey?'r':((e.ctrlKey||e.metaKey)?'t':'p');\
+if(mo!=='p'){try{e.preventDefault();\
+var g=(e.view&&e.view.getSelection)?e.view.getSelection():null;if(g)g.removeAllRanges();}catch(_){}}\
+else{try{var t=(e.view&&e.view.getSelection)?e.view.getSelection():null;\
+if(t&&String(t).length)return;}catch(_){}}\
 try{window.webkit.messageHandlers.vireo.postMessage('sel:'+k+':'+mo);}catch(_){}}\
 function init(f){s(f);try{var d=f.contentDocument;if(d){if(window.ResizeObserver&&d.body){new ResizeObserver(function(){s(f);}).observe(d.body);}\
 if(f.dataset.key&&!f._c){f._c=1;d.addEventListener('click',function(e){\
@@ -1965,6 +1976,9 @@ setTimeout(ready,450);\
 var hs=document.querySelectorAll('.vireo-msg-hdr');\
 for(var j=0;j<hs.length;j++){hs[j].addEventListener('dblclick',function(){\
 try{window.webkit.messageHandlers.vireo.postMessage('open:'+this.dataset.key);}catch(_){}});}\
+document.addEventListener('click',function(e){\
+if(e.target&&e.target.closest&&e.target.closest('.vireo-msg'))return;\
+try{window.webkit.messageHandlers.vireo.postMessage('desel:0:0');}catch(_){}});\
 var ms=document.querySelectorAll('.vireo-msg');\
 for(var q=0;q<ms.length;q++){ms[q].addEventListener('click',function(e){\
 var k=this.dataset.key;if(k)pick(k,e);});}\
