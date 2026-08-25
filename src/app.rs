@@ -353,6 +353,9 @@ pub enum AppMsg {
     ToggleCustomFolders(u32),
     SidebarCollapsed(bool),
     SidebarContext(CtxAction),
+    /// A folder's threading references were repaired — re-read it from the cache
+    /// so what is on screen groups with what was found.
+    RefsRepaired { account_id: u32, folder_id: u32 },
     /// The list's selection changed; the reader outlines the matching cards.
     SelectionKeys(Vec<(u32, u32)>),
     /// The reader's selection changed — mirror what the list can represent.
@@ -3104,6 +3107,26 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::RefsRepaired { account_id, folder_id } => {
+                // Only the folder on screen, and only its cached copy: the repair
+                // rewrote rows on disk, and re-reading is what lets the list see
+                // the conversations they now form.
+                let showing = self
+                    .selected
+                    .as_ref()
+                    .is_some_and(|sel| sel.account_id == account_id && sel.folder_id == folder_id);
+                if showing || self.unified {
+                    if let Some(path) = self
+                        .folders
+                        .get(&account_id)
+                        .and_then(|fs| fs.iter().find(|f| f.id == folder_id))
+                        .map(|f| f.path.clone())
+                    {
+                        self.send_to(account_id, MailRequest::LoadMessages { folder_id, path });
+                    }
+                }
+            }
+
             AppMsg::SelectionKeys(keys) => {
                 self.message_view.emit(MessageViewInput::SetSelectedCards(keys));
             }
@@ -3334,10 +3357,7 @@ const THREAD_BODY_WAIT: std::time::Duration = std::time::Duration::from_millis(1
 /// by mail near it in time, and the newest links are kept.
 const THREAD_LINK_LIMIT: usize = 4000;
 
-/// How many messages of one conversation the reader will assemble. Every member
-/// is a body to fetch and to inline into a single document, so an archive's
-/// deepest threads have to stop somewhere; the newest are kept.
-pub const CONVERSATION_MAX: usize = 25;
+
 
 impl AppModel {
     /// Push the date and clock preference into the formatter and redraw whatever
@@ -4702,11 +4722,6 @@ impl AppModel {
         }
         conv.extend(added);
         conv.sort_by(|a, b| a.timestamp.cmp(&b.timestamp)); // oldest first, as the list threads
-        if conv.len() > CONVERSATION_MAX {
-            // Keep the newest: the end of a long conversation is the part being
-            // read, and the rest is still one click away in the list.
-            conv.drain(..conv.len() - CONVERSATION_MAX);
-        }
         // Late arrivals bring bodies of their own; give them the same grace
         // period so they join the first paint instead of causing a second.
         self.thread_opened_at = Some(std::time::Instant::now());
@@ -6307,6 +6322,9 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
         WorkerEvent::BackfillDone { folder_id } => AppMsg::BackfillDone { account_id, folder_id },
         WorkerEvent::FolderUnread { folder_id, unread } => {
             AppMsg::FolderUnread { account_id, folder_id, unread }
+        }
+        WorkerEvent::RefsRepaired { folder_id } => {
+            AppMsg::RefsRepaired { account_id, folder_id }
         }
         WorkerEvent::Body { message_id, path, body } => {
             AppMsg::Body { account_id, message_id, path, body }

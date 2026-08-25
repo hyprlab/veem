@@ -2378,12 +2378,6 @@ impl MessageList {
         // Oldest first, matching the rows: the head is the message that opened
         // the conversation, and opening it shows the whole thread in order.
         members.sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then(a.uid.cmp(&b.uid)));
-        if members.len() > crate::app::CONVERSATION_MAX {
-            // Newest kept — the same bound the reader applies to what it pulls
-            // in from other folders, so one long thread can't become one
-            // enormous document. Only meaningful once sorted by time.
-            members.drain(..members.len() - crate::app::CONVERSATION_MAX);
-        }
         let is_head = members
             .first()
             .is_some_and(|h| (h.account_id, h.id) == (m.account_id, m.id));
@@ -2512,11 +2506,12 @@ mod tests {
         assert_ne!(keys.get(&(1, 1)), keys.get(&(1, 2)), "still two conversations");
     }
 
-    /// A conversation reaching back through an archive still has to stop: every
-    /// member is a body the reader fetches and inlines into one document.
+    /// A long conversation groups whole. What it may drag in from *other*
+    /// folders is bounded by the cache's own per-thread limit; what is already
+    /// in the folder on screen is shown in full.
     #[test]
-    fn a_very_long_conversation_is_capped_to_its_newest() {
-        let n = crate::app::CONVERSATION_MAX + 12;
+    fn a_long_conversation_groups_every_message() {
+        let n = 60usize;
         let mut members: Vec<Message> = Vec::new();
         for i in 0..n {
             let mut m = msg(i as u32 + 1, &format!("m{i}@x"), "root@x");
@@ -2530,11 +2525,10 @@ mod tests {
             members.iter().all(|m| keys.get(&(1, m.id)) == Some(&root)),
             "one conversation"
         );
-        // The cap itself is applied where the conversation is assembled; this
-        // guards the number, which is what bounds the work.
-        assert!(
-            crate::app::CONVERSATION_MAX <= 50,
-            "a conversation must stay smaller than the cache's own per-thread limit"
+        assert_eq!(
+            members.iter().filter(|m| keys.get(&(1, m.id)) == Some(&root)).count(),
+            n,
+            "every message belongs to it, however long the thread runs"
         );
     }
 

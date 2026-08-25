@@ -23,6 +23,13 @@ CREATE TABLE IF NOT EXISTS folders (
     ord        INTEGER NOT NULL,
     PRIMARY KEY (account_id, path)
 );
+CREATE TABLE IF NOT EXISTS refs_repair (
+    account_id  INTEGER NOT NULL,
+    folder_path TEXT    NOT NULL,
+    next_uid    INTEGER NOT NULL,
+    done        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, folder_path)
+);
 CREATE TABLE IF NOT EXISTS messages (
     account_id     INTEGER NOT NULL,
     folder_path    TEXT    NOT NULL,
@@ -559,6 +566,81 @@ impl Cache {
             tracing::warn!("cache messages_by_thread_ids failed: {e}");
             Vec::new()
         })
+    }
+
+    /// The next chunk of *replies* whose threading references are still the
+    /// In-Reply-To-only ones an ENVELOPE fetch gives — a single id, or none.
+    ///
+    /// Replies only, and that is the whole economy of this: a message that opens
+    /// a conversation has no References and never will, so asking the server for
+    /// its header buys nothing. On a real 71k-message cache 68k rows hold a thin
+    /// reference and only 3.9k of them are replies, so targeting them turns days
+    /// of fetching into minutes.
+    ///
+    /// "None at all" cannot be told from a message that genuinely has no
+    /// References, hence the `next_uid` watermark: each pass walks strictly
+    /// downwards, so a message with nothing to find is visited once and never
+    /// again.
+    pub fn uids_needing_references(
+        &self,
+        account_id: u32,
+        folder_path: &str,
+        below_uid: u32,
+        limit: usize,
+    ) -> Vec<(u32, String)> {
+        let run = || -> rusqlite::Result<Vec<(u32, String)>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT uid, references_ FROM messages \
+                 WHERE account_id = ?1 AND folder_path = ?2 AND uid < ?3 \
+                   AND instr(trim(references_), ' ') = 0 \
+                   AND (references_ <> '' OR subject LIKE 'Re:%' OR subject LIKE 'Fwd:%' \
+                        OR subject LIKE 'Fw:%' OR subject LIKE 'Aw:%' OR subject LIKE 'Sv:%') \
+                 ORDER BY uid DESC LIMIT ?4",
+            )?;
+            let rows = stmt.query_map(
+                params![account_id, folder_path, below_uid, limit as i64],
+                |row| Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?)),
+            )?;
+            rows.collect()
+        };
+        run().unwrap_or_default()
+    }
+
+    pub fn set_references(&self, account_id: u32, folder_path: &str, uid: u32, references: &str) {
+        let _ = self.conn.execute(
+            "UPDATE messages SET references_ = ?1 \
+             WHERE account_id = ?2 AND folder_path = ?3 AND uid = ?4",
+            params![references, account_id, folder_path, uid],
+        );
+    }
+
+    /// How far down a folder's References repair has walked: the uid to look
+    /// below next, and whether the pass has finished. A folder never touched
+    /// starts at the top (`u32::MAX`), so the first chunk is its newest mail.
+    pub fn refs_repair_state(&self, account_id: u32, folder_path: &str) -> (u32, bool) {
+        self.conn
+            .query_row(
+                "SELECT next_uid, done FROM refs_repair \
+                 WHERE account_id = ?1 AND folder_path = ?2",
+                params![account_id, folder_path],
+                |row| Ok((row.get::<_, u32>(0)?, row.get::<_, i64>(1)? != 0)),
+            )
+            .unwrap_or((u32::MAX, false))
+    }
+
+    pub fn set_refs_repair_state(
+        &self,
+        account_id: u32,
+        folder_path: &str,
+        next_uid: u32,
+        done: bool,
+    ) {
+        let _ = self.conn.execute(
+            "INSERT INTO refs_repair (account_id, folder_path, next_uid, done) \
+             VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(account_id, folder_path) DO UPDATE SET next_uid = ?3, done = ?4",
+            params![account_id, folder_path, next_uid, done as i64],
+        );
     }
 
     pub fn load_body(&self, account_id: u32, folder_path: &str, uid: u32) -> Option<String> {
@@ -1332,6 +1414,61 @@ mod tests {
     /// matched every message whose References merely contained that digit, and
     /// one click dragged thousands of messages into the reader — each of them a
     /// body to fetch and re-render. That is worth a test.
+    /// The repair asks the server only about replies. A message that opens a
+    /// conversation has no References and never will, so fetching its header
+    /// buys nothing — and on a real cache that distinction is the difference
+    /// between 68k messages and 4k.
+    #[test]
+    fn only_replies_are_worth_repairing() {
+        let c = Cache::in_memory();
+        // A reply whose References is the single id an ENVELOPE gives.
+        c.conn.execute(
+            "INSERT INTO messages (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, message_id, references_) \
+             VALUES (1,'INBOX',10,'X','','Re: hello','',1,0,0,0,'a@x','parent@x')",
+            [],
+        ).unwrap();
+        // A thread opener: no prefix, no references. Nothing to find.
+        c.conn.execute(
+            "INSERT INTO messages (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, message_id, references_) \
+             VALUES (1,'INBOX',11,'X','','hello','',1,0,0,0,'b@x','')",
+            [],
+        ).unwrap();
+        // Already complete: two ids, from a full header parse.
+        c.conn.execute(
+            "INSERT INTO messages (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, message_id, references_) \
+             VALUES (1,'INBOX',12,'X','','Re: hello','',1,0,0,0,'c@x','root@x parent@x')",
+            [],
+        ).unwrap();
+
+        let want = c.uids_needing_references(1, "INBOX", u32::MAX, 100);
+        let uids: Vec<u32> = want.iter().map(|(u, _)| *u).collect();
+        assert_eq!(uids, vec![10], "only the thin reply");
+    }
+
+    /// The watermark walks strictly down, so a message with nothing to find is
+    /// asked about once rather than on every pass forever.
+    #[test]
+    fn the_repair_walks_downwards_and_finishes() {
+        let c = Cache::in_memory();
+        for uid in [10u32, 20, 30] {
+            c.conn.execute(
+                "INSERT INTO messages (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, message_id, references_) \
+                 VALUES (1,'INBOX',?1,'X','','Re: t','',1,0,0,0,'m@x','p@x')",
+                params![uid],
+            ).unwrap();
+        }
+        assert_eq!(c.refs_repair_state(1, "INBOX"), (u32::MAX, false), "starts at the top");
+        let first = c.uids_needing_references(1, "INBOX", u32::MAX, 2);
+        assert_eq!(first.iter().map(|(u, _)| *u).collect::<Vec<_>>(), vec![30, 20], "newest first");
+
+        c.set_refs_repair_state(1, "INBOX", 20, false);
+        let next = c.uids_needing_references(1, "INBOX", 20, 2);
+        assert_eq!(next.iter().map(|(u, _)| *u).collect::<Vec<_>>(), vec![10], "strictly below");
+
+        c.set_refs_repair_state(1, "INBOX", 0, true);
+        assert!(c.refs_repair_state(1, "INBOX").1, "and it finishes");
+    }
+
     #[test]
     fn a_conversation_holds_only_messages_that_reference_it() {
         let c = Cache::in_memory();
