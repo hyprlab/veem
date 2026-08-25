@@ -26,6 +26,11 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
         "thecalamityjoe87",
         "The option to always load remote content",
     ),
+    (
+        "Alexander Lubovenko",
+        "typedev",
+        "Gmail conversations: one message per thread, one fetch for its bodies",
+    ),
 ];
 
 /// Width of the collapsed, icon-only sidebar rail.
@@ -1955,7 +1960,7 @@ impl SimpleComponent for AppModel {
                         // holds its spinner.
                         self.queue_thread_render(&sender);
                         // Fetch the bodies we don't have yet (primary first via order).
-                        let to_load: Vec<(u32, u32, u32, String)> = self
+                        let to_load: Vec<MissingBody> = self
                             .current_thread
                             .iter()
                             .filter(|tm| tm.body.is_empty())
@@ -1964,8 +1969,8 @@ impl SimpleComponent for AppModel {
                                     .map(|p| (tm.account_id, tm.id, tm.uid, p))
                             })
                             .collect();
-                        for (aid, mid, uid, path) in to_load {
-                            self.send_to(aid, MailRequest::LoadBody { message_id: mid, path, uid });
+                        for ((aid, path), items) in batch_bodies_by_folder(to_load) {
+                            self.send_to(aid, MailRequest::LoadBodies { items, path });
                         }
                         self.show_thread();
                     }
@@ -4671,6 +4676,7 @@ impl AppModel {
         } else {
             self.current_thread.clone()
         };
+        let messages = dedupe_label_copies(messages, &conv, current.folder_id);
         let mut added = Vec::new();
         for mut r in messages {
             if conv.iter().any(|m| m.folder_id == r.folder_id && m.uid == r.uid) {
@@ -4705,14 +4711,14 @@ impl AppModel {
         // period so they join the first paint instead of causing a second.
         self.thread_opened_at = Some(std::time::Instant::now());
         self.current_thread = conv;
-        let to_load: Vec<(u32, u32, u32, String)> = self
+        let to_load: Vec<MissingBody> = self
             .current_thread
             .iter()
             .filter(|tm| tm.body.is_empty())
             .filter_map(|tm| self.resolve_folder_path(tm).map(|p| (tm.account_id, tm.id, tm.uid, p)))
             .collect();
-        for (aid, mid, uid, path) in to_load {
-            self.send_to(aid, MailRequest::LoadBody { message_id: mid, path, uid });
+        for ((aid, path), items) in batch_bodies_by_folder(to_load) {
+            self.send_to(aid, MailRequest::LoadBodies { items, path });
         }
     }
 
@@ -6536,6 +6542,84 @@ fn build_search_pool(cache: &HashMap<(u32, u32), Vec<Message>>) -> Vec<Message> 
     cache.values().flatten().cloned().collect()
 }
 
+/// A conversation member still waiting for its body:
+/// `(account_id, message_id, uid, folder_path)`.
+type MissingBody = (u32, u32, u32, String);
+
+/// One `LoadBodies` request: the `(account_id, folder_path)` it goes to, and the
+/// `(message_id, uid)` of every member it covers.
+type BodyBatch = ((u32, String), Vec<(u32, u32)>);
+
+/// Whether two rows are the same mail stored twice, rather than two messages.
+///
+/// Message-ID is the identity, but it is written by whoever sent the mail and
+/// spam reuses one across unrelated messages — so sender and timestamp have to
+/// agree as well before one copy is allowed to stand for another. Gmail's label
+/// copies agree on all three. Subject is deliberately left out: a re-decoded
+/// encoded-word can rewrite it under one label and not another.
+fn same_mail(a: &Message, b: &Message) -> bool {
+    !a.message_id.is_empty()
+        && a.message_id == b.message_id
+        && a.from_addr == b.from_addr
+        && a.timestamp == b.timestamp
+}
+
+/// Keep one copy of each message, dropping the rest of its labels.
+///
+/// Gmail exposes labels as IMAP folders, so a single message sits in INBOX,
+/// All Mail and Important at once — three folder/UID pairs carrying one
+/// Message-ID. A conversation that dedupes on those pairs alone therefore shows
+/// every copy: a six-message thread renders as eighteen. On a real cache 1210 of
+/// this account's 1212 messages are labelled that way, so this is the normal
+/// case for Gmail, not an edge one.
+///
+/// The copy from the folder the reader is showing wins, so the "from folder X"
+/// label and the actions on a message refer to the mail actually on screen. A
+/// message with no Message-ID can't be matched this way and is left alone.
+fn dedupe_label_copies(messages: Vec<Message>, conv: &[Message], shown_folder: u32) -> Vec<Message> {
+    let mut out: Vec<Message> = Vec::new();
+    for r in messages {
+        if r.message_id.is_empty() {
+            out.push(r);
+            continue;
+        }
+        if conv.iter().any(|m| same_mail(m, &r)) {
+            continue; // the conversation already holds this mail under some label
+        }
+        match out.iter().position(|m| same_mail(m, &r)) {
+            Some(i) => {
+                if out[i].folder_id != shown_folder && r.folder_id == shown_folder {
+                    out[i] = r;
+                }
+            }
+            None => out.push(r),
+        }
+    }
+    out
+}
+
+/// Group a conversation's missing bodies into one request per (account, folder).
+///
+/// Every member asked for on its own is a round trip each, and each arrival
+/// re-renders the reader; `LoadBodies` fetches a whole UID set at once. Members
+/// are kept in the order given — the primary is first, so it is first in its
+/// batch and renders first — and a conversation that spans folders (or, in the
+/// unified inbox, accounts) splits into one batch per folder rather than losing
+/// the members that don't fit the first one.
+fn batch_bodies_by_folder(to_load: Vec<MissingBody>) -> Vec<BodyBatch> {
+    let mut batches: Vec<BodyBatch> = Vec::new();
+    for (account_id, message_id, uid, path) in to_load {
+        match batches
+            .iter_mut()
+            .find(|((a, p), _)| *a == account_id && *p == path)
+        {
+            Some((_, items)) => items.push((message_id, uid)),
+            None => batches.push(((account_id, path), vec![(message_id, uid)])),
+        }
+    }
+    batches
+}
+
 /// Where to move the reader when its message disappeared from a sync (deleted or
 /// moved on another device): whatever now sits in the slot it occupied.
 ///
@@ -6558,6 +6642,109 @@ fn next_after_vanish(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A conversation member as the related-lookup hands it over: what matters
+    /// here is which folder it came from and what Message-ID it carries.
+    fn labelled(folder_id: u32, uid: u32, message_id: &str) -> Message {
+        Message {
+            id: uid,
+            account_id: 1,
+            folder_id,
+            uid,
+            from_name: String::new(),
+            from_addr: String::new(),
+            to: String::new(),
+            cc: String::new(),
+            subject: String::new(),
+            preview: String::new(),
+            body: String::new(),
+            date: String::new(),
+            timestamp: 0,
+            unread: false,
+            starred: false,
+            has_attachment: false,
+            message_id: message_id.to_string(),
+            references: String::new(),
+        }
+    }
+
+    #[test]
+    fn one_gmail_message_under_three_labels_joins_the_conversation_once() {
+        // INBOX = 1, All Mail = 2, Important = 3 — the same mail in all three,
+        // which is how 1210 of one real account's 1212 messages are stored.
+        let related = vec![
+            labelled(2, 500, "<a@example.com>"),
+            labelled(3, 900, "<a@example.com>"),
+            labelled(1, 42, "<a@example.com>"),
+            labelled(2, 501, "<b@example.com>"),
+        ];
+        let kept = dedupe_label_copies(related, &[], 1);
+        assert_eq!(kept.len(), 2, "two messages, not four copies");
+        let a = kept.iter().find(|m| m.message_id == "<a@example.com>").unwrap();
+        assert_eq!(
+            (a.folder_id, a.uid),
+            (1, 42),
+            "the copy from the folder on screen wins, whatever order it arrived in"
+        );
+    }
+
+    #[test]
+    fn a_label_copy_of_a_message_already_shown_is_dropped() {
+        let conv = vec![labelled(1, 42, "<a@example.com>")];
+        let kept = dedupe_label_copies(vec![labelled(2, 500, "<a@example.com>")], &conv, 1);
+        assert!(kept.is_empty(), "the conversation already holds this mail");
+    }
+
+    #[test]
+    fn a_reused_message_id_is_not_treated_as_the_same_mail() {
+        let mut spam = labelled(2, 900, "<a@example.com>");
+        spam.from_addr = "spammer@fake.example".into();
+        let mut mine = labelled(1, 42, "<a@example.com>");
+        mine.from_addr = "me@real.example".into();
+
+        let kept = dedupe_label_copies(vec![mine, spam], &[], 1);
+        assert_eq!(kept.len(), 2, "a shared id from another sender is other mail");
+    }
+
+    #[test]
+    fn messages_without_a_message_id_are_never_merged_together() {
+        // Two distinct messages that carry no Message-ID must stay two: there is
+        // nothing to match them on, and folding them would lose one.
+        let kept = dedupe_label_copies(vec![labelled(1, 7, ""), labelled(1, 8, "")], &[], 1);
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn a_conversation_in_one_folder_becomes_a_single_fetch() {
+        let batches = batch_bodies_by_folder(vec![
+            (1, 10, 100, "INBOX".into()),
+            (1, 11, 101, "INBOX".into()),
+            (1, 12, 102, "INBOX".into()),
+        ]);
+        assert_eq!(batches.len(), 1, "one folder is one round trip");
+        assert_eq!(batches[0].0, (1, "INBOX".to_string()));
+        // Order is the thread's, so the primary is fetched and rendered first.
+        assert_eq!(batches[0].1, vec![(10, 100), (11, 101), (12, 102)]);
+    }
+
+    #[test]
+    fn members_from_other_folders_and_accounts_get_their_own_fetch() {
+        // A conversation pulled together across Inbox and Sent, plus a second
+        // account: batching must not drop the members that don't share the
+        // first one's folder.
+        let batches = batch_bodies_by_folder(vec![
+            (1, 10, 100, "INBOX".into()),
+            (1, 11, 55, "Sent".into()),
+            (1, 12, 101, "INBOX".into()),
+            (2, 13, 7, "INBOX".into()),
+        ]);
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[0], ((1, "INBOX".to_string()), vec![(10, 100), (12, 101)]));
+        assert_eq!(batches[1], ((1, "Sent".to_string()), vec![(11, 55)]));
+        assert_eq!(batches[2], ((2, "INBOX".to_string()), vec![(13, 7)]));
+        let members: usize = batches.iter().map(|(_, items)| items.len()).sum();
+        assert_eq!(members, 4, "every member is still requested");
+    }
 
     #[test]
     fn a_vanished_message_never_throws_you_to_the_top() {

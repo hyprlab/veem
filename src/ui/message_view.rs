@@ -74,6 +74,7 @@ pub struct MessageView {
     /// False from when a render starts until the WebView reports it finished
     /// loading — a themed cover hides the WebView's white inter-document gap.
     webview_ready: bool,
+    /// Which message the document currently on screen was rendered for, so an
     webview: webkit6::WebView,
     /// Bumped per render: each load gets a unique base URI so WebKit treats it
     /// as a fresh document and re-fetches resources (reusing `about:blank` does
