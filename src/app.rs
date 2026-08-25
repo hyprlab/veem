@@ -6234,6 +6234,21 @@ type MissingBody = (u32, u32, u32, String);
 /// One `LoadBodies` request: the `(account_id, folder_path)` it goes to, and the
 /// `(message_id, uid)` of every member it covers.
 type BodyBatch = ((u32, String), Vec<(u32, u32)>);
+
+/// Whether two rows are the same mail stored twice, rather than two messages.
+///
+/// Message-ID is the identity, but it is written by whoever sent the mail and
+/// spam reuses one across unrelated messages — so sender and timestamp have to
+/// agree as well before one copy is allowed to stand for another. Gmail's label
+/// copies agree on all three. Subject is deliberately left out: a re-decoded
+/// encoded-word can rewrite it under one label and not another.
+fn same_mail(a: &Message, b: &Message) -> bool {
+    !a.message_id.is_empty()
+        && a.message_id == b.message_id
+        && a.from_addr == b.from_addr
+        && a.timestamp == b.timestamp
+}
+
 /// Keep one copy of each message, dropping the rest of its labels.
 ///
 /// Gmail exposes labels as IMAP folders, so a single message sits in INBOX,
@@ -6253,10 +6268,10 @@ fn dedupe_label_copies(messages: Vec<Message>, conv: &[Message], shown_folder: u
             out.push(r);
             continue;
         }
-        if conv.iter().any(|m| m.message_id == r.message_id) {
+        if conv.iter().any(|m| same_mail(m, &r)) {
             continue; // the conversation already holds this mail under some label
         }
-        match out.iter().position(|m| m.message_id == r.message_id) {
+        match out.iter().position(|m| same_mail(m, &r)) {
             Some(i) => {
                 if out[i].folder_id != shown_folder && r.folder_id == shown_folder {
                     out[i] = r;
@@ -6363,6 +6378,17 @@ mod tests {
         let conv = vec![labelled(1, 42, "<a@example.com>")];
         let kept = dedupe_label_copies(vec![labelled(2, 500, "<a@example.com>")], &conv, 1);
         assert!(kept.is_empty(), "the conversation already holds this mail");
+    }
+
+    #[test]
+    fn a_reused_message_id_is_not_treated_as_the_same_mail() {
+        let mut spam = labelled(2, 900, "<a@example.com>");
+        spam.from_addr = "spammer@fake.example".into();
+        let mut mine = labelled(1, 42, "<a@example.com>");
+        mine.from_addr = "me@real.example".into();
+
+        let kept = dedupe_label_copies(vec![mine, spam], &[], 1);
+        assert_eq!(kept.len(), 2, "a shared id from another sender is other mail");
     }
 
     #[test]

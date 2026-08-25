@@ -589,14 +589,27 @@ impl Cache {
     /// a miss on one copy is answered from another instead of from the network.
     /// On a real cache 176 messages have a body under only some of their labels,
     /// and 31 have their attachments downloaded under only some.
+    ///
+    /// Copies must agree on sender and timestamp as well as Message-ID. The id is
+    /// supposed to be unique, but it is written by whoever sent the mail, and
+    /// spam and some list software reuse one across genuinely different messages
+    /// — where serving one message's body for another would be worse than the
+    /// cache miss this avoids. Gmail's own copies agree on all three (verified
+    /// across a real 8300-message cache: no Message-ID there covers two
+    /// different senders, subjects or timestamps), so the fallback still fires
+    /// where it was meant to. Subject is deliberately not compared: a re-decoded
+    /// encoded-word can rewrite it under one label and not another.
     fn sibling_copies(&self, account_id: u32, folder_path: &str, uid: u32) -> Vec<(String, u32)> {
         let run = || -> rusqlite::Result<Vec<(String, u32)>> {
             let mut stmt = self.conn.prepare(
-                "SELECT folder_path, uid FROM messages \
-                 WHERE account_id = ?1 AND message_id != '' \
-                   AND message_id = (SELECT message_id FROM messages \
-                                     WHERE account_id = ?1 AND folder_path = ?2 AND uid = ?3) \
-                   AND NOT (folder_path = ?2 AND uid = ?3)",
+                "SELECT m.folder_path, m.uid FROM messages m \
+                 JOIN messages orig ON orig.account_id = ?1 \
+                                   AND orig.folder_path = ?2 AND orig.uid = ?3 \
+                 WHERE m.account_id = ?1 AND m.message_id != '' \
+                   AND m.message_id = orig.message_id \
+                   AND m.from_addr = orig.from_addr \
+                   AND m.ts = orig.ts \
+                   AND NOT (m.folder_path = ?2 AND m.uid = ?3)",
             )?;
             let rows = stmt.query_map(params![account_id, folder_path, uid], |row| {
                 Ok((row.get(0)?, row.get(1)?))
@@ -1289,6 +1302,18 @@ mod tests {
     }
 
     /// Insert a message carrying threading headers.
+    /// Like [`add_threaded`], but with a sender — for the checks that a shared
+    /// Message-ID alone is not enough to call two rows the same mail.
+    fn add_from(c: &Cache, folder: &str, uid: u32, ts: i64, msgid: &str, from: &str) {
+        c.conn
+            .execute(
+                "INSERT INTO messages (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, message_id, references_) \
+                 VALUES (1, ?1, ?2, 'X', ?5, 'S', '', ?3, 0, 0, 0, ?4, '')",
+                params![folder, uid, ts, msgid, from],
+            )
+            .unwrap();
+    }
+
     fn add_threaded(c: &Cache, folder: &str, uid: u32, ts: i64, msgid: &str, refs: &str) {
         c.conn
             .execute(
@@ -1375,6 +1400,25 @@ mod tests {
             None,
             "an empty Message-ID matches nothing, not everything"
         );
+    }
+
+    /// Message-ID is written by the sender, and spam reuses one across unrelated
+    /// mail. Serving one message's body for another would be worse than the
+    /// cache miss the fallback exists to avoid, so sender and timestamp have to
+    /// agree too.
+    #[test]
+    fn a_reused_message_id_from_a_different_sender_answers_for_nothing() {
+        let c = Cache::in_memory();
+        add_from(&c, "INBOX", 42, 500, "dup@x", "me@real.example");
+        add_from(&c, "Archive", 900, 500, "dup@x", "spammer@fake.example");
+        c.save_body(1, "Archive", 900, "not the same mail");
+        assert_eq!(c.load_body(1, "INBOX", 42), None);
+
+        // Same sender, but a different message that happens to reuse the id.
+        add_from(&c, "INBOX", 43, 500, "dup2@x", "me@real.example");
+        add_from(&c, "Archive", 901, 900, "dup2@x", "me@real.example");
+        c.save_body(1, "Archive", 901, "a different day's mail");
+        assert_eq!(c.load_body(1, "INBOX", 43), None);
     }
 
     #[test]

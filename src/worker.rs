@@ -58,6 +58,16 @@ const PREFETCH_LIMIT: usize = 25;
 const GALLERY_LIMIT: u32 = 300;
 const GALLERY_DATA_CAP: u64 = 6 * 1024 * 1024;
 
+/// How many messages one body fetch asks for.
+///
+/// `BODY.PEEK[]` returns whole messages, attachments included, so a whole
+/// conversation in one command — up to `THREAD_MEMBER_LIMIT` members — can be
+/// tens of megabytes arriving as a single response: nothing on screen until all
+/// of it lands, and nothing to show for it if the connection drops on the way.
+/// Ten still cuts the round trips to a fifth of what asking one at a time cost,
+/// while the reader fills in as each batch arrives.
+const BODY_FETCH_BATCH: usize = 10;
+
 /// Pre-download message *bodies* for this many of the most recent messages in a
 /// synced folder, so new mail opens instantly with no network wait. Bodies are
 /// small, so this stays cheap; older messages load on demand.
@@ -862,45 +872,60 @@ async fn run_imap(
             },
 
             MailRequest::LoadBodies { path, .. } => {
-                let uids: Vec<u32> = pending_bodies.iter().map(|(_, uid)| *uid).collect();
-                match load_bodies_retry(&mut session, &account, &path, &uids).await {
-                    Ok(mut fetched) => {
-                        for (message_id, uid) in &pending_bodies {
-                            let Some((body, check, has_attachments)) = fetched.remove(uid) else {
-                                // The server answered the set but not this UID —
-                                // the message is gone from the folder. Say so in
-                                // place, rather than leaving one member of the
-                                // conversation blank forever.
+                for group in pending_bodies.chunks(BODY_FETCH_BATCH) {
+                    // A failed batch leaves no session behind (the retry only
+                    // hands one back on success), so the rest of the conversation
+                    // needs one before it can go on.
+                    if session.is_none() {
+                        session = connect(&account).await.ok();
+                    }
+                    if session.is_none() {
+                        break; // still offline; what's left loads on reopen
+                    }
+                    let uids: Vec<u32> = group.iter().map(|(_, uid)| *uid).collect();
+                    match load_bodies_retry(&mut session, &account, &path, &uids).await {
+                        Ok(mut fetched) => {
+                            for (message_id, uid) in group {
+                                let Some((body, check, has_attachments)) = fetched.remove(uid)
+                                else {
+                                    // The server answered the set but not this
+                                    // UID — the message is gone from the folder.
+                                    // Say so in place, rather than leaving one
+                                    // member of the conversation blank forever.
+                                    emit(WorkerEvent::Body {
+                                        message_id: *message_id,
+                                        path: path.clone(),
+                                        body: "(empty message)".to_string(),
+                                    });
+                                    continue;
+                                };
+                                if let Some(c) = cache.as_ref() {
+                                    c.save_body(account_id, &path, *uid, &body);
+                                    c.save_sender_check(account_id, &path, *uid, &check);
+                                    c.set_has_attachment(account_id, &path, *uid, has_attachments);
+                                }
                                 emit(WorkerEvent::Body {
                                     message_id: *message_id,
                                     path: path.clone(),
-                                    body: "(empty message)".to_string(),
+                                    body,
                                 });
-                                continue;
-                            };
-                            if let Some(c) = cache.as_ref() {
-                                c.save_body(account_id, &path, *uid, &body);
-                                c.save_sender_check(account_id, &path, *uid, &check);
-                                c.set_has_attachment(account_id, &path, *uid, has_attachments);
+                                emit(WorkerEvent::SenderChecked {
+                                    message_id: *message_id,
+                                    check,
+                                });
+                                emit(if has_attachments {
+                                    WorkerEvent::HasAttachments { message_id: *message_id }
+                                } else {
+                                    WorkerEvent::NoAttachments { message_id: *message_id }
+                                });
                             }
-                            emit(WorkerEvent::Body {
-                                message_id: *message_id,
-                                path: path.clone(),
-                                body,
-                            });
-                            emit(WorkerEvent::SenderChecked { message_id: *message_id, check });
-                            emit(if has_attachments {
-                                WorkerEvent::HasAttachments { message_id: *message_id }
-                            } else {
-                                WorkerEvent::NoAttachments { message_id: *message_id }
+                        }
+                        Err(e) => {
+                            emit(WorkerEvent::Error {
+                                text: format!("Could not load conversation: {e}"),
+                                connectivity: true,
                             });
                         }
-                    }
-                    Err(e) => {
-                        emit(WorkerEvent::Error {
-                            text: format!("Could not load conversation: {e}"),
-                            connectivity: true,
-                        });
                     }
                 }
             }
