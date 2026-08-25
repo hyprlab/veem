@@ -58,6 +58,10 @@ pub struct MessageView {
     /// theme rather than the app's. Reading a light message in a dark app used
     /// to mean a dark spinner giving way to a white page.
     cover_provider: gtk::CssProvider,
+    /// Fingerprint of what the WebView is currently showing. Re-selecting a
+    /// message that renders to the same document skips the load entirely —
+    /// every load blanks the view for an instant, however briefly.
+    shown_fingerprint: Option<u64>,
     /// True while the body is being fetched (show a spinner instead).
     loading: bool,
     /// False from when a render starts until the WebView reports it finished
@@ -370,16 +374,14 @@ impl Component for MessageView {
                     // page sits on it — the spinner box is centred and paints
                     // only its own few square inches.
                     add_css_class: "reader-cover",
+                    // Both pages sit on that same ground, so a short dissolve
+                    // between them reads as the message arriving rather than as
+                    // the hard cut a stack does by default.
+                    set_transition_type: gtk::StackTransitionType::Crossfade,
+                    set_transition_duration: 120,
                     set_vexpand: true,
                     #[watch]
                     set_visible_child_name: model.body_page(),
-
-                    // Themed cover shown while the WebView loads, so its white
-                    // inter-document gap is never visible.
-                    add_named[Some("blank")] = &gtk::Box {
-                        set_vexpand: true,
-                        set_hexpand: true,
-                    },
 
                     add_named[Some("loading")] = &gtk::Box {
                         add_css_class: "reader-loading",
@@ -470,6 +472,7 @@ impl Component for MessageView {
             account_name: None,
             chip_provider,
             cover_provider,
+            shown_fingerprint: None,
             loading: false,
             webview_ready: false,
             webview,
@@ -816,7 +819,18 @@ impl MessageView {
     fn render(&mut self) {
         let dark = self.effective_dark();
         self.apply_webview_bg(dark);
-        // Hide the WebView behind the themed cover until this load finishes.
+        // Already showing exactly this — returning to a conversation, or a
+        // re-render nothing changed. Loading it again would only blank the view
+        // and paint the same pixels back.
+        let fingerprint = self.render_fingerprint(dark);
+        if self.webview_ready && self.shown_fingerprint == Some(fingerprint) {
+            return;
+        }
+        self.shown_fingerprint = Some(fingerprint);
+        // Covered until the new document has actually painted. The cover is the
+        // spinner page, which is very likely already up: a conversation shows it
+        // from the moment it is opened, so it simply stays until there is
+        // something to replace it — one transition, not three.
         self.webview_ready = false;
         let html = self.document_html(dark);
         let n = self.seq.get().wrapping_add(1);
@@ -828,16 +842,41 @@ impl MessageView {
     /// Which body-stack page to show: spinner while fetching, themed cover while
     /// the WebView loads, then the rendered message(s).
     fn body_page(&self) -> &'static str {
-        if self.loading {
+        // A document that has been handed over but hasn't painted yet is still
+        // loading as far as the reader is concerned. Showing the previous
+        // message in the meantime, or a bare cover between two spinners, is the
+        // flash this avoids.
+        if self.loading || !self.webview_ready {
             "loading"
-        } else if !self.webview_ready {
-            "blank"
         } else {
             "body"
         }
     }
 
     /// The wrapper document for what is currently on screen.
+    /// Everything the rendered document depends on, in one number. Ordered by
+    /// the thread so it is stable — the sets it consults are read through it
+    /// rather than iterated, whose order is not.
+    fn render_fingerprint(&self, dark: bool) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        dark.hash(&mut h);
+        self.remote_allowed.hash(&mut h);
+        self.thread.len().hash(&mut h);
+        for m in &self.thread {
+            let key = (m.account_id, m.id);
+            key.hash(&mut h);
+            m.unread.hash(&mut h);
+            m.from_name.hash(&mut h);
+            m.from_addr.hash(&mut h);
+            m.body.hash(&mut h);
+            m.datetime_full().hash(&mut h);
+            self.no_autoread.contains(&key).hash(&mut h);
+            self.folder_labels.get(&key).hash(&mut h);
+        }
+        h.finish()
+    }
+
     fn document_html(&self, dark: bool) -> String {
         Self::conversation_document(
             &self.thread,
