@@ -62,6 +62,11 @@ pub struct MessageView {
     /// message that renders to the same document skips the load entirely —
     /// every load blanks the view for an instant, however briefly.
     shown_fingerprint: Option<u64>,
+    /// What each message's frame measured last time it was shown, so reopening a
+    /// conversation lays out right away instead of settling into place.
+    frame_heights: std::collections::HashMap<(u32, u32), u32>,
+    /// This conversation came ready-made, so there is nothing to cover.
+    instant: bool,
     /// True while the body is being fetched (show a spinner instead).
     loading: bool,
     /// False from when a render starts until the WebView reports it finished
@@ -121,6 +126,11 @@ pub enum MessageViewInput {
         /// Boxed: a `Message` inline here would double the size of every message
         /// this component sends.
         primary: Option<Box<Message>>,
+        /// The app already had this conversation assembled, so the reader has
+        /// nothing to wait for: it swaps the document in place rather than
+        /// covering the view, which is what put a spinner on every return to a
+        /// thread it had shown minutes before.
+        instant: bool,
         /// Labels for conversation messages that live in another folder, keyed by
         /// (account, message id) — "Sent" beside a reply of yours read from the
         /// Inbox. Messages from the folder on screen aren't in here.
@@ -151,6 +161,9 @@ pub enum MessageViewInput {
     /// conversation is opened again, rather than clearing it the moment the
     /// message happens to be in view.
     SuppressAutoRead { account_id: u32, id: u32 },
+    /// A message's frame measured this tall, so reopening it can lay out at that
+    /// height instead of settling into it.
+    FrameSized { account_id: u32, id: u32, height: u32 },
     /// One conversation message has been scrolled all the way through, so it
     /// has been read.
     MarkSeen { account_id: u32, id: u32 },
@@ -473,6 +486,8 @@ impl Component for MessageView {
             chip_provider,
             cover_provider,
             shown_fingerprint: None,
+            frame_heights: std::collections::HashMap::new(),
+            instant: false,
             loading: false,
             webview_ready: false,
             webview,
@@ -482,11 +497,18 @@ impl Component for MessageView {
             content_dark: None,
         };
 
-        // Reveal the WebView only once it's finished loading the document.
+        // The document being loaded is not the same as it being ready to look at:
+        // each message body is a frame that loads afterwards and is then sized
+        // from its placeholder height, so revealing here shows every card at the
+        // wrong size and then jumping. The page says when its frames have
+        // settled; this is only the backstop for a page that never does.
         let ready_sender = sender.clone();
         model.webview.connect_load_changed(move |_view, event| {
             if event == webkit6::LoadEvent::Finished {
-                ready_sender.input(MessageViewInput::Rendered);
+                let s = ready_sender.clone();
+                gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(600), move || {
+                    s.input(MessageViewInput::Rendered);
+                });
             }
         });
 
@@ -498,16 +520,29 @@ impl Component for MessageView {
                 // put there, but it is still parsed strictly.
                 use crate::ui::message_list::RowAction;
                 let msg = value.to_str().to_string();
-                let mut parts = msg.splitn(3, ':');
+                let mut parts = msg.splitn(4, ':');
                 let (Some(verb), Some(a), Some(i)) =
                     (parts.next(), parts.next(), parts.next())
                 else {
                     return;
                 };
+                let extra = parts.next();
                 let (Ok(account_id), Ok(id)) = (a.parse::<u32>(), i.parse::<u32>()) else {
                     return;
                 };
                 match verb {
+                    // Every message frame has loaded and been sized: the layout
+                    // has settled, so there is something worth revealing.
+                    "ready" => open_sender.input(MessageViewInput::Rendered),
+                    "size" => {
+                        if let Some(Ok(height)) = extra.map(|h| h.parse::<u32>()) {
+                            open_sender.input(MessageViewInput::FrameSized {
+                                account_id,
+                                id,
+                                height,
+                            });
+                        }
+                    }
                     "open" => open_sender.input(MessageViewInput::OpenHeader { account_id, id }),
                     "seen" => open_sender.input(MessageViewInput::MarkSeen { account_id, id }),
                     "reply" => open_sender.input(MessageViewInput::CardAction {
@@ -559,6 +594,7 @@ impl Component for MessageView {
                 loading,
                 primary,
                 folder_labels,
+                instant,
             } => {
                 let shown = primary.map(|p| *p).or_else(|| thread.first().cloned());
                 // A new message: the previous message's verdict must not linger
@@ -581,6 +617,7 @@ impl Component for MessageView {
                 self.gravatar = gravatar;
                 self.account_name = account_name;
                 self.loading = loading;
+                self.instant = instant;
                 if let Some(color) = &account_color {
                     let css = format!(
                         ".vireo-account-chip {{ background-color: {}; color: {}; }}",
@@ -700,6 +737,14 @@ impl Component for MessageView {
                 if !self.loading {
                     self.render();
                 }
+            }
+            MessageViewInput::FrameSized { account_id, id, height } => {
+                // A few hundred numbers at most, and only for messages actually
+                // opened; the store is trimmed rather than allowed to creep.
+                if self.frame_heights.len() > 512 {
+                    self.frame_heights.clear();
+                }
+                self.frame_heights.insert((account_id, id), height);
             }
             MessageViewInput::MarkSeen { account_id, id } => {
                 // Keep the local copy in step so a later re-render doesn't put
@@ -827,11 +872,18 @@ impl MessageView {
             return;
         }
         self.shown_fingerprint = Some(fingerprint);
-        // Covered until the new document has actually painted. The cover is the
-        // spinner page, which is very likely already up: a conversation shows it
-        // from the moment it is opened, so it simply stays until there is
-        // something to replace it — one transition, not three.
-        self.webview_ready = false;
+        // A conversation is covered until its new document has painted: the
+        // spinner is already up from the moment the thread was opened, so it
+        // simply stays until there is something to replace it — one transition,
+        // not three.
+        //
+        // A single message is not. It is one small frame that paints in a few
+        // milliseconds, and covering that is how a plain message ended up
+        // showing a spinner every time it was opened; the view keeps what it has
+        // until the new document replaces it.
+        if self.thread.len() > 1 && !self.instant {
+            self.webview_ready = false;
+        }
         let html = self.document_html(dark);
         let n = self.seq.get().wrapping_add(1);
         self.seq.set(n);
@@ -882,6 +934,7 @@ impl MessageView {
             &self.thread,
             &self.folder_labels,
             &self.no_autoread,
+            &self.frame_heights,
             !self.remote_allowed,
             dark,
         )
@@ -899,6 +952,7 @@ impl MessageView {
         thread: &[Message],
         folder_labels: &std::collections::HashMap<(u32, u32), String>,
         no_autoread: &std::collections::HashSet<(u32, u32)>,
+        heights: &std::collections::HashMap<(u32, u32), u32>,
         restrict: bool,
         dark: bool,
     ) -> String {
@@ -908,7 +962,13 @@ impl MessageView {
             let body = if m.body.trim().is_empty() {
                 "<div class=\"vireo-loading\">Loading…</div>".to_string()
             } else {
-                message_frame(&m.body, restrict, dark)
+                message_frame(
+                    &m.body,
+                    restrict,
+                    dark,
+                    (m.account_id, m.id),
+                    heights.get(&(m.account_id, m.id)).copied(),
+                )
             };
             if conversation {
                 sections.push_str(&format!(
@@ -1756,16 +1816,24 @@ fn ground_rgba(hex: &str) -> gtk::gdk::RGBA {
 
 const SIZE_SCRIPT: &str = "\
 function s(f){try{var d=f.contentDocument;if(!d)return;var b=d.body,e=d.documentElement;\
-var h=Math.max(b?b.scrollHeight:0,e?e.scrollHeight:0,b?b.offsetHeight:0);if(h>0)f.style.height=h+'px';}catch(_){}}\
+var h=Math.max(b?b.scrollHeight:0,e?e.scrollHeight:0,b?b.offsetHeight:0);\
+if(h>0){f.style.height=h+'px';\
+if(f.dataset.key&&f._h!==h){f._h=h;\
+try{window.webkit.messageHandlers.vireo.postMessage('size:'+f.dataset.key+':'+h);}catch(_){}}}}catch(_){}}\
 function init(f){s(f);try{var d=f.contentDocument;if(d){if(window.ResizeObserver&&d.body){new ResizeObserver(function(){s(f);}).observe(d.body);}\
 var im=d.images||[];for(var i=0;i<im.length;i++){if(!im[i].complete){im[i].addEventListener('load',function(){s(f);});im[i].addEventListener('error',function(){s(f);});}}}}catch(_){}\
 setTimeout(function(){s(f);},250);setTimeout(function(){s(f);},1000);}\
 function all(){return document.querySelectorAll('iframe.vireo-frame');}\
 document.addEventListener('DOMContentLoaded',function(){\
-var fs=all();\
-for(var i=0;i<fs.length;i++){(function(f){\
-if(f.contentDocument&&f.contentDocument.readyState==='complete'){init(f);}\
-f.addEventListener('load',function(){init(f);});})(fs[i]);}\
+var fs=all();var pend=fs.length,rdy=false;\
+function ready(){if(rdy)return;rdy=true;\
+try{window.webkit.messageHandlers.vireo.postMessage('ready:0:0');}catch(_){}}\
+if(!pend)ready();\
+for(var i=0;i<fs.length;i++){(function(f){var counted=false;\
+function tick(){if(counted)return;counted=true;if(--pend<=0)ready();}\
+if(f.contentDocument&&f.contentDocument.readyState==='complete'){init(f);tick();}\
+f.addEventListener('load',function(){init(f);tick();});})(fs[i]);}\
+setTimeout(ready,450);\
 var hs=document.querySelectorAll('.vireo-msg-hdr');\
 for(var j=0;j<hs.length;j++){hs[j].addEventListener('dblclick',function(){\
 try{window.webkit.messageHandlers.vireo.postMessage('open:'+this.dataset.key);}catch(_){}});}\
@@ -1787,7 +1855,7 @@ window.addEventListener('resize',function(){var fs=all();for(var i=0;i<fs.length
 /// One message body as a sandboxed iframe: its own document (so CSS can't leak to
 /// other messages) with no `allow-scripts` (so the email can't run JavaScript).
 /// `allow-same-origin` lets the wrapper script measure its height.
-fn message_frame(body: &str, restrict: bool, dark: bool) -> String {
+fn message_frame(body: &str, restrict: bool, dark: bool, key: (u32, u32), height: Option<u32>) -> String {
     let doc = body_html(body);
     let doc = if restrict { strip_remote(&doc) } else { doc };
     let doc = inject_csp(&doc, !restrict, dark);
@@ -1795,8 +1863,20 @@ fn message_frame(body: &str, restrict: bool, dark: bool) -> String {
         // `allow-same-origin` lets our wrapper script measure the frame height;
         // `allow-popups` lets `_blank` links reach the policy handler (which opens
         // them externally). No `allow-scripts`, so the email's own JS never runs.
-        "<iframe class=\"vireo-frame\" sandbox=\"allow-same-origin allow-popups\" srcdoc=\"{}\"></iframe>",
-        attr_escape(&doc)
+        //
+        // Opening at the height it had last time means the conversation lays out
+        // correctly on its first frame. Without it every card starts at the
+        // browser's default and jumps once its content is measured, which is a
+        // visible lurch on a thread that has simply been reopened.
+        "<iframe class=\"vireo-frame\" data-key=\"{aid}:{id}\"{style} \
+         sandbox=\"allow-same-origin allow-popups\" srcdoc=\"{doc}\"></iframe>",
+        aid = key.0,
+        id = key.1,
+        style = match height {
+            Some(h) => format!(" style=\"height:{h}px\""),
+            None => String::new(),
+        },
+        doc = attr_escape(&doc)
     )
 }
 
@@ -2136,6 +2216,7 @@ mod tests {
             &[first, second],
             &std::collections::HashMap::new(),
             &Default::default(),
+            &Default::default(),
             true,
             false,
         );
@@ -2167,6 +2248,7 @@ mod tests {
             &[first, second],
             &std::collections::HashMap::new(),
             &Default::default(),
+            &Default::default(),
             true,
             false,
         );
@@ -2196,6 +2278,7 @@ mod tests {
             &[read, unread],
             &std::collections::HashMap::new(),
             &Default::default(),
+            &Default::default(),
             true,
             false,
         );
@@ -2221,6 +2304,7 @@ mod tests {
             &[read, unread],
             &std::collections::HashMap::new(),
             &suppressed,
+            &Default::default(),
             true,
             false,
         );
@@ -2228,11 +2312,35 @@ mod tests {
         assert_eq!(doc.matches("class=\"vireo-end\"").count(), 0, "no sentinel: {doc}");
     }
 
+    /// A frame opens at the height it had last time, so a reopened conversation
+    /// lays out on its first frame rather than every card jumping once measured.
+    #[test]
+    fn a_known_frame_height_is_used_on_reopen() {
+        let a = msg_for_print();
+        let mut b = msg_for_print();
+        b.id = 2;
+        let heights: std::collections::HashMap<(u32, u32), u32> = [((1u32, 2u32), 640u32)].into();
+
+        let doc = MessageView::conversation_document(
+            &[a, b],
+            &Default::default(),
+            &Default::default(),
+            &heights,
+            true,
+            false,
+        );
+        assert!(doc.contains("style=\"height:640px\""), "known height used: {doc}");
+        assert_eq!(doc.matches("style=\"height:").count(), 1, "only the known one");
+        // Keyed per message, so a height can't be applied to the wrong frame.
+        assert!(doc.contains("data-key=\"1:2\""), "{doc}");
+    }
+
     #[test]
     fn a_single_message_is_not_drawn_as_a_card() {
         let doc = MessageView::conversation_document(
             &[msg_for_print()],
             &std::collections::HashMap::new(),
+            &Default::default(),
             &Default::default(),
             true,
             false,
@@ -2248,7 +2356,7 @@ mod tests {
         b.id = 2;
         b.folder_id = 3; // pulled in from Sent
         let labels = std::collections::HashMap::from([((1u32, 2u32), "Sent".to_string())]);
-        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), true, false);
+        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), &Default::default(), true, false);
         assert_eq!(
             doc.matches("vireo-folder").count(),
             // once in the stylesheet, once on the message that came from Sent —
@@ -2268,7 +2376,7 @@ mod tests {
         b.id = 2;
         let labels =
             std::collections::HashMap::from([((1u32, 2u32), "<img src=x onerror=alert(1)>".into())]);
-        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), true, false);
+        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), &Default::default(), true, false);
         assert!(!doc.contains("<img src=x"), "the label must be escaped, not rendered");
         assert!(doc.contains("&lt;img src=x"));
     }
@@ -2286,7 +2394,8 @@ mod tests {
         let mut b = msg_for_print();
         b.id = 2;
         // Two messages: the per-message headers only render in conversation mode.
-        let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), true, false);
+        let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), &Default::default(),
+            true, false);
 
         assert!(!doc.contains("<script>x=1"), "{doc}");
         assert!(!doc.contains("<img src=y"), "{doc}");
@@ -2300,7 +2409,8 @@ mod tests {
         a.from_name = "Ada".into();
         let mut b = msg_for_print();
         b.id = 2;
-        let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), true, false);
+        let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), &Default::default(),
+            true, false);
 
         // A nonce'd CSP, so an injected `<script>` or `onerror=` is refused by
         // the engine even if the escaping above ever regresses.
@@ -2328,6 +2438,7 @@ mod tests {
         let again =
             MessageView::conversation_document(
                 &[msg_for_print(), msg_for_print()],
+                &Default::default(),
                 &Default::default(),
                 &Default::default(),
                 true,
@@ -2402,13 +2513,13 @@ mod tests {
         // about, a frame built while remote content is disallowed carries the
         // restrictive policy. A detector miss costs a banner, not the blocking.
         let sneaky = r#"<img data-x="y" src="//tracker.example/p.gif">"#;
-        let frame = message_frame(sneaky, true, false);
+        let frame = message_frame(sneaky, true, false, (1, 1), None);
         assert!(frame.contains("img-src data: cid:"), "{frame}");
         assert!(!frame.contains("img-src http:"), "{frame}");
         assert!(!frame.contains("tracker.example"), "{frame}");
 
         // And once the user allows it, the same body renders untouched.
-        let allowed = message_frame(sneaky, false, false);
+        let allowed = message_frame(sneaky, false, false, (1, 1), None);
         assert!(allowed.contains("img-src http: https:"), "{allowed}");
         assert!(allowed.contains("tracker.example"), "{allowed}");
     }
@@ -2460,7 +2571,8 @@ mod tests {
         let mut b = msg_for_print();
         b.id = 2;
         b.body = "<p style=\"height:300px\">second</p>".into();
-        let html = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), true, false);
+        let html = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), &Default::default(),
+            true, false);
 
         let view = webkit6::WebView::new();
         let settings = webkit6::Settings::new();

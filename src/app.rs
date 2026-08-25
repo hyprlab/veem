@@ -4052,6 +4052,8 @@ impl AppModel {
             loading,
             primary: None, // a single message is its own primary
             folder_labels: HashMap::new(),
+            // A single message is one small frame; it is never covered anyway.
+            instant: true,
         });
         // After `Show`, which clears the outgoing message's verdict.
         if let Some(check) = stored_check {
@@ -4114,6 +4116,9 @@ impl AppModel {
             loading,
             folder_labels: self.thread_folder_labels(),
             primary: Some(Box::new(primary)),
+            // Nothing to wait for when the conversation was already assembled
+            // and its bodies are in hand.
+            instant: self.thread_painted && !loading,
         });
     }
 

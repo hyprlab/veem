@@ -409,6 +409,8 @@ impl MessageWindow {
             primary: None,
             folder_labels: std::collections::HashMap::new(),
             loading: self.loading,
+            // A popout shows one message; there is no conversation to cover.
+            instant: true,
         });
     }
 
