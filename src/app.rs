@@ -251,6 +251,16 @@ pub struct AppModel {
     /// has, the reader shows its spinner — opening a thread is a wait, however
     /// short, and showing the previous message meanwhile reads as a glitch.
     thread_painted: bool,
+    /// Conversations already assembled, keyed by the message that opens them.
+    /// Returning to a thread paints from here rather than re-running the
+    /// cross-folder lookup and re-gathering bodies: the wait belongs to the
+    /// first open, not to every one. Bounded — a conversation holds its
+    /// messages' bodies, which are not small.
+    thread_cache: HashMap<(u32, u32), Vec<Message>>,
+    /// Insertion order for `thread_cache`, oldest first.
+    thread_cache_order: Vec<(u32, u32)>,
+    /// Which conversation `current_thread` is, for storing it back.
+    thread_key: Option<(u32, u32)>,
     /// Whether conversation threads start expanded in the message list.
     threads_expanded: bool,
     /// How email content is themed (message content only, not the app UI).
@@ -1170,6 +1180,9 @@ impl SimpleComponent for AppModel {
             thread_opened_at: None,
             thread_related_pending: false,
             thread_painted: false,
+            thread_cache: HashMap::new(),
+            thread_cache_order: Vec::new(),
+            thread_key: None,
             threads_expanded: config::load_threads_expanded(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
@@ -1887,47 +1900,67 @@ impl SimpleComponent for AppModel {
                 }
 
                 if thread.len() > 1 {
-                    // Conversation: assemble the thread with any cached bodies,
-                    // request the rest, and render it as a scrollable conversation.
-                    let mut conv: Vec<Message> = Vec::with_capacity(thread.len());
-                    for tm in &thread {
-                        let mut tm = tm.clone();
-                        // The others keep their real unread state: each is marked
-                        // in the reader until it is scrolled through. Only the one
-                        // just opened is read outright.
-                        if tm.id == m.id && tm.account_id == account_id {
-                            tm.unread = false;
-                            tm.body = current.body.clone();
-                        } else if tm.body.is_empty() {
-                            if let Some(b) = self.body_cache.get(&(tm.account_id, tm.id)) {
-                                tm.body = b.clone();
+                    self.thread_key = Some((account_id, m.id));
+                    // Already assembled: paint it now. No lookup, no body
+                    // gathering, no spinner — returning to a thread shouldn't
+                    // cost what opening it did.
+                    if let Some(cached) = self.thread_cache.get(&(account_id, m.id)).cloned() {
+                        self.current_thread = cached;
+                        // The message just opened is read, whatever the stored
+                        // copy said when it was put away.
+                        for tm in self.current_thread.iter_mut() {
+                            if tm.id == m.id && tm.account_id == account_id {
+                                tm.unread = false;
+                                tm.body = current.body.clone();
                             }
                         }
-                        conv.push(tm);
+                        self.thread_painted = true;
+                        self.thread_related_pending = false;
+                        self.show_thread();
+                    } else {
+                        // Conversation: assemble the thread with any cached bodies,
+                        // request the rest, and render it as a scrollable conversation.
+                        let mut conv: Vec<Message> = Vec::with_capacity(thread.len());
+                        for tm in &thread {
+                            let mut tm = tm.clone();
+                            // The others keep their real unread state: each is marked
+                            // in the reader until it is scrolled through. Only the one
+                            // just opened is read outright.
+                            if tm.id == m.id && tm.account_id == account_id {
+                                tm.unread = false;
+                                tm.body = current.body.clone();
+                            } else if tm.body.is_empty() {
+                                if let Some(b) = self.body_cache.get(&(tm.account_id, tm.id)) {
+                                    tm.body = b.clone();
+                                }
+                            }
+                            conv.push(tm);
+                        }
+                        self.current_thread = conv;
+                        self.thread_opened_at = Some(std::time::Instant::now());
+                        self.thread_painted = false;
+                        // The paint happens once the conversation has settled: the
+                        // lookup answered and the bodies in. Until then the reader
+                        // holds its spinner.
+                        self.queue_thread_render(&sender);
+                        // Fetch the bodies we don't have yet (primary first via order).
+                        let to_load: Vec<(u32, u32, u32, String)> = self
+                            .current_thread
+                            .iter()
+                            .filter(|tm| tm.body.is_empty())
+                            .filter_map(|tm| {
+                                self.resolve_folder_path(tm)
+                                    .map(|p| (tm.account_id, tm.id, tm.uid, p))
+                            })
+                            .collect();
+                        for (aid, mid, uid, path) in to_load {
+                            self.send_to(aid, MailRequest::LoadBody { message_id: mid, path, uid });
+                        }
+                        self.show_thread();
                     }
-                    self.current_thread = conv;
-                    self.thread_opened_at = Some(std::time::Instant::now());
-                    self.thread_painted = false;
-                    // The paint happens once the conversation has settled: the
-                    // lookup answered and the bodies in. Until then the reader
-                    // holds its spinner.
-                    self.queue_thread_render(&sender);
-                    // Fetch the bodies we don't have yet (primary first via order).
-                    let to_load: Vec<(u32, u32, u32, String)> = self
-                        .current_thread
-                        .iter()
-                        .filter(|tm| tm.body.is_empty())
-                        .filter_map(|tm| {
-                            self.resolve_folder_path(tm)
-                                .map(|p| (tm.account_id, tm.id, tm.uid, p))
-                        })
-                        .collect();
-                    for (aid, mid, uid, path) in to_load {
-                        self.send_to(aid, MailRequest::LoadBody { message_id: mid, path, uid });
-                    }
-                    self.show_thread();
                 } else {
                     self.current_thread.clear();
+                    self.thread_key = None;
                     let display = current;
                     // Request the body FIRST so it renders before attachments — the
                     // worker processes requests in order, so the body must come first.
@@ -2887,6 +2920,9 @@ impl SimpleComponent for AppModel {
                 // Cache for instant display when revisiting this folder.
                 self.message_cache
                     .insert((account_id, folder_id), messages.clone());
+                // A sync can add a reply to a conversation already assembled, so
+                // what was stored is no longer necessarily the conversation.
+                self.forget_threads(account_id);
                 if self.unified {
                     // Accept only each account's inbox; merge all by recency.
                     if self.inbox_of(account_id).map(|f| f.id) == Some(folder_id) {
@@ -3058,6 +3094,7 @@ impl SimpleComponent for AppModel {
                 if let Some(n) = self.folder_unread.get_mut(&(account_id, folder_id)) {
                     *n = n.saturating_sub(1);
                 }
+                self.remember_thread();
                 self.push_unread_counts();
             }
 
@@ -3078,6 +3115,7 @@ impl SimpleComponent for AppModel {
                     }
                     self.thread_painted = true;
                     self.show_thread();
+                    self.remember_thread();
                 }
             }
 
@@ -5021,6 +5059,32 @@ impl AppModel {
 
     /// Re-emit the currently-visible folder/unified list from the caches, so
     /// in-place changes (e.g. mark-all-read) show without a server round-trip.
+    /// How many assembled conversations are kept. Each holds its messages'
+    /// bodies, so this is a memory budget as much as a cache size.
+    const THREAD_CACHE_MAX: usize = 8;
+
+    /// Store the conversation on screen so returning to it is instant.
+    fn remember_thread(&mut self) {
+        let Some(key) = self.thread_key else { return };
+        if self.current_thread.len() <= 1 {
+            return;
+        }
+        if self.thread_cache.insert(key, self.current_thread.clone()).is_none() {
+            self.thread_cache_order.push(key);
+        }
+        while self.thread_cache_order.len() > Self::THREAD_CACHE_MAX {
+            let oldest = self.thread_cache_order.remove(0);
+            self.thread_cache.remove(&oldest);
+        }
+    }
+
+    /// Forget assembled conversations for an account — its mail has changed
+    /// underneath them, so what they hold may no longer be the conversation.
+    fn forget_threads(&mut self, account_id: u32) {
+        self.thread_cache.retain(|(aid, _), _| *aid != account_id);
+        self.thread_cache_order.retain(|(aid, _)| *aid != account_id);
+    }
+
     /// Push every account's inbox slice to the list as one date-sorted run. The
     /// slices arrive independently (cache seed, then each account's load), so the
     /// whole merged list is re-emitted each time one of them changes.
@@ -5454,6 +5518,9 @@ impl AppModel {
                 tm.unread = !read;
                 true
             });
+        if in_thread {
+            self.remember_thread();
+        }
         if in_thread && self.current_thread.len() > 1 {
             if read {
                 self.show_thread();
@@ -5540,6 +5607,7 @@ impl AppModel {
     /// unread counts — the caller does that (single delete via `discard_message`;
     /// bulk via one `RemoveMany` + one push in `apply_bulk_move`).
     fn discard_message_local(&mut self, m: &Message) {
+        self.forget_threads(m.account_id);
         if let Some(p) = self.popouts.get(&(m.account_id, m.id)) {
             p.window.close();
         }
