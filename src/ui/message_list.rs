@@ -733,6 +733,7 @@ fn normalize_subject(subject: &str) -> String {
 /// subject are never threaded together.
 fn compute_thread_keys(
     msgs: &[Message],
+    links: &[(u32, String, String)],
     since: i64,
 ) -> std::collections::HashMap<(u32, u32), (u32, String)> {
     use std::collections::HashMap;
@@ -771,6 +772,19 @@ fn compute_thread_keys(
         parent.entry(sn.clone()).or_insert_with(|| sn.clone());
         for r in m.references.split_whitespace() {
             let rn = format!("{}\u{0}{}", m.account_id, r);
+            parent.entry(rn.clone()).or_insert_with(|| rn.clone());
+            union(&mut parent, &sn, &rn);
+        }
+    }
+
+    // Messages from elsewhere in the account contribute their links but never
+    // appear: a reply in the Inbox and the one before it are two answers to the
+    // same message in Sent, and without that message nothing says so.
+    for (aid, id, refs) in links {
+        let sn = format!("{aid}\u{0}{id}");
+        parent.entry(sn.clone()).or_insert_with(|| sn.clone());
+        for r in refs.split_whitespace() {
+            let rn = format!("{aid}\u{0}{r}");
             parent.entry(rn.clone()).or_insert_with(|| rn.clone());
             union(&mut parent, &sn, &rn);
         }
@@ -834,6 +848,11 @@ pub struct MessageList {
     /// Keyed by (account_id, id) since UIDs collide across accounts in the
     /// unified "All Inboxes" view.
     selected_id: Option<(u32, u32)>,
+    /// (account, message-id, references) for mail in the account's *other*
+    /// folders. A conversation is often joined through messages that aren't on
+    /// screen — every reply in an Inbox answers something in Sent — so those
+    /// links are needed to see that the replies belong together.
+    thread_links: Vec<(u32, String, String)>,
     /// The shown rows' (account, folder, uid, id) keys, handed to every row so a
     /// drag can carry the whole selection (#23).
     drag_keys: DragKeys,
@@ -946,6 +965,9 @@ pub enum MessageListInput {
     SetThreading(bool),
     /// The instant threading starts applying; older mail stands alone.
     SetThreadingSince(i64),
+    /// Reply headers from the account's other folders, so a conversation joined
+    /// through a message that isn't on screen still groups.
+    SetThreadLinks(Vec<(u32, String, String)>),
     /// Whether conversations start expanded (true) or collapsed (false).
     SetThreadsExpanded(bool),
     SetGravatar(bool),
@@ -1339,6 +1361,7 @@ impl SimpleComponent for MessageList {
             color_provider,
             context_popover,
             palette_collapse_secs: std::rc::Rc::new(std::cell::Cell::new(5)),
+            thread_links: Vec::new(),
             drag_keys: DragKeys::default(),
             selected_id: None,
             selected_ids: Vec::new(),
@@ -1511,6 +1534,14 @@ impl SimpleComponent for MessageList {
             }
             MessageListInput::SetIndexComplete(complete) => {
                 self.index_complete = complete;
+            }
+            MessageListInput::SetThreadLinks(links) => {
+                if self.thread_links != links {
+                    self.thread_links = links;
+                    if self.threading {
+                        self.rebuild_preserving_scroll();
+                    }
+                }
             }
             MessageListInput::SetThreadingSince(since) => {
                 if self.threading_since != since {
@@ -2195,7 +2226,7 @@ impl MessageList {
         // message as the head; expanding reveals the older replies beneath it.
         // With threading off, every message is its own group.
         let keys = if self.threading {
-            compute_thread_keys(&capped, self.threading_since)
+            compute_thread_keys(&capped, &self.thread_links, self.threading_since)
         } else {
             std::collections::HashMap::new()
         };
@@ -2330,7 +2361,7 @@ impl MessageList {
         // Thread within whatever set is on screen (the search pool while searching,
         // otherwise the current folder) so the conversation matches the rows shown.
         let source = self.active_source();
-        let keys = compute_thread_keys(source, self.threading_since);
+        let keys = compute_thread_keys(source, &self.thread_links, self.threading_since);
         let Some(key) = keys.get(&(m.account_id, m.id)).cloned() else {
             return (vec![m.clone()], false);
         };
@@ -2409,6 +2440,72 @@ impl MessageList {
 
 #[cfg(test)]
 mod tests {
+    use super::compute_thread_keys;
+    use crate::models::Message;
+
+    fn msg(id: u32, message_id: &str, references: &str) -> Message {
+        Message {
+            id,
+            account_id: 1,
+            folder_id: 1,
+            uid: id,
+            from_name: "X".into(),
+            from_addr: "x@example.com".into(),
+            to: String::new(),
+            cc: String::new(),
+            subject: "S".into(),
+            preview: String::new(),
+            body: String::new(),
+            date: String::new(),
+            timestamp: 1000,
+            unread: false,
+            starred: false,
+            has_attachment: false,
+            message_id: message_id.into(),
+            references: references.into(),
+        }
+    }
+
+    /// Two replies in an Inbox each answer a different message in Sent, and
+    /// reference nothing else — so within the Inbox they share no id at all.
+    /// They are one conversation, and the messages that say so are the ones in
+    /// Sent, which the folder on screen never shows.
+    #[test]
+    fn a_conversation_joined_through_another_folder_still_groups() {
+        let shown = [
+            msg(1, "reply-a@them", "sent-1@us"),
+            msg(2, "reply-b@them", "sent-2@us"),
+        ];
+        // Without the Sent messages there is nothing to join them.
+        let alone = compute_thread_keys(&shown, &[], 0);
+        assert_ne!(
+            alone.get(&(1, 1)),
+            alone.get(&(1, 2)),
+            "nothing on screen links these two"
+        );
+
+        // Sent 2 replied to reply-a, which replied to Sent 1: one conversation.
+        let links = vec![
+            (1u32, "sent-1@us".to_string(), String::new()),
+            (1u32, "sent-2@us".to_string(), "sent-1@us reply-a@them".to_string()),
+        ];
+        let joined = compute_thread_keys(&shown, &links, 0);
+        assert_eq!(
+            joined.get(&(1, 1)),
+            joined.get(&(1, 2)),
+            "the messages in Sent say they belong together"
+        );
+    }
+
+    /// Links are evidence, not glue: unrelated mail must not be pulled in.
+    #[test]
+    fn links_do_not_merge_unrelated_conversations() {
+        let shown = [msg(1, "a@x", ""), msg(2, "b@x", "")];
+        let links = vec![(1u32, "c@x".to_string(), "a@x".to_string())];
+        let keys = compute_thread_keys(&shown, &links, 0);
+        assert_ne!(keys.get(&(1, 1)), keys.get(&(1, 2)), "still two conversations");
+    }
+
     #[test]
     fn preview_lines_clamp_but_keep_zero() {
         // 0 is "off"; anything above 3 is a hand-edited file, not a setting.

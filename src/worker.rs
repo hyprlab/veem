@@ -2084,7 +2084,13 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
     for (name, addr) in parse_recipients(&msg.bcc) {
         builder = builder.bcc(mailbox(&name, &addr)?);
     }
-    let mut builder = builder.subject(msg.subject.clone());
+    // Our own Message-ID, in the account's own domain. Without one the SMTP
+    // server assigns it on the way out — so the copy filed in Sent has no id at
+    // all, and nothing that replies to it can ever be linked back. Setting it
+    // here means the copy we keep and the copy that arrives share the same id.
+    let mut builder = builder
+        .subject(msg.subject.clone())
+        .message_id(Some(new_message_id(&account.email)));
     // Threading headers, re-wrapped in the angle brackets the wire format wants
     // (they are stored stripped). References carries the whole chain so a client
     // can place the reply even if it never saw the immediate parent.
@@ -2137,6 +2143,21 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
         builder.multipart(multipart)?
     };
     Ok(email)
+}
+
+/// A Message-ID for outgoing mail: unique, and in the sender's own domain so it
+/// looks like what it is rather than like this machine.
+fn new_message_id(from: &str) -> String {
+    let domain = from.rsplit('@').next().filter(|d| !d.is_empty()).unwrap_or("localhost");
+    let unique = crate::rng::nonce(18).unwrap_or_else(|_| {
+        // Entropy is only unavailable in extremis; the clock still separates
+        // one message from the next.
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_string())
+            .unwrap_or_default()
+    });
+    format!("<vireo-{unique}@{domain}>")
 }
 
 /// Wrap each stored (bare) message id back in angle brackets for a header value.
@@ -5065,6 +5086,25 @@ mod tests {
     }
 
     /// A message that starts a conversation must not carry empty headers.
+    /// Without a Message-ID of our own the server assigns one on the way out, so
+    /// the copy filed in Sent has none — and nothing that replies to it can be
+    /// linked back to it. It must also be in the sender's domain, not this
+    /// machine's hostname.
+    #[test]
+    fn outgoing_mail_carries_a_message_id_in_the_senders_domain() {
+        let account = AccountConfig { email: "me@example.com".into(), ..sample_account() };
+        let msg = OutgoingMessage { to: "you@example.org".into(), ..sample_outgoing() };
+        let raw = String::from_utf8_lossy(
+            &build_email(&account, &msg).expect("builds").formatted(),
+        )
+        .to_string();
+        let line = raw
+            .lines()
+            .find(|l| l.starts_with("Message-ID:"))
+            .expect(&format!("a Message-ID is set: {raw}"));
+        assert!(line.contains("@example.com>"), "in the sender's domain: {line}");
+    }
+
     #[test]
     fn a_new_message_carries_no_threading_headers() {
         let msg = OutgoingMessage { to: "someone@example.com".into(), ..sample_outgoing() };

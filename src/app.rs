@@ -2929,6 +2929,7 @@ impl SimpleComponent for AppModel {
                 // A sync can add a reply to a conversation already assembled, so
                 // what was stored is no longer necessarily the conversation.
                 self.forget_threads(account_id);
+                self.push_thread_links();
                 if self.unified {
                     // Accept only each account's inbox; merge all by recency.
                     if self.inbox_of(account_id).map(|f| f.id) == Some(folder_id) {
@@ -5102,6 +5103,25 @@ impl AppModel {
     fn forget_threads(&mut self, account_id: u32) {
         self.thread_cache.retain(|(aid, _), _| *aid != account_id);
         self.thread_cache_order.retain(|(aid, _)| *aid != account_id);
+    }
+
+    /// Reply headers for every cached message from the threading cutoff forward,
+    /// so the list can see that two replies in a folder answer the same message
+    /// in another one. Bounded by the cutoff: old mail never threads, so its
+    /// links are never needed.
+    fn push_thread_links(&self) {
+        let mut links: Vec<(u32, String, String)> = Vec::new();
+        for ((account_id, _), msgs) in self.message_cache.iter() {
+            for m in msgs.iter().filter(|m| m.timestamp >= self.threading_since) {
+                if m.message_id.is_empty() && m.references.is_empty() {
+                    continue;
+                }
+                links.push((*account_id, m.message_id.clone(), m.references.clone()));
+            }
+        }
+        links.sort();
+        links.dedup();
+        self.message_list.emit(MessageListInput::SetThreadLinks(links));
     }
 
     /// Push every account's inbox slice to the list as one date-sorted run. The
