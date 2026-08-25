@@ -238,6 +238,11 @@ pub struct AppModel {
     /// A conversation re-render is already scheduled, so further bodies arriving
     /// in the same burst don't each queue one of their own.
     thread_render_queued: bool,
+    /// When the conversation on screen was opened. Its bodies arrive one at a
+    /// time, and painting each arrival meant a stack of half-built renders
+    /// flashing past; the reader holds its spinner until they are all in, or
+    /// until this has been waiting [`THREAD_BODY_WAIT`].
+    thread_opened_at: Option<std::time::Instant>,
     /// Whether conversation threads start expanded in the message list.
     threads_expanded: bool,
     /// How email content is themed (message content only, not the app UI).
@@ -1154,6 +1159,7 @@ impl SimpleComponent for AppModel {
             threading: config::load_threading(),
             threading_since: config::threading_since(),
             thread_render_queued: false,
+            thread_opened_at: None,
             threads_expanded: config::load_threads_expanded(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
@@ -1886,6 +1892,7 @@ impl SimpleComponent for AppModel {
                         conv.push(tm);
                     }
                     self.current_thread = conv;
+                    self.thread_opened_at = Some(std::time::Instant::now());
                     // Fetch the bodies we don't have yet (primary first via order).
                     let to_load: Vec<(u32, u32, u32, String)> = self
                         .current_thread
@@ -3026,6 +3033,17 @@ impl SimpleComponent for AppModel {
             AppMsg::RenderThread => {
                 self.thread_render_queued = false;
                 if self.current_thread.len() > 1 {
+                    // Still assembling and still within the grace period: come
+                    // back rather than paint a conversation that is about to be
+                    // replaced. The re-queue is what makes the deadline fire.
+                    let missing = self.current_thread.iter().any(|m| m.body.is_empty());
+                    let waiting = self
+                        .thread_opened_at
+                        .is_some_and(|opened| opened.elapsed() < THREAD_BODY_WAIT);
+                    if missing && waiting {
+                        self.queue_thread_render(&sender);
+                        return;
+                    }
                     self.show_thread();
                 }
             }
@@ -3189,6 +3207,12 @@ impl SimpleComponent for AppModel {
         }
     }
 }
+
+/// How long a conversation waits for its outstanding bodies before painting what
+/// it has. Long enough that a cached conversation — the common case — always
+/// arrives whole, short enough that one unreachable message can't hold the
+/// reader hostage.
+const THREAD_BODY_WAIT: std::time::Duration = std::time::Duration::from_millis(1200);
 
 impl AppModel {
     /// Push the date and clock preference into the formatter and redraw whatever
@@ -3994,7 +4018,18 @@ impl AppModel {
         let primary = self.current.clone().unwrap_or_else(|| head.clone());
         let account_id = primary.account_id;
         let allow_remote = self.remote_allowed(&primary);
-        let loading = primary.body.is_empty();
+        // Spin while any of the conversation is still on its way: a partial
+        // render would be replaced moments later, and each replacement is a full
+        // page load in the WebView — which is what the flashing was.
+        let missing = self.current_thread.iter().any(|m| m.body.is_empty());
+        let waiting = self
+            .thread_opened_at
+            .is_some_and(|opened| opened.elapsed() < THREAD_BODY_WAIT);
+        let loading = if self.current_thread.len() > 1 {
+            missing && waiting
+        } else {
+            primary.body.is_empty()
+        };
         self.message_view.emit(MessageViewInput::Show {
             thread: self.current_thread.clone(),
             allow_remote,
@@ -4532,6 +4567,9 @@ impl AppModel {
         }
         conv.extend(added);
         conv.sort_by(|a, b| a.timestamp.cmp(&b.timestamp)); // oldest first, as the list threads
+        // Late arrivals bring bodies of their own; give them the same grace
+        // period so they join the first paint instead of causing a second.
+        self.thread_opened_at = Some(std::time::Instant::now());
         self.current_thread = conv;
         let to_load: Vec<(u32, u32, u32, String)> = self
             .current_thread
