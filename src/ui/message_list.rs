@@ -840,6 +840,10 @@ pub struct MessageList {
     /// Every selected message key, so the whole selection survives list rebuilds
     /// (background syncs) until the user clicks away.
     selected_ids: Vec<(u32, u32)>,
+    /// The selection was just set from the reader, which is already showing the
+    /// message: opening it again would swap the conversation for a single
+    /// message under the user.
+    from_reader: bool,
     /// How many rows are currently selected (drives the bulk-action bar).
     selection_count: usize,
     /// Conversation keys the user has toggled away from the default state
@@ -961,6 +965,13 @@ pub enum MessageListInput {
     /// Replace the cross-folder search pool (all folders, all accounts). Sent by
     /// the app when a search begins; cleared to empty when it ends.
     SetSearchPool(Vec<Message>),
+    /// A card was clicked in the reader: mirror it here, so everything that acts
+    /// on the list's selection acts on the message the user pointed at. The
+    /// reader is already showing it, so this must not re-open anything.
+    SelectFromReader {
+        key: (u32, u32),
+        mode: crate::ui::message_view::SelectMode,
+    },
     /// The set of selected rows changed (single click, Ctrl/Shift multi-select).
     SelectionChanged,
     /// A row was activated (double-click / Enter): pop it out into its own window.
@@ -1023,6 +1034,9 @@ pub enum MessageListOutput {
     /// picked one reply *inside* a conversation shown in the list, and wants
     /// only that message — so the reader must not go looking for its siblings.
     Selected { message: Message, thread: Vec<Message>, solo: bool },
+    /// Every selected message, whenever that changes — the reader outlines the
+    /// matching cards.
+    SelectionKeys(Vec<(u32, u32)>),
     /// A row was double-clicked: open the message in its own window.
     Activated(Message),
     /// A context-menu action chosen for a specific message.
@@ -1326,6 +1340,7 @@ impl SimpleComponent for MessageList {
             selected_id: None,
             selected_ids: Vec::new(),
             selection_count: 0,
+            from_reader: false,
             expanded_threads: std::collections::HashSet::new(),
             default_expanded: false,
             msg_thread: std::collections::HashMap::new(),
@@ -1591,6 +1606,51 @@ impl SimpleComponent for MessageList {
                     self.rebuild_preserving_scroll();
                 }
             }
+            MessageListInput::SelectFromReader { key, mode } => {
+                use crate::ui::message_view::SelectMode;
+                let Some(idx) = self.shown.iter().position(|m| (m.account_id, m.id) == key) else {
+                    return;
+                };
+                let list = self.rows.widget();
+                let Some(row) = list.row_at_index(idx as i32) else {
+                    return;
+                };
+                self.from_reader = true;
+                match mode {
+                    SelectMode::Plain => {
+                        list.unselect_all();
+                        list.select_row(Some(&row));
+                    }
+                    SelectMode::Toggle => {
+                        if row.is_selected() {
+                            list.unselect_row(&row);
+                        } else {
+                            list.select_row(Some(&row));
+                        }
+                    }
+                    SelectMode::Range => {
+                        // From whatever was selected first to here, as the list
+                        // does for a shift-click of its own.
+                        let anchor = list
+                            .selected_rows()
+                            .first()
+                            .map(|r| r.index())
+                            .unwrap_or(idx as i32);
+                        let (lo, hi) = (anchor.min(idx as i32), anchor.max(idx as i32));
+                        list.unselect_all();
+                        for i in lo..=hi {
+                            if let Some(r) = list.row_at_index(i) {
+                                list.select_row(Some(&r));
+                            }
+                        }
+                    }
+                }
+                // GTK emits selected-rows-changed for each of those calls; the
+                // flag is consumed by the first, so make sure the final state is
+                // the one reported.
+                self.from_reader = true;
+                sender.input(MessageListInput::SelectionChanged);
+            }
             MessageListInput::SelectionChanged => {
                 let keys: Vec<(u32, u32)> = self
                     .rows
@@ -1600,6 +1660,15 @@ impl SimpleComponent for MessageList {
                     .filter_map(|r| self.shown.get(r.index() as usize).map(|m| (m.account_id, m.id)))
                     .collect();
                 self.selection_count = keys.len();
+                // The reader outlines whatever is selected here, however the
+                // selection was made.
+                let _ = sender.output(MessageListOutput::SelectionKeys(keys.clone()));
+                // Set from the reader, which is already showing this message:
+                // mirror the selection but leave the reader alone.
+                if std::mem::take(&mut self.from_reader) {
+                    self.selected_ids = keys;
+                    return;
+                }
                 match keys.as_slice() {
                     [] => self.selected_id = None,
                     [key] => {

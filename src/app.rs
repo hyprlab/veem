@@ -345,6 +345,14 @@ pub enum AppMsg {
     ToggleCustomFolders(u32),
     SidebarCollapsed(bool),
     SidebarContext(CtxAction),
+    /// The list's selection changed; the reader outlines the matching cards.
+    SelectionKeys(Vec<(u32, u32)>),
+    /// A card was clicked in the reader — mirror it in the list's selection.
+    SelectCard {
+        account_id: u32,
+        id: u32,
+        mode: crate::ui::message_view::SelectMode,
+    },
     /// A conversation message was scrolled all the way through — mark it read on
     /// the server, in the caches and in the list.
     ThreadMessageSeen { account_id: u32, id: u32 },
@@ -1035,6 +1043,7 @@ impl SimpleComponent for AppModel {
                     MessageListOutput::Selected { message, thread, solo } => {
                         AppMsg::MessageSelected { message, thread, solo }
                     }
+                    MessageListOutput::SelectionKeys(keys) => AppMsg::SelectionKeys(keys),
                     MessageListOutput::Activated(m) => AppMsg::OpenMessageWindow(m),
                     MessageListOutput::Action { action, message } => {
                         AppMsg::RowAction { action, message }
@@ -1060,6 +1069,9 @@ impl SimpleComponent for AppModel {
                     }
                     MessageViewOutput::MarkSeen { account_id, id } => {
                         AppMsg::ThreadMessageSeen { account_id, id }
+                    }
+                    MessageViewOutput::SelectCard { account_id, id, mode } => {
+                        AppMsg::SelectCard { account_id, id, mode }
                     }
                 });
 
@@ -3066,6 +3078,17 @@ impl SimpleComponent for AppModel {
                 if let Some(p) = self.popouts.get(&(account_id, message_id)) {
                     p.controller.emit(MessageWindowInput::SetBody(body));
                 }
+            }
+
+            AppMsg::SelectionKeys(keys) => {
+                self.message_view.emit(MessageViewInput::SetSelectedCards(keys));
+            }
+
+            AppMsg::SelectCard { account_id, id, mode } => {
+                self.message_list.emit(MessageListInput::SelectFromReader {
+                    key: (account_id, id),
+                    mode,
+                });
             }
 
             AppMsg::ThreadMessageSeen { account_id, id } => {

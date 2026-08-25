@@ -67,6 +67,8 @@ pub struct MessageView {
     frame_heights: std::collections::HashMap<(u32, u32), u32>,
     /// This conversation came ready-made, so there is nothing to cover.
     instant: bool,
+    /// The messages the list has selected, outlined in the reader.
+    selected_cards: Vec<(u32, u32)>,
     /// True while the body is being fetched (show a spinner instead).
     loading: bool,
     /// False from when a render starts until the WebView reports it finished
@@ -161,6 +163,12 @@ pub enum MessageViewInput {
     /// conversation is opened again, rather than clearing it the moment the
     /// message happens to be in view.
     SuppressAutoRead { account_id: u32, id: u32 },
+    /// A card was clicked, with whatever modifier was held.
+    CardClicked { account_id: u32, id: u32, mode: SelectMode },
+    /// Which messages the list has selected. Drawn as an accent outline on the
+    /// matching cards, applied to the live document rather than by rendering it
+    /// again — a re-render would lose the reader's scroll position.
+    SetSelectedCards(Vec<(u32, u32)>),
     /// A message's frame measured this tall, so reopening it can lay out at that
     /// height instead of settling into it.
     FrameSized { account_id: u32, id: u32, height: u32 },
@@ -176,6 +184,18 @@ pub enum MessageViewInput {
     },
 }
 
+/// How a click on a conversation card changes the selection, mirroring what the
+/// message list does with the same modifiers.
+#[derive(Debug, Clone, Copy)]
+pub enum SelectMode {
+    /// Plain click: this message alone.
+    Plain,
+    /// Ctrl: add or remove this one, leaving the rest.
+    Toggle,
+    /// Shift: everything between the last selection and this one.
+    Range,
+}
+
 #[derive(Debug)]
 pub enum MessageViewOutput {
     /// Add this sender address to the remote-content allowlist.
@@ -184,6 +204,9 @@ pub enum MessageViewOutput {
     ComposeTo(String),
     /// Open a conversation message in its own window (header double-clicked).
     OpenWindow(Box<Message>),
+    /// A card was clicked: select that message in the list too, so everything
+    /// that acts on a selection acts on the message the user pointed at.
+    SelectCard { account_id: u32, id: u32, mode: SelectMode },
     /// A conversation message has been read (scrolled through). The reader has
     /// already dropped its mark; the app makes it stick.
     MarkSeen { account_id: u32, id: u32 },
@@ -488,6 +511,7 @@ impl Component for MessageView {
             shown_fingerprint: None,
             frame_heights: std::collections::HashMap::new(),
             instant: false,
+            selected_cards: Vec::new(),
             loading: false,
             webview_ready: false,
             webview,
@@ -534,6 +558,18 @@ impl Component for MessageView {
                     // Every message frame has loaded and been sized: the layout
                     // has settled, so there is something worth revealing.
                     "ready" => open_sender.input(MessageViewInput::Rendered),
+                    "sel" => {
+                        let mode = match extra {
+                            Some("t") => SelectMode::Toggle,
+                            Some("r") => SelectMode::Range,
+                            _ => SelectMode::Plain,
+                        };
+                        open_sender.input(MessageViewInput::CardClicked {
+                            account_id,
+                            id,
+                            mode,
+                        });
+                    }
                     "size" => {
                         if let Some(Ok(height)) = extra.map(|h| h.parse::<u32>()) {
                             open_sender.input(MessageViewInput::FrameSized {
@@ -738,6 +774,23 @@ impl Component for MessageView {
                     self.render();
                 }
             }
+            MessageViewInput::CardClicked { account_id, id, mode } => {
+                // Only meaningful in a conversation: a lone message is already
+                // the selection.
+                if self.thread.len() > 1 {
+                    let _ = sender.output(MessageViewOutput::SelectCard {
+                        account_id,
+                        id,
+                        mode,
+                    });
+                }
+            }
+            MessageViewInput::SetSelectedCards(keys) => {
+                if self.selected_cards != keys {
+                    self.selected_cards = keys;
+                    self.apply_card_selection();
+                }
+            }
             MessageViewInput::FrameSized { account_id, id, height } => {
                 // A few hundred numbers at most, and only for messages actually
                 // opened; the store is trimmed rather than allowed to creep.
@@ -856,6 +909,34 @@ impl MessageView {
 
     /// Whether message content should render dark: the user's forced choice, or
     /// the system UI theme when following it.
+    /// The desktop accent colour, as the document can use it. Read from the
+    /// widget's style so it follows the user's choice; GNOME's own blue is the
+    /// fallback when the theme doesn't define it.
+    fn accent_hex(&self) -> String {
+        #[allow(deprecated)]
+        self.webview
+            .style_context()
+            .lookup_color("accent_bg_color")
+            .map(|c| crate::color::to_hex(&c))
+            .unwrap_or_else(|| "#3584e4".to_string())
+    }
+
+    /// Outline the selected cards in the document already on screen. Rendering
+    /// it again would reload every frame and lose the reader's place.
+    fn apply_card_selection(&self) {
+        let keys: Vec<String> = self
+            .selected_cards
+            .iter()
+            .map(|(a, i)| format!("'{a}:{i}'"))
+            .collect();
+        let js = format!(
+            "(function(){{var s=[{}];             var els=document.querySelectorAll('.vireo-msg');             for(var i=0;i<els.length;i++){{var k=els[i].dataset.key;             els[i].classList.toggle('selected', s.indexOf(k)>=0);}}}})()",
+            keys.join(",")
+        );
+        self.webview
+            .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+    }
+
     fn effective_dark(&self) -> bool {
         self.content_dark
             .unwrap_or_else(|| adw::StyleManager::default().is_dark())
@@ -935,6 +1016,8 @@ impl MessageView {
             &self.folder_labels,
             &self.no_autoread,
             &self.frame_heights,
+            &self.selected_cards,
+            &self.accent_hex(),
             !self.remote_allowed,
             dark,
         )
@@ -953,6 +1036,8 @@ impl MessageView {
         folder_labels: &std::collections::HashMap<(u32, u32), String>,
         no_autoread: &std::collections::HashSet<(u32, u32)>,
         heights: &std::collections::HashMap<(u32, u32), u32>,
+        selected: &[(u32, u32)],
+        accent: &str,
         restrict: bool,
         dark: bool,
     ) -> String {
@@ -972,7 +1057,7 @@ impl MessageView {
             };
             if conversation {
                 sections.push_str(&format!(
-                    "<section class=\"vireo-msg\">\
+                    "<section class=\"vireo-msg{sel}\" data-key=\"{aid}:{id}\">\
                        <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
                          {dot}<span class=\"vireo-from\">{from}</span>{addr}{folder}\
@@ -988,6 +1073,7 @@ impl MessageView {
                        </header>{body}{seen_mark}</section>",
                     aid = m.account_id,
                     id = m.id,
+                    sel = if selected.contains(&(m.account_id, m.id)) { " selected" } else { "" },
                     // `escape_text`, not `attr_escape`: these land in element
                     // text content, where `<` and `>` are structural. A `From:`
                     // display name is attacker-controlled (and RFC 2047-decoded,
@@ -1082,6 +1168,8 @@ impl MessageView {
                .vireo-msg{{background:{bg};border:1px solid rgba(128,128,128,0.28);\
                  border-radius:12px;overflow:hidden;margin-bottom:14px;}}\
                .vireo-msg:last-child{{margin-bottom:0;}}\
+               .vireo-msg.selected{{border-color:{accent};box-shadow:inset 0 0 0 1px {accent};}}\
+               .vireo-msg-hdr{{cursor:pointer;}}\
                .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;transition:background 120ms ease;border-bottom:1px solid rgba(128,128,128,0.2);}}\
                .vireo-msg-hdr:hover{{background:rgba(128,128,128,0.16);}}\
                .vireo-from{{font-weight:700;}}\
@@ -1837,6 +1925,11 @@ setTimeout(ready,450);\
 var hs=document.querySelectorAll('.vireo-msg-hdr');\
 for(var j=0;j<hs.length;j++){hs[j].addEventListener('dblclick',function(){\
 try{window.webkit.messageHandlers.vireo.postMessage('open:'+this.dataset.key);}catch(_){}});}\
+var ms=document.querySelectorAll('.vireo-msg');\
+for(var q=0;q<ms.length;q++){ms[q].addEventListener('click',function(e){\
+var k=this.dataset.key;if(!k)return;\
+var mo=e.shiftKey?'r':(e.ctrlKey||e.metaKey?'t':'p');\
+try{window.webkit.messageHandlers.vireo.postMessage('sel:'+k+':'+mo);}catch(_){}});}\
 var as=document.querySelectorAll('.vireo-act');\
 for(var k=0;k<as.length;k++){as[k].addEventListener('click',function(e){\
 e.stopPropagation();e.preventDefault();\
@@ -2217,11 +2310,13 @@ mod tests {
             &std::collections::HashMap::new(),
             &Default::default(),
             &Default::default(),
+            &[],
+            "#3584e4",
             true,
             false,
         );
         assert_eq!(
-            doc.matches("<section class=\"vireo-msg\">").count(),
+            doc.matches("<section class=\"vireo-msg\"").count(),
             2,
             "each message gets its own card: {doc}"
         );
@@ -2249,6 +2344,8 @@ mod tests {
             &std::collections::HashMap::new(),
             &Default::default(),
             &Default::default(),
+            &[],
+            "#3584e4",
             true,
             false,
         );
@@ -2279,6 +2376,8 @@ mod tests {
             &std::collections::HashMap::new(),
             &Default::default(),
             &Default::default(),
+            &[],
+            "#3584e4",
             true,
             false,
         );
@@ -2305,6 +2404,8 @@ mod tests {
             &std::collections::HashMap::new(),
             &suppressed,
             &Default::default(),
+            &[],
+            "#3584e4",
             true,
             false,
         );
@@ -2326,6 +2427,8 @@ mod tests {
             &Default::default(),
             &Default::default(),
             &heights,
+            &[],
+            "#3584e4",
             true,
             false,
         );
@@ -2335,6 +2438,27 @@ mod tests {
         assert!(doc.contains("data-key=\"1:2\""), "{doc}");
     }
 
+    /// A selected message is outlined in the accent colour, and only that one.
+    #[test]
+    fn a_selected_card_is_outlined_in_the_accent() {
+        let a = msg_for_print();
+        let mut b = msg_for_print();
+        b.id = 2;
+        let doc = MessageView::conversation_document(
+            &[a, b],
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+            &[(1, 2)],
+            "#ff8800",
+            true,
+            false,
+        );
+        assert!(doc.contains("class=\"vireo-msg selected\" data-key=\"1:2\""), "{doc}");
+        assert_eq!(doc.matches("vireo-msg selected").count(), 1, "only the selected one");
+        assert!(doc.contains("border-color:#ff8800"), "outlined in the accent: {doc}");
+    }
+
     #[test]
     fn a_single_message_is_not_drawn_as_a_card() {
         let doc = MessageView::conversation_document(
@@ -2342,10 +2466,12 @@ mod tests {
             &std::collections::HashMap::new(),
             &Default::default(),
             &Default::default(),
+            &[],
+            "#3584e4",
             true,
             false,
         );
-        assert!(!doc.contains("<section class=\"vireo-msg\">"), "no card: {doc}");
+        assert!(!doc.contains("<section class=\"vireo-msg\""), "no card: {doc}");
         assert!(!doc.contains("<body class=\"vireo-conv\">"), "no conversation padding");
     }
 
@@ -2356,7 +2482,7 @@ mod tests {
         b.id = 2;
         b.folder_id = 3; // pulled in from Sent
         let labels = std::collections::HashMap::from([((1u32, 2u32), "Sent".to_string())]);
-        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), &Default::default(), true, false);
+        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), &Default::default(), &[], "#3584e4", true, false);
         assert_eq!(
             doc.matches("vireo-folder").count(),
             // once in the stylesheet, once on the message that came from Sent —
@@ -2376,7 +2502,7 @@ mod tests {
         b.id = 2;
         let labels =
             std::collections::HashMap::from([((1u32, 2u32), "<img src=x onerror=alert(1)>".into())]);
-        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), &Default::default(), true, false);
+        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), &Default::default(), &[], "#3584e4", true, false);
         assert!(!doc.contains("<img src=x"), "the label must be escaped, not rendered");
         assert!(doc.contains("&lt;img src=x"));
     }
@@ -2395,7 +2521,7 @@ mod tests {
         b.id = 2;
         // Two messages: the per-message headers only render in conversation mode.
         let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), &Default::default(),
-            true, false);
+            &[], "#3584e4", true, false);
 
         assert!(!doc.contains("<script>x=1"), "{doc}");
         assert!(!doc.contains("<img src=y"), "{doc}");
@@ -2410,7 +2536,7 @@ mod tests {
         let mut b = msg_for_print();
         b.id = 2;
         let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), &Default::default(),
-            true, false);
+            &[], "#3584e4", true, false);
 
         // A nonce'd CSP, so an injected `<script>` or `onerror=` is refused by
         // the engine even if the escaping above ever regresses.
@@ -2441,6 +2567,8 @@ mod tests {
                 &Default::default(),
                 &Default::default(),
                 &Default::default(),
+                &[],
+                "#3584e4",
                 true,
                 false,
             );
@@ -2572,7 +2700,7 @@ mod tests {
         b.id = 2;
         b.body = "<p style=\"height:300px\">second</p>".into();
         let html = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), &Default::default(),
-            true, false);
+            &[], "#3584e4", true, false);
 
         let view = webkit6::WebView::new();
         let settings = webkit6::Settings::new();
