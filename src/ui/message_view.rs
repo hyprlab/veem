@@ -370,6 +370,10 @@ impl Component for MessageView {
 
                 #[name = "body_stack"]
                 gtk::Stack {
+                    // The message's ground, painted on the stack itself so every
+                    // page sits on it — the spinner box is centred and paints
+                    // only its own few square inches.
+                    add_css_class: "reader-cover",
                     set_vexpand: true,
                     #[watch]
                     set_visible_child_name: model.body_page(),
@@ -377,13 +381,12 @@ impl Component for MessageView {
                     // Themed cover shown while the WebView loads, so its white
                     // inter-document gap is never visible.
                     add_named[Some("blank")] = &gtk::Box {
-                        add_css_class: "reader-cover",
                         set_vexpand: true,
                         set_hexpand: true,
                     },
 
                     add_named[Some("loading")] = &gtk::Box {
-                        add_css_class: "reader-cover",
+                        add_css_class: "reader-loading",
                         set_orientation: gtk::Orientation::Vertical,
                         set_halign: gtk::Align::Center,
                         set_valign: gtk::Align::Center,
@@ -596,6 +599,10 @@ impl Component for MessageView {
                     .any(|m| has_remote_resources(&m.body));
                 self.blocked = has_remote && !allow_remote;
                 self.load_avatar(&sender);
+                // Repaint the cover for what is arriving, even when the spinner
+                // is about to be shown instead of a document: the whole point is
+                // that the spinner already sits on the right colour.
+                self.apply_webview_bg(self.effective_dark());
                 // While loading, the spinner page is shown; rendering the (empty)
                 // body would just flash blank, so wait for the real body.
                 if !self.loading {
@@ -942,15 +949,15 @@ impl MessageView {
         let scheme = if dark { "dark" } else { "light" };
         // Paint the wrapper and the (still-loading) iframes in the theme colour so
         // there's no white flash before each message's content renders.
-        let bg = if dark { "#1e1e1e" } else { "#ffffff" };
+        let bg = if dark { GROUND.1 } else { GROUND.0 };
         // In a conversation each message is a card, which only reads as one
         // against a slightly different ground. A single message keeps the plain
         // full-bleed page — a lone card floating in a margin is just wasted
         // width.
         let page = match (conversation, dark) {
             (false, _) => bg,
-            (true, true) => "#141414",
-            (true, false) => "#f1f1f1",
+            (true, true) => PAGE.1,
+            (true, false) => PAGE.0,
         };
         let body_class = if conversation { " class=\"vireo-conv\"" } else { "" };
         // Defence in depth for the wrapper: the only script allowed to run is the
@@ -1087,24 +1094,29 @@ impl MessageView {
     /// Paint the WebView canvas in the theme colour so unstyled bodies (and the
     /// gap before a load) match light/dark mode instead of flashing white.
     fn apply_webview_bg(&self, dark: bool) {
-        let rgba = if dark {
-            gtk::gdk::RGBA::new(0.118, 0.118, 0.118, 1.0)
-        } else {
-            gtk::gdk::RGBA::new(1.0, 1.0, 1.0, 1.0)
+        // Whatever is about to be shown: a conversation's cards sit on the deeper
+        // page, a lone message on the plain ground. The cover matches it so the
+        // spinner gives way to the document without a change of colour.
+        let ground = match (self.thread.len() > 1, dark) {
+            (true, false) => PAGE.0,
+            (true, true) => PAGE.1,
+            (false, false) => GROUND.0,
+            (false, true) => GROUND.1,
         };
-        self.webview.set_background_color(&rgba);
+        self.webview.set_background_color(&ground_rgba(ground));
+        let bg = ground;
         // The spinner and the cover stand in for the message, so they answer to
         // the message's theme: #1e1e1e matches the document's own dark ground,
         // white its light one. The label and spinner take a dimmed foreground
         // from the same side, so neither disappears into the ground.
-        let (bg, fg) = if dark {
-            ("#1e1e1e", "rgba(255,255,255,0.55)")
+        let fg = if dark {
+            "rgba(255,255,255,0.55)"
         } else {
-            ("#ffffff", "rgba(0,0,0,0.45)")
+            "rgba(0,0,0,0.45)"
         };
         self.cover_provider.load_from_data(&format!(
             ".reader-cover {{ background-color: {bg}; }}\
-             .reader-cover label, .reader-cover spinner {{ color: {fg}; }}"
+             .reader-loading label, .reader-loading spinner {{ color: {fg}; }}"
         ));
     }
 }
@@ -1717,6 +1729,21 @@ fn inject_csp(html: &str, allow_remote: bool, dark: bool) -> String {
 /// Wrapper-document script: size each message iframe to its content height so the
 /// whole conversation scrolls as one page (the iframes have no inner scrollbars).
 /// Re-measures as images load and as content reflows.
+/// The reader's two grounds. A message sits on [`GROUND`]; in a conversation the
+/// cards sit on the slightly deeper [`PAGE`], which is what makes them read as
+/// cards. The spinner and the cover behind the WebView use the same pair, so
+/// handing over to the document changes nothing on screen.
+const GROUND: (&str, &str) = ("#ffffff", "#1e1e1e");
+const PAGE: (&str, &str) = ("#f1f1f1", "#141414");
+
+/// That ground as a colour the WebView itself can be painted with.
+fn ground_rgba(hex: &str) -> gtk::gdk::RGBA {
+    let v = |i: usize| {
+        u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0) as f32 / 255.0
+    };
+    gtk::gdk::RGBA::new(v(1), v(3), v(5), 1.0)
+}
+
 const SIZE_SCRIPT: &str = "\
 function s(f){try{var d=f.contentDocument;if(!d)return;var b=d.body,e=d.documentElement;\
 var h=Math.max(b?b.scrollHeight:0,e?e.scrollHeight:0,b?b.offsetHeight:0);if(h>0)f.style.height=h+'px';}catch(_){}}\
@@ -2112,6 +2139,9 @@ mod tests {
         let grace = doc.find("Grace Hopper").expect("second sender present");
         assert!(ada < grace, "cards must keep the order they were handed");
         assert!(doc.contains("<body class=\"vireo-conv\">"), "conversation padding");
+        // The cards sit on the deeper page — the same colour the spinner and the
+        // cover behind the WebView are painted, so the handover is invisible.
+        assert!(doc.contains(&format!("background:{}", PAGE.0)), "page ground: {doc}");
     }
 
     /// A single message is not a conversation: no card chrome, no margin — it
