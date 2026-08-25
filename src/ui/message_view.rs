@@ -393,6 +393,20 @@ impl Component for MessageView {
 
                     gtk::Label {
                         #[watch]
+                        set_label: &to_line(model.current.as_ref()),
+                        #[watch]
+                        set_visible: model.thread.len() <= 1
+                            && model.current.as_ref().is_some_and(|m| !m.to.trim().is_empty()),
+                        set_halign: gtk::Align::Start,
+                        set_wrap: true,
+                        set_wrap_mode: gtk::pango::WrapMode::WordChar,
+                        set_xalign: 0.0,
+                        set_selectable: true,
+                        add_css_class: "reader-to",
+                    },
+
+                    gtk::Label {
+                        #[watch]
                         set_label: &cc_line(model.current.as_ref()),
                         #[watch]
                         set_visible: model.thread.len() <= 1
@@ -1101,7 +1115,7 @@ impl MessageView {
                     "<section class=\"vireo-msg{sel}\" data-key=\"{aid}:{id}\">\
                        <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
-                         {dot}<span class=\"vireo-from\">{from}</span>{addr}{folder}\
+                         {dot}<span class=\"vireo-from\">{from}</span>{addr}{to}{folder}\
                          <span class=\"vireo-date\">{date}</span>\
                          <span class=\"vireo-acts\">\
                            <button type=\"button\" class=\"vireo-act\" data-act=\"reply\" \
@@ -1125,6 +1139,17 @@ impl MessageView {
                         String::new()
                     } else {
                         format!("<span class=\"vireo-addr\">&lt;{}&gt;</span>", escape_text(&m.from_addr))
+                    },
+                    // Which address this message was sent to — the recipient
+                    // side of a Sent/replied/forwarded message, or, for an
+                    // auto-forward, which of several addresses it landed on.
+                    to = if m.to.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "<span class=\"vireo-to\">to {}</span>",
+                            escape_text(m.to.trim())
+                        )
                     },
                     date = escape_text(&m.datetime_full()),
                     // Where this message was read from, when that isn't the
@@ -1220,6 +1245,7 @@ impl MessageView {
                .vireo-msg-hdr:hover{{background:rgba(128,128,128,0.16);}}\
                .vireo-from{{font-weight:700;}}\
                .vireo-addr{{opacity:0.55;font-size:0.9em;}}\
+               .vireo-to{{opacity:0.55;font-size:0.85em;}}\
                .vireo-date{{margin-left:auto;opacity:0.55;font-size:0.85em;}}\
                .vireo-dot{{width:8px;height:8px;border-radius:50%;background:#3584e4;\
                  flex:none;align-self:center;}}\
@@ -1586,6 +1612,16 @@ fn email_link_markup(m: Option<&Message>) -> String {
             let esc = gtk::glib::markup_escape_text(&m.from_addr);
             format!("<a href=\"mailto:{esc}\">{esc}</a>")
         }
+        _ => String::new(),
+    }
+}
+
+/// "To: a@b, c@d" for the header, or empty when there's no To recipient.
+/// Useful for spotting which address a message was sent to when it arrives
+/// via an auto-forward from one of several addresses.
+fn to_line(m: Option<&Message>) -> String {
+    match m {
+        Some(m) if !m.to.trim().is_empty() => format!("To: {}", m.to.trim()),
         _ => String::new(),
     }
 }
