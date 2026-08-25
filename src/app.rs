@@ -247,6 +247,10 @@ pub struct AppModel {
     /// add messages (and bodies) to what is on screen, so the reader waits for
     /// it rather than painting a conversation it is about to paint again.
     thread_related_pending: bool,
+    /// Whether the conversation on screen has had its one paint yet. Until it
+    /// has, the reader shows its spinner — opening a thread is a wait, however
+    /// short, and showing the previous message meanwhile reads as a glitch.
+    thread_painted: bool,
     /// Whether conversation threads start expanded in the message list.
     threads_expanded: bool,
     /// How email content is themed (message content only, not the app UI).
@@ -1165,6 +1169,7 @@ impl SimpleComponent for AppModel {
             thread_render_queued: false,
             thread_opened_at: None,
             thread_related_pending: false,
+            thread_painted: false,
             threads_expanded: config::load_threads_expanded(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
@@ -1902,6 +1907,7 @@ impl SimpleComponent for AppModel {
                     }
                     self.current_thread = conv;
                     self.thread_opened_at = Some(std::time::Instant::now());
+                    self.thread_painted = false;
                     // The paint happens once the conversation has settled: the
                     // lookup answered and the bodies in. Until then the reader
                     // holds its spinner.
@@ -3070,6 +3076,7 @@ impl SimpleComponent for AppModel {
                         self.queue_thread_render(&sender);
                         return;
                     }
+                    self.thread_painted = true;
                     self.show_thread();
                 }
             }
@@ -4053,7 +4060,10 @@ impl AppModel {
             .is_some_and(|opened| opened.elapsed() < THREAD_BODY_WAIT);
         let unsettled = missing || self.thread_related_pending;
         let loading = if self.current_thread.len() > 1 {
-            unsettled && waiting
+            // The spinner holds the reader from the moment a thread is opened
+            // until its single paint, so the wait is shown rather than papered
+            // over with the message that was there before.
+            !self.thread_painted || (unsettled && waiting)
         } else {
             primary.body.is_empty()
         };

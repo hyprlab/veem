@@ -29,10 +29,6 @@ pub struct MessageView {
     /// having them in view can't undo the thing the user just asked for. Cleared
     /// whenever a conversation is opened afresh.
     no_autoread: std::collections::HashSet<(u32, u32)>,
-    /// The next render is a conversation being opened, so its cards play their
-    /// entrance. Cleared by that render: a body arriving late, or a mark
-    /// changing, must not replay it.
-    animate_next: bool,
     /// Draw the blocked-content banner in its quiet grey style.
     dim_banner: bool,
     /// Whether that banner is shown at all. It gates only the notice: `blocked`
@@ -464,7 +460,6 @@ impl Component for MessageView {
             folder_labels: std::collections::HashMap::new(),
             blocked: false,
             no_autoread: std::collections::HashSet::new(),
-            animate_next: false,
             dim_banner: crate::config::load_dim_remote_banner(),
             show_banner: crate::config::load_show_remote_banner(),
             remote_allowed: false,
@@ -577,7 +572,6 @@ impl Component for MessageView {
                 // read by scrolling again.
                 if !same_message {
                     self.no_autoread.clear();
-                    self.animate_next = true;
                 }
                 self.thread = thread;
                 self.folder_labels = folder_labels;
@@ -824,8 +818,7 @@ impl MessageView {
         self.apply_webview_bg(dark);
         // Hide the WebView behind the themed cover until this load finishes.
         self.webview_ready = false;
-        let animate = std::mem::take(&mut self.animate_next);
-        let html = self.document_html(dark, animate);
+        let html = self.document_html(dark);
         let n = self.seq.get().wrapping_add(1);
         self.seq.set(n);
         self.webview
@@ -845,14 +838,13 @@ impl MessageView {
     }
 
     /// The wrapper document for what is currently on screen.
-    fn document_html(&self, dark: bool, animate: bool) -> String {
+    fn document_html(&self, dark: bool) -> String {
         Self::conversation_document(
             &self.thread,
             &self.folder_labels,
             &self.no_autoread,
             !self.remote_allowed,
             dark,
-            animate,
         )
     }
 
@@ -870,11 +862,10 @@ impl MessageView {
         no_autoread: &std::collections::HashSet<(u32, u32)>,
         restrict: bool,
         dark: bool,
-        animate: bool,
     ) -> String {
         let conversation = thread.len() > 1;
         let mut sections = String::new();
-        for (idx, m) in thread.iter().enumerate() {
+        for m in thread {
             let body = if m.body.trim().is_empty() {
                 "<div class=\"vireo-loading\">Loading…</div>".to_string()
             } else {
@@ -882,7 +873,7 @@ impl MessageView {
             };
             if conversation {
                 sections.push_str(&format!(
-                    "<section class=\"vireo-msg\"{delay}>\
+                    "<section class=\"vireo-msg\">\
                        <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
                          {dot}<span class=\"vireo-from\">{from}</span>{addr}{folder}\
@@ -898,13 +889,6 @@ impl MessageView {
                        </header>{body}{seen_mark}</section>",
                     aid = m.account_id,
                     id = m.id,
-                    // Each card follows the one above it. Capped so a long
-                    // conversation still finishes arriving promptly.
-                    delay = if animate {
-                        format!(" style=\"animation-delay:{}ms\"", (idx.min(8) * 55))
-                    } else {
-                        String::new()
-                    },
                     // `escape_text`, not `attr_escape`: these land in element
                     // text content, where `<` and `>` are structural. A `From:`
                     // display name is attacker-controlled (and RFC 2047-decoded,
@@ -988,18 +972,6 @@ impl MessageView {
             Some(n) => format!("<script nonce=\"{n}\">{SIZE_SCRIPT}</script>"),
             None => String::new(),
         };
-        // Cards arrive from the right, each just behind the last, settling out of
-        // a slight tilt. `both` holds the opening frame before the delay elapses,
-        // so a card never flashes at full size first. Motion is a preference,
-        // not a given — a reader who has asked for less simply gets none.
-        let anim = if animate {
-            "@keyframes vireo-in{from{opacity:0;transform:translateX(34px) rotate(1.6deg);}\
-             to{opacity:1;transform:none;}}\
-             .vireo-msg{animation:vireo-in 300ms cubic-bezier(0.22,1,0.36,1) both;}\
-             @media (prefers-reduced-motion:reduce){.vireo-msg{animation:none;}}"
-        } else {
-            ""
-        };
         format!(
             "<!doctype html><html><head><meta charset=\"utf-8\">{csp}\
              <meta name=\"color-scheme\" content=\"{scheme}\">\
@@ -1011,7 +983,6 @@ impl MessageView {
                .vireo-msg{{background:{bg};border:1px solid rgba(128,128,128,0.28);\
                  border-radius:12px;overflow:hidden;margin-bottom:14px;}}\
                .vireo-msg:last-child{{margin-bottom:0;}}\
-               {anim}\
                .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;transition:background 120ms ease;border-bottom:1px solid rgba(128,128,128,0.2);}}\
                .vireo-msg-hdr:hover{{background:rgba(128,128,128,0.16);}}\
                .vireo-from{{font-weight:700;}}\
@@ -2128,7 +2099,6 @@ mod tests {
             &Default::default(),
             true,
             false,
-            false,
         );
         assert_eq!(
             doc.matches("<section class=\"vireo-msg\">").count(),
@@ -2160,7 +2130,6 @@ mod tests {
             &Default::default(),
             true,
             false,
-            false,
         );
         for act in ["reply", "replyall", "forward"] {
             assert_eq!(
@@ -2190,7 +2159,6 @@ mod tests {
             &Default::default(),
             true,
             false,
-            false,
         );
         assert_eq!(doc.matches("class=\"vireo-dot\"").count(), 1, "one dot: {doc}");
         assert_eq!(doc.matches("class=\"vireo-end\"").count(), 1, "one sentinel: {doc}");
@@ -2216,44 +2184,9 @@ mod tests {
             &suppressed,
             true,
             false,
-            false,
         );
         assert_eq!(doc.matches("class=\"vireo-dot\"").count(), 1, "still marked: {doc}");
         assert_eq!(doc.matches("class=\"vireo-end\"").count(), 0, "no sentinel: {doc}");
-    }
-
-    /// The entrance plays when a conversation is opened and not on the renders
-    /// that follow it — a body arriving late must not restage the whole thread.
-    #[test]
-    fn cards_are_staggered_only_on_the_opening_render() {
-        let thread = [msg_for_print(), msg_for_print(), msg_for_print()];
-        let opening = MessageView::conversation_document(
-            &thread,
-            &Default::default(),
-            &Default::default(),
-            true,
-            false,
-            true,
-        );
-        assert!(opening.contains("@keyframes vireo-in"), "entrance present");
-        assert!(opening.contains("animation-delay:0ms"), "first card leads");
-        assert!(opening.contains("animation-delay:55ms"), "second follows it");
-        assert!(opening.contains("animation-delay:110ms"), "third follows that");
-        assert!(
-            opening.contains("prefers-reduced-motion"),
-            "a reader who asked for less motion gets none"
-        );
-
-        let update = MessageView::conversation_document(
-            &thread,
-            &Default::default(),
-            &Default::default(),
-            true,
-            false,
-            false,
-        );
-        assert!(!update.contains("@keyframes"), "no entrance on a re-render");
-        assert!(!update.contains("animation-delay"), "and no stagger: {update}");
     }
 
     #[test]
@@ -2263,7 +2196,6 @@ mod tests {
             &std::collections::HashMap::new(),
             &Default::default(),
             true,
-            false,
             false,
         );
         assert!(!doc.contains("<section class=\"vireo-msg\">"), "no card: {doc}");
@@ -2277,7 +2209,7 @@ mod tests {
         b.id = 2;
         b.folder_id = 3; // pulled in from Sent
         let labels = std::collections::HashMap::from([((1u32, 2u32), "Sent".to_string())]);
-        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), true, false, false);
+        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), true, false);
         assert_eq!(
             doc.matches("vireo-folder").count(),
             // once in the stylesheet, once on the message that came from Sent —
@@ -2297,7 +2229,7 @@ mod tests {
         b.id = 2;
         let labels =
             std::collections::HashMap::from([((1u32, 2u32), "<img src=x onerror=alert(1)>".into())]);
-        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), true, false, false);
+        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), true, false);
         assert!(!doc.contains("<img src=x"), "the label must be escaped, not rendered");
         assert!(doc.contains("&lt;img src=x"));
     }
@@ -2315,7 +2247,7 @@ mod tests {
         let mut b = msg_for_print();
         b.id = 2;
         // Two messages: the per-message headers only render in conversation mode.
-        let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), true, false, false);
+        let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), true, false);
 
         assert!(!doc.contains("<script>x=1"), "{doc}");
         assert!(!doc.contains("<img src=y"), "{doc}");
@@ -2329,7 +2261,7 @@ mod tests {
         a.from_name = "Ada".into();
         let mut b = msg_for_print();
         b.id = 2;
-        let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), true, false, false);
+        let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), true, false);
 
         // A nonce'd CSP, so an injected `<script>` or `onerror=` is refused by
         // the engine even if the escaping above ever regresses.
@@ -2360,7 +2292,6 @@ mod tests {
                 &Default::default(),
                 &Default::default(),
                 true,
-                false,
                 false,
             );
         assert!(!again.contains(nonce), "nonce was reused across renders");
@@ -2490,7 +2421,7 @@ mod tests {
         let mut b = msg_for_print();
         b.id = 2;
         b.body = "<p style=\"height:300px\">second</p>".into();
-        let html = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), true, false, false);
+        let html = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), true, false);
 
         let view = webkit6::WebView::new();
         let settings = webkit6::Settings::new();
