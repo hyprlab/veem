@@ -1221,6 +1221,12 @@ impl MessageView {
                .vireo-dot{{width:8px;height:8px;border-radius:50%;background:#3584e4;\
                  flex:none;align-self:center;}}\
                .vireo-end{{height:1px;}}\
+               .vireo-quote{{display:block;margin:0 16px 12px;padding:0 7px;\
+                 font:inherit;font-size:0.7em;line-height:1.45;letter-spacing:0.06em;\
+                 color:inherit;opacity:0.6;background:rgba(128,128,128,0.16);\
+                 border:0;border-radius:999px;cursor:pointer;}}\
+               .vireo-quote:hover{{opacity:0.95;background:rgba(128,128,128,0.28);}}\
+               .vireo-quote.open{{opacity:0.95;}}\
                .vireo-acts{{display:flex;gap:6px;}}\
                .vireo-act{{font:inherit;font-size:0.8em;color:inherit;background:none;\
                  border:1px solid rgba(128,128,128,0.45);border-radius:999px;\
@@ -1971,16 +1977,16 @@ f._q=1;\
 var box=d.createElement('div');top.parentNode.insertBefore(box,top);\
 while(box.nextSibling)box.appendChild(box.nextSibling);\
 box.style.display='none';\
-var b=d.createElement('button');b.textContent='\u{2022}\u{2022}\u{2022}';\
+if(!f.parentNode)return;\
+var b=document.createElement('button');b.className='vireo-quote';\
+b.type='button';b.textContent='\u{2022}\u{2022}\u{2022}';\
 b.setAttribute('title','Show quoted text');\
-b.style.cssText='display:block;margin:10px 0;padding:0 10px;line-height:1.5;'+\
-'border:1px solid rgba(128,128,128,0.5);border-radius:999px;'+\
-'background:rgba(128,128,128,0.14);color:inherit;font:inherit;cursor:pointer;';\
-box.parentNode.insertBefore(b,box);\
+f.parentNode.insertBefore(b,f.nextSibling);\
 b.addEventListener('click',function(e){e.stopPropagation();e.preventDefault();\
 var on=box.style.display==='none';box.style.display=on?'':'none';\
+b.classList.toggle('open',on);\
 b.setAttribute('title',on?'Hide quoted text':'Show quoted text');\
-s(f);setTimeout(function(){s(f);},0);});}catch(_){}}\
+s(f);setTimeout(function(){s(f);},0);setTimeout(function(){s(f);},120);});}catch(_){}}\
 function init(f){quote(f);s(f);try{var d=f.contentDocument;if(d){if(window.ResizeObserver&&d.body){new ResizeObserver(function(){s(f);}).observe(d.body);}\
 if(f.dataset.key&&!f._c){f._c=1;d.addEventListener('click',function(e){\
 if(e.target&&e.target.closest&&e.target.closest('a'))return;pick(f.dataset.key,e);});}\
