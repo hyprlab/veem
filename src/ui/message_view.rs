@@ -1205,6 +1205,8 @@ impl MessageView {
                body{{margin:0;padding:0;background:{page};font:14px/1.55 system-ui,sans-serif;}}\
                body.vireo-conv{{padding:14px;}}\
                iframe.vireo-frame{{width:100%;border:0;display:block;background:{bg};}}\
+               iframe.vireo-frame.anim{{transition:height 240ms cubic-bezier(0.4,0,0.2,1);}}\
+               @media (prefers-reduced-motion:reduce){{iframe.vireo-frame.anim{{transition:none;}}}}\
                .vireo-msg{{background:{bg};border:1px solid rgba(128,128,128,0.28);\
                  border-radius:12px;overflow:hidden;margin-bottom:14px;}}\
                .vireo-msg:last-child{{margin-bottom:0;}}\
@@ -1983,10 +1985,18 @@ b.type='button';b.textContent='\u{2022}\u{2022}\u{2022}';\
 b.setAttribute('title','Show quoted text');\
 f.parentNode.insertBefore(b,f.nextSibling);\
 b.addEventListener('click',function(e){e.stopPropagation();e.preventDefault();\
-var on=box.style.display==='none';box.style.display=on?'':'none';\
+var on=box.style.display==='none';\
+var from=f.getBoundingClientRect().height;\
+box.style.display=on?'':'none';\
 b.classList.toggle('open',on);\
 b.setAttribute('title',on?'Hide quoted text':'Show quoted text');\
-s(f);setTimeout(function(){s(f);},0);setTimeout(function(){s(f);},120);});}catch(_){}}\
+var to=0;try{var dd=f.contentDocument,bb=dd.body,ee=dd.documentElement;\
+to=Math.max(bb?bb.scrollHeight:0,ee?ee.scrollHeight:0,bb?bb.offsetHeight:0);}catch(_){}\
+if(!to){s(f);return;}\
+f.style.height=from+'px';f.classList.add('anim');\
+void f.offsetHeight;\
+f.style.height=to+'px';\
+setTimeout(function(){f.classList.remove('anim');s(f);},280);});}catch(_){}}\
 function init(f){quote(f);s(f);try{var d=f.contentDocument;if(d){if(window.ResizeObserver&&d.body){new ResizeObserver(function(){s(f);}).observe(d.body);}\
 if(f.dataset.key&&!f._c){f._c=1;d.addEventListener('click',function(e){\
 if(e.target&&e.target.closest&&e.target.closest('a'))return;pick(f.dataset.key,e);});}\
