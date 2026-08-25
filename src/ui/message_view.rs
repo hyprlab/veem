@@ -58,6 +58,10 @@ pub struct MessageView {
     account_name: Option<String>,
     /// Provider holding the header chip's per-account colours.
     chip_provider: gtk::CssProvider,
+    /// Paints the reader's spinner and its inter-document cover in the *message*
+    /// theme rather than the app's. Reading a light message in a dark app used
+    /// to mean a dark spinner giving way to a white page.
+    cover_provider: gtk::CssProvider,
     /// True while the body is being fetched (show a spinner instead).
     loading: bool,
     /// False from when a render starts until the WebView reports it finished
@@ -373,11 +377,13 @@ impl Component for MessageView {
                     // Themed cover shown while the WebView loads, so its white
                     // inter-document gap is never visible.
                     add_named[Some("blank")] = &gtk::Box {
+                        add_css_class: "reader-cover",
                         set_vexpand: true,
                         set_hexpand: true,
                     },
 
                     add_named[Some("loading")] = &gtk::Box {
+                        add_css_class: "reader-cover",
                         set_orientation: gtk::Orientation::Vertical,
                         set_halign: gtk::Align::Center,
                         set_valign: gtk::Align::Center,
@@ -389,8 +395,10 @@ impl Component for MessageView {
                             set_height_request: 36,
                         },
                         gtk::Label {
+                            // Dimming comes from the cover's own foreground, which
+                            // is picked for the message theme — `dim-label` would
+                            // fade it against the app's instead.
                             set_label: "Loading…",
-                            add_css_class: "dim-label",
                         },
                     },
                 },
@@ -434,10 +442,16 @@ impl Component for MessageView {
             }
         });
         let chip_provider = gtk::CssProvider::new();
+        let cover_provider = gtk::CssProvider::new();
         if let Some(display) = gtk::gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
                 &display,
                 &chip_provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &cover_provider,
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
             );
         }
@@ -457,6 +471,7 @@ impl Component for MessageView {
             avatar_texture: None,
             account_name: None,
             chip_provider,
+            cover_provider,
             loading: false,
             webview_ready: false,
             webview,
@@ -517,7 +532,7 @@ impl Component for MessageView {
         // Re-render the body when the light/dark preference changes so unstyled
         // content tracks the theme live.
         let style_manager = adw::StyleManager::default();
-        model.apply_webview_bg(style_manager.is_dark());
+        model.apply_webview_bg(model.effective_dark());
         let theme_sender = sender.clone();
         style_manager.connect_dark_notify(move |_| {
             theme_sender.input(MessageViewInput::ThemeChanged);
@@ -1078,6 +1093,19 @@ impl MessageView {
             gtk::gdk::RGBA::new(1.0, 1.0, 1.0, 1.0)
         };
         self.webview.set_background_color(&rgba);
+        // The spinner and the cover stand in for the message, so they answer to
+        // the message's theme: #1e1e1e matches the document's own dark ground,
+        // white its light one. The label and spinner take a dimmed foreground
+        // from the same side, so neither disappears into the ground.
+        let (bg, fg) = if dark {
+            ("#1e1e1e", "rgba(255,255,255,0.55)")
+        } else {
+            ("#ffffff", "rgba(0,0,0,0.45)")
+        };
+        self.cover_provider.load_from_data(&format!(
+            ".reader-cover {{ background-color: {bg}; }}\
+             .reader-cover label, .reader-cover spinner {{ color: {fg}; }}"
+        ));
     }
 }
 

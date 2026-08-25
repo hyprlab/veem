@@ -243,6 +243,10 @@ pub struct AppModel {
     /// flashing past; the reader holds its spinner until they are all in, or
     /// until this has been waiting [`THREAD_BODY_WAIT`].
     thread_opened_at: Option<std::time::Instant>,
+    /// A cross-folder conversation lookup is still outstanding. Its answer can
+    /// add messages (and bodies) to what is on screen, so the reader waits for
+    /// it rather than painting a conversation it is about to paint again.
+    thread_related_pending: bool,
     /// Whether conversation threads start expanded in the message list.
     threads_expanded: bool,
     /// How email content is themed (message content only, not the app UI).
@@ -1160,6 +1164,7 @@ impl SimpleComponent for AppModel {
             threading_since: config::threading_since(),
             thread_render_queued: false,
             thread_opened_at: None,
+            thread_related_pending: false,
             threads_expanded: config::load_threads_expanded(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
@@ -1850,6 +1855,9 @@ impl SimpleComponent for AppModel {
                     current.body = body;
                 }
                 self.current = Some(current.clone());
+                // A new selection: whatever the last one was waiting for no
+                // longer holds this one back.
+                self.thread_related_pending = false;
 
                 // The folder being read holds only its half of the conversation:
                 // your own replies are filed in Sent, and older parts may have
@@ -1869,6 +1877,7 @@ impl SimpleComponent for AppModel {
                             ids,
                             since: self.threading_since,
                         });
+                        self.thread_related_pending = true;
                     }
                 }
 
@@ -1893,6 +1902,10 @@ impl SimpleComponent for AppModel {
                     }
                     self.current_thread = conv;
                     self.thread_opened_at = Some(std::time::Instant::now());
+                    // The paint happens once the conversation has settled: the
+                    // lookup answered and the bodies in. Until then the reader
+                    // holds its spinner.
+                    self.queue_thread_render(&sender);
                     // Fetch the bodies we don't have yet (primary first via order).
                     let to_load: Vec<(u32, u32, u32, String)> = self
                         .current_thread
@@ -2007,7 +2020,19 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::Related { account_id, message_id, messages } => {
+                if self
+                    .current
+                    .as_ref()
+                    .is_some_and(|c| c.account_id == account_id && c.id == message_id)
+                {
+                    self.thread_related_pending = false;
+                }
                 self.merge_related(account_id, message_id, messages);
+                // One render for the settled conversation, rather than one here
+                // and another for whatever this brought with it.
+                if self.current_thread.len() > 1 {
+                    self.queue_thread_render(&sender);
+                }
             }
 
             AppMsg::PurgeMessages(messages) => {
@@ -3036,11 +3061,12 @@ impl SimpleComponent for AppModel {
                     // Still assembling and still within the grace period: come
                     // back rather than paint a conversation that is about to be
                     // replaced. The re-queue is what makes the deadline fire.
-                    let missing = self.current_thread.iter().any(|m| m.body.is_empty());
+                    let unsettled = self.current_thread.iter().any(|m| m.body.is_empty())
+                        || self.thread_related_pending;
                     let waiting = self
                         .thread_opened_at
                         .is_some_and(|opened| opened.elapsed() < THREAD_BODY_WAIT);
-                    if missing && waiting {
+                    if unsettled && waiting {
                         self.queue_thread_render(&sender);
                         return;
                     }
@@ -4025,8 +4051,9 @@ impl AppModel {
         let waiting = self
             .thread_opened_at
             .is_some_and(|opened| opened.elapsed() < THREAD_BODY_WAIT);
+        let unsettled = missing || self.thread_related_pending;
         let loading = if self.current_thread.len() > 1 {
-            missing && waiting
+            unsettled && waiting
         } else {
             primary.body.is_empty()
         };
@@ -4580,7 +4607,6 @@ impl AppModel {
         for (aid, mid, uid, path) in to_load {
             self.send_to(aid, MailRequest::LoadBody { message_id: mid, path, uid });
         }
-        self.show_thread();
     }
 
     /// Whether a message already lives in its account's Trash — where "delete"
