@@ -1954,11 +1954,14 @@ fn ground_rgba(hex: &str) -> gtk::gdk::RGBA {
 }
 
 const SIZE_SCRIPT: &str = "\
-function s(f){try{var d=f.contentDocument;if(!d)return;var b=d.body,e=d.documentElement;\
+function s(f){if(f._s)return;f._s=1;try{var d=f.contentDocument;if(!d)return;\
+var b=d.body,e=d.documentElement;\
+var prev=f.style.height;f.style.height='0px';void f.offsetHeight;\
 var h=Math.max(b?b.scrollHeight:0,e?e.scrollHeight:0,b?b.offsetHeight:0);\
 if(h>0){f.style.height=h+'px';\
 if(f.dataset.key&&f._h!==h){f._h=h;\
-try{window.webkit.messageHandlers.vireo.postMessage('size:'+f.dataset.key+':'+h);}catch(_){}}}}catch(_){}}\
+try{window.webkit.messageHandlers.vireo.postMessage('size:'+f.dataset.key+':'+h);}catch(_){}}}\
+else{f.style.height=prev;}}catch(_){}finally{f._s=0;}}\
 function pick(k,e){var mo=e.shiftKey?'r':((e.ctrlKey||e.metaKey)?'t':'p');\
 if(mo!=='p'){try{e.preventDefault();\
 var g=(e.view&&e.view.getSelection)?e.view.getSelection():null;if(g)g.removeAllRanges();}catch(_){}}\
