@@ -25,6 +25,7 @@ pub struct PrefInit {
     pub blacklist: Vec<String>,
     pub palette_collapse_secs: u64,
     pub threading: bool,
+    pub thread_old_mail: bool,
     pub threads_expanded: bool,
     pub message_theme: MessageTheme,
     pub notifications: bool,
@@ -122,6 +123,7 @@ pub struct Preferences {
 pub enum PrefInput {
     AddSenderText(String),
     RemoveSenderRow(String),
+    ToggleThreadOldMail(bool),
     ToggleDimRemoteBanner(bool),
     ToggleShowRemoteBanner(bool),
     AddBlacklistText(String),
@@ -162,6 +164,7 @@ pub enum PrefOutput {
     SetDateStyle(DateStyle),
     SetClockStyle(ClockStyle),
     SetThreading(bool),
+    SetThreadOldMail(bool),
     SetThreadsExpanded(bool),
     SetFetchInterval(u64),
     SetPush(bool),
@@ -261,6 +264,21 @@ impl Component for Preferences {
                             set_subtitle: "Collapse replies into a single threaded conversation.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleThreading(row.is_active()));
+                            },
+                        },
+
+                        #[name = "thread_old_mail_row"]
+                        adw::SwitchRow {
+                            set_title: "Thread older messages too",
+                            set_subtitle: "By default only mail that arrived since conversations \
+                                           were switched on is grouped. This reaches back through \
+                                           the whole mailbox, at some cost: an old conversation \
+                                           can run years deep, and each message in one is read \
+                                           and rendered when the conversation is opened.",
+                            #[watch]
+                            set_sensitive: threading_row.is_active(),
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleThreadOldMail(row.is_active()));
                             },
                         },
 
@@ -605,6 +623,7 @@ impl Component for Preferences {
         }
         widgets.single_key_row.set_active(init.single_key_shortcuts);
         widgets.threading_row.set_active(init.threading);
+        widgets.thread_old_mail_row.set_active(init.thread_old_mail);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
 
         // Date and clock combos.
@@ -739,6 +758,9 @@ impl Component for Preferences {
                 }
             }
 
+            PrefInput::ToggleThreadOldMail(on) => {
+                let _ = sender.output(PrefOutput::SetThreadOldMail(on));
+            }
             PrefInput::ToggleDimRemoteBanner(on) => {
                 let _ = sender.output(PrefOutput::SetDimRemoteBanner(on));
             }

@@ -235,6 +235,9 @@ pub struct AppModel {
     /// `config::threading_since`) — so an archive is never grouped, and never
     /// pulled into a conversation.
     threading_since: i64,
+    /// Whether conversations reach back through the whole mailbox rather than
+    /// only mail from the cutoff forward.
+    thread_old_mail: bool,
     /// A conversation re-render is already scheduled, so further bodies arriving
     /// in the same burst don't each queue one of their own.
     thread_render_queued: bool,
@@ -423,6 +426,7 @@ pub enum AppMsg {
     SetDateStyle(crate::config::DateStyle),
     SetClockStyle(crate::config::ClockStyle),
     SetThreading(bool),
+    SetThreadOldMail(bool),
     SetThreadsExpanded(bool),
     SetFetchInterval(u64),
     SetPush(bool),
@@ -1181,7 +1185,8 @@ impl SimpleComponent for AppModel {
                 config::load_single_key_shortcuts(),
             )),
             threading: config::load_threading(),
-            threading_since: config::threading_since(),
+            threading_since: if config::load_thread_old_mail() { 0 } else { config::threading_since() },
+            thread_old_mail: config::load_thread_old_mail(),
             thread_render_queued: false,
             thread_opened_at: None,
             thread_related_pending: false,
@@ -2798,6 +2803,7 @@ impl SimpleComponent for AppModel {
                     blacklist: self.blacklist.clone(),
                     palette_collapse_secs: self.palette_collapse_secs,
                     threading: self.threading,
+                    thread_old_mail: self.thread_old_mail,
                     threads_expanded: self.threads_expanded,
                     message_theme: self.message_theme,
                     notifications: self.notifications_enabled,
@@ -2825,6 +2831,7 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetDateStyle(style) => AppMsg::SetDateStyle(style),
                         PrefOutput::SetClockStyle(style) => AppMsg::SetClockStyle(style),
                         PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
+                        PrefOutput::SetThreadOldMail(on) => AppMsg::SetThreadOldMail(on),
                         PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                         PrefOutput::SetPush(on) => AppMsg::SetPush(on),
@@ -3075,6 +3082,23 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetThreadOldMail(on) => {
+                if self.thread_old_mail != on {
+                    self.thread_old_mail = on;
+                    config::set_thread_old_mail(on);
+                    // Lifting the cutoff means the whole mailbox threads; putting
+                    // it back means only mail since it was stamped.
+                    self.threading_since = if on { 0 } else { config::threading_since() };
+                    self.message_list
+                        .emit(MessageListInput::SetThreadingSince(self.threading_since));
+                    // The links were gathered under the old bound, and any
+                    // assembled conversation was built under it too.
+                    self.thread_cache.clear();
+                    self.thread_cache_order.clear();
+                    self.push_thread_links();
+                }
+            }
+
             AppMsg::SelectionKeys(keys) => {
                 self.message_view.emit(MessageViewInput::SetSelectedCards(keys));
             }
@@ -3299,6 +3323,16 @@ impl SimpleComponent for AppModel {
 /// arrives whole, short enough that one unreachable message can't hold the
 /// reader hostage.
 const THREAD_BODY_WAIT: std::time::Duration = std::time::Duration::from_millis(1200);
+
+/// How many messages' reply headers are held for joining conversations across
+/// folders. Only a bound on memory and rebuild cost — a conversation is joined
+/// by mail near it in time, and the newest links are kept.
+const THREAD_LINK_LIMIT: usize = 4000;
+
+/// How many messages of one conversation the reader will assemble. Every member
+/// is a body to fetch and to inline into a single document, so an archive's
+/// deepest threads have to stop somewhere; the newest are kept.
+pub const CONVERSATION_MAX: usize = 25;
 
 impl AppModel {
     /// Push the date and clock preference into the formatter and redraw whatever
@@ -4662,6 +4696,11 @@ impl AppModel {
         }
         conv.extend(added);
         conv.sort_by(|a, b| a.timestamp.cmp(&b.timestamp)); // oldest first, as the list threads
+        if conv.len() > CONVERSATION_MAX {
+            // Keep the newest: the end of a long conversation is the part being
+            // read, and the rest is still one click away in the list.
+            conv.drain(..conv.len() - CONVERSATION_MAX);
+        }
         // Late arrivals bring bodies of their own; give them the same grace
         // period so they join the first paint instead of causing a second.
         self.thread_opened_at = Some(std::time::Instant::now());
@@ -5110,15 +5149,23 @@ impl AppModel {
     /// in another one. Bounded by the cutoff: old mail never threads, so its
     /// links are never needed.
     fn push_thread_links(&self) {
-        let mut links: Vec<(u32, String, String)> = Vec::new();
-        for ((account_id, _), msgs) in self.message_cache.iter() {
-            for m in msgs.iter().filter(|m| m.timestamp >= self.threading_since) {
-                if m.message_id.is_empty() && m.references.is_empty() {
-                    continue;
-                }
-                links.push((*account_id, m.message_id.clone(), m.references.clone()));
-            }
-        }
+        // Newest first, and capped: threading the whole mailbox would otherwise
+        // put every message's reply headers here, to be cloned on each sync and
+        // walked on each rebuild. A conversation is joined by mail near it in
+        // time, so the newest links are the ones that do the joining.
+        let mut recent: Vec<&Message> = self
+            .message_cache
+            .values()
+            .flatten()
+            .filter(|m| m.timestamp >= self.threading_since)
+            .filter(|m| !(m.message_id.is_empty() && m.references.is_empty()))
+            .collect();
+        recent.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        recent.truncate(THREAD_LINK_LIMIT);
+        let mut links: Vec<(u32, String, String)> = recent
+            .into_iter()
+            .map(|m| (m.account_id, m.message_id.clone(), m.references.clone()))
+            .collect();
         links.sort();
         links.dedup();
         self.message_list.emit(MessageListInput::SetThreadLinks(links));
