@@ -4450,6 +4450,7 @@ impl AppModel {
         } else {
             self.current_thread.clone()
         };
+        let messages = dedupe_label_copies(messages, &conv, current.folder_id);
         let mut added = Vec::new();
         for mut r in messages {
             if conv.iter().any(|m| m.folder_id == r.folder_id && m.uid == r.uid) {
@@ -6233,6 +6234,39 @@ type MissingBody = (u32, u32, u32, String);
 /// One `LoadBodies` request: the `(account_id, folder_path)` it goes to, and the
 /// `(message_id, uid)` of every member it covers.
 type BodyBatch = ((u32, String), Vec<(u32, u32)>);
+/// Keep one copy of each message, dropping the rest of its labels.
+///
+/// Gmail exposes labels as IMAP folders, so a single message sits in INBOX,
+/// All Mail and Important at once — three folder/UID pairs carrying one
+/// Message-ID. A conversation that dedupes on those pairs alone therefore shows
+/// every copy: a six-message thread renders as eighteen. On a real cache 1210 of
+/// this account's 1212 messages are labelled that way, so this is the normal
+/// case for Gmail, not an edge one.
+///
+/// The copy from the folder the reader is showing wins, so the "from folder X"
+/// label and the actions on a message refer to the mail actually on screen. A
+/// message with no Message-ID can't be matched this way and is left alone.
+fn dedupe_label_copies(messages: Vec<Message>, conv: &[Message], shown_folder: u32) -> Vec<Message> {
+    let mut out: Vec<Message> = Vec::new();
+    for r in messages {
+        if r.message_id.is_empty() {
+            out.push(r);
+            continue;
+        }
+        if conv.iter().any(|m| m.message_id == r.message_id) {
+            continue; // the conversation already holds this mail under some label
+        }
+        match out.iter().position(|m| m.message_id == r.message_id) {
+            Some(i) => {
+                if out[i].folder_id != shown_folder && r.folder_id == shown_folder {
+                    out[i] = r;
+                }
+            }
+            None => out.push(r),
+        }
+    }
+    out
+}
 
 /// Group a conversation's missing bodies into one request per (account, folder).
 ///
@@ -6278,6 +6312,66 @@ fn next_after_vanish(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A conversation member as the related-lookup hands it over: what matters
+    /// here is which folder it came from and what Message-ID it carries.
+    fn labelled(folder_id: u32, uid: u32, message_id: &str) -> Message {
+        Message {
+            id: uid,
+            account_id: 1,
+            folder_id,
+            uid,
+            from_name: String::new(),
+            from_addr: String::new(),
+            to: String::new(),
+            cc: String::new(),
+            subject: String::new(),
+            preview: String::new(),
+            body: String::new(),
+            date: String::new(),
+            timestamp: 0,
+            unread: false,
+            starred: false,
+            has_attachment: false,
+            message_id: message_id.to_string(),
+            references: String::new(),
+        }
+    }
+
+    #[test]
+    fn one_gmail_message_under_three_labels_joins_the_conversation_once() {
+        // INBOX = 1, All Mail = 2, Important = 3 — the same mail in all three,
+        // which is how 1210 of one real account's 1212 messages are stored.
+        let related = vec![
+            labelled(2, 500, "<a@example.com>"),
+            labelled(3, 900, "<a@example.com>"),
+            labelled(1, 42, "<a@example.com>"),
+            labelled(2, 501, "<b@example.com>"),
+        ];
+        let kept = dedupe_label_copies(related, &[], 1);
+        assert_eq!(kept.len(), 2, "two messages, not four copies");
+        let a = kept.iter().find(|m| m.message_id == "<a@example.com>").unwrap();
+        assert_eq!(
+            (a.folder_id, a.uid),
+            (1, 42),
+            "the copy from the folder on screen wins, whatever order it arrived in"
+        );
+    }
+
+    #[test]
+    fn a_label_copy_of_a_message_already_shown_is_dropped() {
+        let conv = vec![labelled(1, 42, "<a@example.com>")];
+        let kept = dedupe_label_copies(vec![labelled(2, 500, "<a@example.com>")], &conv, 1);
+        assert!(kept.is_empty(), "the conversation already holds this mail");
+    }
+
+    #[test]
+    fn messages_without_a_message_id_are_never_merged_together() {
+        // Two distinct messages that carry no Message-ID must stay two: there is
+        // nothing to match them on, and folding them would lose one.
+        let kept = dedupe_label_copies(vec![labelled(1, 7, ""), labelled(1, 8, "")], &[], 1);
+        assert_eq!(kept.len(), 2);
+    }
 
     #[test]
     fn a_conversation_in_one_folder_becomes_a_single_fetch() {
