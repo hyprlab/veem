@@ -1991,7 +1991,9 @@ box.style.display=on?'':'none';\
 b.classList.toggle('open',on);\
 b.setAttribute('title',on?'Hide quoted text':'Show quoted text');\
 var to=0;try{var dd=f.contentDocument,bb=dd.body,ee=dd.documentElement;\
-to=Math.max(bb?bb.scrollHeight:0,ee?ee.scrollHeight:0,bb?bb.offsetHeight:0);}catch(_){}\
+var prev=f.style.height;f.style.height='0px';void f.offsetHeight;\
+to=Math.max(bb?bb.scrollHeight:0,ee?ee.scrollHeight:0,bb?bb.offsetHeight:0);\
+f.style.height=prev;void f.offsetHeight;}catch(_){}\
 if(!to){s(f);return;}\
 f.style.height=from+'px';f.classList.add('anim');\
 void f.offsetHeight;\
