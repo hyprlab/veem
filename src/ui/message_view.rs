@@ -204,9 +204,10 @@ pub enum MessageViewOutput {
     ComposeTo(String),
     /// Open a conversation message in its own window (header double-clicked).
     OpenWindow(Box<Message>),
-    /// A card was clicked: select that message in the list too, so everything
-    /// that acts on a selection acts on the message the user pointed at.
-    SelectCard { account_id: u32, id: u32, mode: SelectMode },
+    /// The reader's selection changed. It owns this: a conversation can hold
+    /// messages the list has no row for — a reply of yours read in from Sent —
+    /// and those must still be selectable. The list mirrors what it can.
+    SelectCards(Vec<(u32, u32)>),
     /// A conversation message has been read (scrolled through). The reader has
     /// already dropped its mark; the app makes it stick.
     MarkSeen { account_id: u32, id: u32 },
@@ -777,13 +778,42 @@ impl Component for MessageView {
             MessageViewInput::CardClicked { account_id, id, mode } => {
                 // Only meaningful in a conversation: a lone message is already
                 // the selection.
-                if self.thread.len() > 1 {
-                    let _ = sender.output(MessageViewOutput::SelectCard {
-                        account_id,
-                        id,
-                        mode,
-                    });
+                if self.thread.len() <= 1 {
+                    return;
                 }
+                let key = (account_id, id);
+                let order: Vec<(u32, u32)> =
+                    self.thread.iter().map(|m| (m.account_id, m.id)).collect();
+                let mut keys = match mode {
+                    SelectMode::Plain => vec![key],
+                    SelectMode::Toggle => {
+                        let mut k = self.selected_cards.clone();
+                        if let Some(pos) = k.iter().position(|x| *x == key) {
+                            k.remove(pos);
+                        } else {
+                            k.push(key);
+                        }
+                        k
+                    }
+                    SelectMode::Range => {
+                        // From the first thing already selected to this one, in
+                        // the order the conversation is shown.
+                        let anchor = self
+                            .selected_cards
+                            .first()
+                            .and_then(|a| order.iter().position(|x| x == a))
+                            .unwrap_or_else(|| {
+                                order.iter().position(|x| *x == key).unwrap_or(0)
+                            });
+                        let here = order.iter().position(|x| *x == key).unwrap_or(anchor);
+                        let (lo, hi) = (anchor.min(here), anchor.max(here));
+                        order[lo..=hi].to_vec()
+                    }
+                };
+                keys.retain(|k| order.contains(k));
+                self.selected_cards = keys.clone();
+                self.apply_card_selection();
+                let _ = sender.output(MessageViewOutput::SelectCards(keys));
             }
             MessageViewInput::SetSelectedCards(keys) => {
                 if self.selected_cards != keys {
@@ -1168,6 +1198,7 @@ impl MessageView {
                .vireo-msg{{background:{bg};border:1px solid rgba(128,128,128,0.28);\
                  border-radius:12px;overflow:hidden;margin-bottom:14px;}}\
                .vireo-msg:last-child{{margin-bottom:0;}}\
+               .vireo-msg{{user-select:none;}}\
                .vireo-msg.selected{{border-color:{accent};box-shadow:0 0 0 2px {accent};}}\
                .vireo-msg.selected .vireo-msg-hdr{{background:{accent}26;\
                  border-bottom-color:{accent}59;}}\
@@ -1910,7 +1941,14 @@ var h=Math.max(b?b.scrollHeight:0,e?e.scrollHeight:0,b?b.offsetHeight:0);\
 if(h>0){f.style.height=h+'px';\
 if(f.dataset.key&&f._h!==h){f._h=h;\
 try{window.webkit.messageHandlers.vireo.postMessage('size:'+f.dataset.key+':'+h);}catch(_){}}}}catch(_){}}\
+function pick(k,e){try{var t=(e.view&&e.view.getSelection)?e.view.getSelection():null;\
+if(t&&String(t).length)return;}catch(_){}\
+var mo=e.shiftKey?'r':(e.ctrlKey||e.metaKey?'t':'p');\
+if(e.shiftKey){try{e.preventDefault();}catch(_){}}\
+try{window.webkit.messageHandlers.vireo.postMessage('sel:'+k+':'+mo);}catch(_){}}\
 function init(f){s(f);try{var d=f.contentDocument;if(d){if(window.ResizeObserver&&d.body){new ResizeObserver(function(){s(f);}).observe(d.body);}\
+if(f.dataset.key&&!f._c){f._c=1;d.addEventListener('click',function(e){\
+if(e.target&&e.target.closest&&e.target.closest('a'))return;pick(f.dataset.key,e);});}\
 var im=d.images||[];for(var i=0;i<im.length;i++){if(!im[i].complete){im[i].addEventListener('load',function(){s(f);});im[i].addEventListener('error',function(){s(f);});}}}}catch(_){}\
 setTimeout(function(){s(f);},250);setTimeout(function(){s(f);},1000);}\
 function all(){return document.querySelectorAll('iframe.vireo-frame');}\
@@ -1929,9 +1967,7 @@ for(var j=0;j<hs.length;j++){hs[j].addEventListener('dblclick',function(){\
 try{window.webkit.messageHandlers.vireo.postMessage('open:'+this.dataset.key);}catch(_){}});}\
 var ms=document.querySelectorAll('.vireo-msg');\
 for(var q=0;q<ms.length;q++){ms[q].addEventListener('click',function(e){\
-var k=this.dataset.key;if(!k)return;\
-var mo=e.shiftKey?'r':(e.ctrlKey||e.metaKey?'t':'p');\
-try{window.webkit.messageHandlers.vireo.postMessage('sel:'+k+':'+mo);}catch(_){}});}\
+var k=this.dataset.key;if(k)pick(k,e);});}\
 var as=document.querySelectorAll('.vireo-act');\
 for(var k=0;k<as.length;k++){as[k].addEventListener('click',function(e){\
 e.stopPropagation();e.preventDefault();\

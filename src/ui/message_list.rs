@@ -968,13 +968,13 @@ pub enum MessageListInput {
     /// Replace the cross-folder search pool (all folders, all accounts). Sent by
     /// the app when a search begins; cleared to empty when it ends.
     SetSearchPool(Vec<Message>),
-    /// A card was clicked in the reader: mirror it here, so everything that acts
-    /// on the list's selection acts on the message the user pointed at. The
-    /// reader is already showing it, so this must not re-open anything.
-    SelectFromReader {
-        key: (u32, u32),
-        mode: crate::ui::message_view::SelectMode,
-    },
+    /// The reader's selection: mirror whichever of these the list has rows for,
+    /// so everything that acts on the list's selection acts on the messages the
+    /// user pointed at. The reader is already showing them, so this must not
+    /// re-open anything. Messages the list cannot represent — a reply read in
+    /// from Sent, which belongs to another folder — are simply not mirrored;
+    /// the reader keeps showing them selected regardless.
+    SelectFromReader { keys: Vec<(u32, u32)> },
     /// The set of selected rows changed (single click, Ctrl/Shift multi-select).
     SelectionChanged,
     /// A row was activated (double-click / Enter): pop it out into its own window.
@@ -1610,14 +1610,17 @@ impl SimpleComponent for MessageList {
                     self.rebuild_preserving_scroll();
                 }
             }
-            MessageListInput::SelectFromReader { key, mode } => {
-                use crate::ui::message_view::SelectMode;
-                // The reader shows every message in a conversation; the list only
-                // shows the head while the thread is collapsed. Selecting a reply
-                // therefore has to open the thread first — otherwise there is no
-                // row to select, and only the head would ever answer a click.
-                if !self.shown.iter().any(|m| (m.account_id, m.id) == key) {
-                    if let Some(thread_key) = self.msg_thread.get(&key).cloned() {
+            MessageListInput::SelectFromReader { keys } => {
+                // The list shows only a thread's head while it is collapsed, so
+                // selecting a reply has to open the thread first — otherwise
+                // there is no row to select and only the head would ever answer.
+                let hidden: Vec<(u32, String)> = keys
+                    .iter()
+                    .filter(|k| !self.shown.iter().any(|m| (m.account_id, m.id) == **k))
+                    .filter_map(|k| self.msg_thread.get(k).cloned())
+                    .collect();
+                if !hidden.is_empty() {
+                    for thread_key in hidden {
                         // `expanded_threads` records the departure from the
                         // default, so which way to move it depends on that.
                         if self.default_expanded {
@@ -1625,47 +1628,22 @@ impl SimpleComponent for MessageList {
                         } else {
                             self.expanded_threads.insert(thread_key);
                         }
-                        self.rebuild_preserving_scroll();
                     }
+                    self.rebuild_preserving_scroll();
                 }
-                let Some(idx) = self.shown.iter().position(|m| (m.account_id, m.id) == key) else {
-                    return;
-                };
                 let list = self.rows.widget();
-                let Some(row) = list.row_at_index(idx as i32) else {
-                    return;
-                };
-                match mode {
-                    SelectMode::Plain => {
-                        list.unselect_all();
-                        list.select_row(Some(&row));
-                    }
-                    SelectMode::Toggle => {
-                        if row.is_selected() {
-                            list.unselect_row(&row);
-                        } else {
+                list.unselect_all();
+                for key in &keys {
+                    if let Some(idx) = self.shown.iter().position(|m| (m.account_id, m.id) == *key)
+                    {
+                        if let Some(row) = list.row_at_index(idx as i32) {
                             list.select_row(Some(&row));
                         }
                     }
-                    SelectMode::Range => {
-                        // From whatever was selected first to here, as the list
-                        // does for a shift-click of its own.
-                        let anchor = list
-                            .selected_rows()
-                            .first()
-                            .map(|r| r.index())
-                            .unwrap_or(idx as i32);
-                        let (lo, hi) = (anchor.min(idx as i32), anchor.max(idx as i32));
-                        list.unselect_all();
-                        for i in lo..=hi {
-                            if let Some(r) = list.row_at_index(i) {
-                                list.select_row(Some(&r));
-                            }
-                        }
-                    }
                 }
-                // What the reader asked for, so the changes GTK is about to
-                // report can be recognised as ours rather than the user's.
+                // What the reader asked for, as this list can represent it, so
+                // the changes GTK is about to report are recognised as ours
+                // rather than the user's.
                 self.reader_keys = list
                     .selected_rows()
                     .iter()
@@ -1683,11 +1661,10 @@ impl SimpleComponent for MessageList {
                     .filter_map(|r| self.shown.get(r.index() as usize).map(|m| (m.account_id, m.id)))
                     .collect();
                 self.selection_count = keys.len();
-                // The reader outlines whatever is selected here, however the
-                // selection was made.
-                let _ = sender.output(MessageListOutput::SelectionKeys(keys.clone()));
-                // Set from the reader, which is already showing this message:
-                // mirror the selection but leave the reader alone.
+                // Set from the reader, which is already showing these messages:
+                // mirror the selection but leave the reader alone. Reporting it
+                // back would also drop whatever the reader has selected that this
+                // list has no row for.
                 if self.from_reader > 0 {
                     self.from_reader -= 1;
                     if keys == self.reader_keys {
@@ -1697,6 +1674,8 @@ impl SimpleComponent for MessageList {
                     // Something else moved the selection — stop expecting ours.
                     self.from_reader = 0;
                 }
+                // A selection the user made here; the reader outlines it.
+                let _ = sender.output(MessageListOutput::SelectionKeys(keys.clone()));
                 match keys.as_slice() {
                     [] => self.selected_id = None,
                     [key] => {

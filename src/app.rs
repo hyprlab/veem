@@ -347,12 +347,8 @@ pub enum AppMsg {
     SidebarContext(CtxAction),
     /// The list's selection changed; the reader outlines the matching cards.
     SelectionKeys(Vec<(u32, u32)>),
-    /// A card was clicked in the reader — mirror it in the list's selection.
-    SelectCard {
-        account_id: u32,
-        id: u32,
-        mode: crate::ui::message_view::SelectMode,
-    },
+    /// The reader's selection changed — mirror what the list can represent.
+    SelectCards(Vec<(u32, u32)>),
     /// A conversation message was scrolled all the way through — mark it read on
     /// the server, in the caches and in the list.
     ThreadMessageSeen { account_id: u32, id: u32 },
@@ -1070,9 +1066,7 @@ impl SimpleComponent for AppModel {
                     MessageViewOutput::MarkSeen { account_id, id } => {
                         AppMsg::ThreadMessageSeen { account_id, id }
                     }
-                    MessageViewOutput::SelectCard { account_id, id, mode } => {
-                        AppMsg::SelectCard { account_id, id, mode }
-                    }
+                    MessageViewOutput::SelectCards(keys) => AppMsg::SelectCards(keys),
                 });
 
         // The drawer owns a Paned whose top pane is the reader body, so hand it
@@ -3084,11 +3078,8 @@ impl SimpleComponent for AppModel {
                 self.message_view.emit(MessageViewInput::SetSelectedCards(keys));
             }
 
-            AppMsg::SelectCard { account_id, id, mode } => {
-                self.message_list.emit(MessageListInput::SelectFromReader {
-                    key: (account_id, id),
-                    mode,
-                });
+            AppMsg::SelectCards(keys) => {
+                self.message_list.emit(MessageListInput::SelectFromReader { keys });
             }
 
             AppMsg::ThreadMessageSeen { account_id, id } => {
