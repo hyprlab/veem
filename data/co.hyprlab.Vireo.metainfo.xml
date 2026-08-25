@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.14.0" date="2026-08-25" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.14.0</url>
+      <description>
+        <p>Conversations, properly: threads read oldest first as cards you can act on individually, quoted replies fold away, and unread messages clear as you read down. Replies you send now stay in their conversation, Gmail accounts show a message once rather than once per label, and opening a thread no longer flashes.</p>
+      </description>
+    </release>
     <release version="1.13.5" date="2026-08-24" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.13.5</url>
       <description>

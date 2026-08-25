@@ -2,7 +2,29 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.13.5
+## What's new in 1.14.0
+
+- **Conversations, properly.** A thread reads oldest first, each message its own
+  card you can reply to, forward, select or act on individually. Quoted replies
+  fold away behind a ••• so you see what was actually written. Unread messages
+  in a thread are marked and clear as you read down. The version that first
+  attempted this could exhaust your machine's memory; that is fixed, and covered
+  by tests.
+- **Threading starts from this release**, with a setting to reach back through
+  your whole mailbox if you want it. Nothing is re-downloaded either way.
+- **Replies you send stay in their conversation.** Vireo grouped incoming mail
+  by headers it never wrote on its own, so replies sent from it arrived as new
+  conversations for everyone who received them.
+- **Gmail accounts show a message once.** Gmail keeps one message under several
+  labels; a six-message thread could appear as eighteen, with attachments that
+  looked missing. Thanks to [Alexander Lubovenko](https://github.com/typedev).
+- **Opening a thread no longer flashes**, and returning to one is instant.
+- **Dragging several messages moves all of them**, and "All Inboxes" no longer
+  leaves out an account that is still syncing.
+- **A quieter blocked-content warning**, or none at all — your choice; remote
+  content stays blocked either way.
+
+## In 1.13.5
 
 - **Replies you send now stay in their conversation.** Vireo grouped incoming
   mail correctly, but the replies it sent carried none of the headers that mark

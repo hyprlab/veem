@@ -1,5 +1,88 @@
 # Changelog
 
+## 1.14.0 — 2026-08-25
+
+### Conversations
+
+- **Threading is back, and no longer exhausts memory.** 1.13.3 could consume
+  every byte on the machine when a message was opened. The cause was one wrong
+  index: `messages_by_thread_ids` binds ids, then padded ids, then the account,
+  but read the `References` comparisons from slot `n+2` instead of `n+1`, so
+  every one shifted and the last ran against the *account id* — which SQLite
+  coerced to text, matching every message whose References merely contained that
+  digit. On a real cache one click returned 6,278 "related" messages instead of
+  1, each a body to fetch and a re-render of a document holding all the others.
+  Two tests cover the query; the first fails on the old indices.
+- **A conversation reads oldest first**, with the message that started it as the
+  row on screen and its replies descending beneath. Opening the head shows the
+  whole thread in that order; opening a reply shows that message alone.
+- **Each message is a card**, with its own Reply, Reply all and Forward — the
+  toolbar's are disabled while a conversation is shown, because they could not
+  say which message they meant. Clicking a card selects that message, Ctrl and
+  Shift extend the selection as they do in the list, and the two stay in step in
+  both directions. A quoted reply chain is folded behind a ••• that expands and
+  collapses, the card growing and shrinking with it.
+- **Unread messages are marked** and clear as they are scrolled through, rather
+  than the whole thread being marked read on opening it.
+- **Threading applies from this release forward by default**, with "Thread older
+  messages too" for the whole mailbox. An archive's conversations run years and
+  hundreds of messages deep; the two things the date bound was quietly holding
+  down — the cross-folder links and the size of one conversation — are bounded
+  by count instead, so either setting is safe.
+- **A conversation is joined through the folders it spans.** Every reply in an
+  Inbox answers something in Sent, so where both sides of an exchange arrived in
+  one mailbox it grouped and where they did not it fell into pieces. Reply
+  headers from an account's other folders now join what is shown without
+  appearing themselves.
+- **Replies carry `In-Reply-To` and `References`, and our own mail carries a
+  `Message-ID`.** Vireo threaded incoming mail by headers it never wrote: a
+  reply began a new conversation for everyone who received it, and with no id of
+  our own the SMTP server assigned one on the way out, leaving the copy filed in
+  Sent with no identity at all.
+- **Gmail's labels no longer show a message three times** ([#45](https://github.com/hyprlab/vireo/pull/45)).
+  One message lives in INBOX, All Mail and Important at once; the reader keyed
+  on folder and UID, so a six-message thread rendered as eighteen. Bodies,
+  sender checks and attachments were keyed the same way, so data cached under
+  one label was invisible to the others. Both now match on Message-ID, with
+  sender and timestamp required to agree.
+- **A conversation's bodies are fetched in one request** rather than one apiece,
+  in batches of ten ([#45](https://github.com/hyprlab/vireo/pull/45)).
+
+### The reader
+
+- **Opening a conversation paints once.** It re-rendered per body that arrived,
+  and each render is a full page load — so the reader flashed its way through
+  loading. It now holds the spinner until the conversation has settled, bounded
+  so an unanswered lookup cannot strand it, and returning to a thread already
+  assembled paints from it with no spinner at all.
+- **A message frame opens at the height it had last time**, so a reopened
+  conversation lays out on its first frame instead of every card jumping once
+  measured. Frames are sized to their content rather than only ever grown, so a
+  short message no longer sits in a tall card.
+- **The spinner and the cover behind it follow the message theme**, not the
+  app's: a light message in a dark app used to hand a dark spinner to a white
+  page.
+- **A body can no longer be applied to the wrong message.** A UID is unique only
+  within its folder, and the background prefetch pushes bodies from every folder
+  it syncs.
+
+### Elsewhere
+
+- **Dragging several messages moves all of them** ([#23](https://github.com/hyprlab/vireo/issues/23)).
+  The payload was built from the dragged row alone, and the drop was discarded
+  when that row's account differed from the target folder's — which is why
+  dragging from the unified inbox often did nothing at all.
+- **"All Inboxes" no longer omits an account** that was still syncing, offline,
+  or busy backfilling. It cleared every account's slice on entry and rebuilt
+  from whatever came back; it now keeps each account's last known inbox and
+  tops it up from the caches.
+- **Preferences: the sender fields sit with their lists.** "Always allow sender"
+  is the first row of Allowed Senders, and it and the Blacklist row add with a
+  + button.
+- **The blocked-remote-content banner can be quieter, or silent.** A grey style
+  with outlined buttons, and a switch to hide it — which gates the notice only;
+  remote content is blocked exactly as before.
+
 ## 1.13.5 — 2026-08-24
 
 - **Fixed: replies sent from Vireo were not part of any conversation.** Vireo
