@@ -1957,7 +1957,31 @@ var g=(e.view&&e.view.getSelection)?e.view.getSelection():null;if(g)g.removeAllR
 else{try{var t=(e.view&&e.view.getSelection)?e.view.getSelection():null;\
 if(t&&String(t).length)return;}catch(_){}}\
 try{window.webkit.messageHandlers.vireo.postMessage('sel:'+k+':'+mo);}catch(_){}}\
-function init(f){s(f);try{var d=f.contentDocument;if(d){if(window.ResizeObserver&&d.body){new ResizeObserver(function(){s(f);}).observe(d.body);}\
+function quote(f){try{var d=f.contentDocument;if(!d||!d.body||f._q)return;\
+var sel=['.vireo-quote-attr','.gmail_quote','blockquote[type=\"cite\"]','#divRplyFwdMsg','blockquote'];\
+var q=null;for(var i=0;i<sel.length&&!q;i++)q=d.querySelector(sel[i]);\
+if(!q)return;\
+var top=q;while(top.parentNode&&top.parentNode!==d.body)top=top.parentNode;\
+if(!top.parentNode)return;\
+var before=false;\
+for(var n=d.body.firstChild;n&&n!==top;n=n.nextSibling){\
+if(n.nodeType===1||(n.nodeType===3&&n.textContent.trim()))before=true;}\
+if(!before)return;\
+f._q=1;\
+var box=d.createElement('div');top.parentNode.insertBefore(box,top);\
+while(box.nextSibling)box.appendChild(box.nextSibling);\
+box.style.display='none';\
+var b=d.createElement('button');b.textContent='\u{2022}\u{2022}\u{2022}';\
+b.setAttribute('title','Show quoted text');\
+b.style.cssText='display:block;margin:10px 0;padding:0 10px;line-height:1.5;'+\
+'border:1px solid rgba(128,128,128,0.5);border-radius:999px;'+\
+'background:rgba(128,128,128,0.14);color:inherit;font:inherit;cursor:pointer;';\
+box.parentNode.insertBefore(b,box);\
+b.addEventListener('click',function(e){e.stopPropagation();e.preventDefault();\
+var on=box.style.display==='none';box.style.display=on?'':'none';\
+b.setAttribute('title',on?'Hide quoted text':'Show quoted text');\
+s(f);setTimeout(function(){s(f);},0);});}catch(_){}}\
+function init(f){quote(f);s(f);try{var d=f.contentDocument;if(d){if(window.ResizeObserver&&d.body){new ResizeObserver(function(){s(f);}).observe(d.body);}\
 if(f.dataset.key&&!f._c){f._c=1;d.addEventListener('click',function(e){\
 if(e.target&&e.target.closest&&e.target.closest('a'))return;pick(f.dataset.key,e);});}\
 var im=d.images||[];for(var i=0;i<im.length;i++){if(!im[i].complete){im[i].addEventListener('load',function(){s(f);});im[i].addEventListener('error',function(){s(f);});}}}}catch(_){}\
