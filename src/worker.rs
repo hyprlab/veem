@@ -3691,19 +3691,27 @@ async fn load_bodies(
         .try_collect()
         .await?;
     let mut out = std::collections::HashMap::new();
+    let mut last_uid: Option<u32> = None;
     for f in &fetches {
-        let Some(uid) = f.uid else {
+        if let Some(u) = f.uid {
+            last_uid = Some(u);
+        }
+        // A message's response can arrive split across items — [`load_body`]
+        // scans every one of them for the body rather than trusting the first,
+        // and this has to be as forgiving. An item with no body is not an empty
+        // message, just not the part carrying one, so it is skipped: leaving the
+        // UID out of the map means the caller shows "(empty message)" without
+        // writing that over a real body in the cache.
+        let (Some(uid), Some(raw)) = (last_uid, f.body()) else {
             continue;
         };
-        let raw = f.body();
-        let body = raw
-            .map(extract_body)
-            .unwrap_or_else(|| "(empty message)".to_string());
-        let check = raw.map(crate::verify::check_sender).unwrap_or_default();
-        let has_attachments = raw
-            .map(|r| !extract_attachments(r).is_empty())
-            .unwrap_or(false);
-        out.insert(uid, (body, check, has_attachments));
+        out.entry(uid).or_insert_with(|| {
+            (
+                extract_body(raw),
+                crate::verify::check_sender(raw),
+                !extract_attachments(raw).is_empty(),
+            )
+        });
     }
     Ok(out)
 }

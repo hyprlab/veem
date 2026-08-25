@@ -562,6 +562,14 @@ impl Cache {
     }
 
     pub fn load_body(&self, account_id: u32, folder_path: &str, uid: u32) -> Option<String> {
+        self.body_of(account_id, folder_path, uid).or_else(|| {
+            self.sibling_copies(account_id, folder_path, uid)
+                .into_iter()
+                .find_map(|(p, u)| self.body_of(account_id, &p, u))
+        })
+    }
+
+    fn body_of(&self, account_id: u32, folder_path: &str, uid: u32) -> Option<String> {
         self.conn
             .query_row(
                 "SELECT body FROM bodies WHERE account_id = ?1 AND folder_path = ?2 AND uid = ?3",
@@ -569,6 +577,36 @@ impl Cache {
                 |row| row.get::<_, String>(0),
             )
             .ok()
+    }
+
+    /// Every other copy of this message in the account, as `(folder_path, uid)`.
+    ///
+    /// Gmail exposes labels as IMAP folders, so one message is stored several
+    /// times over — INBOX, All Mail, Important — under a different UID in each.
+    /// Everything keyed by (folder, uid) is therefore per-*copy*: a body read
+    /// while the user was in All Mail is invisible to the INBOX copy, and its
+    /// attachments would be downloaded a second time. They are the same mail, so
+    /// a miss on one copy is answered from another instead of from the network.
+    /// On a real cache 176 messages have a body under only some of their labels,
+    /// and 31 have their attachments downloaded under only some.
+    fn sibling_copies(&self, account_id: u32, folder_path: &str, uid: u32) -> Vec<(String, u32)> {
+        let run = || -> rusqlite::Result<Vec<(String, u32)>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT folder_path, uid FROM messages \
+                 WHERE account_id = ?1 AND message_id != '' \
+                   AND message_id = (SELECT message_id FROM messages \
+                                     WHERE account_id = ?1 AND folder_path = ?2 AND uid = ?3) \
+                   AND NOT (folder_path = ?2 AND uid = ?3)",
+            )?;
+            let rows = stmt.query_map(params![account_id, folder_path, uid], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
+            rows.collect()
+        };
+        run().unwrap_or_else(|e| {
+            tracing::warn!("cache sibling_copies failed: {e}");
+            Vec::new()
+        })
     }
 
     pub fn save_body(&self, account_id: u32, folder_path: &str, uid: u32, body: &str) {
@@ -583,6 +621,19 @@ impl Cache {
     /// The cached sender-authentication verdict for a message, if one was stored
     /// when its body was fetched.
     pub fn load_sender_check(
+        &self,
+        account_id: u32,
+        folder_path: &str,
+        uid: u32,
+    ) -> Option<crate::models::SenderCheck> {
+        self.sender_check_of(account_id, folder_path, uid).or_else(|| {
+            self.sibling_copies(account_id, folder_path, uid)
+                .into_iter()
+                .find_map(|(p, u)| self.sender_check_of(account_id, &p, u))
+        })
+    }
+
+    fn sender_check_of(
         &self,
         account_id: u32,
         folder_path: &str,
@@ -687,6 +738,20 @@ impl Cache {
     }
 
     pub fn load_attachments(&self, account_id: u32, folder_path: &str, uid: u32) -> Vec<Attachment> {
+        let own = self.attachments_of(account_id, folder_path, uid);
+        if !own.is_empty() {
+            return own;
+        }
+        // Downloaded under another of this message's labels: same mail, same
+        // attachments, no reason to fetch them again.
+        self.sibling_copies(account_id, folder_path, uid)
+            .into_iter()
+            .map(|(p, u)| self.attachments_of(account_id, &p, u))
+            .find(|items| !items.is_empty())
+            .unwrap_or_default()
+    }
+
+    fn attachments_of(&self, account_id: u32, folder_path: &str, uid: u32) -> Vec<Attachment> {
         let run = || -> rusqlite::Result<Vec<Attachment>> {
             let mut stmt = self.conn.prepare(
                 "SELECT name, data FROM attachments
@@ -1253,6 +1318,63 @@ mod tests {
         let found = c.messages_by_thread_ids(1, &["root@x".to_string()], 0);
         let ids: Vec<&str> = found.iter().map(|(_, m)| m.message_id.as_str()).collect();
         assert_eq!(ids, vec!["reply@x", "root@x"], "only the real conversation");
+    }
+
+    /// Gmail stores one message under every label it carries, so INBOX, All Mail
+    /// and Important hold three copies with three UIDs. A body read under one
+    /// label has to answer for the others, or opening the conversation from the
+    /// Inbox re-downloads mail already in hand — and its attachments come back
+    /// as a "Load attachments" button rather than the files themselves.
+    #[test]
+    fn a_body_cached_under_one_gmail_label_answers_for_the_others() {
+        let c = Cache::in_memory();
+        add_threaded(&c, "INBOX", 42, 500, "same@x", "");
+        add_threaded(&c, "[Gmail]/All Mail", 900, 500, "same@x", "");
+        c.save_body(1, "[Gmail]/All Mail", 900, "the real body");
+
+        assert_eq!(c.load_body(1, "INBOX", 42).as_deref(), Some("the real body"));
+        // The copy that actually holds it still answers directly.
+        assert_eq!(
+            c.load_body(1, "[Gmail]/All Mail", 900).as_deref(),
+            Some("the real body")
+        );
+    }
+
+    #[test]
+    fn attachments_downloaded_under_one_label_answer_for_the_others() {
+        let c = Cache::in_memory();
+        add_threaded(&c, "INBOX", 42, 500, "same@x", "");
+        add_threaded(&c, "Paratype", 7, 500, "same@x", "");
+        c.save_attachments(
+            1,
+            "Paratype",
+            7,
+            &[Attachment { name: "spec.pdf".into(), data: vec![1, 2, 3] }],
+        );
+
+        let found = c.load_attachments(1, "INBOX", 42);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "spec.pdf");
+    }
+
+    /// Two different messages must never answer for each other — the fallback
+    /// keys on Message-ID, and a message that has none has nothing to match.
+    #[test]
+    fn a_different_message_never_answers_for_this_one() {
+        let c = Cache::in_memory();
+        add_threaded(&c, "INBOX", 42, 500, "mine@x", "");
+        add_threaded(&c, "[Gmail]/All Mail", 900, 500, "someone-else@x", "");
+        c.save_body(1, "[Gmail]/All Mail", 900, "not yours");
+        assert_eq!(c.load_body(1, "INBOX", 42), None);
+
+        add_threaded(&c, "INBOX", 43, 500, "", "");
+        add_threaded(&c, "Archive", 44, 500, "", "");
+        c.save_body(1, "Archive", 44, "unrelated");
+        assert_eq!(
+            c.load_body(1, "INBOX", 43),
+            None,
+            "an empty Message-ID matches nothing, not everything"
+        );
     }
 
     #[test]
