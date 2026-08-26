@@ -634,23 +634,30 @@ fn build_cell(
     thumb_holder.set_halign(gtk::Align::Fill);
     thumb_holder.set_valign(gtk::Align::Fill);
 
-    let thumb = item.data.as_ref().and_then(|d| thumbnail_texture(&item.name, d));
+    let thumb = match item.data.as_ref() {
+        Some(d) => thumbnail_texture(&item.name, d),
+        None => Thumbnail::Fallback,
+    };
     match thumb {
-        Some(tex) => {
-            let pic = gtk::Picture::for_paintable(&tex);
-            pic.set_content_fit(gtk::ContentFit::Cover);
-            pic.set_hexpand(true);
-            pic.set_vexpand(true);
-            pic.add_css_class("gallery-thumb-image");
-            thumb_holder.append(&pic);
-        }
-        None => {
-            let img = gtk::Image::from_icon_name(icon_for(&item.name));
-            img.set_pixel_size(56);
-            img.set_hexpand(true);
-            img.add_css_class("gallery-file-icon");
-            img.add_css_class(icon_color_class(&item.name));
-            thumb_holder.append(&img);
+        Thumbnail::Ready(tex) => thumb_holder.append(&gallery_picture(&tex)),
+        Thumbnail::Fallback => thumb_holder.append(&gallery_icon(&item.name)),
+        Thumbnail::Pending => {
+            thumb_holder.append(&thumbnail_spinner());
+            let holder = thumb_holder.downgrade();
+            let name = item.name.clone();
+            let data = item.data.clone().unwrap_or_default();
+            spawn_pdf_render(data, move |tex| {
+                // The cell may be gone by now (search narrowed, list rebuilt);
+                // the render still landed in the cache for the next build.
+                let Some(holder) = holder.upgrade() else { return };
+                while let Some(child) = holder.first_child() {
+                    holder.remove(&child);
+                }
+                match tex {
+                    Some(tex) => holder.append(&gallery_picture(&tex)),
+                    None => holder.append(&gallery_icon(&name)),
+                }
+            });
         }
     }
 
@@ -852,22 +859,110 @@ fn sort_indices(idx: &mut [usize], all: &[GalleryItem], sort: SortBy) {
     }
 }
 
+/// The gallery's cover-cropped thumbnail picture for a ready texture.
+fn gallery_picture(tex: &gdk::Texture) -> gtk::Picture {
+    let pic = gtk::Picture::for_paintable(tex);
+    pic.set_content_fit(gtk::ContentFit::Cover);
+    pic.set_hexpand(true);
+    pic.set_vexpand(true);
+    pic.add_css_class("gallery-thumb-image");
+    pic
+}
+
+/// The gallery's centred type icon for anything without a thumbnail.
+fn gallery_icon(name: &str) -> gtk::Image {
+    let img = gtk::Image::from_icon_name(icon_for(name));
+    img.set_pixel_size(56);
+    img.set_hexpand(true);
+    img.add_css_class("gallery-file-icon");
+    img.add_css_class(icon_color_class(name));
+    img
+}
+
 /// A `gdk::Texture` from raw image bytes, or `None` if the format isn't loadable.
 pub(crate) fn texture_from(data: &[u8]) -> Option<gdk::Texture> {
     gdk::Texture::from_bytes(&glib::Bytes::from(data)).ok()
 }
 
+/// What a grid cell can show for an attachment right now.
+pub(crate) enum Thumbnail {
+    /// A texture is available immediately: a decoded image, or a PDF page
+    /// already in the render cache.
+    Ready(gdk::Texture),
+    /// A PDF whose page hasn't been rendered yet. Show a spinner and call
+    /// [`spawn_pdf_render`] — rendering a page takes long enough that doing it
+    /// while building cells froze the whole window (the "Force Quit" dialog).
+    Pending,
+    /// No thumbnail for this type (or the image didn't decode): type icon.
+    Fallback,
+}
+
+thread_local! {
+    /// Finished PDF renders (successes and failures), keyed by content hash —
+    /// a gallery rebuild or a revisit never renders the same page twice.
+    /// Main-thread only; results land here from `spawn_pdf_render`.
+    static PDF_THUMBS: std::cell::RefCell<std::collections::HashMap<u64, Option<gdk::Texture>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn pdf_cache_key(data: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    data.len().hash(&mut h);
+    data.hash(&mut h);
+    h.finish()
+}
+
 /// A grid-cell thumbnail for any attachment type that has one: a decoded image,
-/// or a PDF's first page. `None` for anything else, so the caller falls back to
-/// the type icon.
-pub(crate) fn thumbnail_texture(name: &str, data: &[u8]) -> Option<gdk::Texture> {
+/// or a PDF's first page (from cache, or `Pending` until a worker renders it).
+pub(crate) fn thumbnail_texture(name: &str, data: &[u8]) -> Thumbnail {
     if is_image_name(name) {
-        texture_from(data)
+        match texture_from(data) {
+            Some(tex) => Thumbnail::Ready(tex),
+            None => Thumbnail::Fallback,
+        }
     } else if name.to_ascii_lowercase().ends_with(".pdf") {
-        pdf_thumbnail(data)
+        match PDF_THUMBS.with(|c| c.borrow().get(&pdf_cache_key(data)).cloned()) {
+            Some(Some(tex)) => Thumbnail::Ready(tex),
+            Some(None) => Thumbnail::Fallback,
+            None => Thumbnail::Pending,
+        }
     } else {
-        None
+        Thumbnail::Fallback
     }
+}
+
+/// Render a PDF's first page off the main thread, then hand the result to
+/// `on_done` back on it (and record it in the cache either way). The GTK loop
+/// keeps running — cells show their spinner instead of the window freezing.
+pub(crate) fn spawn_pdf_render(
+    data: Vec<u8>,
+    on_done: impl FnOnce(Option<gdk::Texture>) + 'static,
+) {
+    let key = pdf_cache_key(&data);
+    glib::spawn_future_local(async move {
+        let tex = gtk::gio::spawn_blocking(move || pdf_thumbnail(&data))
+            .await
+            .ok()
+            .flatten();
+        PDF_THUMBS.with(|c| {
+            c.borrow_mut().insert(key, tex.clone());
+        });
+        on_done(tex);
+    });
+}
+
+/// The centred spinner a cell shows while its PDF page renders.
+pub(crate) fn thumbnail_spinner() -> gtk::Spinner {
+    let spinner = gtk::Spinner::new();
+    spinner.set_spinning(true);
+    spinner.set_width_request(28);
+    spinner.set_height_request(28);
+    spinner.set_halign(gtk::Align::Center);
+    spinner.set_valign(gtk::Align::Center);
+    spinner.set_hexpand(true);
+    spinner.set_vexpand(true);
+    spinner
 }
 
 /// Render a PDF's first page to a texture, by way of an in-memory PNG — the
@@ -1248,16 +1343,24 @@ mod tests {
     }
 
     #[test]
-    fn thumbnail_texture_renders_pdf_first_page() {
-        let tex =
-            thumbnail_texture("attachment.pdf", &minimal_pdf()).expect("should render a page");
+    fn pdf_thumbnail_renders_the_first_page() {
+        let tex = pdf_thumbnail(&minimal_pdf()).expect("should render a page");
         assert!(tex.width() > 0 && tex.height() > 0);
+        assert!(pdf_thumbnail(b"not a real pdf").is_none());
     }
 
     #[test]
-    fn thumbnail_texture_is_none_for_unsupported_types() {
-        assert!(thumbnail_texture("archive.zip", b"not a real zip").is_none());
-        assert!(thumbnail_texture("notes.pdf", b"not a real pdf").is_none());
+    fn thumbnail_texture_classifies_attachment_types() {
+        // No thumbnail for a type without one; an uncached PDF is rendered
+        // asynchronously, so the immediate answer is Pending.
+        assert!(matches!(
+            thumbnail_texture("archive.zip", b"not a real zip"),
+            Thumbnail::Fallback
+        ));
+        assert!(matches!(
+            thumbnail_texture("notes.pdf", &minimal_pdf()),
+            Thumbnail::Pending
+        ));
     }
 
     #[test]

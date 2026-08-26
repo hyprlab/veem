@@ -28,8 +28,31 @@ use relm4::prelude::*;
 use crate::config::{self, DrawerState};
 use crate::models::{is_image_name, Attachment};
 use crate::ui::attachments_gallery::{
-    icon_color_class, icon_for, open_bytes, texture_from, thumbnail_texture,
+    icon_color_class, icon_for, open_bytes, spawn_pdf_render, texture_from, thumbnail_texture,
+    Thumbnail,
 };
+
+/// The drawer's cover-cropped picture for a ready thumbnail texture.
+fn drawer_picture(tex: &gtk::gdk::Texture) -> gtk::Widget {
+    let pic = gtk::Picture::for_paintable(tex);
+    pic.set_content_fit(gtk::ContentFit::Cover);
+    pic.set_hexpand(true);
+    pic.set_vexpand(true);
+    pic.upcast()
+}
+
+/// The drawer's centred type icon, sized to the current thumbnail scale.
+fn drawer_icon(name: &str, thumb: i32) -> gtk::Widget {
+    let img = gtk::Image::from_icon_name(icon_for(name));
+    img.set_pixel_size((thumb / 2).max(24));
+    img.set_halign(gtk::Align::Center);
+    img.set_valign(gtk::Align::Center);
+    img.set_hexpand(true);
+    img.set_vexpand(true);
+    img.add_css_class("gallery-file-icon");
+    img.add_css_class(icon_color_class(name));
+    img.upcast()
+}
 
 const MIN_THUMB: f64 = 56.0;
 const MAX_THUMB: f64 = 220.0;
@@ -753,21 +776,29 @@ fn build_cell(
     cell.set_halign(gtk::Align::Center);
 
     // The thumbnail content: a cover-cropped image/PDF-page render, or a
-    // centred type icon.
+    // centred type icon. A PDF not yet in the render cache gets a spinner
+    // while a worker renders its page — never a frozen window.
     let content: gtk::Widget = match thumbnail_texture(&att.name, &att.data) {
-        Some(tex) => {
-            let pic = gtk::Picture::for_paintable(&tex);
-            pic.set_content_fit(gtk::ContentFit::Cover);
-            pic.upcast()
-        }
-        None => {
-            let img = gtk::Image::from_icon_name(icon_for(&att.name));
-            img.set_pixel_size((thumb / 2).max(24));
-            img.set_halign(gtk::Align::Center);
-            img.set_valign(gtk::Align::Center);
-            img.add_css_class("gallery-file-icon");
-            img.add_css_class(icon_color_class(&att.name));
-            img.upcast()
+        Thumbnail::Ready(tex) => drawer_picture(&tex),
+        Thumbnail::Fallback => drawer_icon(&att.name, thumb),
+        Thumbnail::Pending => {
+            let holder = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            holder.set_hexpand(true);
+            holder.set_vexpand(true);
+            holder.append(&crate::ui::attachments_gallery::thumbnail_spinner());
+            let weak = holder.downgrade();
+            let name = att.name.clone();
+            spawn_pdf_render(att.data.clone(), move |tex| {
+                let Some(holder) = weak.upgrade() else { return };
+                while let Some(child) = holder.first_child() {
+                    holder.remove(&child);
+                }
+                match tex {
+                    Some(tex) => holder.append(&drawer_picture(&tex)),
+                    None => holder.append(&drawer_icon(&name, thumb)),
+                }
+            });
+            holder.upcast()
         }
     };
 
