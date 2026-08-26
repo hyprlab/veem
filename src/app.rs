@@ -2050,6 +2050,7 @@ impl SimpleComponent for AppModel {
                         self.thread_painted = true;
                         self.thread_related_pending = false;
                         self.show_thread();
+                        self.load_thread_attachments(&sender);
                     } else {
                         // Conversation: assemble the thread with any cached bodies,
                         // request the rest, and render it as a scrollable conversation.
@@ -2090,6 +2091,7 @@ impl SimpleComponent for AppModel {
                             self.send_to(aid, MailRequest::LoadBodies { items, path });
                         }
                         self.show_thread();
+                        self.load_thread_attachments(&sender);
                     }
                 } else {
                     self.current_thread.clear();
@@ -2210,6 +2212,9 @@ impl SimpleComponent for AppModel {
                 // and another for whatever this brought with it.
                 if self.current_thread.len() > 1 {
                     self.queue_thread_render(&sender);
+                    // What was pulled in (a reply from Sent, an archived part)
+                    // may carry attachments of its own.
+                    self.load_thread_attachments(&sender);
                 }
             }
 
@@ -3317,6 +3322,17 @@ impl SimpleComponent for AppModel {
                     self.attachments = items.clone();
                     self.rebuild_attach_popover(&sender);
                 }
+                // With a conversation open the drawer spans the whole thread, so
+                // any member's arrival re-merges the union (this supersedes the
+                // single-message assignment above when both apply).
+                if self.current_thread.len() > 1
+                    && self
+                        .current_thread
+                        .iter()
+                        .any(|tm| tm.id == message_id && tm.account_id == account_id)
+                {
+                    self.refresh_thread_attachments(&sender);
+                }
                 if let Some(p) = self.popouts.get(&(account_id, message_id)) {
                     p.controller.emit(MessageWindowInput::SetAttachments(items));
                 }
@@ -4199,6 +4215,51 @@ impl AppModel {
     fn sync_attachment_drawer(&self) {
         self.attachment_drawer
             .emit(AttachmentDrawerInput::SetItems(self.attachments.clone()));
+    }
+
+    /// Fill the drawer for a whole conversation: ask the disk cache for every
+    /// member's attachments (never the network) and show what's already in
+    /// hand. Opening a thread used to load nothing at all — the drawer only
+    /// appeared after clicking a member, which runs the single-message path.
+    fn load_thread_attachments(&mut self, sender: &ComponentSender<Self>) {
+        let wanted: Vec<(u32, u32, u32, String)> = self
+            .current_thread
+            .iter()
+            .filter(|tm| tm.has_attachment)
+            .filter(|tm| !self.attachment_cache.contains_key(&(tm.account_id, tm.id)))
+            .filter_map(|tm| {
+                self.resolve_folder_path(tm)
+                    .map(|p| (tm.account_id, tm.id, tm.uid, p))
+            })
+            .collect();
+        for (account_id, message_id, uid, path) in wanted {
+            self.send_to(account_id, MailRequest::LoadAttachments {
+                message_id,
+                path,
+                uid,
+                download: false,
+            });
+        }
+        self.refresh_thread_attachments(sender);
+    }
+
+    /// Point the drawer at the union of cached attachments across the open
+    /// conversation. A reply pulled in from Sent can duplicate what it was
+    /// sent with, so identical (name, size) pairs are shown once.
+    fn refresh_thread_attachments(&mut self, sender: &ComponentSender<Self>) {
+        let mut seen = HashSet::new();
+        let mut merged = Vec::new();
+        for tm in &self.current_thread {
+            if let Some(items) = self.attachment_cache.get(&(tm.account_id, tm.id)) {
+                for a in items {
+                    if seen.insert((a.name.clone(), a.data.len())) {
+                        merged.push(a.clone());
+                    }
+                }
+            }
+        }
+        self.attachments = merged;
+        self.rebuild_attach_popover(sender);
     }
 
     /// Present a read-only window showing raw message source (monospace).
