@@ -162,7 +162,7 @@ pub struct AppModel {
     /// Mirror of "the lightbox is open", readable synchronously by the
     /// window's key controller (closures only get a sender, not the model).
     lightbox_open: std::rc::Rc<std::cell::Cell<bool>>,
-    /// Current lightbox zoom (1, 2 or 4) — a click on the document cycles it,
+    /// Current lightbox zoom (1, 2 or 3) — a click on the document cycles it,
     /// Escape unwinds it before closing.
     lightbox_zoom: i32,
     /// The lightbox picture + its scroller, for applying zoom sizes.
@@ -466,7 +466,7 @@ pub enum AppMsg {
     LightboxPrev,
     LightboxNext,
     LightboxClose,
-    /// Click on the document: cycle zoom 1x → 2x → 4x → 1x.
+    /// Click on the document: cycle zoom 1x → 2x → 3x → 1x.
     LightboxZoomCycle,
     /// Escape: unwind zoom first; close only from normal view.
     LightboxEscape,
@@ -1153,17 +1153,9 @@ impl SimpleComponent for AppModel {
                                     set_content_fit: gtk::ContentFit::Contain,
                                     #[watch]
                                     set_paintable: model.lightbox_texture.as_ref(),
-                                    // A click zooms (1x → 2x → 4x → 1x);
-                                    // Escape unwinds. Opening lives in the
-                                    // bottom bar's Open button.
-                                    add_controller = gtk::GestureClick {
-                                        set_button: gtk::gdk::BUTTON_PRIMARY,
-                                        connect_pressed[sender] => move |_, n, _, _| {
-                                            if n == 1 {
-                                                sender.input(AppMsg::LightboxZoomCycle);
-                                            }
-                                        },
-                                    },
+                                    // Click-to-zoom and drag-to-pan are wired
+                                    // in `init` (they share a movement
+                                    // threshold, which view! closures can't).
                                 },
                             },
 
@@ -1782,6 +1774,50 @@ impl SimpleComponent for AppModel {
 
         model.lightbox_picture = Some(widgets.lightbox_picture.clone());
         model.lightbox_scroller = Some(widgets.lightbox_scroller.clone());
+
+        // Lightbox pointer behaviour: dragging pans the zoomed document (the
+        // scroller's adjustments move opposite the pointer); a clean click —
+        // release with no meaningful movement — cycles the zoom. The shared
+        // `moved` cell is what keeps a pan from also zooming.
+        {
+            let hadj = widgets.lightbox_scroller.hadjustment();
+            let vadj = widgets.lightbox_scroller.vadjustment();
+            let start = std::rc::Rc::new(std::cell::Cell::new((0.0_f64, 0.0_f64)));
+            let moved = std::rc::Rc::new(std::cell::Cell::new(0.0_f64));
+
+            let drag = gtk::GestureDrag::new();
+            drag.set_button(gtk::gdk::BUTTON_PRIMARY);
+            {
+                let start = start.clone();
+                let moved = moved.clone();
+                let (h, v) = (hadj.clone(), vadj.clone());
+                drag.connect_drag_begin(move |_, _, _| {
+                    start.set((h.value(), v.value()));
+                    moved.set(0.0);
+                });
+            }
+            {
+                let start = start.clone();
+                let moved = moved.clone();
+                drag.connect_drag_update(move |_, dx, dy| {
+                    moved.set(moved.get().max(dx.abs().max(dy.abs())));
+                    let (h0, v0) = start.get();
+                    hadj.set_value(h0 - dx);
+                    vadj.set_value(v0 - dy);
+                });
+            }
+            widgets.lightbox_picture.add_controller(drag);
+
+            let click = gtk::GestureClick::new();
+            click.set_button(gtk::gdk::BUTTON_PRIMARY);
+            let s = sender.clone();
+            click.connect_released(move |_, n, _, _| {
+                if n == 1 && moved.get() < 8.0 {
+                    s.input(AppMsg::LightboxZoomCycle);
+                }
+            });
+            widgets.lightbox_picture.add_controller(click);
+        }
 
         ComponentParts { model, widgets }
     }
@@ -2785,7 +2821,7 @@ impl SimpleComponent for AppModel {
             AppMsg::LightboxZoomCycle => {
                 let next = match self.lightbox_zoom {
                     1 => 2,
-                    2 => 4,
+                    2 => 3,
                     _ => 1,
                 };
                 self.lightbox_set_zoom(next);
