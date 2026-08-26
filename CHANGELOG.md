@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.15.5 — 2026-08-26
+
+### Opening attachments: a chooser fallback, and the truth on failure
+
+- **When the portal's direct launch fails, Vireo retries with the app
+  chooser** (`OpenFile` with `ask: true`, one blocking zbus call from a worker
+  thread). The chooser is the portal backend's own dialog and launches the
+  picked app through different machinery than the failing default-handler
+  path — verified working on a machine whose direct launches all fail —
+  and "always open with" persists in the permission store, so it's one
+  confirmation ever, not one per open.
+- **The failure dialog earns its keep**: it shows the portal's own error text
+  (reportable verbatim) and the two steps that actually help — Download →
+  open from Files, and updating `xdg-desktop-portal` + re-login. No Flatseal
+  advice: portal access is not a permission, so no toggle exists for this.
+  Also fixed: a codegen step had baked a run of 14 literal spaces into the
+  dialog copy, which rendered as a janky gap.
+- **Double-clicking a lightbox preview opens the document externally** — in
+  the gallery's lightbox and the drawer's alike.
+
 ## 1.15.4 — 2026-08-26
 
 ### The Flatpak opens attachments again

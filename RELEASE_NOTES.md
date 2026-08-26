@@ -2,7 +2,18 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.15.4
+## What's new in 1.15.5
+
+- **Opening attachments now works even where the desktop's portal is
+  misbehaving.** If the system fails to launch your default app directly,
+  Vireo brings up GNOME's "Open With" chooser instead — pick your viewer,
+  tick "always", and future opens go straight through. Only when nothing at
+  all can launch does Vireo show a dialog, and it now tells you exactly what
+  the system reported and what to do about it.
+- **Double-click a lightbox preview** to open the document in its app —
+  from the attachments gallery and the message drawer alike.
+
+## In 1.15.4
 
 - **Opening attachments works in the Flatpak.** The sandboxed build was
   handing the system's app portal a file path only Vireo itself could see, so

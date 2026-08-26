@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.15.5" date="2026-08-26" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.15.5</url>
+      <description>
+        <p>Opening attachments works even where the desktop portal misbehaves: when a direct launch fails, Vireo falls back to the Open With chooser (remembered once confirmed), and the failure dialog now reports the system's actual error with practical steps. Double-clicking a lightbox preview opens the document in its external app.</p>
+      </description>
+    </release>
     <release version="1.15.4" date="2026-08-26" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.15.4</url>
       <description>
