@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.15.4" date="2026-08-26" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.15.4</url>
+      <description>
+        <p>Opening attachments works in the Flatpak: the sandboxed build now hands opened files to the desktop portal as a document handle the viewer can actually read, instead of a private path it couldn't. And when a desktop's portal genuinely cannot launch applications, Vireo says so in a dialog instead of doing nothing.</p>
+      </description>
+    </release>
     <release version="1.15.3" date="2026-08-26" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.15.3</url>
       <description>

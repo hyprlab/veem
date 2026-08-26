@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.15.4 — 2026-08-26
+
+### The Flatpak opens attachments again
+
+- **Root cause:** the sandboxed build stages an opened attachment into the
+  app's *private* `/tmp`, and then handed the desktop portal a `file://` URI
+  *string* — a path that, host-side, does not exist. The launched viewer
+  pointed at nothing, on every machine; the click read as dead. (The fix took
+  a detour: one test machine's portal is also broken for host callers, which
+  masked the real mechanism until a second machine reproduced it.)
+- **Fix:** the sandboxed branch now launches through `gtk::FileLauncher`,
+  which passes the staged file as a **file descriptor** via the document
+  portal — the portal exports it at a host-readable path and hands that to
+  the handler. Native builds keep GIO-first launching.
+- When a portal genuinely cannot launch anything, both chains now end in a
+  dialog saying so — and that Download still works — instead of silence.
+
 ## 1.15.3 — 2026-08-26
 
 ### Send-as aliases (#34)
