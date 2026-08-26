@@ -649,6 +649,14 @@ impl Component for AccountsWindow {
                 widgets.goa_banner.set_visible(is_goa);
                 widgets.remove_group.set_visible(!is_goa);
                 widgets.goa_enabled_row.set_active(acc.enabled);
+                // While Mail is switched off in GNOME Settings the account is
+                // paused from there, not from here — say so where the toggle is.
+                widgets.goa_enabled_row.set_sensitive(!acc.goa_mail_disabled);
+                widgets.goa_enabled_row.set_subtitle(if acc.goa_mail_disabled {
+                    "Paused: Mail is switched off for this account in GNOME Settings \u{2192} Online Accounts."
+                } else {
+                    "Hides the account here without removing it from your system."
+                });
                 widgets.nav.push_by_tag("editor");
             }
 
@@ -807,6 +815,9 @@ impl Component for AccountsWindow {
                 if let Some(orig) = &editing_orig {
                     account.enabled = orig.enabled;
                     account.goa_id = orig.goa_id.clone();
+                    account.goa_mail_disabled = orig.goa_mail_disabled;
+                    account.goa_enabled_before_mail_disabled =
+                        orig.goa_enabled_before_mail_disabled;
                     if orig.goa_id.is_some() {
                         account.oauth = orig.oauth;
                         account.oauth_settings = orig.oauth_settings.clone();
@@ -1038,7 +1049,14 @@ impl AccountsWindow {
             // sync or appear in the sidebar.
             let toggle = gtk::Switch::new();
             toggle.set_valign(gtk::Align::Center);
-            toggle.set_tooltip_text(Some("Enable this account"));
+            if acc.goa_mail_disabled {
+                toggle.set_tooltip_text(Some(
+                    "Paused: Mail is switched off for this account in GNOME Settings",
+                ));
+                toggle.set_sensitive(false);
+            } else {
+                toggle.set_tooltip_text(Some("Enable this account"));
+            }
             toggle.set_active(acc.enabled);
             let ti = sender.input_sender().clone();
             let tpos = pos;
@@ -1322,6 +1340,8 @@ fn read_account(widgets: &AccountsWindowWidgets, emoji: Option<String>) -> Accou
         // Defaults for a new account; preserved from the original when editing.
         enabled: true,
         goa_id: None,
+        goa_mail_disabled: false,
+        goa_enabled_before_mail_disabled: true,
         oauth: false,
         oauth_settings: None,
         oauth_refresh: String::new(),

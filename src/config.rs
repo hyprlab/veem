@@ -105,6 +105,14 @@ pub struct AccountConfig {
     /// settings/credentials trace back to the system account).
     #[serde(default)]
     pub goa_id: Option<String>,
+    /// Set while this GOA account's Mail service is switched off in GNOME
+    /// Settings: the account is paused (`enabled` forced off) rather than
+    /// removed, so its local settings survive until Mail comes back on.
+    #[serde(default)]
+    pub goa_mail_disabled: bool,
+    /// What `enabled` was when the Mail pause began; restored when it ends.
+    #[serde(default = "default_enabled")]
+    pub goa_enabled_before_mail_disabled: bool,
     /// Authenticate with OAuth2 (XOAUTH2) instead of a stored password. The token
     /// comes from GOA (`goa_id`) or, for accounts added directly in Vireo, from
     /// refreshing `oauth_settings` with the keyring-stored refresh token.

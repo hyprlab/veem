@@ -5384,6 +5384,8 @@ mod tests {
             label: None,
             enabled: true,
             goa_id: None,
+            goa_mail_disabled: false,
+            goa_enabled_before_mail_disabled: true,
             oauth: false,
             oauth_settings: None,
             oauth_refresh: String::new(),
