@@ -519,7 +519,8 @@ impl AttachmentsGallery {
     fn open_item(&self, index: usize) {
         if let Some(item) = self.item_at(index) {
             if let Some(data) = &item.data {
-                open_bytes(&item.name, data);
+                let parent = self.flow.root().and_downcast::<gtk::Window>();
+                open_bytes(&item.name, data, parent.as_ref());
             }
         }
     }
@@ -909,7 +910,13 @@ pub(crate) fn icon_color_class(name: &str) -> &'static str {
 /// (under Flatpak it is per-app): the directory is created private and its
 /// ownership checked, and each file is created fresh rather than written
 /// through whatever already sits at a guessable path.
-pub(crate) fn open_bytes(name: &str, data: &[u8]) {
+///
+/// Launched through the portal's `UriLauncher` rather than
+/// `AppInfo::launch_default_for_uri`: for a type with no registered default
+/// (common for attachments — nothing may ever have been "set as default" for
+/// a `.pdf`) the portal falls back to GNOME's own app-chooser dialog instead
+/// of silently doing nothing.
+pub(crate) fn open_bytes(name: &str, data: &[u8], parent: Option<&gtk::Window>) {
     let safe: String = name
         .chars()
         .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
@@ -929,7 +936,17 @@ pub(crate) fn open_bytes(name: &str, data: &[u8]) {
     }
     drop(file);
     let uri = format!("file://{}", path.to_string_lossy());
-    let _ = gtk::gio::AppInfo::launch_default_for_uri(&uri, gtk::gio::AppLaunchContext::NONE);
+    gtk::UriLauncher::new(&uri).launch(parent, gtk::gio::Cancellable::NONE, move |res| {
+        // Falls back to the non-portal launch path if the portal itself is
+        // unreachable or misbehaving (some sandboxes/containers, or a desktop
+        // with no working `xdg-desktop-portal` backend) rather than leaving
+        // the click looking like it did nothing.
+        if let Err(e) = res {
+            tracing::warn!("portal launch failed, falling back: {e}");
+            let _ =
+                gtk::gio::AppInfo::launch_default_for_uri(&uri, gtk::gio::AppLaunchContext::NONE);
+        }
+    });
 }
 
 /// The private directory opened attachments are staged in, created if needed.
@@ -990,7 +1007,10 @@ fn create_private(
             use std::os::unix::fs::OpenOptionsExt;
             opts.mode(0o600);
             // Refuse to follow a symlink instead of racing to check for one.
-            opts.custom_flags(0o200000 /* O_NOFOLLOW */);
+            // 0o400000 is O_NOFOLLOW on every Linux arch Vireo ships for; the
+            // wrong constant here once passed O_DIRECTORY (0o200000) instead,
+            // which made this open() fail and every attachment click a no-op.
+            opts.custom_flags(0o400000 /* O_NOFOLLOW */);
         }
         if let Ok(file) = opts.open(&path) {
             return Some((file, path));

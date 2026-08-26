@@ -353,7 +353,7 @@ impl SimpleComponent for AttachmentDrawer {
             }
             AttachmentDrawerInput::Open(i) => {
                 if let Some(att) = self.item_at(i) {
-                    open_bytes(&att.name, &att.data);
+                    open_bytes(&att.name, &att.data, self.window().as_ref());
                 }
             }
             AttachmentDrawerInput::Download(i) => {
@@ -367,7 +367,7 @@ impl SimpleComponent for AttachmentDrawer {
                 if is_image_name(&att.name) && texture_from(&att.data).is_some() {
                     self.show_lightbox(orig);
                 } else {
-                    open_bytes(&att.name, &att.data);
+                    open_bytes(&att.name, &att.data, self.window().as_ref());
                 }
             }
             AttachmentDrawerInput::ContextMenu { index, x, y } => {
@@ -695,9 +695,10 @@ impl AttachmentDrawer {
         {
             let images = images.clone();
             let pos = pos.clone();
+            let win = win.clone();
             open_btn.connect_clicked(move |_| {
                 let (name, data) = &images[pos.get()];
-                open_bytes(name, data);
+                open_bytes(name, data, Some(&win));
             });
         }
         {
