@@ -1646,21 +1646,42 @@ pub(crate) fn open_bytes(name: &str, data: &[u8], parent: Option<&gtk::Window>) 
     // that can't work. So each side leads with the road that works for it
     // and keeps the other as the fallback.
     if std::path::Path::new("/.flatpak-info").exists() {
+        // Inside the sandbox the portal is the only launcher there is — a
+        // host-side AppInfo fallback can't work here. When the portal itself
+        // fails (seen in the wild: xdg-desktop-portal accepting the request
+        // and failing to spawn anything), say so instead of doing nothing.
+        let owned = parent.cloned();
         gtk::UriLauncher::new(&uri).launch(parent, gtk::gio::Cancellable::NONE, move |res| {
             if let Err(e) = res {
-                tracing::warn!("portal launch failed, falling back: {e}");
-                let _ = gtk::gio::AppInfo::launch_default_for_uri(
-                    &uri,
-                    gtk::gio::AppLaunchContext::NONE,
-                );
+                tracing::warn!("portal launch failed: {e}");
+                launch_failed_dialog(owned.as_ref());
             }
         });
     } else if let Err(e) =
         gtk::gio::AppInfo::launch_default_for_uri(&uri, gtk::gio::AppLaunchContext::NONE)
     {
         tracing::warn!("gio launch failed ({e}), trying the portal");
-        gtk::UriLauncher::new(&uri).launch(parent, gtk::gio::Cancellable::NONE, |_| {});
+        let owned = parent.cloned();
+        gtk::UriLauncher::new(&uri).launch(parent, gtk::gio::Cancellable::NONE, move |res| {
+            if let Err(e) = res {
+                tracing::warn!("portal launch also failed: {e}");
+                launch_failed_dialog(owned.as_ref());
+            }
+        });
     }
+}
+
+/// Both launch roads failed — tell the user what happened and what still
+/// works, rather than leaving a click that does nothing.
+fn launch_failed_dialog(parent: Option<&gtk::Window>) {
+    let dialog = gtk::AlertDialog::builder()
+        .message("The file could not be opened")
+        .detail(
+            "Your desktop's app portal did not launch an application.              Use Download to save the file, then open it from Files.",
+        )
+        .modal(true)
+        .build();
+    dialog.show(parent);
 }
 
 /// The private directory opened attachments are staged in, created if needed.
