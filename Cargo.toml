@@ -16,6 +16,11 @@ adw = { package = "libadwaita", version = "0.7", features = ["v1_4"] }
 relm4 = { version = "0.9", features = ["macros", "libadwaita"] }
 relm4-components = "0.9"
 webkit6 = "0.4"
+# PDF thumbnails in the attachment gallery (first-page render via poppler-glib).
+poppler-rs = { version = "0.24", features = ["v20_9"] }
+# "png": only to enable cairo-rs's `ImageSurface::write_to_png`, used to hand a
+# rendered PDF page to gdk::Texture the same way every other thumbnail loads.
+cairo-rs = { version = "0.20", features = ["png"] }
 keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

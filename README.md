@@ -118,13 +118,13 @@ runtime.
 **Fedora**
 
 ```sh
-sudo dnf install gtk4-devel libadwaita-devel webkitgtk6.0-devel
+sudo dnf install gtk4-devel libadwaita-devel webkitgtk6.0-devel poppler-glib-devel
 ```
 
 **Debian / Ubuntu**
 
 ```sh
-sudo apt install libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev
+sudo apt install libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libpoppler-glib-dev
 ```
 
 **Build & install**

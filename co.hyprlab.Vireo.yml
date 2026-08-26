@@ -51,6 +51,39 @@ build-options:
     # built into the source and works out of the box.
 
 modules:
+  # PDF attachment thumbnails (gallery + in-message drawer) render via
+  # poppler-glib, which the GNOME runtime doesn't ship — every other library it
+  # links against (cairo, glib, fontconfig, freetype, gdk-pixbuf) already is.
+  # Config lifted from flathub's org.gnome.Evince manifest, with
+  # ENABLE_LIBOPENJPEG turned off to avoid pulling in an openjpeg module too:
+  # thumbnails don't need JPEG2000 support, just the common image formats.
+  - name: popplerdata
+    no-autogen: true
+    make-install-args:
+      - prefix=/app
+    sources:
+      - type: archive
+        url: https://poppler.freedesktop.org/poppler-data-0.4.12.tar.gz
+        sha256: c835b640a40ce357e1b83666aabd95edffa24ddddd49b8daff63adb851cdab74
+  - name: poppler
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_INSTALL_LIBDIR=/app/lib
+      - -DCMAKE_INSTALL_INCLUDEDIR=/app/include
+      - -DBUILD_GTK_TESTS=OFF
+      - -DBUILD_CPP_TESTS=OFF
+      - -DENABLE_CPP=OFF
+      - -DENABLE_BOOST=OFF
+      - -DENABLE_GOBJECT_INTROSPECTION=OFF
+      - -DENABLE_LIBOPENJPEG=OFF
+      - -DENABLE_QT5=OFF
+      - -DENABLE_QT6=OFF
+    cleanup:
+      - /bin
+    sources:
+      - type: archive
+        url: https://poppler.freedesktop.org/poppler-26.07.0.tar.xz
+        sha256: 304832f48f8a47fdca90c6b6d1f684e68f37c10c9a0726f345f4ca9df4ca01e2
   - name: vireo
     buildsystem: simple
     build-commands:

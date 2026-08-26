@@ -2,16 +2,16 @@
 //! inboxes, with a lightbox preview (prev/next, open, go to message).
 //!
 //! Data comes from the SQLite cache (what the background prefetch has already
-//! downloaded), fed in via [`GalleryInput::SetItems`]. Image attachments show as
-//! thumbnails; other files show a type icon. Clicking a cell opens a large
-//! overlay preview.
+//! downloaded), fed in via [`GalleryInput::SetItems`]. Image attachments and PDFs
+//! (rendered from their first page) show as thumbnails; other files show a type
+//! icon. Clicking a cell opens a large overlay preview.
 
 use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
 use relm4::prelude::*;
 
-use crate::models::GalleryItem;
+use crate::models::{is_image_name, GalleryItem};
 
 pub struct AttachmentsGallery {
     /// Full set of attachments, unfiltered — the source for search and sort.
@@ -616,7 +616,8 @@ impl AttachmentsGallery {
     }
 }
 
-/// One grid cell: a thumbnail (image) or type icon, plus name + size.
+/// One grid cell: a thumbnail (image or PDF first page) or type icon, plus name
+/// + size.
 fn build_cell(
     index: usize,
     item: &GalleryItem,
@@ -633,11 +634,7 @@ fn build_cell(
     thumb_holder.set_halign(gtk::Align::Fill);
     thumb_holder.set_valign(gtk::Align::Fill);
 
-    let thumb = item
-        .is_image()
-        .then_some(item.data.as_ref())
-        .flatten()
-        .and_then(|d| texture_from(d));
+    let thumb = item.data.as_ref().and_then(|d| thumbnail_texture(&item.name, d));
     match thumb {
         Some(tex) => {
             let pic = gtk::Picture::for_paintable(&tex);
@@ -858,6 +855,53 @@ fn sort_indices(idx: &mut [usize], all: &[GalleryItem], sort: SortBy) {
 /// A `gdk::Texture` from raw image bytes, or `None` if the format isn't loadable.
 pub(crate) fn texture_from(data: &[u8]) -> Option<gdk::Texture> {
     gdk::Texture::from_bytes(&glib::Bytes::from(data)).ok()
+}
+
+/// A grid-cell thumbnail for any attachment type that has one: a decoded image,
+/// or a PDF's first page. `None` for anything else, so the caller falls back to
+/// the type icon.
+pub(crate) fn thumbnail_texture(name: &str, data: &[u8]) -> Option<gdk::Texture> {
+    if is_image_name(name) {
+        texture_from(data)
+    } else if name.to_ascii_lowercase().ends_with(".pdf") {
+        pdf_thumbnail(data)
+    } else {
+        None
+    }
+}
+
+/// Render a PDF's first page to a texture, by way of an in-memory PNG — the
+/// same route every other thumbnail here already goes through, so cropping,
+/// caching, and format all stay uniform.
+fn pdf_thumbnail(data: &[u8]) -> Option<gdk::Texture> {
+    let doc = poppler::Document::from_bytes(&glib::Bytes::from(data), None).ok()?;
+    let page = doc.page(0)?;
+    let (w, h) = page.size();
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    // Poppler's default is one pixel per point (72 dpi) — fine for text but
+    // soft as a thumbnail, so render at a fixed, sharper width instead.
+    const TARGET_WIDTH: f64 = 360.0;
+    let scale = TARGET_WIDTH / w;
+    let surface = gtk::cairo::ImageSurface::create(
+        gtk::cairo::Format::ARgb32,
+        TARGET_WIDTH.round() as i32,
+        (h * scale).round() as i32,
+    )
+    .ok()?;
+    let cr = gtk::cairo::Context::new(&surface).ok()?;
+    // A PDF page's own background is transparent; without painting white first,
+    // the thumbnail would show through to whatever is behind it (a hole in
+    // dark mode rather than a page).
+    cr.set_source_rgb(1.0, 1.0, 1.0);
+    cr.paint().ok()?;
+    cr.scale(scale, scale);
+    page.render(&cr);
+    drop(cr);
+    let mut png = Vec::new();
+    surface.write_to_png(&mut png).ok()?;
+    texture_from(&png)
 }
 
 /// A symbolic icon name for a filename by extension.
@@ -1161,6 +1205,59 @@ mod tests {
         assert!(type_keywords("a.png").contains("image"));
         assert!(type_keywords("a.mp3").contains("audio"));
         assert!(type_keywords("a.ics").contains("calendar"));
+    }
+
+    /// A minimal one-page PDF, built by hand — just enough structure for
+    /// poppler to load and render, with no dependency on an external file.
+    fn minimal_pdf() -> Vec<u8> {
+        let content = b"1 0 0 rg 100 100 300 300 re f";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Contents 4 0 R >>".to_string(),
+            format!(
+                "<< /Length {} >>\nstream\n{}\nendstream",
+                content.len(),
+                std::str::from_utf8(content).unwrap()
+            ),
+        ];
+        let mut out = Vec::new();
+        out.extend_from_slice(b"%PDF-1.4\n");
+        let mut offsets = vec![0usize];
+        for (i, obj) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            out.extend_from_slice(obj.as_bytes());
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let xref_offset = out.len();
+        out.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+        out.extend_from_slice(b"0000000000 65535 f \n");
+        for off in &offsets[1..] {
+            out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF",
+                objects.len() + 1,
+                xref_offset
+            )
+            .as_bytes(),
+        );
+        out
+    }
+
+    #[test]
+    fn thumbnail_texture_renders_pdf_first_page() {
+        let tex =
+            thumbnail_texture("attachment.pdf", &minimal_pdf()).expect("should render a page");
+        assert!(tex.width() > 0 && tex.height() > 0);
+    }
+
+    #[test]
+    fn thumbnail_texture_is_none_for_unsupported_types() {
+        assert!(thumbnail_texture("archive.zip", b"not a real zip").is_none());
+        assert!(thumbnail_texture("notes.pdf", b"not a real pdf").is_none());
     }
 
     #[test]

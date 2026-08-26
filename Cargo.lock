@@ -1959,6 +1959,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "poppler-rs"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45b1f21ffe55c78cbe3b301950cf15a143c8ff2a0f05a2b9e8e9c80605347206"
+dependencies = [
+ "cairo-rs",
+ "gio",
+ "glib",
+ "libc",
+ "poppler-sys-rs",
+]
+
+[[package]]
+name = "poppler-sys-rs"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e970afd57f25a79b8e526c257bf9c8cd5a6a68973331b6da341c422a6db47755"
+dependencies = [
+ "cairo-sys-rs",
+ "gio-sys",
+ "glib-sys",
+ "gobject-sys",
+ "libc",
+ "system-deps",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2952,6 +2979,7 @@ dependencies = [
  "async-imap",
  "async-native-tls",
  "base64",
+ "cairo-rs",
  "chrono",
  "dirs",
  "futures",
@@ -2962,6 +2990,7 @@ dependencies = [
  "lettre",
  "libadwaita",
  "mail-parser",
+ "poppler-rs",
  "relm4",
  "relm4-components",
  "rfc2047-decoder",
