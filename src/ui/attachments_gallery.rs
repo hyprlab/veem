@@ -1788,7 +1788,14 @@ fn portal_open_file(path: std::path::PathBuf, ask: bool, parent: Option<gtk::Win
     if ask {
         options.insert_value("ask", &true.to_variant());
     }
-    let params = ("", glib::variant::Handle(handle), options.end()).to_variant();
+    // Not the tuple's ToVariant: that boxes the dict as a nested "v" and the
+    // portal rejects "(shv)". tuple_from_iter splices each child at its own
+    // type, producing the "(sha{sv})" the interface declares.
+    let params = glib::Variant::tuple_from_iter([
+        "".to_variant(),
+        glib::variant::Handle(handle).to_variant(),
+        options.end(),
+    ]);
     let call_conn = conn.clone();
     conn.call_with_unix_fd_list(
         Some("org.freedesktop.portal.Desktop"),
