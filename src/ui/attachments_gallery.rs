@@ -1745,7 +1745,23 @@ fn portal_open_with_chooser(path: std::path::PathBuf, first_error: String) {
 /// else's access — an attacker who pre-creates it on a shared host would
 /// otherwise get every attachment the user opens.
 fn attachment_dir() -> Option<std::path::PathBuf> {
-    let dir = std::env::temp_dir().join("vireo-attachments");
+    // Inside Flatpak /tmp is PRIVATE to the sandbox: the document portal
+    // validates an exported fd by re-opening its path in the HOST namespace,
+    // so a /tmp-staged file fails validation and every portal open dies
+    // silently before any UI. $XDG_RUNTIME_DIR/app/$FLATPAK_ID is
+    // bind-mounted from the host at the SAME path — the one temp location
+    // both sides of the sandbox agree on (and it's session-scoped tmpfs,
+    // like /tmp). Native builds keep /tmp.
+    let dir = match std::env::var("FLATPAK_ID") {
+        Ok(app_id) => {
+            let runtime = std::env::var("XDG_RUNTIME_DIR").ok()?;
+            std::path::Path::new(&runtime)
+                .join("app")
+                .join(app_id)
+                .join("vireo-attachments")
+        }
+        Err(_) => std::env::temp_dir().join("vireo-attachments"),
+    };
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
