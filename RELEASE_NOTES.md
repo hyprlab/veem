@@ -2,7 +2,18 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.14.0
+## What's new in 1.14.1
+
+- **Conversations now include the mail you already had.** Threading applied only
+  to mail that arrived after you upgraded, so an account you had just added —
+  or the same account set up again on another machine — showed no conversations
+  at all, even though every reply in it says what it answers. Vireo reads those
+  headers now whatever the date, so your existing mail threads on sight. The
+  "Thread older messages too" setting is gone with it: there is nothing left for
+  it to switch on. Nothing is re-downloaded, and opening a long conversation is
+  still bounded.
+
+## In 1.14.0
 
 - **Conversations, properly.** A thread reads oldest first, each message its own
   card you can reply to, forward, select or act on individually. Quoted replies

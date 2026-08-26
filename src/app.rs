@@ -236,13 +236,6 @@ pub struct AppModel {
     single_key: std::rc::Rc<std::cell::Cell<bool>>,
     /// Whether messages are grouped into conversation threads.
     threading: bool,
-    /// Mail older than this (unix seconds) never threads (see
-    /// `config::threading_since`) — so an archive is never grouped, and never
-    /// pulled into a conversation.
-    threading_since: i64,
-    /// Whether conversations reach back through the whole mailbox rather than
-    /// only mail from the cutoff forward.
-    thread_old_mail: bool,
     /// A conversation re-render is already scheduled, so further bodies arriving
     /// in the same burst don't each queue one of their own.
     thread_render_queued: bool,
@@ -434,7 +427,6 @@ pub enum AppMsg {
     SetDateStyle(crate::config::DateStyle),
     SetClockStyle(crate::config::ClockStyle),
     SetThreading(bool),
-    SetThreadOldMail(bool),
     SetThreadsExpanded(bool),
     SetFetchInterval(u64),
     SetPush(bool),
@@ -1193,8 +1185,6 @@ impl SimpleComponent for AppModel {
                 config::load_single_key_shortcuts(),
             )),
             threading: config::load_threading(),
-            threading_since: if config::load_thread_old_mail() { 0 } else { config::threading_since() },
-            thread_old_mail: config::load_thread_old_mail(),
             thread_render_queued: false,
             thread_opened_at: None,
             thread_related_pending: false,
@@ -1262,9 +1252,6 @@ impl SimpleComponent for AppModel {
         model
             .message_list
             .emit(MessageListInput::SetThreading(model.threading));
-        model
-            .message_list
-            .emit(MessageListInput::SetThreadingSince(model.threading_since));
         model
             .message_list
             .emit(MessageListInput::SetThreadsExpanded(model.threads_expanded));
@@ -1899,20 +1886,16 @@ impl SimpleComponent for AppModel {
                 // The folder being read holds only its half of the conversation:
                 // your own replies are filed in Sent, and older parts may have
                 // been archived. Ask for the rest from the cache (#21).
-                // Only for mail from the cutoff forward: an archived message's
-                // conversation can span years and hundreds of messages, and
-                // assembling it means reading every one of their bodies.
                 // …unless the user picked this reply out of a conversation already
                 // on screen. They asked for one message; assembling its thread
                 // again would swap the conversation back in under them.
-                if self.threading && !solo && m.timestamp >= self.threading_since {
+                if self.threading && !solo {
                     let only = [m.clone()];
                     let ids = thread_ids(if thread.is_empty() { &only[..] } else { &thread });
                     if !ids.is_empty() {
                         self.send_to(account_id, MailRequest::LoadRelated {
                             message_id: m.id,
                             ids,
-                            since: self.threading_since,
                         });
                         self.thread_related_pending = true;
                     }
@@ -2811,7 +2794,6 @@ impl SimpleComponent for AppModel {
                     blacklist: self.blacklist.clone(),
                     palette_collapse_secs: self.palette_collapse_secs,
                     threading: self.threading,
-                    thread_old_mail: self.thread_old_mail,
                     threads_expanded: self.threads_expanded,
                     message_theme: self.message_theme,
                     notifications: self.notifications_enabled,
@@ -2839,7 +2821,6 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetDateStyle(style) => AppMsg::SetDateStyle(style),
                         PrefOutput::SetClockStyle(style) => AppMsg::SetClockStyle(style),
                         PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
-                        PrefOutput::SetThreadOldMail(on) => AppMsg::SetThreadOldMail(on),
                         PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                         PrefOutput::SetPush(on) => AppMsg::SetPush(on),
@@ -3090,23 +3071,6 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::SetThreadOldMail(on) => {
-                if self.thread_old_mail != on {
-                    self.thread_old_mail = on;
-                    config::set_thread_old_mail(on);
-                    // Lifting the cutoff means the whole mailbox threads; putting
-                    // it back means only mail since it was stamped.
-                    self.threading_since = if on { 0 } else { config::threading_since() };
-                    self.message_list
-                        .emit(MessageListInput::SetThreadingSince(self.threading_since));
-                    // The links were gathered under the old bound, and any
-                    // assembled conversation was built under it too.
-                    self.thread_cache.clear();
-                    self.thread_cache_order.clear();
-                    self.push_thread_links();
-                }
-            }
-
             AppMsg::RefsRepaired { account_id, folder_id } => {
                 // Only the folder on screen, and only its cached copy: the repair
                 // rewrote rows on disk, and re-reading is what lets the list see
@@ -3353,9 +3317,12 @@ impl SimpleComponent for AppModel {
 const THREAD_BODY_WAIT: std::time::Duration = std::time::Duration::from_millis(1200);
 
 /// How many messages' reply headers are held for joining conversations across
-/// folders. Only a bound on memory and rebuild cost — a conversation is joined
-/// by mail near it in time, and the newest links are kept.
-const THREAD_LINK_LIMIT: usize = 4000;
+/// folders. Only a bound on memory and rebuild cost — never on correctness: a
+/// conversation whose members are all on screen groups without consulting these
+/// at all. They matter for the join that runs through a message that isn't
+/// shown, most often your own reply in Sent. The newest are kept, since that is
+/// where the mail being read lives.
+const THREAD_LINK_LIMIT: usize = 20_000;
 
 
 
@@ -5165,10 +5132,8 @@ impl AppModel {
         self.thread_cache_order.retain(|(aid, _)| *aid != account_id);
     }
 
-    /// Reply headers for every cached message from the threading cutoff forward,
-    /// so the list can see that two replies in a folder answer the same message
-    /// in another one. Bounded by the cutoff: old mail never threads, so its
-    /// links are never needed.
+    /// Reply headers for every cached message, so the list can see that two
+    /// replies in a folder answer the same message in another one.
     fn push_thread_links(&self) {
         // Newest first, and capped: threading the whole mailbox would otherwise
         // put every message's reply headers here, to be cloned on each sync and
@@ -5178,7 +5143,6 @@ impl AppModel {
             .message_cache
             .values()
             .flatten()
-            .filter(|m| m.timestamp >= self.threading_since)
             .filter(|m| !(m.message_id.is_empty() && m.references.is_empty()))
             .collect();
         recent.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));

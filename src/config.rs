@@ -871,47 +871,6 @@ struct StateFile {
     /// start at their defaults.
     #[serde(default)]
     drawer_collapsed: bool,
-    /// Threading applies only to mail that arrived at or after this instant
-    /// (unix seconds), stamped the first time a build with threading runs.
-    #[serde(default)]
-    threading_since: Option<i64>,
-    /// Thread the whole mailbox rather than only mail from the cutoff forward.
-    /// Off by default: an archive's conversations run years and hundreds of
-    /// messages deep, and every member of one is a body to read and render.
-    #[serde(default)]
-    thread_old_mail: bool,
-}
-
-/// The instant threading starts applying, stamped once and then kept.
-///
-/// Conversations are built only from mail at or after it. An archive of tens of
-/// thousands of messages is left alone: grouping it would mean fetching every
-/// old message's References from the server, and a years-deep conversation puts
-/// hundreds of bodies into one reader document. Mail that arrives from here on
-/// threads normally, and those conversations are a handful of messages each.
-/// Whether conversations reach back through the whole mailbox.
-pub fn load_thread_old_mail() -> bool {
-    load_state().thread_old_mail
-}
-
-pub fn set_thread_old_mail(on: bool) {
-    let mut state = load_state();
-    state.thread_old_mail = on;
-    save_state(&state);
-}
-
-pub fn threading_since() -> i64 {
-    let mut state = load_state();
-    if let Some(ts) = state.threading_since {
-        return ts;
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    state.threading_since = Some(now);
-    save_state(&state);
-    now
 }
 
 fn state_path() -> Option<PathBuf> {

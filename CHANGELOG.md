@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.14.1 — 2026-08-25
+
+### Conversations
+
+- **Mail that was already in the mailbox threads.** 1.14.0 stamped a
+  `threading_since` instant the first time it ran and grouped only messages at
+  or after it. An account added after that — or the same account re-added on
+  another machine — therefore had an inbox where nothing threaded at all, however
+  complete its `References` headers were, because `compute_thread_keys` filtered
+  on the timestamp *before* the union-find ran and those messages never reached
+  it. The stamp, the `thread_old_mail` preference that gated it, and the
+  `ts >= ?` predicate in `messages_by_thread_ids` are gone: a message threads
+  because its headers say what it answers, whenever it was sent. Covered by a
+  test built from the headers iCloud actually delivers.
+- **The References repair runs for every folder**, rather than only when the
+  retired setting was switched on. A message indexed by an older build carries
+  only its In-Reply-To, and threading reads References — so this is what makes
+  old mail threadable in the first place. Unchanged otherwise: replies only,
+  chunked at 500, resumable by watermark, once per folder.
+- **Conversations join across folders further back.** The reply-header pool grew
+  from 4,000 messages to 20,000. It bounds memory and rebuild cost, never
+  correctness — a conversation whose members are all on screen never consults it
+  — and what one conversation costs to *open* is still capped at 50 members, the
+  bound the date was only ever a proxy for.
+
 ## 1.14.0 — 2026-08-25
 
 ### Conversations

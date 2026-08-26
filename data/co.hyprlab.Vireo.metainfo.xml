@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.14.1" date="2026-08-25" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.14.1</url>
+      <description>
+        <p>Conversations now include mail that was already in the mailbox. Threading applied only to mail arriving after the upgrade, so a newly added account showed no conversations at all; Vireo now groups messages by their reply headers whatever the date, and the "Thread older messages too" setting is retired.</p>
+      </description>
+    </release>
     <release version="1.14.0" date="2026-08-25" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.14.0</url>
       <description>

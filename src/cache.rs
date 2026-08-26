@@ -483,14 +483,14 @@ impl Cache {
     /// Returns each message with the folder path it lives in, since the caller
     /// needs that both to label it and to fetch its body. Cache-only: the point
     /// is to assemble a conversation without going near the network (#21).
-    /// `since` bounds the search to mail from the threading cutoff forward, and
-    /// [`THREAD_MEMBER_LIMIT`] caps what one conversation can drag in — every
-    /// member found is a body the reader will load and render.
+    /// A message's age is not a factor — what it answers is written in its
+    /// headers whenever it was sent. [`THREAD_MEMBER_LIMIT`] caps what one
+    /// conversation can drag in, which is the bound that matters: every member
+    /// found is a body the reader will load and render.
     pub fn messages_by_thread_ids(
         &self,
         account_id: u32,
         ids: &[String],
-        since: i64,
     ) -> Vec<(String, Message)> {
         let ids: Vec<&String> = ids.iter().filter(|i| !i.is_empty()).take(THREAD_ID_LIMIT).collect();
         if ids.is_empty() {
@@ -511,10 +511,9 @@ impl Cache {
             .collect::<Vec<_>>()
             .join(" OR ");
         let sql = format!(
-            "SELECT folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred,                     has_attachment, recipients, cc, message_id, references_, preview              FROM messages              WHERE account_id = ?{account} AND ts >= ?{since} AND (message_id IN ({in_list}) OR {refs_match})              ORDER BY ts DESC LIMIT ?{limit}",
+            "SELECT folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred,                     has_attachment, recipients, cc, message_id, references_, preview              FROM messages              WHERE account_id = ?{account} AND (message_id IN ({in_list}) OR {refs_match})              ORDER BY ts DESC LIMIT ?{limit}",
             account = ids.len() * 2 + 1,
-            since = ids.len() * 2 + 2,
-            limit = ids.len() * 2 + 3,
+            limit = ids.len() * 2 + 2,
             in_list = slots(0),
             refs_match = refs_match,
         );
@@ -531,7 +530,6 @@ impl Cache {
                 binds.push(p as &dyn rusqlite::ToSql);
             }
             binds.push(&account_id as &dyn rusqlite::ToSql);
-            binds.push(&since as &dyn rusqlite::ToSql);
             let limit = THREAD_MEMBER_LIMIT as i64;
             binds.push(&limit as &dyn rusqlite::ToSql);
             let rows = stmt.query_map(binds.as_slice(), |row| {
@@ -1477,7 +1475,7 @@ mod tests {
         // Unrelated, but its References contain the digit "1" — the account id.
         add_threaded(&c, "Archive", 3, 550, "other@x", "31337@elsewhere");
 
-        let found = c.messages_by_thread_ids(1, &["root@x".to_string()], 0);
+        let found = c.messages_by_thread_ids(1, &["root@x".to_string()]);
         let ids: Vec<&str> = found.iter().map(|(_, m)| m.message_id.as_str()).collect();
         assert_eq!(ids, vec!["reply@x", "root@x"], "only the real conversation");
     }
@@ -1558,15 +1556,19 @@ mod tests {
         assert_eq!(c.load_body(1, "INBOX", 43), None);
     }
 
+    /// Re-adding an account re-downloads mail that is all older than the moment
+    /// it was added. Threading reads what a message answers, not when it was
+    /// sent, so every member belongs to the conversation regardless of age.
     #[test]
-    fn a_conversation_ignores_mail_from_before_the_threading_cutoff() {
+    fn a_conversation_holds_its_members_however_old_they_are() {
         let c = Cache::in_memory();
         add_threaded(&c, "INBOX", 1, 500, "root@x", "");
-        add_threaded(&c, "Sent", 2, 400, "old-reply@x", "root@x"); // predates the cutoff
+        add_threaded(&c, "Sent", 2, 400, "old-reply@x", "root@x");
         add_threaded(&c, "Sent", 3, 600, "new-reply@x", "root@x");
 
-        let found = c.messages_by_thread_ids(1, &["root@x".to_string()], 450);
-        let ids: Vec<&str> = found.iter().map(|(_, m)| m.message_id.as_str()).collect();
-        assert_eq!(ids, vec!["new-reply@x", "root@x"], "archive stays out");
+        let found = c.messages_by_thread_ids(1, &["root@x".to_string()]);
+        let mut ids: Vec<&str> = found.iter().map(|(_, m)| m.message_id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["new-reply@x", "old-reply@x", "root@x"], "all three, any age");
     }
 }

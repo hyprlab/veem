@@ -731,10 +731,15 @@ fn normalize_subject(subject: &str) -> String {
 /// thread key `(account_id, root)`. Messages with no reply relationship get a
 /// unique key (a thread of one) — so unrelated messages that merely share a
 /// subject are never threaded together.
+///
+/// Age plays no part: a message threads because its headers say what it answers,
+/// and those are indexed with every message. Grouping runs over the rendered
+/// window, so covering the whole mailbox costs no more than covering a day of
+/// it; what a conversation costs to *open* is bounded separately, by
+/// `THREAD_MEMBER_LIMIT`.
 fn compute_thread_keys(
     msgs: &[Message],
     links: &[(u32, String, String)],
-    since: i64,
 ) -> std::collections::HashMap<(u32, u32), (u32, String)> {
     use std::collections::HashMap;
 
@@ -767,7 +772,7 @@ fn compute_thread_keys(
         }
     };
 
-    for m in msgs.iter().filter(|m| m.timestamp >= since) {
+    for m in msgs {
         let sn = self_node(m);
         parent.entry(sn.clone()).or_insert_with(|| sn.clone());
         for r in m.references.split_whitespace() {
@@ -791,12 +796,10 @@ fn compute_thread_keys(
     }
 
     let mut out = HashMap::new();
-    for m in msgs.iter().filter(|m| m.timestamp >= since) {
+    for m in msgs {
         let root = find(&mut parent, &self_node(m));
         out.insert((m.account_id, m.id), (m.account_id, root));
     }
-    // Anything older is simply absent: the caller keys it by its own uid, so it
-    // stands alone rather than joining a conversation.
     out
 }
 
@@ -893,9 +896,6 @@ pub struct MessageList {
     sort: SortOrder,
     /// Group messages into conversation threads (user preference).
     threading: bool,
-    /// Mail older than this (unix seconds) never threads — see
-    /// `config::threading_since`.
-    threading_since: i64,
     /// When `Some`, a spinner + this message overlays the list — shown while a
     /// large bulk action (archive/delete/spam) is applied.
     busy: Option<String>,
@@ -963,8 +963,6 @@ pub enum MessageListInput {
     AppendMessages { messages: Vec<Message> },
     SetLoading { title: String },
     SetThreading(bool),
-    /// The instant threading starts applying; older mail stands alone.
-    SetThreadingSince(i64),
     /// Reply headers from the account's other folders, so a conversation joined
     /// through a message that isn't on screen still groups.
     SetThreadLinks(Vec<(u32, String, String)>),
@@ -1376,7 +1374,6 @@ impl SimpleComponent for MessageList {
             scroller: None,
             sort: SortOrder::DateNewest,
             threading: true,
-            threading_since: i64::MAX, // until the app sends the real cutoff
 
             busy: None,
         };
@@ -1541,12 +1538,6 @@ impl SimpleComponent for MessageList {
                     if self.threading {
                         self.rebuild_preserving_scroll();
                     }
-                }
-            }
-            MessageListInput::SetThreadingSince(since) => {
-                if self.threading_since != since {
-                    self.threading_since = since;
-                    self.rebuild();
                 }
             }
             MessageListInput::SetThreading(on) => {
@@ -2226,7 +2217,7 @@ impl MessageList {
         // message as the head; expanding reveals the older replies beneath it.
         // With threading off, every message is its own group.
         let keys = if self.threading {
-            compute_thread_keys(&capped, &self.thread_links, self.threading_since)
+            compute_thread_keys(&capped, &self.thread_links)
         } else {
             std::collections::HashMap::new()
         };
@@ -2361,7 +2352,7 @@ impl MessageList {
         // Thread within whatever set is on screen (the search pool while searching,
         // otherwise the current folder) so the conversation matches the rows shown.
         let source = self.active_source();
-        let keys = compute_thread_keys(source, &self.thread_links, self.threading_since);
+        let keys = compute_thread_keys(source, &self.thread_links);
         let Some(key) = keys.get(&(m.account_id, m.id)).cloned() else {
             return (vec![m.clone()], false);
         };
@@ -2477,7 +2468,7 @@ mod tests {
             msg(2, "reply-b@them", "sent-2@us"),
         ];
         // Without the Sent messages there is nothing to join them.
-        let alone = compute_thread_keys(&shown, &[], 0);
+        let alone = compute_thread_keys(&shown, &[]);
         assert_ne!(
             alone.get(&(1, 1)),
             alone.get(&(1, 2)),
@@ -2489,7 +2480,7 @@ mod tests {
             (1u32, "sent-1@us".to_string(), String::new()),
             (1u32, "sent-2@us".to_string(), "sent-1@us reply-a@them".to_string()),
         ];
-        let joined = compute_thread_keys(&shown, &links, 0);
+        let joined = compute_thread_keys(&shown, &links);
         assert_eq!(
             joined.get(&(1, 1)),
             joined.get(&(1, 2)),
@@ -2497,12 +2488,34 @@ mod tests {
         );
     }
 
+    /// A re-added account re-downloads its whole mailbox, so every message in it
+    /// is older than the moment the account was added. Threading reads the reply
+    /// headers, which say the same thing whenever the mail was sent — the three
+    /// messages here are the shape iCloud delivered: a root with no References,
+    /// and two replies naming it.
+    #[test]
+    fn mail_older_than_the_account_still_threads() {
+        let old = 1_787_565_140i64; // long before this list was ever built
+        let mut root = msg(1, "root@dccma.com", "");
+        root.timestamp = old;
+        let mut first = msg(2, "r1@dccma.com", "root@dccma.com sent-1@me.com");
+        first.timestamp = old + 48;
+        let mut second = msg(3, "r2@dccma.com", "root@dccma.com sent-2@me.com");
+        second.timestamp = old + 224;
+
+        let shown = [root, first, second];
+        let keys = compute_thread_keys(&shown, &[]);
+        let root_key = keys.get(&(1, 1)).cloned().expect("the root is threaded");
+        assert_eq!(keys.get(&(1, 2)), Some(&root_key), "first reply joins");
+        assert_eq!(keys.get(&(1, 3)), Some(&root_key), "second reply joins");
+    }
+
     /// Links are evidence, not glue: unrelated mail must not be pulled in.
     #[test]
     fn links_do_not_merge_unrelated_conversations() {
         let shown = [msg(1, "a@x", ""), msg(2, "b@x", "")];
         let links = vec![(1u32, "c@x".to_string(), "a@x".to_string())];
-        let keys = compute_thread_keys(&shown, &links, 0);
+        let keys = compute_thread_keys(&shown, &links);
         assert_ne!(keys.get(&(1, 1)), keys.get(&(1, 2)), "still two conversations");
     }
 
@@ -2519,7 +2532,7 @@ mod tests {
             members.push(m);
         }
         // All one conversation by their shared reference.
-        let keys = compute_thread_keys(&members, &[], 0);
+        let keys = compute_thread_keys(&members, &[]);
         let root = keys.get(&(1, 1)).cloned().expect("threaded");
         assert!(
             members.iter().all(|m| keys.get(&(1, m.id)) == Some(&root)),

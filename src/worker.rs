@@ -144,9 +144,7 @@ pub enum MailRequest {
     /// Assemble a conversation from the local cache across every folder of the
     /// account: the messages whose Message-ID or references match `ids`. Answers
     /// with [`WorkerEvent::Related`]; never touches the network.
-    /// `since` bounds the search to mail from the threading cutoff forward, so
-    /// an archive is never pulled into a conversation.
-    LoadRelated { message_id: u32, ids: Vec<String>, since: i64 },
+    LoadRelated { message_id: u32, ids: Vec<String> },
     /// Permanently erase messages from `path` (flag `\Deleted` + EXPUNGE), used
     /// when "delete" is asked for in Trash, where there is nowhere left to move to.
     PurgeMessages { path: String, uids: Vec<u32> },
@@ -435,9 +433,8 @@ async fn run_imap(
     let mut backfill: std::collections::VecDeque<Backfill> = std::collections::VecDeque::new();
     let mut backfill_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     // Folders queued for the one-time References repair (see
-    // [`run_one_refs_repair`]). Only gathered when conversations reach back
-    // through old mail — under the default cutoff, only mail this build indexed
-    // threads at all, and this build fetches References with the envelope.
+    // [`run_one_refs_repair`]). Every folder gets one: a message indexed by an
+    // older build carries only its In-Reply-To, and threading reads References.
     let mut refs_repair: std::collections::VecDeque<(u32, String)> =
         std::collections::VecDeque::new();
     // IMAP IDLE push: watch the most recently loaded folder for new mail.
@@ -468,10 +465,9 @@ async fn run_imap(
             // immediate parent alone — which for an incoming reply is usually
             // your own message, filed in Sent, so the link points outside the
             // folder and the reply starts a thread of its own.
-            if crate::config::load_thread_old_mail()
-                && cache
-                    .as_ref()
-                    .is_some_and(|c| !c.refs_repair_state(account_id, &f.path).1)
+            if cache
+                .as_ref()
+                .is_some_and(|c| !c.refs_repair_state(account_id, &f.path).1)
             {
                 refs_repair.push_back((f.id, f.path.clone()));
             }
@@ -691,7 +687,7 @@ async fn run_imap(
                 }
                 continue; // cache-only, never hits the network
             }
-            MailRequest::LoadRelated { message_id, ids, since } => {
+            MailRequest::LoadRelated { message_id, ids } => {
                 // Folder ids are positional over the same ordered folder list the
                 // UI was given, so a cached row's path maps back to the id the app
                 // knows it by — which is what lets the reader fetch a related
@@ -700,7 +696,7 @@ async fn run_imap(
                     .as_ref()
                     .map(|c| {
                         let folders = c.load_folders(account_id);
-                        c.messages_by_thread_ids(account_id, ids, *since)
+                        c.messages_by_thread_ids(account_id, ids)
                             .into_iter()
                             .filter_map(|(path, mut m)| {
                                 let f = folders.iter().find(|f| f.path == path)?;
