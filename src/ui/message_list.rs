@@ -62,43 +62,56 @@ pub struct RowInit {
 /// the list and read live when a drag starts.
 pub type DragKeys = std::rc::Rc<std::cell::RefCell<Vec<(u32, u32, u32, u32)>>>;
 
-/// What was found for a sender's circle, and where it came from — the two are
-/// cached separately, by address and by domain.
+/// A background face lookup's answer, correlated by sender address (a recycled
+/// row compares before using it). The tiers are personal-first: the contact's
+/// own photo, their Gravatar, then the icon their domain publishes (#30), with
+/// the UI's coloured initials as the implicit last resort.
 #[derive(Debug)]
-pub enum Face {
-    /// The sender's own Gravatar.
-    Gravatar(Vec<u8>),
-    /// The icon their domain publishes (#30).
-    Logo(Vec<u8>),
+pub enum FaceCmd {
+    /// The avatar tiers (contact photo, Gravatar) answered. `logo` carries the
+    /// logo tier's answer when it was consulted in the same trip: found bytes,
+    /// or a definitive miss to remember.
+    Avatar {
+        email: String,
+        generation: u64,
+        mode: crate::avatar::FetchMode,
+        outcome: crate::avatar::FetchOutcome,
+        logo: Option<Option<Vec<u8>>>,
+    },
+    /// A logo-only lookup — the avatar tiers had already answered from cache.
+    Logo { email: String, bytes: Option<Vec<u8>> },
 }
 
-/// Look for a face for `email`, off the main thread: the sender's Gravatar
-/// first, since it is theirs rather than their employer's, then the brand icon.
-/// `None` when neither is enabled, both are missing, or the cache already says
-/// so.
-pub fn find_face(
+/// Run the avatar tiers off the main thread, falling through to the domain icon
+/// when they come up empty and `want_logo` says the switch is on. `generation`
+/// and `mode` come from [`crate::avatar::lookup`] and ride along so the result
+/// can be cached against the EDS state that was actually queried.
+pub async fn find_face(
     email: String,
-    gravatar: bool,
-    sender_logos: bool,
-) -> impl std::future::Future<Output = Option<Face>> + Send + 'static {
-    async move {
-        tokio::task::spawn_blocking(move || {
-            if gravatar {
-                if let Some(bytes) = crate::avatar::fetch(&email) {
-                    return Some(Face::Gravatar(bytes));
-                }
-            }
-            if sender_logos {
-                if let Some(bytes) = crate::logo::fetch(&email) {
-                    return Some(Face::Logo(bytes));
-                }
-            }
-            None
-        })
+    generation: u64,
+    mode: crate::avatar::FetchMode,
+    want_logo: bool,
+) -> FaceCmd {
+    let lookup_email = email.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let outcome = crate::avatar::fetch(&lookup_email, mode);
+        let logo = (want_logo && !matches!(outcome, crate::avatar::FetchOutcome::Found(_)))
+            .then(|| crate::logo::fetch(&lookup_email));
+        (outcome, logo)
+    })
+    .await;
+    let (outcome, logo) = result.unwrap_or((crate::avatar::FetchOutcome::Retry, None));
+    FaceCmd::Avatar { email, generation, mode, outcome, logo }
+}
+
+/// Fetch just the domain icon, off the main thread.
+pub async fn find_logo(email: String) -> FaceCmd {
+    let lookup_email = email.clone();
+    let bytes = tokio::task::spawn_blocking(move || crate::logo::fetch(&lookup_email))
         .await
         .ok()
-        .flatten()
-    }
+        .flatten();
+    FaceCmd::Logo { email, bytes }
 }
 
 /// One message summary row.
@@ -180,7 +193,7 @@ impl FactoryComponent for MessageRow {
     type Init = RowInit;
     type Input = MessageRowInput;
     type Output = MessageRowOutput;
-    type CommandOutput = Option<Face>;
+    type CommandOutput = FaceCmd;
     type ParentWidget = gtk::ListBox;
 
     view! {
@@ -535,23 +548,55 @@ impl FactoryComponent for MessageRow {
         }
     }
 
-    fn update_cmd(&mut self, face: Self::CommandOutput, _sender: FactorySender<Self>) {
-        self.avatar_texture = match face {
-            Some(Face::Gravatar(bytes)) => {
-                crate::avatar::decode_and_cache(&self.msg.from_addr, &bytes)
-            }
-            Some(Face::Logo(bytes)) => {
-                crate::logo::decode_and_cache(&self.msg.from_addr, &bytes)
-            }
-            // Nothing to show: remember it, so the sender's other rows and the
-            // next sync don't ask the same domain again.
-            None => {
-                if self.sender_logos {
-                    crate::logo::remember_missing(&self.msg.from_addr);
+    fn update_cmd(&mut self, cmd: Self::CommandOutput, sender: FactorySender<Self>) {
+        match cmd {
+            FaceCmd::Avatar { email, generation, mode, outcome, logo } => {
+                // Record what came back before deciding what to draw — the
+                // caches are shared, so the sender's other rows benefit even
+                // when this row has been recycled to a different message.
+                let retry_stale = crate::avatar::cache_result(&email, generation, mode, outcome);
+                match logo {
+                    Some(Some(bytes)) => {
+                        crate::logo::decode_and_cache(&email, &bytes);
+                    }
+                    Some(None) => crate::logo::remember_missing(&email),
+                    None => {}
                 }
-                None
+                if !self.msg.from_addr.eq_ignore_ascii_case(&email) {
+                    return;
+                }
+                match crate::avatar::lookup(&email, self.gravatar) {
+                    crate::avatar::CacheLookup::Texture(texture) => {
+                        self.avatar_texture = Some(texture);
+                    }
+                    crate::avatar::CacheLookup::Missing => self.load_logo(&email, &sender),
+                    crate::avatar::CacheLookup::Fetch { generation, mode } => {
+                        self.avatar_texture = None;
+                        // Only chase a result the EDS generation invalidated;
+                        // a transient Gravatar failure waits for a later render.
+                        if retry_stale {
+                            let want_logo =
+                                self.sender_logos && !crate::logo::known_missing(&email);
+                            sender.oneshot_command(find_face(email, generation, mode, want_logo));
+                        }
+                    }
+                }
             }
-        };
+            FaceCmd::Logo { email, bytes } => {
+                let texture = match bytes {
+                    Some(bytes) => crate::logo::decode_and_cache(&email, &bytes),
+                    None => {
+                        // Remember the miss, so the sender's other rows and the
+                        // next sync don't ask the same domain again.
+                        crate::logo::remember_missing(&email);
+                        None
+                    }
+                };
+                if self.msg.from_addr.eq_ignore_ascii_case(&email) && self.sender_logos {
+                    self.avatar_texture = texture;
+                }
+            }
+        }
     }
 
     fn shutdown(&mut self, _widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
@@ -611,23 +656,44 @@ impl MessageRow {
     }
 
     /// Fill the circle: a cached face if one is known, otherwise go and look.
+    /// The chain is contact photo → Gravatar → domain icon → initials, each
+    /// tier consulted only while its switch is on.
     fn load_face(&mut self, sender: &FactorySender<Self>) {
         let email = self.msg.from_addr.clone();
         if email.is_empty() {
             return;
         }
-        if let Some(tex) = crate::avatar::cached(&email).or_else(|| crate::logo::cached(&email)) {
+        match crate::avatar::lookup(&email, self.gravatar) {
+            crate::avatar::CacheLookup::Texture(texture) => {
+                self.avatar_texture = Some(texture);
+            }
+            // Contact and Gravatar are definitively absent — the logo tier is
+            // all that's left before initials.
+            crate::avatar::CacheLookup::Missing => self.load_logo(&email, sender),
+            crate::avatar::CacheLookup::Fetch { generation, mode } => {
+                let want_logo = self.sender_logos && !crate::logo::known_missing(&email);
+                sender.oneshot_command(find_face(email, generation, mode, want_logo));
+            }
+        }
+    }
+
+    /// The logo tier: only consulted when enabled, so switching "sender logos"
+    /// off hides already-cached logos immediately. A domain already asked about
+    /// is not asked again — one request a session, not one a row.
+    fn load_logo(&mut self, email: &str, sender: &FactorySender<Self>) {
+        if !self.sender_logos {
+            self.avatar_texture = None;
+            return;
+        }
+        if let Some(tex) = crate::logo::cached(email) {
             self.avatar_texture = Some(tex);
             return;
         }
-        // A domain already asked about is not asked again, so a sender with no
-        // icon costs one request a session rather than one a row.
-        let want_logo = self.sender_logos && !crate::logo::known_missing(&email);
-        if !self.gravatar && !want_logo {
+        self.avatar_texture = None;
+        if crate::logo::known_missing(email) {
             return;
         }
-        let gravatar = self.gravatar;
-        sender.oneshot_command(find_face(email, gravatar, want_logo));
+        sender.oneshot_command(find_logo(email.to_string()));
     }
 
     /// Classes for the row's content box. Without the sender circle the unread
@@ -969,6 +1035,9 @@ pub enum MessageListInput {
     /// Whether conversations start expanded (true) or collapsed (false).
     SetThreadsExpanded(bool),
     SetGravatar(bool),
+    /// The GNOME Contacts photo index changed (EDS sync, or the first load
+    /// finished) — refresh visible circles without losing the scroll position.
+    ContactPhotosChanged,
     /// Show or hide the coloured sender circles (#29).
     SetAvatars(bool),
     /// Fill them with senders' own site icons, or stop (#30).
@@ -1588,6 +1657,13 @@ impl SimpleComponent for MessageList {
                 if self.gravatar != on {
                     self.gravatar = on;
                     self.rebuild();
+                }
+            }
+            MessageListInput::ContactPhotosChanged => {
+                // Pointless when the circles aren't drawn; rows check the
+                // fresh index as they are rebuilt.
+                if self.avatars {
+                    self.rebuild_preserving_scroll();
                 }
             }
             MessageListInput::SetPreviewLines(lines) => {

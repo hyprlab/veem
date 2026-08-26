@@ -44,7 +44,6 @@ base64 = "0.22"
 getrandom = "0.2"
 
 # Gravatar (opt-in): MD5 of the email + a simple blocking HTTPS fetch
-md5 = "0.7"
 ureq = { version = "2", features = ["json"] }
 serde_json = "1"
 

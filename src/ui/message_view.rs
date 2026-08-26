@@ -107,6 +107,9 @@ pub enum MessageViewInput {
     SetAvatars(bool),
     /// Fill it with the sender's own site icon, or stop (#30).
     SetSenderLogos(bool),
+    /// The GNOME Contacts photo index changed — look the current sender's
+    /// photo up again.
+    ContactPhotosChanged,
     /// How (and whether) the blocked-remote-content banner is drawn. Neither
     /// flag changes what is blocked — only what the reader says about it.
     SetBannerStyle { dim: bool, show: bool },
@@ -226,8 +229,9 @@ impl Component for MessageView {
     type Init = ();
     type Input = MessageViewInput;
     type Output = MessageViewOutput;
-    /// (message id, fetched Gravatar bytes) — id guards against stale results.
-    type CommandOutput = (u32, Option<crate::ui::message_list::Face>);
+    /// A background face lookup's answer; correlated by sender address in
+    /// `update_cmd`, which guards against stale results.
+    type CommandOutput = crate::ui::message_list::FaceCmd;
 
     view! {
         gtk::Stack {
@@ -751,6 +755,9 @@ impl Component for MessageView {
                 self.sender_logos = on;
                 self.load_avatar(&sender);
             }
+            MessageViewInput::ContactPhotosChanged => {
+                self.load_avatar(&sender);
+            }
             MessageViewInput::SetContentTheme(o) => {
                 if self.content_dark != o {
                     self.content_dark = o;
@@ -880,43 +887,71 @@ impl Component for MessageView {
 
     fn update_cmd(
         &mut self,
-        (message_id, face): Self::CommandOutput,
-        _sender: ComponentSender<Self>,
+        cmd: Self::CommandOutput,
+        sender: ComponentSender<Self>,
         _root: &Self::Root,
     ) {
-        // Ignore results for a message that's no longer shown.
-        let still_current = self
-            .current
-            .as_ref()
-            .is_some_and(|m| m.id == message_id);
-        if !still_current {
-            return;
-        }
-        let Some(m) = self.current.as_ref() else {
-            return;
-        };
-        let addr = m.from_addr.clone();
-        self.avatar_texture = match face {
-            Some(crate::ui::message_list::Face::Gravatar(b)) => {
-                crate::avatar::decode_and_cache(&addr, &b)
-            }
-            Some(crate::ui::message_list::Face::Logo(b)) => {
-                crate::logo::decode_and_cache(&addr, &b)
-            }
-            None => {
-                if self.sender_logos {
-                    crate::logo::remember_missing(&addr);
+        use crate::ui::message_list::FaceCmd;
+        // Results are correlated by sender address, not message id: an IMAP uid
+        // is only unique within its mailbox, and the same sender's face is
+        // right whichever of their messages is now shown.
+        let current_addr = self.current.as_ref().map(|m| m.from_addr.clone());
+        match cmd {
+            FaceCmd::Avatar { email, generation, mode, outcome, logo } => {
+                let retry_stale = crate::avatar::cache_result(&email, generation, mode, outcome);
+                match logo {
+                    Some(Some(bytes)) => {
+                        crate::logo::decode_and_cache(&email, &bytes);
+                    }
+                    Some(None) => crate::logo::remember_missing(&email),
+                    None => {}
                 }
-                None
+                let still_current =
+                    current_addr.is_some_and(|a| a.eq_ignore_ascii_case(&email));
+                if !still_current {
+                    return;
+                }
+                match crate::avatar::lookup(&email, self.gravatar) {
+                    crate::avatar::CacheLookup::Texture(texture) => {
+                        self.avatar_texture = Some(texture);
+                    }
+                    crate::avatar::CacheLookup::Missing => self.load_logo(&email, &sender),
+                    crate::avatar::CacheLookup::Fetch { generation, mode } => {
+                        self.avatar_texture = None;
+                        // Only chase a result the EDS generation invalidated; a
+                        // transient Gravatar failure waits for a later render.
+                        if retry_stale {
+                            let want_logo =
+                                self.sender_logos && !crate::logo::known_missing(&email);
+                            sender.oneshot_command(crate::ui::message_list::find_face(
+                                email, generation, mode, want_logo,
+                            ));
+                        }
+                    }
+                }
             }
-        };
+            FaceCmd::Logo { email, bytes } => {
+                let texture = match bytes {
+                    Some(bytes) => crate::logo::decode_and_cache(&email, &bytes),
+                    None => {
+                        crate::logo::remember_missing(&email);
+                        None
+                    }
+                };
+                let still_current =
+                    current_addr.is_some_and(|a| a.eq_ignore_ascii_case(&email));
+                if still_current && self.sender_logos {
+                    self.avatar_texture = texture;
+                }
+            }
+        }
     }
 }
 
 impl MessageView {
-    /// Set the sender's face: a cached one if known, otherwise a background look
-    /// keyed to this message — the sender's Gravatar, or the icon their domain
-    /// publishes (#30), whichever is enabled and answers.
+    /// Set the sender's face: a cached one if known, otherwise a background
+    /// look — the chain is contact photo → Gravatar → domain icon (#30) →
+    /// initials, each tier consulted only while its switch is on.
     fn load_avatar(&mut self, sender: &ComponentSender<Self>) {
         self.avatar_texture = None;
         // Nothing to fetch when the circle isn't drawn (#29).
@@ -930,22 +965,36 @@ impl MessageView {
         if email.is_empty() {
             return;
         }
-        if let Some(tex) = crate::avatar::cached(&email).or_else(|| crate::logo::cached(&email)) {
+        match crate::avatar::lookup(&email, self.gravatar) {
+            crate::avatar::CacheLookup::Texture(texture) => {
+                self.avatar_texture = Some(texture);
+            }
+            crate::avatar::CacheLookup::Missing => self.load_logo(&email, sender),
+            crate::avatar::CacheLookup::Fetch { generation, mode } => {
+                let want_logo = self.sender_logos && !crate::logo::known_missing(&email);
+                sender.oneshot_command(crate::ui::message_list::find_face(
+                    email, generation, mode, want_logo,
+                ));
+            }
+        }
+    }
+
+    /// The logo tier: only consulted when enabled, so switching "sender logos"
+    /// off hides already-cached logos immediately.
+    fn load_logo(&mut self, email: &str, sender: &ComponentSender<Self>) {
+        if !self.sender_logos {
+            self.avatar_texture = None;
+            return;
+        }
+        if let Some(tex) = crate::logo::cached(email) {
             self.avatar_texture = Some(tex);
             return;
         }
-        let want_logo = self.sender_logos && !crate::logo::known_missing(&email);
-        if !self.gravatar && !want_logo {
+        self.avatar_texture = None;
+        if crate::logo::known_missing(email) {
             return;
         }
-        let id = m.id;
-        let gravatar = self.gravatar;
-        sender.oneshot_command(async move {
-            (
-                id,
-                crate::ui::message_list::find_face(email, gravatar, want_logo).await,
-            )
-        });
+        sender.oneshot_command(crate::ui::message_list::find_logo(email.to_string()));
     }
 
     /// Whether message content should render dark: the user's forced choice, or

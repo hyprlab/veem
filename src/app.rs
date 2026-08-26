@@ -450,6 +450,9 @@ pub enum AppMsg {
     SetDimRemoteBanner(bool),
     SetShowRemoteBanner(bool),
     SetGravatar(bool),
+    /// The GNOME Contacts photo index changed (EDS sync, or the first load
+    /// finished) — refresh the sender circles that are on screen.
+    ContactPhotosChanged,
     SetAvatars(bool),
     SetSenderLogos(bool),
     SetDateStyle(crate::config::DateStyle),
@@ -1257,6 +1260,14 @@ impl SimpleComponent for AppModel {
             gallery_by_account: HashMap::new(),
         };
         model.spawn_workers(&sender);
+        // Refresh visible sender circles when the GNOME Contacts photo index
+        // changes (first load finishing, or an EDS/CardDAV sync).
+        crate::contacts::watch_photo_changes({
+            let input = sender.input_sender().clone();
+            move || {
+                let _ = input.send(AppMsg::ContactPhotosChanged);
+            }
+        });
         // Watch GNOME Online Accounts so a change there (account removed, Mail
         // toggled) is reflected in Vireo live, no restart needed. The watcher
         // debounces signal bursts and snapshots GOA on its own thread;
@@ -2538,6 +2549,12 @@ impl SimpleComponent for AppModel {
                     let current = self.current.clone();
                     self.show_message(current, false);
                 }
+            }
+
+            AppMsg::ContactPhotosChanged => {
+                // Both components skip the work when sender circles are off.
+                self.message_list.emit(MessageListInput::ContactPhotosChanged);
+                self.message_view.emit(MessageViewInput::ContactPhotosChanged);
             }
 
             AppMsg::SetFetchInterval(secs) => {
