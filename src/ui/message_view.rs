@@ -397,6 +397,20 @@ impl Component for MessageView {
 
                     gtk::Label {
                         #[watch]
+                        set_label: &to_line(model.current.as_ref()),
+                        #[watch]
+                        set_visible: model.thread.len() <= 1
+                            && model.current.as_ref().is_some_and(|m| !m.to.trim().is_empty()),
+                        set_halign: gtk::Align::Start,
+                        set_wrap: true,
+                        set_wrap_mode: gtk::pango::WrapMode::WordChar,
+                        set_xalign: 0.0,
+                        set_selectable: true,
+                        add_css_class: "reader-to",
+                    },
+
+                    gtk::Label {
+                        #[watch]
                         set_label: &cc_line(model.current.as_ref()),
                         #[watch]
                         set_visible: model.thread.len() <= 1
@@ -1688,6 +1702,17 @@ fn recipients_html(m: &Message) -> String {
     format!("<div class=\"vireo-rcpt\" hidden>{lines}</div>")
 }
 
+/// "To: a@b, c@d" for the header, or empty when there's no To recipient.
+/// Shows at a glance who a Sent/replied message went to — or, for a message
+/// auto-forwarded from one of several addresses, which one it landed on.
+fn to_line(m: Option<&Message>) -> String {
+    match m {
+        Some(m) if !m.to.trim().is_empty() => format!("To: {}", m.to.trim()),
+        _ => String::new(),
+    }
+}
+
+/// "Cc: a@b, c@d" for the header, or empty when there are no Cc recipients.
 fn cc_line(m: Option<&Message>) -> String {
     match m {
         Some(m) if !m.cc.trim().is_empty() => format!("Cc: {}", m.cc.trim()),
