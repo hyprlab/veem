@@ -1664,18 +1664,11 @@ pub(crate) fn open_bytes(name: &str, data: &[u8], parent: Option<&gtk::Window>) 
         // through the document portal, which exports it where the handler can
         // read it. When even that fails (a broken portal), say so instead of
         // doing nothing — a host-side AppInfo fallback can't work here.
-        let file = gtk::gio::File::for_path(&path);
-        let staged = path.clone();
-        gtk::FileLauncher::new(Some(&file)).launch(parent, gtk::gio::Cancellable::NONE, move |res| {
-            if let Err(e) = res {
-                tracing::warn!("portal file launch failed: {e}");
-                // The default-handler launch failed inside the portal. Retry
-                // with the app chooser (`ask: true`): the backend's dialog
-                // launches the chosen app through its own machinery, and
-                // "always open with" sticks in the permission store.
-                portal_open_with_chooser(staged.clone(), e.to_string());
-            }
-        });
+        // Not GTK's FileLauncher: in this runtime it mis-finishes its own
+        // async task in the sandboxed path (task-tag assertion), so its
+        // callback never fires and every failure vanishes. Speaking the
+        // portal protocol directly restores the contract.
+        portal_open_file(path, false, parent.cloned());
     } else if let Err(e) =
         gtk::gio::AppInfo::launch_default_for_uri(&uri, gtk::gio::AppLaunchContext::NONE)
     {
@@ -1708,35 +1701,116 @@ fn launch_failed_dialog(parent: Option<&gtk::Window>, error: &str) {
     dialog.show(parent);
 }
 
-/// Ask the portal to open `path` with an app the user picks (`ask: true`).
-/// Runs on its own thread — one blocking D-Bus call; the chooser itself is the
-/// portal backend's dialog, which launches the chosen app through different
-/// machinery than the failed direct launch. Only if even this call fails does
-/// the error dialog appear (back on the main loop), carrying `first_error`
-/// from the direct launch too.
-fn portal_open_with_chooser(path: std::path::PathBuf, first_error: String) {
-    std::thread::spawn(move || {
-        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-            let file = std::fs::File::open(&path)?;
-            let conn = zbus::blocking::Connection::session()?;
-            let mut options: std::collections::HashMap<&str, zbus::zvariant::Value> =
-                std::collections::HashMap::new();
-            options.insert("ask", zbus::zvariant::Value::from(true));
-            conn.call_method(
-                Some("org.freedesktop.portal.Desktop"),
-                "/org/freedesktop/portal/desktop",
-                Some("org.freedesktop.portal.OpenURI"),
-                "OpenFile",
-                &("", zbus::zvariant::Fd::from(&file), options),
-            )?;
-            Ok(())
-        })();
-        if let Err(e) = result {
-            tracing::warn!("chooser open failed too: {e}");
-            let detail = format!("{first_error}; chooser: {e}");
-            gtk::glib::idle_add_once(move || launch_failed_dialog(None, &detail));
+/// Open a staged file through the OpenURI portal, speaking the protocol
+/// directly over GIO's D-Bus. The subscription to the request's `Response`
+/// signal is set up FIRST, on a path derived from our own `handle_token`, so
+/// a fast reply can't race it. Response 0 is success. On the quiet attempt
+/// (`ask == false`) any failure retries once with the app chooser — the
+/// backend's own dialog, whose launch machinery works even where the direct
+/// default-handler launch is broken (seen on Fedora 44), and whose "always
+/// open with" sticks in the permission store. A cancelled chooser (1) is not
+/// an error; any other chooser failure gets the dialog.
+fn portal_open_file(path: std::path::PathBuf, ask: bool, parent: Option<gtk::Window>) {
+    use gtk::gio;
+    use gtk::glib;
+    use gtk::glib::prelude::*;
+    use std::os::fd::AsFd;
+
+    let conn = match gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) {
+        Ok(c) => c,
+        Err(e) => {
+            launch_failed_dialog(parent.as_ref(), &e.to_string());
+            return;
         }
-    });
+    };
+    let file = match std::fs::File::open(&path) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!("staged attachment vanished: {e}");
+            return;
+        }
+    };
+    let fd_list = gio::UnixFDList::new();
+    let handle = match fd_list.append(file.as_fd()) {
+        Ok(h) => h,
+        Err(e) => {
+            launch_failed_dialog(parent.as_ref(), &e.to_string());
+            return;
+        }
+    };
+
+    let token = crate::rng::nonce(16)
+        .map(|t| t.replace('-', "_"))
+        .unwrap_or_else(|_| format!("vireo{}", std::process::id()));
+    let sender_token = conn
+        .unique_name()
+        .map(|n| n.trim_start_matches(':').replace('.', "_"))
+        .unwrap_or_default();
+    let request_path =
+        format!("/org/freedesktop/portal/desktop/request/{sender_token}/{token}");
+
+    let sub_id: std::rc::Rc<std::cell::RefCell<Option<gtk::gio::SignalSubscriptionId>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let sub = sub_id.clone();
+    let sig_conn = conn.clone();
+    let retry_path = path.clone();
+    let retry_parent = parent.clone();
+    let id = conn.signal_subscribe(
+        Some("org.freedesktop.portal.Desktop"),
+        Some("org.freedesktop.portal.Request"),
+        Some("Response"),
+        Some(&request_path),
+        None,
+        gio::DBusSignalFlags::NONE,
+        move |_, _, _, _, _, params| {
+            if let Some(id) = sub.borrow_mut().take() {
+                sig_conn.signal_unsubscribe(id);
+            }
+            let code = params.child_value(0).get::<u32>().unwrap_or(2);
+            match (code, ask) {
+                (0, _) => {}
+                (_, false) => {
+                    tracing::warn!("portal open answered {code}; retrying with the chooser");
+                    portal_open_file(retry_path.clone(), true, retry_parent.clone());
+                }
+                (1, true) => {} // the user closed the chooser — their call
+                (_, true) => launch_failed_dialog(
+                    retry_parent.as_ref(),
+                    &format!("the portal answered response code {code}"),
+                ),
+            }
+        },
+    );
+    *sub_id.borrow_mut() = Some(id);
+
+    let options = glib::VariantDict::new(None);
+    options.insert_value("handle_token", &token.to_variant());
+    if ask {
+        options.insert_value("ask", &true.to_variant());
+    }
+    let params = ("", glib::variant::Handle(handle), options.end()).to_variant();
+    let call_conn = conn.clone();
+    conn.call_with_unix_fd_list(
+        Some("org.freedesktop.portal.Desktop"),
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.OpenURI",
+        "OpenFile",
+        Some(&params),
+        None,
+        gio::DBusCallFlags::NONE,
+        10_000,
+        Some(&fd_list),
+        gio::Cancellable::NONE,
+        move |res| {
+            if let Err(e) = res {
+                if let Some(id) = sub_id.borrow_mut().take() {
+                    call_conn.signal_unsubscribe(id);
+                }
+                tracing::warn!("portal OpenFile call failed: {e}");
+                launch_failed_dialog(parent.as_ref(), &e.to_string());
+            }
+        },
+    );
 }
 
 /// The private directory opened attachments are staged in, created if needed.
