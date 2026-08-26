@@ -892,6 +892,13 @@ struct StateFile {
     /// Attachments gallery sort criterion (the sort dropdown's row index).
     #[serde(default)]
     gallery_sort: u32,
+    /// Message-list pane width in px (#28 — it reset every launch).
+    #[serde(default = "default_list_pane_width")]
+    list_pane_width: i32,
+}
+
+fn default_list_pane_width() -> i32 {
+    350
 }
 
 fn default_gallery_thumb_width() -> i32 {
@@ -1017,6 +1024,18 @@ pub fn save_gallery_thumb_width(width: i32) {
 pub fn save_gallery_sort(sort: u32) {
     let mut s = load_state();
     s.gallery_sort = sort;
+    save_state(&s);
+}
+
+/// The message-list pane's remembered width (clamped to something sane).
+pub fn load_list_pane_width() -> i32 {
+    load_state().list_pane_width.clamp(350, 4000)
+}
+
+/// Persist the message-list pane's width (#28).
+pub fn save_list_pane_width(width: i32) {
+    let mut s = load_state();
+    s.list_pane_width = width.clamp(350, 4000);
     save_state(&s);
 }
 

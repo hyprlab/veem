@@ -231,6 +231,12 @@ upstream — their work ships in the app and is credited in the About window:
   Settings, OAuth-aware connection tests, and a timeout on stalled IMAP
   connections.
 
+Not every contribution is code. Thanks to
+[**p-mitana**](https://github.com/p-mitana) for a thorough round of design
+feedback — reader, composer and GNOME-HIG suggestions, and a string of sharp
+bug reports — that shaped the 1.15 releases, and to everyone who files issues
+and ideas.
+
 Pull requests are welcome. There's no CLA — by opening one you agree your
 contribution ships under the [AGPL-3.0-or-later](LICENSE), and it may be adapted
 before it lands (with the change explained on the pull request).

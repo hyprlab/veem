@@ -56,6 +56,9 @@ pub struct RowInit {
     /// Shared with the list so a drag can turn the ListBox's selected row
     /// *indices* into message ids and carry the whole selection (#23).
     pub drag_keys: DragKeys,
+    /// Show who the message went to instead of who sent it — a Sent folder's
+    /// rows all say "me" otherwise (#27).
+    pub show_recipient: bool,
 }
 
 /// The shown rows' (account, folder, uid, id) keys, in list order — rebuilt with
@@ -145,6 +148,8 @@ pub struct MessageRow {
     is_thread_child: bool,
     /// Whether this head's conversation is expanded.
     thread_expanded: bool,
+    /// Sent-folder rows name the recipient, not the sender (#27).
+    show_recipient: bool,
     /// Conversation key for the head's expand/collapse toggle.
     thread_key: Option<(u32, String)>,
     /// Any message in this conversation is unread (heads only).
@@ -184,6 +189,38 @@ pub enum MessageRowOutput {
 /// The keys of every selected row in the ListBox this drag started from, in list
 /// order. Empty when the row has no list parent yet or nothing is selected — the
 /// caller then falls back to the dragged row alone.
+/// Display names from a raw To header: "Ann <a@x>, b@y" -> "Ann, b@y".
+fn recipient_names(to: &str) -> String {
+    let mut names: Vec<String> = Vec::new();
+    for part in to.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let name = match part.split_once('<') {
+            Some((n, _)) if !n.trim().trim_matches('"').is_empty() => {
+                n.trim().trim_matches('"').to_string()
+            }
+            Some((_, rest)) => rest.trim_end_matches('>').trim().to_string(),
+            None => part.to_string(),
+        };
+        if !name.is_empty() {
+            names.push(name);
+        }
+    }
+    names.join(", ")
+}
+
+/// The first recipient's bare address from a raw To header, if any.
+fn first_recipient_addr(to: &str) -> Option<String> {
+    let first = to.split(',').map(str::trim).find(|p| !p.is_empty())?;
+    let addr = match first.split_once('<') {
+        Some((_, rest)) => rest.trim_end_matches('>').trim(),
+        None => first,
+    };
+    (!addr.is_empty()).then(|| addr.to_string())
+}
+
 fn drag_selection(src: &gtk::DragSource, keys: &DragKeys) -> Vec<(u32, u32, u32, u32)> {
     let Some(list) = src.widget().and_then(|w| w.parent()).and_downcast::<gtk::ListBox>() else {
         return Vec::new();
@@ -260,7 +297,7 @@ impl FactoryComponent for MessageRow {
                 // Account colour ring (unified view only).
                 set_css_classes: &self.ring_classes(),
                 #[watch]
-                set_text: Some(self.msg.from_name.as_str()),
+                set_text: Some(&self.face_name()),
                 #[watch]
                 set_custom_image: self.avatar_texture.as_ref(),
             },
@@ -284,7 +321,7 @@ impl FactoryComponent for MessageRow {
                 gtk::Box {
                     set_spacing: 6,
                     gtk::Label {
-                        set_label: &self.msg.from_name,
+                        set_label: &self.name_line(),
                         set_halign: gtk::Align::Start,
                         set_hexpand: true,
                         set_ellipsize: gtk::pango::EllipsizeMode::End,
@@ -484,9 +521,11 @@ impl FactoryComponent for MessageRow {
             thread_key,
             thread_unread,
             drag_keys,
+            show_recipient,
         } = init;
         let mut model = Self {
             msg,
+            show_recipient,
             gravatar,
             avatars,
             sender_logos,
@@ -569,7 +608,7 @@ impl FactoryComponent for MessageRow {
                     Some(None) => crate::logo::remember_missing(&email),
                     None => {}
                 }
-                if !self.msg.from_addr.eq_ignore_ascii_case(&email) {
+                if !self.face_email().eq_ignore_ascii_case(&email) {
                     return;
                 }
                 match crate::avatar::lookup(&email, self.gravatar) {
@@ -599,7 +638,7 @@ impl FactoryComponent for MessageRow {
                         None
                     }
                 };
-                if self.msg.from_addr.eq_ignore_ascii_case(&email) && self.sender_logos {
+                if self.face_email().eq_ignore_ascii_case(&email) && self.sender_logos {
                     self.avatar_texture = texture;
                 }
             }
@@ -662,11 +701,50 @@ impl MessageRow {
         }
     }
 
+    /// The row's name line: the sender — or, in a Sent folder, who the message
+    /// went to, since every sender there is you (#27).
+    fn name_line(&self) -> String {
+        if !self.show_recipient {
+            return self.msg.from_name.clone();
+        }
+        let names = recipient_names(&self.msg.to);
+        if names.is_empty() {
+            self.msg.from_name.clone()
+        } else {
+            format!("To: {names}")
+        }
+    }
+
+    /// What the avatar's initials (and face lookups) key on: the first
+    /// recipient in a Sent folder, the sender everywhere else.
+    fn face_name(&self) -> String {
+        if self.show_recipient {
+            let names = recipient_names(&self.msg.to);
+            if let Some(first) = names.split(',').next().map(str::trim) {
+                if !first.is_empty() {
+                    return first.to_string();
+                }
+            }
+        }
+        self.msg.from_name.clone()
+    }
+
+    /// The address face lookups run against — the first recipient's in a Sent
+    /// folder, so the circle shows who the mail went to.
+    fn face_email(&self) -> String {
+        if self.show_recipient {
+            if let Some(addr) = first_recipient_addr(&self.msg.to) {
+                return addr;
+            }
+        }
+        self.msg.from_addr.clone()
+    }
+
     /// Fill the circle: a cached face if one is known, otherwise go and look.
     /// The chain is contact photo → Gravatar → domain icon → initials, each
     /// tier consulted only while its switch is on.
     fn load_face(&mut self, sender: &FactorySender<Self>) {
-        let email = self.msg.from_addr.clone();
+        let email = self.face_email();
         if email.is_empty() {
             return;
         }
@@ -949,6 +1027,8 @@ pub struct MessageList {
     expanded_threads: std::collections::HashSet<(u32, String)>,
     /// Whether conversations start expanded (user preference; collapsed default).
     default_expanded: bool,
+    /// The open folder is Sent: rows name recipients instead of senders (#27).
+    show_recipient: bool,
     /// Rendered thread membership: message key → conversation key, rebuilt with
     /// the rows. Lets a read-state change on a hidden reply refresh its head.
     msg_thread: std::collections::HashMap<(u32, u32), (u32, String)>,
@@ -1045,6 +1125,9 @@ pub enum MessageListInput {
     /// The GNOME Contacts photo index changed (EDS sync, or the first load
     /// finished) — refresh visible circles without losing the scroll position.
     ContactPhotosChanged,
+    /// The open folder is (or stopped being) a Sent folder — rows name the
+    /// recipient there instead of the sender (#27).
+    SetShowRecipient(bool),
     /// Show or hide the coloured sender circles (#29).
     SetAvatars(bool),
     /// Fill them with senders' own site icons, or stop (#30).
@@ -1456,6 +1539,7 @@ impl SimpleComponent for MessageList {
             from_reader: 0,
             reader_keys: Vec::new(),
             expanded_threads: std::collections::HashSet::new(),
+            show_recipient: false,
             default_expanded: false,
             msg_thread: std::collections::HashMap::new(),
             thread_members: std::collections::HashMap::new(),
@@ -1664,6 +1748,12 @@ impl SimpleComponent for MessageList {
             MessageListInput::SetGravatar(on) => {
                 if self.gravatar != on {
                     self.gravatar = on;
+                    self.rebuild();
+                }
+            }
+            MessageListInput::SetShowRecipient(on) => {
+                if self.show_recipient != on {
+                    self.show_recipient = on;
                     self.rebuild();
                 }
             }
@@ -2421,6 +2511,7 @@ impl MessageList {
                     thread_key: meta.key,
                     thread_unread: meta.unread,
                     drag_keys: self.drag_keys.clone(),
+                    show_recipient: self.show_recipient,
                 });
             }
         }

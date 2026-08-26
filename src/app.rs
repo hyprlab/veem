@@ -38,10 +38,8 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// Width of the collapsed, icon-only sidebar rail.
-/// The message list's width when the window opens: the room a row needs for its
-/// Actions Palette, padding and unread dot.
-const LIST_PALETTE_WIDTH: i32 = 350;
+// The message list's opening width now comes from config (the remembered pane
+// width, #28); its 350px floor lives with the pane in message_list.rs.
 
 /// The narrowest the reader pane may be squeezed. Its header's own row of
 /// actions (~490px) is the real floor — this request sits just under it so the
@@ -641,7 +639,28 @@ impl SimpleComponent for AppModel {
                         // either way. With the circles off the minimum drops to what
                         // the sender and subject need (#29) — a fine width to be
                         // able to drag down to, but a poor one to open at.
-                        set_position: LIST_PALETTE_WIDTH,
+                        set_position: crate::config::load_list_pane_width(),
+                        // Remember the width the user drags to (#28). Debounced:
+                        // position-notify fires per pixel of a drag (and when the
+                        // window squeezes the pane), one write once it settles.
+                        connect_position_notify[
+                            pending = std::rc::Rc::new(std::cell::RefCell::new(
+                                None::<gtk::glib::SourceId>,
+                            ))
+                        ] => move |p| {
+                            let pos = p.position();
+                            if let Some(id) = pending.borrow_mut().take() {
+                                id.remove();
+                            }
+                            let armed = pending.clone();
+                            *pending.borrow_mut() = Some(gtk::glib::timeout_add_local_once(
+                                std::time::Duration::from_millis(600),
+                                move || {
+                                    *armed.borrow_mut() = None;
+                                    crate::config::save_list_pane_width(pos);
+                                },
+                            ));
+                        },
                         // The list keeps its width as the window resizes (the
                         // reader absorbs the change), and can't be dragged narrower
                         // than its own minimum. The reader has a floor of its own:
@@ -1682,6 +1701,7 @@ impl SimpleComponent for AppModel {
                 self.message_list.emit(MessageListInput::SetSelected(None));
                 self.message_list.emit(MessageListInput::SetColorize(true));
                 self.message_list.emit(MessageListInput::ResetPaging);
+                self.message_list.emit(MessageListInput::SetShowRecipient(false));
                 let reqs: Vec<(u32, u32, String)> = self
                     .accounts
                     .iter()
@@ -4302,6 +4322,13 @@ impl AppModel {
         self.message_list.emit(MessageListInput::SetSelected(None));
         self.message_list.emit(MessageListInput::SetColorize(false));
         self.message_list.emit(MessageListInput::ResetPaging);
+        // A Sent folder's rows all come from you — name the recipients (#27).
+        let is_sent = self
+            .folders
+            .get(&account_id)
+            .and_then(|fs| fs.iter().find(|f| f.id == folder_id))
+            .is_some_and(|f| f.kind == FolderKind::Sent);
+        self.message_list.emit(MessageListInput::SetShowRecipient(is_sent));
         self.selected = Some(SelectedFolder {
             account_id,
             folder_id,
