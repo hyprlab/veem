@@ -221,10 +221,12 @@ upstream — their work ships in the app and is credited in the About window:
   conversations: showing a message once rather than once per label, answering it
   from whichever label already holds its body or attachments, and fetching a
   conversation's bodies in one request instead of one apiece.
-- [**Anton Palgunov**](https://github.com/Toxblh) ([#7](https://github.com/hyprlab/vireo/pull/7)) — GNOME Online
-  Accounts refinements: custom server ports (IPv6 included), pausing an account
-  while its Mail service is off in GNOME Settings, OAuth-aware connection
-  tests, and a timeout on stalled IMAP connections.
+- [**Anton Palgunov**](https://github.com/Toxblh) ([#7](https://github.com/hyprlab/vireo/pull/7),
+  [#8](https://github.com/hyprlab/vireo/pull/8)) — sender avatars from GNOME
+  Contacts photos, and GNOME Online Accounts refinements: custom server ports
+  (IPv6 included), pausing an account while its Mail service is off in GNOME
+  Settings, OAuth-aware connection tests, and a timeout on stalled IMAP
+  connections.
 
 Pull requests are welcome. There's no CLA — by opening one you agree your
 contribution ships under the [AGPL-3.0-or-later](LICENSE), and it may be adapted

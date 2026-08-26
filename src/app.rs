@@ -34,7 +34,7 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
     (
         "Anton Palgunov",
         "Toxblh",
-        "Online Accounts: custom ports, pausing with the Mail toggle, live change handling",
+        "Contact photos as sender avatars; Online Accounts custom ports, Mail-toggle pausing",
     ),
 ];
 
