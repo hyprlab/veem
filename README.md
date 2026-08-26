@@ -214,9 +214,12 @@ upstream — their work ships in the app and is credited in the About window:
   setting.
 - [**Chris Pouliot**](https://github.com/chrispouliot) ([#13](https://github.com/hyprlab/vireo/pull/13)) — Proton
   Bridge connections: IMAP STARTTLS and locally signed certificates.
-- [**Isaac**](https://github.com/thecalamityjoe87) ([#31](https://github.com/hyprlab/vireo/pull/31)) — the
-  preference to always load remote content, for people who would rather not be
-  asked.
+- [**Isaac**](https://github.com/thecalamityjoe87) ([#31](https://github.com/hyprlab/vireo/pull/31),
+  [#43](https://github.com/hyprlab/vireo/pull/43), [#44](https://github.com/hyprlab/vireo/pull/44),
+  [#49](https://github.com/hyprlab/vireo/pull/49)) — PDF first-page thumbnails
+  in the attachment gallery and drawer, the fix for attachments not opening
+  (wrong O_NOFOLLOW constant + portal-based launching), the reader header's
+  "To:" line, and the preference to always load remote content.
 - [**Alexander Lubovenko**](https://github.com/typedev) ([#45](https://github.com/hyprlab/vireo/pull/45)) — Gmail
   conversations: showing a message once rather than once per label, answering it
   from whichever label already holds its body or attachments, and fetching a

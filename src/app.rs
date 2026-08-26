@@ -24,7 +24,7 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
     (
         "Isaac",
         "thecalamityjoe87",
-        "The option to always load remote content",
+        "PDF thumbnails, the attachment-opening fix, the reader's To line, remote-content option",
     ),
     (
         "Alexander Lubovenko",
