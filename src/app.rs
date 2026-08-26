@@ -38,9 +38,13 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
 /// Actions Palette, padding and unread dot.
 const LIST_PALETTE_WIDTH: i32 = 350;
 
-/// The narrowest the reader pane may be squeezed: the width its header needs to
-/// hold a full complement of actions without any falling off the right edge.
-const READER_MIN_WIDTH: i32 = 535;
+/// The narrowest the reader pane may be squeezed. Its header's own row of
+/// actions (~490px) is the real floor — this request sits just under it so the
+/// header, not an arbitrary figure, decides. Kept modest on purpose: the
+/// window's total minimum width must stay under half of a 1920px screen, or
+/// GNOME refuses to tile the window to the left/right screen edge (it only
+/// offers the top-edge maximize).
+const READER_MIN_WIDTH: i32 = 480;
 
 const SIDEBAR_RAIL_WIDTH: f64 = 80.0;
 
@@ -184,6 +188,16 @@ pub struct AppModel {
     sidebar_menu: Option<gtk::MenuButton>,
     /// Whether the sidebar is in icon-only (collapsed) mode.
     sidebar_collapsed: bool,
+    /// The narrow-window breakpoint is currently applied (window is too narrow
+    /// for the expanded sidebar + a full-width Actions Palette — e.g. tiled to
+    /// half of a 1920px screen).
+    auto_rail: bool,
+    /// The rail's current on-screen state — the user's choice OR'd with the
+    /// breakpoint, tracked so apply/unapply only animate real changes.
+    rail_active: bool,
+    /// While narrow: the sidebar is temporarily expanded as an overlay floating
+    /// above the panes (so the list and reader keep their widths).
+    sidebar_peek: bool,
     /// Held so the in-flight collapse/expand width animation isn't dropped.
     sidebar_anim: Option<adw::TimedAnimation>,
     current: Option<Message>,
@@ -291,6 +305,9 @@ pub struct AppModel {
     /// The conversation currently shown in the reader (newest first), with bodies
     /// filled in as they arrive. More than one entry = conversation/thread mode.
     current_thread: Vec<Message>,
+    /// Every message currently selected (list rows or reader cards), newest
+    /// report wins. Lets the toolbar's Delete act on the whole multi-selection.
+    list_selection: Vec<(u32, u32)>,
     /// A draft awaiting its body before opening in the compose editor.
     pending_draft: Option<Message>,
     /// Outstanding bulk MoveMessages requests awaiting a worker `BulkComplete`.
@@ -345,6 +362,12 @@ pub enum AppMsg {
     ToggleCollapse(u32),
     ToggleCustomFolders(u32),
     SidebarCollapsed(bool),
+    /// The narrow-window breakpoint applied/unapplied — collapse the sidebar to
+    /// its icon rail (and restore it) without touching the user's preference.
+    AutoRail(bool),
+    /// The floating sidebar overlay was dismissed from outside (a click on the
+    /// dimmed content, an Escape) rather than via the sidebar's own button.
+    SidebarPeekDismissed,
     SidebarContext(CtxAction),
     /// A folder's threading references were repaired — re-read it from the cache
     /// so what is on screen groups with what was found.
@@ -566,7 +589,9 @@ impl SimpleComponent for AppModel {
                 adw::OverlaySplitView {
                     set_vexpand: true,
                     set_max_sidebar_width: 280.0,
-                    set_min_sidebar_width: 220.0,
+                    // Low enough (with the panes' own minimums) that the whole
+                    // window fits half of a 1920px screen — see READER_MIN_WIDTH.
+                    set_min_sidebar_width: 180.0,
                     set_sidebar_width_fraction: 0.2,
 
                     #[wrap(Some)]
@@ -634,6 +659,11 @@ impl SimpleComponent for AppModel {
                                 set_title_widget = &gtk::Label {
                                     #[watch]
                                     set_label: model.pane_title(),
+                                    // Gives way as the pane narrows instead of
+                                    // holding the whole window wider — a long
+                                    // folder name was part of what kept the
+                                    // window too wide to tile to a screen edge.
+                                    set_ellipsize: gtk::pango::EllipsizeMode::End,
                                     add_css_class: "pane-title",
                                 },
                                 // Compose leads this header: it is the window's
@@ -646,7 +676,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Compose),
                                 },
                                 pack_start = &gtk::Button {
-                                    set_tooltip_text: Some("Notifications"),
+                                    set_tooltip_text: Some("Status Bar"),
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleNotifications),
                                     gtk::Box {
@@ -913,10 +943,11 @@ impl SimpleComponent for AppModel {
                                 },
                                 pack_end = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
-                                    set_tooltip_text: Some("Delete"),
+                                    #[watch]
+                                    set_tooltip_text: Some(&model.delete_tooltip()),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_sensitive: model.current.is_some(),
+                                    set_sensitive: model.current.is_some() || model.list_selection.len() > 1,
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Delete),
                                 },
                                 pack_end = &gtk::Button {
@@ -1146,6 +1177,7 @@ impl SimpleComponent for AppModel {
             pending_draft: None,
             popouts: HashMap::new(),
             current_thread: Vec::new(),
+            list_selection: Vec::new(),
             bulk_pending: 0,
             pending_bulk: None,
             pending_purge: None,
@@ -1158,6 +1190,9 @@ impl SimpleComponent for AppModel {
             sidebar_header: None,
             sidebar_collapsed: icon_only,
             sidebar_anim: None,
+            auto_rail: false,
+            rail_active: icon_only,
+            sidebar_peek: false,
             current: None,
             allowed_senders: config::load_allowed_senders(),
             auto_remote_content: config::load_auto_remote_content(),
@@ -1326,6 +1361,34 @@ impl SimpleComponent for AppModel {
         if win_max {
             root.maximize();
         }
+        // Below this width the expanded sidebar and a full-width Actions
+        // Palette can't both fit (280 sidebar + 350 list + 492 reader), so the
+        // sidebar drops to its icon rail automatically — this is what keeps the
+        // palette whole when the window is tiled to half of a 1920px screen.
+        // With a breakpoint present the window no longer derives its minimum
+        // size from its content, so pin an explicit floor: the sidebar rail
+        // (80) + the list's palette floor (350) + the reader header (~492).
+        root.set_size_request(930, 360);
+        let narrow = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            1120.0,
+            adw::LengthUnit::Px,
+        ));
+        {
+            let s = sender.clone();
+            narrow.connect_apply(move |_| s.input(AppMsg::AutoRail(true)));
+            let s = sender.clone();
+            narrow.connect_unapply(move |_| s.input(AppMsg::AutoRail(false)));
+        }
+        root.add_breakpoint(narrow);
+        {
+            let s = sender.clone();
+            widgets.sidebar_split.connect_show_sidebar_notify(move |split| {
+                if split.is_collapsed() && !split.shows_sidebar() {
+                    s.input(AppMsg::SidebarPeekDismissed);
+                }
+            });
+        }
         model.sidebar_split = Some(widgets.sidebar_split.clone());
         model.app_title = Some(widgets.app_title.clone());
         model.sidebar_header = Some(widgets.sidebar_header.clone());
@@ -1490,6 +1553,7 @@ impl SimpleComponent for AppModel {
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
         match msg {
             AppMsg::ShowOutbox => {
+                self.close_sidebar_peek();
                 // Treated as a folder: same list, same reader, nothing swapped
                 // out from under the user. `selected` stays None so no sync or
                 // server request is ever aimed at it.
@@ -1550,6 +1614,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ShowAttachments => {
+                self.close_sidebar_peek();
                 self.showing_outbox = false;
                 self.showing_gallery = true;
                 self.gallery_by_account.clear();
@@ -1592,6 +1657,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::UnifiedSelected => {
+                self.close_sidebar_peek();
                 self.showing_gallery = false;
                 self.showing_outbox = false;
                 self.unified = true;
@@ -1645,6 +1711,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::FolderSelected { account_id, folder_id, name, path } => {
+                self.close_sidebar_peek();
                 self.select_folder(account_id, folder_id, name, path);
             }
 
@@ -1695,16 +1762,52 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::SidebarCollapsed(collapsed) => {
-                self.sidebar_collapsed = collapsed;
-                self.animate_sidebar(collapsed);
-                if let (Some(header), Some(title), Some(menu)) = (
-                    self.sidebar_header.as_ref(),
-                    self.app_title.as_ref(),
-                    self.sidebar_menu.as_ref(),
-                ) {
-                    set_sidebar_header_compact(header, title, menu, collapsed);
+                // The sidebar component has already switched its own rows; this
+                // is the app-side reaction (split widths, header, persistence).
+                if self.auto_rail {
+                    // Narrow window: expanding is a transient overlay *peek*
+                    // floating above the panes — the list and reader keep their
+                    // widths — and collapsing just closes it back to the rail.
+                    // Neither touches the persisted preference: this is the
+                    // window's shape talking, not the user's setting.
+                    self.rail_active = collapsed;
+                    self.set_sidebar_peek(!collapsed, false);
+                } else {
+                    self.sidebar_collapsed = collapsed;
+                    self.rail_active = collapsed;
+                    self.animate_sidebar(collapsed);
+                    self.compact_sidebar_header(collapsed);
+                    self.save_sidebar_state();
                 }
-                self.save_sidebar_state();
+            }
+
+            AppMsg::AutoRail(on) => {
+                self.auto_rail = on;
+                if !on && self.sidebar_peek {
+                    // Widened with the overlay open: fold it back before the
+                    // split view returns to side-by-side. Closing puts the rows
+                    // in rail mode, so mark the rail active for the restore
+                    // comparison below.
+                    self.set_sidebar_peek(false, true);
+                    self.rail_active = true;
+                }
+                // The rail wins while the window is narrow; the user's own
+                // choice comes back the moment there is room again. Nothing is
+                // persisted here — this is the window's shape, not a preference.
+                let want = on || self.sidebar_collapsed;
+                if want != self.rail_active {
+                    self.rail_active = want;
+                    self.sidebar.emit(SidebarInput::SetCollapsed(want));
+                    self.animate_sidebar(want);
+                    self.compact_sidebar_header(want);
+                }
+            }
+
+            AppMsg::SidebarPeekDismissed => {
+                if self.auto_rail && self.sidebar_peek {
+                    self.rail_active = true;
+                    self.set_sidebar_peek(false, true);
+                }
             }
 
             AppMsg::SidebarContext(action) => match action {
@@ -2047,6 +2150,12 @@ impl SimpleComponent for AppModel {
                 }
             }
             AppMsg::Delete => {
+                // More than one message selected: the trash button deletes the
+                // whole selection, exactly as the bulk bar's Delete would.
+                if self.list_selection.len() > 1 {
+                    self.message_list.emit(MessageListInput::Bulk(BulkAction::Delete));
+                    return;
+                }
                 if let Some(m) = self.current.clone() {
                     // In the Outbox, deleting means giving up on sending it —
                     // there is no server-side copy to move to Trash.
@@ -3092,10 +3201,12 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::SelectionKeys(keys) => {
+                self.list_selection = keys.clone();
                 self.message_view.emit(MessageViewInput::SetSelectedCards(keys));
             }
 
             AppMsg::SelectCards(keys) => {
+                self.list_selection = keys.clone();
                 self.message_list.emit(MessageListInput::SelectFromReader { keys });
             }
 
@@ -3770,6 +3881,55 @@ impl AppModel {
         result
     }
 
+    /// Close the floating sidebar overlay if it is open — navigation picked in
+    /// it is done with it (mirrors how GNOME's own adaptive sidebars behave).
+    fn close_sidebar_peek(&mut self) {
+        if self.auto_rail && self.sidebar_peek {
+            self.rail_active = true;
+            self.set_sidebar_peek(false, true);
+        }
+    }
+
+    /// Hide or show the sidebar header's title and window controls (icon rail).
+    fn compact_sidebar_header(&self, compact: bool) {
+        if let (Some(header), Some(title), Some(menu)) = (
+            self.sidebar_header.as_ref(),
+            self.app_title.as_ref(),
+            self.sidebar_menu.as_ref(),
+        ) {
+            set_sidebar_header_compact(header, title, menu, compact);
+        }
+    }
+
+    /// Open or close the narrow-window sidebar *peek*: the expanded sidebar
+    /// floating above the panes as an overlay (the split view's collapsed
+    /// mode), so neither the message list nor the reader is resized. `sync_rows`
+    /// also switches the sidebar component's rows — the sidebar's own toggle
+    /// button has already done that itself, an outside dismissal has not.
+    fn set_sidebar_peek(&mut self, open: bool, sync_rows: bool) {
+        let Some(split) = self.sidebar_split.clone() else { return };
+        self.sidebar_peek = open;
+        if open {
+            if sync_rows {
+                self.sidebar.emit(SidebarInput::SetCollapsed(false));
+            }
+            self.compact_sidebar_header(false);
+            split.set_min_sidebar_width(280.0);
+            split.set_max_sidebar_width(280.0);
+            split.set_collapsed(true);
+            split.set_show_sidebar(true);
+        } else {
+            if sync_rows {
+                self.sidebar.emit(SidebarInput::SetCollapsed(true));
+            }
+            self.compact_sidebar_header(true);
+            split.set_min_sidebar_width(SIDEBAR_RAIL_WIDTH);
+            split.set_max_sidebar_width(SIDEBAR_RAIL_WIDTH);
+            split.set_collapsed(false);
+            split.set_show_sidebar(true);
+        }
+    }
+
     /// Smoothly animate the sidebar rail between its expanded width and the
     /// narrow icon-only width by interpolating the split view's pinned width.
     fn animate_sidebar(&mut self, collapsing: bool) {
@@ -3796,7 +3956,7 @@ impl AppModel {
             // Restore responsive sizing once expanded, so window resizes track again.
             let s2 = split.clone();
             anim.connect_done(move |_| {
-                s2.set_min_sidebar_width(220.0);
+                s2.set_min_sidebar_width(180.0);
                 s2.set_max_sidebar_width(280.0);
                 s2.set_sidebar_width_fraction(0.2);
             });
@@ -4295,6 +4455,15 @@ impl AppModel {
     /// CSS classes for the sender-check badge. The verdict tint is only added
     /// once a verdict exists — without one the button is insensitive and should
     /// grey out exactly like the other toolbar icons.
+    /// Tooltip for the toolbar's trash button: says when it will delete the
+    /// whole multi-selection rather than just the open message.
+    fn delete_tooltip(&self) -> String {
+        match self.list_selection.len() {
+            n if n > 1 => format!("Delete {n} messages"),
+            _ => "Delete".to_string(),
+        }
+    }
+
     fn sender_badge_classes(&self) -> Vec<&'static str> {
         let mut classes = vec!["flat", "image-button"];
         if let Some(check) = self.sender_verdict() {

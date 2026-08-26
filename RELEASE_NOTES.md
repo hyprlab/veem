@@ -2,7 +2,26 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.14.1
+## What's new in 1.14.2
+
+- **The window tiles to half a screen.** Snapping to the left or right edge
+  (or Super+←/→) works now: the window's minimum width no longer exceeds half
+  a 1920px display. When the window narrows, the sidebar collapses to its icon
+  rail on its own so the message list keeps its full Actions Palette — and
+  expanding from the rail floats the sidebar over the panes instead of pushing
+  them. Your own sidebar preference returns when there's room.
+- **Unread counts on every folder**, and sub-folders sorted and indented the
+  way the server structures them.
+- **Delete acts on your whole selection.** Multi-select messages and the
+  toolbar's trash button (or `d`) removes them all.
+- **Conversation cards name their recipients.** A compact chip on each card
+  expands to the full To/Cc list and folds away again.
+- **Attachments as a list.** The attachment drawer can switch from thumbnails
+  to an alphabetical list with a sort-direction switch, and hovering any
+  thumbnail shows the full filename.
+- The notification dropdown is now the **status bar**.
+
+## In 1.14.1
 
 - **Conversations now include the mail you already had.** Threading applied only
   to mail that arrived after you upgraded, so an account you had just added —

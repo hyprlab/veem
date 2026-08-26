@@ -1043,6 +1043,8 @@ impl MessageView {
             m.unread.hash(&mut h);
             m.from_name.hash(&mut h);
             m.from_addr.hash(&mut h);
+            m.to.hash(&mut h);
+            m.cc.hash(&mut h);
             m.body.hash(&mut h);
             m.datetime_full().hash(&mut h);
             self.no_autoread.contains(&key).hash(&mut h);
@@ -1101,7 +1103,7 @@ impl MessageView {
                     "<section class=\"vireo-msg{sel}\" data-key=\"{aid}:{id}\">\
                        <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
-                         {dot}<span class=\"vireo-from\">{from}</span>{addr}{folder}\
+                         {dot}<span class=\"vireo-from\">{from}</span>{addr}{folder}{rcpt_toggle}\
                          <span class=\"vireo-date\">{date}</span>\
                          <span class=\"vireo-acts\">\
                            <button type=\"button\" class=\"vireo-act\" data-act=\"reply\" \
@@ -1110,7 +1112,7 @@ impl MessageView {
                              data-key=\"{aid}:{id}\" title=\"Reply to everyone on this message\">Reply all</button>\
                            <button type=\"button\" class=\"vireo-act\" data-act=\"forward\" \
                              data-key=\"{aid}:{id}\" title=\"Forward this message\">Forward</button>\
-                         </span>\
+                         </span>{rcpt}\
                        </header>{body}{seen_mark}</section>",
                     aid = m.account_id,
                     id = m.id,
@@ -1127,6 +1129,18 @@ impl MessageView {
                         format!("<span class=\"vireo-addr\">&lt;{}&gt;</span>", escape_text(&m.from_addr))
                     },
                     date = escape_text(&m.datetime_full()),
+                    // Everyone the message went to, tucked behind a small chip so
+                    // a card's header stays one line tall until asked. Escaped
+                    // like the sender: recipient headers are attacker-controlled.
+                    rcpt_toggle = match recipient_count(m) {
+                        0 => String::new(),
+                        n => format!(
+                            "<button type=\"button\" class=\"vireo-rcpt-toggle\" \
+                             title=\"Show recipients\">{n} recipient{s}</button>",
+                            s = if n == 1 { "" } else { "s" },
+                        ),
+                    },
+                    rcpt = recipients_html(m),
                     // Where this message was read from, when that isn't the
                     // folder on screen — the reply you sent, pulled in from Sent.
                     folder = match folder_labels.get(&(m.account_id, m.id)) {
@@ -1239,6 +1253,15 @@ impl MessageView {
                .vireo-act:active{{background:rgba(128,128,128,0.3);}}\
                .vireo-folder{{margin-left:0.5em;padding:0.05em 0.45em;border-radius:0.7em;\
                  font-size:0.78em;opacity:0.75;border:1px solid currentColor;}}\
+               .vireo-rcpt-toggle{{font:inherit;font-size:0.78em;color:inherit;background:none;\
+                 border:1px solid rgba(128,128,128,0.45);border-radius:999px;\
+                 padding:0.05em 0.6em;cursor:pointer;opacity:0.7;\
+                 transition:opacity 120ms ease,background 120ms ease;}}\
+               .vireo-rcpt-toggle:hover{{opacity:1;background:rgba(128,128,128,0.18);}}\
+               .vireo-rcpt-toggle.open{{opacity:1;background:rgba(128,128,128,0.18);}}\
+               .vireo-rcpt{{flex-basis:100%;font-size:0.85em;opacity:0.75;\
+                 user-select:text;overflow-wrap:anywhere;margin:0;}}\
+               .vireo-rcpt div{{margin-top:2px;}}\
                .vireo-loading{{opacity:0.5;padding:16px;}}\
              </style>{sizer}\
              </head><body{body_class}>{sections}</body></html>"
@@ -1591,6 +1614,31 @@ fn email_link_markup(m: Option<&Message>) -> String {
 }
 
 /// "Cc: a@b, c@d" for the header, or empty when there are no Cc recipients.
+/// How many addresses a message's To + Cc headers name.
+fn recipient_count(m: &Message) -> usize {
+    [m.to.as_str(), m.cc.as_str()]
+        .iter()
+        .flat_map(|s| s.split(','))
+        .filter(|a| !a.trim().is_empty())
+        .count()
+}
+
+/// The collapsible To/Cc block inside a conversation card's header. Starts
+/// hidden; the header's recipients chip toggles it. Empty when the message
+/// names no recipients at all.
+fn recipients_html(m: &Message) -> String {
+    let mut lines = String::new();
+    for (label, list) in [("To", m.to.trim()), ("Cc", m.cc.trim())] {
+        if !list.is_empty() {
+            lines.push_str(&format!("<div><b>{label}:</b> {}</div>", escape_text(list)));
+        }
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!("<div class=\"vireo-rcpt\" hidden>{lines}</div>")
+}
+
 fn cc_line(m: Option<&Message>) -> String {
     match m {
         Some(m) if !m.cc.trim().is_empty() => format!("Cc: {}", m.cc.trim()),
@@ -2022,6 +2070,15 @@ setTimeout(ready,450);\
 var hs=document.querySelectorAll('.vireo-msg-hdr');\
 for(var j=0;j<hs.length;j++){hs[j].addEventListener('dblclick',function(){\
 try{window.webkit.messageHandlers.vireo.postMessage('open:'+this.dataset.key);}catch(_){}});}\
+var rs=document.querySelectorAll('.vireo-rcpt-toggle');\
+for(var r=0;r<rs.length;r++){rs[r].addEventListener('click',function(e){\
+e.stopPropagation();e.preventDefault();\
+var h=this.closest('.vireo-msg-hdr');var b=h?h.querySelector('.vireo-rcpt'):null;if(!b)return;\
+var on=b.hasAttribute('hidden');\
+if(on)b.removeAttribute('hidden');else b.setAttribute('hidden','');\
+this.classList.toggle('open',on);\
+this.setAttribute('title',on?'Hide recipients':'Show recipients');});\
+rs[r].addEventListener('dblclick',function(e){e.stopPropagation();});}\
 document.addEventListener('click',function(e){\
 if(e.target&&e.target.closest&&e.target.closest('.vireo-msg'))return;\
 try{window.webkit.messageHandlers.vireo.postMessage('desel:0:0');}catch(_){}});\
@@ -2425,6 +2482,69 @@ mod tests {
         // The cards sit on the deeper page — the same colour the spinner and the
         // cover behind the WebView are painted, so the handover is invisible.
         assert!(doc.contains(&format!("background:{}", PAGE.0)), "page ground: {doc}");
+    }
+
+    /// Each card names everyone the message went to, collapsed behind a chip so
+    /// the header stays one line tall — and a recipient list is header text an
+    /// attacker controls, so it must land escaped in the trusted wrapper.
+    #[test]
+    fn every_card_carries_its_recipients_escaped_and_collapsed() {
+        let mut first = msg_for_print();
+        first.to = "me@example.com, <script>alert(1)</script>@evil.test".into();
+        let mut second = msg_for_print();
+        second.id = 2;
+        second.cc = String::new();
+
+        let doc = MessageView::conversation_document(
+            &[first, second],
+            &std::collections::HashMap::new(),
+            &Default::default(),
+            &Default::default(),
+            &[],
+            "#3584e4",
+            true,
+            false,
+        );
+        assert_eq!(
+            doc.matches("class=\"vireo-rcpt\" hidden").count(),
+            2,
+            "each card gets a collapsed To/Cc block: {doc}"
+        );
+        assert_eq!(
+            doc.matches("class=\"vireo-rcpt-toggle\"").count(),
+            2,
+            "each card gets a recipients chip: {doc}"
+        );
+        // 3 addresses on the first card (2 To + 1 Cc), 1 on the second.
+        assert!(doc.contains(">3 recipients<"), "recipient count on the chip: {doc}");
+        assert!(doc.contains(">1 recipient<"), "singular for one recipient: {doc}");
+        assert!(!doc.contains("<script>alert(1)</script>"), "recipients must be escaped: {doc}");
+        assert!(doc.contains("&lt;script&gt;"), "escaped form present: {doc}");
+    }
+
+    /// A message that names no recipients at all gets neither chip nor block.
+    #[test]
+    fn a_card_with_no_recipients_shows_no_chip() {
+        let mut only = msg_for_print();
+        only.to = String::new();
+        only.cc = " ".into();
+        let mut second = msg_for_print();
+        second.id = 2;
+        let doc = MessageView::conversation_document(
+            &[only, second],
+            &std::collections::HashMap::new(),
+            &Default::default(),
+            &Default::default(),
+            &[],
+            "#3584e4",
+            true,
+            false,
+        );
+        assert_eq!(
+            doc.matches("<button type=\"button\" class=\"vireo-rcpt-toggle\"").count(),
+            1,
+            "only the second card: {doc}"
+        );
     }
 
     /// A single message is not a conversation: no card chrome, no margin — it

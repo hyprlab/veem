@@ -2942,7 +2942,15 @@ async fn list_folders(
         }
     }
 
-    folders.sort_by_key(|f| folder_order(f.kind));
+    // Essential folders first in their fixed order; custom folders sorted by
+    // their full hierarchical path (case-insensitively), so sub-folders sit
+    // grouped under their parents in a stable, server-independent order rather
+    // than in whatever order the server's LIST happened to return them.
+    folders.sort_by(|a, b| {
+        folder_order(a.kind)
+            .cmp(&folder_order(b.kind))
+            .then_with(|| a.path.to_lowercase().cmp(&b.path.to_lowercase()))
+    });
     for (i, f) in folders.iter_mut().enumerate() {
         f.id = i as u32 + 1;
     }

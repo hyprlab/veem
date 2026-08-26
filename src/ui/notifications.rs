@@ -1,4 +1,4 @@
-//! Top-of-window notification area.
+//! Top-of-window status bar (notification area).
 //!
 //! A transient bar slides down for new messages and auto-collapses after a few
 //! seconds. Messages that need attention (errors) are also kept in a list that
@@ -165,7 +165,7 @@ impl SimpleComponent for NotificationCenter {
                         gtk::Button {
                             #[watch]
                             set_icon_name: if model.panel_open { "co.hyprlab.Vireo-pan-up-symbolic" } else { "co.hyprlab.Vireo-pan-down-symbolic" },
-                            set_tooltip_text: Some("Collapse"),
+                            set_tooltip_text: Some("Collapse status bar"),
                             add_css_class: "flat",
                             connect_clicked => NotifyInput::TogglePanel,
                         },
@@ -173,7 +173,7 @@ impl SimpleComponent for NotificationCenter {
                 },
 
                 // Only the cards section expands; an empty panel stays at bar
-                // height (just shows the status / "Notifications (0)" row).
+                // height (just shows the status / "Status bar (0)" row).
                 gtk::Revealer {
                     set_transition_type: gtk::RevealerTransitionType::SlideDown,
                     #[watch]
@@ -358,7 +358,7 @@ impl NotificationCenter {
             if !self.status_text.is_empty() {
                 self.status_text.clone()
             } else {
-                format!("Notifications ({})", self.ids.len())
+                format!("Status bar ({})", self.ids.len())
             }
         } else {
             self.transient_text.clone()

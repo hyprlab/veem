@@ -896,3 +896,8 @@ headerbar.rail-header {
 .drawer-action image {
   -gtk-icon-size: 12px;
 }
+
+/* The attachment drawer's list view: one full-width row per file. */
+.drawer-list-row {
+  padding: 2px 6px;
+}

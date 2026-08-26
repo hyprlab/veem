@@ -129,6 +129,10 @@ pub enum SidebarInput {
     /// Toggle the "All Inboxes" per-account inbox sub-list.
     ToggleUnifiedExpand,
     ToggleCollapseLocal(u32),
+    /// Set icon-only mode outright (the app's narrow-window breakpoint) —
+    /// unlike ToggleCollapsed this never reports CollapsedChanged, so it can't
+    /// overwrite the user's own persisted choice.
+    SetCollapsed(bool),
     /// Toggle the collapsible "Folders" (custom folders) section for an account.
     ToggleCustomFoldersLocal(u32),
     ToggleCollapsed,
@@ -209,7 +213,11 @@ impl Component for Sidebar {
 
             gtk::ScrolledWindow {
                 set_vexpand: true,
-                set_hscrollbar_policy: gtk::PolicyType::Never,
+                // External, not Never (see the message list's scroller): row
+                // content — a deeply indented folder tree, say — must not force
+                // the window's minimum width past what edge-tiling allows. The
+                // split view's min/max sidebar widths govern instead.
+                set_hscrollbar_policy: gtk::PolicyType::External,
 
                 #[name = "normal_box"]
                 gtk::Box {
@@ -469,6 +477,28 @@ impl Component for Sidebar {
                 }
                 self.rebuild_normal(&widgets.normal_box, &sender);
                 self.restore_selection();
+            }
+
+            SidebarInput::SetCollapsed(collapsed) => {
+                // Driven by the app's narrow-window breakpoint: same visual
+                // change as the user's own toggle, but no CollapsedChanged
+                // output — automatic switches must not overwrite the user's
+                // persisted preference.
+                if self.collapsed != collapsed {
+                    self.collapsed = collapsed;
+                    widgets.collapse_btn.set_icon_name(if self.collapsed {
+                        "co.hyprlab.Vireo-go-next-symbolic"
+                    } else {
+                        "co.hyprlab.Vireo-go-previous-symbolic"
+                    });
+                    widgets.collapse_btn.set_tooltip_text(Some(if self.collapsed {
+                        "Expand sidebar"
+                    } else {
+                        "Collapse sidebar"
+                    }));
+                    self.rebuild_normal(&widgets.normal_box, &sender);
+                    self.restore_selection();
+                }
             }
 
             SidebarInput::ToggleCollapsed => {
@@ -1062,7 +1092,7 @@ impl Sidebar {
             list.set_selection_mode(gtk::SelectionMode::Single);
             list.add_css_class("navigation-sidebar");
             for folder in &essential {
-                let (row, badge) = build_folder_row(folder, self.collapsed);
+                let (row, badge) = build_folder_row(folder, self.collapsed, 0);
                 row.add_controller(folder_drop_target(id, folder.path.clone(), sender));
                 list.append(&row);
                 if let Some(badge) = badge {
@@ -1098,7 +1128,8 @@ impl Sidebar {
             let folders_toggle = gtk::Button::new();
             if !custom.is_empty() {
                 for folder in &custom {
-                    let (row, badge) = build_folder_row(folder, self.collapsed);
+                    let depth = folder_depth(folder, &custom);
+                    let (row, badge) = build_folder_row(folder, self.collapsed, depth);
                     row.add_controller(folder_drop_target(id, folder.path.clone(), sender));
                     custom_list.append(&row);
                     if let Some(badge) = badge {
@@ -1584,10 +1615,39 @@ fn with_unread_overlay(
     (overlay, badge)
 }
 
-fn build_folder_row(folder: &Folder, collapsed: bool) -> (gtk::ListBoxRow, Option<gtk::Label>) {
+/// Nesting depth of a custom folder: how many of the *other listed* folders are
+/// ancestors of its IMAP path. Working from listed ancestors (rather than
+/// counting delimiters) keeps namespace prefixes honest — "INBOX.Clients" is
+/// top-level on a Dovecot-style server because "INBOX" isn't in the custom
+/// list, while "INBOX.Clients.Acme" is one level down because "INBOX.Clients"
+/// is. The delimiter itself never reaches the UI, so any of the common ones is
+/// accepted at the boundary.
+fn folder_depth(folder: &Folder, all: &[&Folder]) -> usize {
+    all.iter()
+        .filter(|g| {
+            g.id != folder.id
+                && folder.path.len() > g.path.len() + 1
+                && folder.path.starts_with(&g.path)
+                && matches!(folder.path.as_bytes()[g.path.len()], b'/' | b'.' | b'\\')
+        })
+        .count()
+}
+
+/// Build one folder row. `depth` indents sub-folders to mirror the server's
+/// hierarchy (0 = top level; only meaningful for custom folders).
+fn build_folder_row(
+    folder: &Folder,
+    collapsed: bool,
+    depth: usize,
+) -> (gtk::ListBoxRow, Option<gtk::Label>) {
     let row = gtk::ListBoxRow::new();
     let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     hbox.add_css_class("folder-row");
+    if !collapsed && depth > 0 {
+        // Indent nested folders; capped so a pathological hierarchy can't push
+        // the name out of the sidebar.
+        hbox.set_margin_start(14 * depth.min(4) as i32);
+    }
 
     let img = gtk::Image::from_icon_name(folder.kind.icon());
     img.add_css_class("folder-icon");
@@ -1600,16 +1660,11 @@ fn build_folder_row(folder: &Folder, collapsed: bool) -> (gtk::ListBoxRow, Optio
             folder.name.clone()
         };
         row.set_tooltip_text(Some(&tip));
-        // Only the Inbox carries an unread chip; in the rail it rides the icon's
+        // Every folder carries an unread chip; in the rail it rides the icon's
         // corner so new mail shows without expanding the sidebar.
-        if folder.kind == FolderKind::Inbox {
-            let (overlay, badge) = with_unread_overlay(&img, folder.unread);
-            hbox.append(&overlay);
-            Some(badge)
-        } else {
-            hbox.append(&img);
-            None
-        }
+        let (overlay, badge) = with_unread_overlay(&img, folder.unread);
+        hbox.append(&overlay);
+        Some(badge)
     } else {
         hbox.append(&img);
         let name = gtk::Label::new(Some(&folder.name));
@@ -1618,18 +1673,14 @@ fn build_folder_row(folder: &Folder, collapsed: bool) -> (gtk::ListBoxRow, Optio
         name.set_ellipsize(gtk::pango::EllipsizeMode::End);
         hbox.append(&name);
 
-        // Only the Inbox shows an unread count chip; other folders (Spam, Sent,
-        // Trash, …) don't. Present but hidden when zero so it can update in place.
-        if folder.kind == FolderKind::Inbox {
-            let badge = gtk::Label::new(Some(&folder.unread.to_string()));
-            badge.add_css_class("unread-badge");
-            badge.set_valign(gtk::Align::Center);
-            badge.set_visible(folder.unread > 0);
-            hbox.append(&badge);
-            Some(badge)
-        } else {
-            None
-        }
+        // Every folder shows an unread count chip — present but hidden when
+        // zero so it can update in place.
+        let badge = gtk::Label::new(Some(&folder.unread.to_string()));
+        badge.add_css_class("unread-badge");
+        badge.set_valign(gtk::Align::Center);
+        badge.set_visible(folder.unread > 0);
+        hbox.append(&badge);
+        Some(badge)
     };
 
     row.set_child(Some(&hbox));
@@ -1638,7 +1689,48 @@ fn build_folder_row(folder: &Folder, collapsed: bool) -> (gtk::ListBoxRow, Optio
 
 #[cfg(test)]
 mod tests {
+    use super::folder_depth;
     use super::parse_move_payload;
+    use crate::models::{Folder, FolderKind};
+
+    fn custom(id: u32, path: &str) -> Folder {
+        Folder {
+            id,
+            account_id: 1,
+            name: path.rsplit(['/', '.']).next().unwrap_or(path).to_string(),
+            path: path.to_string(),
+            kind: FolderKind::Custom,
+            unread: 0,
+        }
+    }
+
+    #[test]
+    fn folder_depth_follows_listed_ancestors() {
+        // A Dovecot-style namespace: everything lives under "INBOX.", which is
+        // not itself a custom folder — so "INBOX.Clients" is top-level and only
+        // real sub-folders are indented.
+        let folders = vec![
+            custom(1, "INBOX.Clients"),
+            custom(2, "INBOX.Clients.Acme"),
+            custom(3, "INBOX.Clients.Acme.Invoices"),
+            custom(4, "INBOX.Travel"),
+        ];
+        let refs: Vec<&Folder> = folders.iter().collect();
+        assert_eq!(folder_depth(&folders[0], &refs), 0);
+        assert_eq!(folder_depth(&folders[1], &refs), 1);
+        assert_eq!(folder_depth(&folders[2], &refs), 2);
+        assert_eq!(folder_depth(&folders[3], &refs), 0);
+    }
+
+    #[test]
+    fn folder_depth_needs_a_delimiter_not_just_a_prefix() {
+        // "ClientsB" merely shares a prefix with "Clients" — it is a sibling,
+        // not a child.
+        let folders = vec![custom(1, "Clients"), custom(2, "ClientsB"), custom(3, "Clients/X")];
+        let refs: Vec<&Folder> = folders.iter().collect();
+        assert_eq!(folder_depth(&folders[1], &refs), 0);
+        assert_eq!(folder_depth(&folders[2], &refs), 1);
+    }
 
     #[test]
     fn a_drop_payload_carries_every_dragged_message() {

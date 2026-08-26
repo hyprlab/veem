@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.14.2" date="2026-08-26" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.14.2</url>
+      <description>
+        <p>The window now tiles to half a screen: the sidebar collapses to its icon rail when the window narrows and floats over the panes when expanded from the rail. Every folder shows its unread count with sub-folders sorted and indented as the server structures them, the toolbar's Delete removes the whole multi-selection, conversation cards gain an expandable recipients list, and the attachment drawer gains filename tooltips and an alphabetical list view.</p>
+      </description>
+    </release>
     <release version="1.14.1" date="2026-08-25" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.14.1</url>
       <description>

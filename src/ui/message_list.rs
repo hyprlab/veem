@@ -1235,7 +1235,19 @@ impl SimpleComponent for MessageList {
                 #[name = "scroller"]
                 set_child = &gtk::ScrolledWindow {
                 set_vexpand: true,
-                set_hscrollbar_policy: gtk::PolicyType::Never,
+                // External, not Never: with Never the widest row's minimum (the
+                // Actions Palette reservation plus the avatar column) propagates
+                // all the way up and becomes part of the window's minimum width,
+                // which pushed it past half of a 1920px screen — at which point
+                // GNOME refuses to tile the window to the left/right edge. Rows
+                // ellipsize, so a narrow pane clips gracefully instead.
+                set_hscrollbar_policy: gtk::PolicyType::External,
+                // The pane's own floor, now that rows no longer set one: room
+                // for a row's full Actions Palette (avatar + dot + the reserved
+                // actions line), so opening the palette never needs to clip —
+                // the narrow-window breakpoint rails the sidebar in time to
+                // afford this even in a half-screen tile.
+                set_size_request: (350, -1),
 
                 // Reaching the bottom pulls in the next page (and, if the index is
                 // still loading, shows the spinner below until more arrive).

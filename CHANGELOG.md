@@ -1,5 +1,65 @@
 # Changelog
 
+## 1.14.2 — 2026-08-26
+
+### The window
+
+- **Tiles to half a screen.** With a populated mailbox the window's minimum
+  width was 1070px — wider than half of a 1920px display — so GNOME refused
+  Super+←/→ and edge-drag tiling and offered only the top-edge maximize. The
+  message list and sidebar scrollers no longer impose their content's width on
+  the window's minimum: names ellipsize and rows clip gracefully instead of
+  vetoing the tile.
+- **The sidebar gives way when the window narrows.** Below 1120px — a
+  half-screen tile on a 1920px display — the sidebar drops to its icon rail
+  automatically, which is what leaves the message list its full Actions Palette
+  width in the tile. The user's own collapse preference is restored the moment
+  there is room again, and the automatic switch never overwrites it.
+- **Expanding while narrow floats.** From the rail in a tiled window, the
+  sidebar's expand button opens it as an overlay above the panes rather than
+  pushing them aside. Picking a folder closes it, as does clicking the dimmed
+  content or pressing Escape.
+
+### The sidebar
+
+- **Every folder shows its unread count**, not only the Inbox. The counts were
+  already fetched per folder (IMAP `STATUS (UNSEEN)`); now each folder row
+  carries the badge, updating in place — in the icon rail it rides the icon's
+  corner.
+- **Sub-folders in the server's structure.** Custom folders sort by their full
+  hierarchical path, case-insensitively, and nested folders are indented under
+  their parents — rather than appearing in whatever order the server's LIST
+  returned them. Depth follows listed ancestors, so a Dovecot-style `INBOX.`
+  namespace prefix doesn't produce a phantom level.
+
+### The message list
+
+- **The toolbar's Delete deletes the whole selection.** With several messages
+  selected, the trash button (and the `d` shortcut) removes them all through
+  the same path as the selection bar — including the "delete permanently"
+  confirmation when the selection is already in Trash. Its tooltip says how
+  many it is about to take.
+
+### Conversations
+
+- **Each card names everyone the message went to.** An "N recipients" chip in
+  the card's header expands into the full To/Cc list — selectable for copying —
+  and collapses again so headers stay one line tall. Recipient headers are
+  attacker-controlled text and land escaped in the trusted wrapper document,
+  under regression tests.
+
+### Attachments
+
+- **The drawer grew a list view.** A header toggle switches the thumbnail grid
+  to an alphabetical list — type icon, filename, size, Download/Open — with an
+  A→Z / Z→A switch beside it. Both choices persist. Hovering anywhere on a
+  thumbnail now shows the full filename.
+
+### Status bar
+
+- **The notification dropdown is now called the status bar** — in its tooltip
+  and its panel — which is what it is.
+
 ## 1.14.1 — 2026-08-25
 
 ### Conversations

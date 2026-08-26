@@ -866,11 +866,15 @@ struct StateFile {
     /// Set once the user dismisses the Linux Mint keyring setup tip.
     #[serde(default)]
     mint_keyring_help_dismissed: bool,
-    /// In-message attachment drawer: collapsed (showing only its header). This is
-    /// the only drawer setting we remember — height and thumbnail size always
-    /// start at their defaults.
+    /// In-message attachment drawer: collapsed (showing only its header).
     #[serde(default)]
     drawer_collapsed: bool,
+    /// Attachment drawer shows an alphabetical list instead of the thumbnail grid.
+    #[serde(default)]
+    drawer_list_view: bool,
+    /// The drawer's list view sorts Z→A instead of A→Z.
+    #[serde(default)]
+    drawer_sort_desc: bool,
 }
 
 fn state_path() -> Option<PathBuf> {
@@ -917,24 +921,49 @@ pub struct DrawerState {
     pub collapsed: bool,
     /// Thumbnail edge in px.
     pub thumb: i32,
+    /// Show an alphabetical list instead of the thumbnail grid.
+    pub list_view: bool,
+    /// Sort the list Z→A instead of A→Z.
+    pub sort_desc: bool,
 }
 
 impl Default for DrawerState {
     fn default() -> Self {
-        Self { height: 160, collapsed: false, thumb: 56 }
+        Self { height: 160, collapsed: false, thumb: 56, list_view: false, sort_desc: false }
     }
 }
 
-/// Load the attachment drawer's remembered state. Only the collapsed flag is
-/// persisted; height and thumbnail size always start at their defaults.
+/// Load the attachment drawer's remembered state. The collapsed flag and view
+/// settings are persisted; height and thumbnail size always start at their
+/// defaults.
 pub fn load_drawer_state() -> DrawerState {
-    DrawerState { collapsed: load_state().drawer_collapsed, ..DrawerState::default() }
+    let s = load_state();
+    DrawerState {
+        collapsed: s.drawer_collapsed,
+        list_view: s.drawer_list_view,
+        sort_desc: s.drawer_sort_desc,
+        ..DrawerState::default()
+    }
 }
 
 /// Persist whether the attachment drawer is collapsed.
 pub fn save_drawer_collapsed(collapsed: bool) {
     let mut s = load_state();
     s.drawer_collapsed = collapsed;
+    save_state(&s);
+}
+
+/// Persist the attachment drawer's view mode (list vs. thumbnail grid).
+pub fn save_drawer_list_view(list_view: bool) {
+    let mut s = load_state();
+    s.drawer_list_view = list_view;
+    save_state(&s);
+}
+
+/// Persist the attachment drawer's list sort direction.
+pub fn save_drawer_sort_desc(desc: bool) {
+    let mut s = load_state();
+    s.drawer_sort_desc = desc;
     save_state(&s);
 }
 

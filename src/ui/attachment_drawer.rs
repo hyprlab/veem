@@ -42,6 +42,13 @@ pub struct DrawerInit {
 
 pub struct AttachmentDrawer {
     items: Vec<Attachment>,
+    /// Display position → index into `items`. Identity for the grid; the list
+    /// view is sorted alphabetically (flipped by `sort_desc`).
+    display_order: Vec<usize>,
+    /// Show an alphabetical list instead of the thumbnail grid (persisted).
+    list_view: bool,
+    /// Sort the list Z→A instead of A→Z (persisted).
+    sort_desc: bool,
     /// Thumbnail edge in px (size slider); does not affect drawer height.
     thumb: i32,
     /// Expanded drawer height in px (the Paned split); persisted.
@@ -73,6 +80,10 @@ pub enum AttachmentDrawerInput {
     PositionChanged,
     /// Toggle the collapsed/expanded state (chevron).
     ToggleCollapsed,
+    /// Switch between the thumbnail grid and the alphabetical list.
+    ToggleListView,
+    /// Flip the list's sort direction (A→Z / Z→A).
+    ToggleSortOrder,
     /// Open an attachment in its default application.
     Open(usize),
     /// Save an attachment to disk (file chooser).
@@ -150,13 +161,57 @@ impl SimpleComponent for AttachmentDrawer {
                         add_css_class: "heading",
                     },
                     gtk::Box { set_hexpand: true },
+                    gtk::Button {
+                        add_css_class: "flat",
+                        set_valign: gtk::Align::Center,
+                        // Only the list has an order to flip.
+                        #[watch]
+                        set_visible: !model.collapsed && model.list_view,
+                        #[watch]
+                        set_icon_name: if model.sort_desc {
+                            "co.hyprlab.Vireo-view-sort-descending-symbolic"
+                        } else {
+                            "co.hyprlab.Vireo-view-sort-ascending-symbolic"
+                        },
+                        #[watch]
+                        set_tooltip_text: Some(if model.sort_desc {
+                            "Sorted Z to A — switch to A to Z"
+                        } else {
+                            "Sorted A to Z — switch to Z to A"
+                        }),
+                        connect_clicked[sender] => move |_| {
+                            sender.input(AttachmentDrawerInput::ToggleSortOrder);
+                        },
+                    },
+                    gtk::Button {
+                        add_css_class: "flat",
+                        set_valign: gtk::Align::Center,
+                        #[watch]
+                        set_visible: !model.collapsed,
+                        #[watch]
+                        set_icon_name: if model.list_view {
+                            "co.hyprlab.Vireo-view-grid-symbolic"
+                        } else {
+                            "co.hyprlab.Vireo-view-list-bullet-symbolic"
+                        },
+                        #[watch]
+                        set_tooltip_text: Some(if model.list_view {
+                            "Show as thumbnails"
+                        } else {
+                            "Show as a list"
+                        }),
+                        connect_clicked[sender] => move |_| {
+                            sender.input(AttachmentDrawerInput::ToggleListView);
+                        },
+                    },
                     gtk::Image {
                         set_icon_name: Some("co.hyprlab.Vireo-image-x-generic-symbolic"),
                         add_css_class: "dim-label",
                         set_pixel_size: 12,
-                        // The size slider is meaningless with the grid hidden.
+                        // The size slider is meaningless with the grid hidden
+                        // (and sizes thumbnails only, so also in the list view).
                         #[watch]
-                        set_visible: !model.collapsed,
+                        set_visible: !model.collapsed && !model.list_view,
                     },
                     gtk::Scale {
                         set_orientation: gtk::Orientation::Horizontal,
@@ -168,7 +223,7 @@ impl SimpleComponent for AttachmentDrawer {
                         set_tooltip_text: Some("Thumbnail size"),
                         set_valign: gtk::Align::Center,
                         #[watch]
-                        set_visible: !model.collapsed,
+                        set_visible: !model.collapsed && !model.list_view,
                         connect_value_changed[sender] => move |s| {
                             sender.input(AttachmentDrawerInput::SetThumbSize(s.value() as i32));
                         },
@@ -178,7 +233,7 @@ impl SimpleComponent for AttachmentDrawer {
                         add_css_class: "dim-label",
                         set_pixel_size: 22,
                         #[watch]
-                        set_visible: !model.collapsed,
+                        set_visible: !model.collapsed && !model.list_view,
                     },
                 },
 
@@ -204,7 +259,8 @@ impl SimpleComponent for AttachmentDrawer {
                         set_margin_start: 8,
                         set_margin_end: 8,
                         set_min_children_per_line: 1,
-                        set_max_children_per_line: 40,
+                        #[watch]
+                        set_max_children_per_line: if model.list_view { 1 } else { 40 },
                         add_css_class: "attachment-drawer-flow",
                         connect_child_activated[sender] => move |_, child| {
                             sender.input(AttachmentDrawerInput::Activate(child.index() as usize));
@@ -228,6 +284,9 @@ impl SimpleComponent for AttachmentDrawer {
 
         let model = AttachmentDrawer {
             items: Vec::new(),
+            display_order: Vec::new(),
+            list_view: init.state.list_view,
+            sort_desc: init.state.sort_desc,
             thumb: init.state.thumb.clamp(MIN_THUMB as i32, MAX_THUMB as i32),
             height: init.state.height.max(MIN_HEIGHT),
             collapsed: init.state.collapsed,
@@ -280,23 +339,33 @@ impl SimpleComponent for AttachmentDrawer {
             AttachmentDrawerInput::ToggleCollapsed => {
                 self.collapsed = !self.collapsed;
                 self.apply_position();
-                // Collapsed/expanded is the only remembered drawer setting.
                 config::save_drawer_collapsed(self.collapsed);
             }
+            AttachmentDrawerInput::ToggleListView => {
+                self.list_view = !self.list_view;
+                self.rebuild(&sender);
+                config::save_drawer_list_view(self.list_view);
+            }
+            AttachmentDrawerInput::ToggleSortOrder => {
+                self.sort_desc = !self.sort_desc;
+                self.rebuild(&sender);
+                config::save_drawer_sort_desc(self.sort_desc);
+            }
             AttachmentDrawerInput::Open(i) => {
-                if let Some(att) = self.items.get(i) {
+                if let Some(att) = self.item_at(i) {
                     open_bytes(&att.name, &att.data);
                 }
             }
             AttachmentDrawerInput::Download(i) => {
-                if let Some(att) = self.items.get(i) {
-                    self.save_attachment(att);
+                if let Some(att) = self.item_at(i).cloned() {
+                    self.save_attachment(&att);
                 }
             }
             AttachmentDrawerInput::Activate(i) => {
-                let Some(att) = self.items.get(i) else { return };
+                let Some(orig) = self.display_order.get(i).copied() else { return };
+                let Some(att) = self.items.get(orig) else { return };
                 if is_image_name(&att.name) && texture_from(&att.data).is_some() {
-                    self.show_lightbox(i);
+                    self.show_lightbox(orig);
                 } else {
                     open_bytes(&att.name, &att.data);
                 }
@@ -368,7 +437,7 @@ impl AttachmentDrawer {
     }
 
     /// Rebuild the thumbnail grid from the current items and thumbnail size.
-    fn rebuild(&self, sender: &ComponentSender<Self>) {
+    fn rebuild(&mut self, sender: &ComponentSender<Self>) {
         // Remove existing cells only. The context-menu popover is also parented
         // to the flow, so skip anything that isn't a FlowBoxChild — and walk
         // siblings captured before removal so this can never loop (removing a
@@ -381,9 +450,33 @@ impl AttachmentDrawer {
             }
             child = next;
         }
-        for (i, att) in self.items.iter().enumerate() {
-            self.flow.insert(&build_cell(i, att, self.thumb, sender), -1);
+        // The grid keeps the message's own attachment order; the list is
+        // alphabetical (case-insensitive), flipped by the sort switch. Cells are
+        // handed their *display* index — `item_at` maps it back to `items`.
+        let mut order: Vec<usize> = (0..self.items.len()).collect();
+        if self.list_view {
+            order.sort_by(|&a, &b| {
+                self.items[a].name.to_lowercase().cmp(&self.items[b].name.to_lowercase())
+            });
+            if self.sort_desc {
+                order.reverse();
+            }
         }
+        self.display_order = order;
+        for (i, &orig) in self.display_order.iter().enumerate() {
+            let att = &self.items[orig];
+            let cell = if self.list_view {
+                build_list_row(i, att, sender)
+            } else {
+                build_cell(i, att, self.thumb, sender)
+            };
+            self.flow.insert(&cell, -1);
+        }
+    }
+
+    /// The attachment shown at display position `i` (grid or sorted list).
+    fn item_at(&self, i: usize) -> Option<&Attachment> {
+        self.items.get(*self.display_order.get(i)?)
     }
 
     /// Save one attachment via a file chooser.
@@ -724,8 +817,71 @@ fn build_cell(
 
     let child = gtk::FlowBoxChild::new();
     child.set_child(Some(&cell));
+    // The full filename on hover anywhere in the cell — the label below the
+    // thumbnail is ellipsized, so the thumbnail itself must answer too.
+    child.set_tooltip_text(Some(&att.name));
 
     // Right-click → context menu at the click point.
+    let right = gtk::GestureClick::new();
+    right.set_button(gtk::gdk::BUTTON_SECONDARY);
+    let s = sender.clone();
+    right.connect_pressed(move |_, _, x, y| {
+        s.input(AttachmentDrawerInput::ContextMenu { index, x, y });
+    });
+    child.add_controller(right);
+
+    child
+}
+
+/// One row of the drawer's list view: type icon, filename, size, and the same
+/// Download/Open quick actions the grid shows on hover. Activation (click) and
+/// the right-click context menu match the grid's behaviour.
+fn build_list_row(
+    index: usize,
+    att: &Attachment,
+    sender: &ComponentSender<AttachmentDrawer>,
+) -> gtk::FlowBoxChild {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.add_css_class("drawer-list-row");
+
+    let icon = gtk::Image::from_icon_name(icon_for(&att.name));
+    icon.set_pixel_size(20);
+    icon.add_css_class(icon_color_class(&att.name));
+    row.append(&icon);
+
+    let name = gtk::Label::new(Some(&att.name));
+    name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    name.set_halign(gtk::Align::Start);
+    name.set_hexpand(true);
+    name.set_xalign(0.0);
+    row.append(&name);
+
+    let size = gtk::Label::new(Some(&att.human_size()));
+    size.add_css_class("dim-label");
+    size.add_css_class("caption");
+    size.set_valign(gtk::Align::Center);
+    row.append(&size);
+
+    let action_btn = |icon: &str, tip: &str| {
+        let b = gtk::Button::from_icon_name(icon);
+        b.add_css_class("flat");
+        b.set_valign(gtk::Align::Center);
+        b.set_tooltip_text(Some(tip));
+        b
+    };
+    let download = action_btn("co.hyprlab.Vireo-folder-download-symbolic", "Download");
+    let s = sender.clone();
+    download.connect_clicked(move |_| s.input(AttachmentDrawerInput::Download(index)));
+    row.append(&download);
+    let open = action_btn("co.hyprlab.Vireo-document-open-symbolic", "Open");
+    let s = sender.clone();
+    open.connect_clicked(move |_| s.input(AttachmentDrawerInput::Open(index)));
+    row.append(&open);
+
+    let child = gtk::FlowBoxChild::new();
+    child.set_child(Some(&row));
+    child.set_tooltip_text(Some(&att.name));
+
     let right = gtk::GestureClick::new();
     right.set_button(gtk::gdk::BUTTON_SECONDARY);
     let s = sender.clone();
