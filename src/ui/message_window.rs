@@ -181,7 +181,7 @@ impl Component for MessageWindow {
                         connect_clicked => MessageWindowInput::Delete,
                     },
                     pack_end = &gtk::Button {
-                        set_icon_name: "co.hyprlab.Vireo-background-app-ghost-symbolic",
+                        set_icon_name: "co.hyprlab.Vireo-code-symbolic",
                         set_tooltip_text: Some("View Source"),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::ViewSource,

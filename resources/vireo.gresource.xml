@@ -7,9 +7,8 @@
     <file>icons/scalable/actions/co.hyprlab.Vireo-adw-external-link-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-audio-x-generic-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-avatar-default-symbolic.svg</file>
-    <file>icons/scalable/actions/co.hyprlab.Vireo-background-app-ghost-symbolic.svg</file>
+    <file>icons/scalable/actions/co.hyprlab.Vireo-code-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-contact-new-symbolic.svg</file>
-    <file>icons/scalable/actions/co.hyprlab.Vireo-dialog-information-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-dialog-warning-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-document-edit-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-document-open-recent-symbolic.svg</file>
@@ -26,7 +25,6 @@
     <file>icons/scalable/actions/co.hyprlab.Vireo-go-previous-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-image-x-generic-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-insert-link-symbolic.svg</file>
-    <file>icons/scalable/actions/co.hyprlab.Vireo-lightbulb-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-list-add-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-list-drag-handle-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-mail-archive-symbolic.svg</file>
@@ -53,6 +51,7 @@
     <file>icons/scalable/actions/co.hyprlab.Vireo-system-search-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-text-x-generic-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-user-trash-symbolic.svg</file>
+    <file>icons/scalable/actions/co.hyprlab.Vireo-verified-checkmark-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-video-x-generic-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-view-fullscreen-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-view-grid-symbolic.svg</file>

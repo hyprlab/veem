@@ -849,7 +849,7 @@ impl SimpleComponent for AppModel {
                                 // in reverse of their visual order. Left to right:
                                 // Archive, Delete, Spam, View Source, Print, sender check.
                                 pack_end = &gtk::MenuButton {
-                                    set_icon_name: "co.hyprlab.Vireo-lightbulb-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-verified-checkmark-symbolic",
                                     add_css_class: "flat",
                                     add_css_class: "image-button",
                                     // Always on screen so the toolbar's icons never
@@ -929,7 +929,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::PrintPreview),
                                 },
                                 pack_end = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-background-app-ghost-symbolic",
+                                    set_icon_name: "co.hyprlab.Vireo-code-symbolic",
                                     set_tooltip_text: Some("View Source"),
                                     add_css_class: "flat",
                                     #[watch]

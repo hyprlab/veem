@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- View Source: angle brackets, the universal "code" glyph (#22 — the ghost
+     icon it replaces said nothing about what the button does). -->
+<svg height="16px" viewBox="0 0 16 16" width="16px" xmlns="http://www.w3.org/2000/svg">
+    <path d="m 5.65 3.35 -4.29 4.29 c -0.2 0.2 -0.2 0.52 0 0.72 l 4.29 4.29 1.41 -1.41 -3.24 -3.24 3.24 -3.24 z"/>
+    <path d="m 10.35 3.35 4.29 4.29 c 0.2 0.2 0.2 0.52 0 0.72 l -4.29 4.29 -1.41 -1.41 3.24 -3.24 -3.24 -3.24 z"/>
+</svg>

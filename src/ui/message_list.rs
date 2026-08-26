@@ -455,7 +455,7 @@ impl FactoryComponent for MessageRow {
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Delete)),
                             },
                             gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-background-app-ghost-symbolic",
+                                set_icon_name: "co.hyprlab.Vireo-code-symbolic",
                                 set_tooltip_text: Some("View source"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ViewSource)),

@@ -1166,7 +1166,7 @@ impl MessageView {
                     "<section class=\"vireo-msg{sel}\" data-key=\"{aid}:{id}\">\
                        <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
-                         {dot}<span class=\"vireo-from\">{from}</span>{addr}{folder}{rcpt_toggle}\
+                         {ava}{dot}<span class=\"vireo-from\">{from}</span>{addr}{folder}{rcpt_toggle}\
                          <span class=\"vireo-date\">{date}</span>\
                          <span class=\"vireo-acts\">\
                            <button type=\"button\" class=\"vireo-act\" data-act=\"reply\" \
@@ -1186,6 +1186,32 @@ impl MessageView {
                     // so any byte sequence can be delivered), and this document
                     // is the trusted wrapper — not a sandboxed message frame.
                     from = escape_text(&m.from_name),
+                    // An initials circle, tinted per sender address, so who
+                    // wrote each card — and which cards are your own replies —
+                    // reads at a glance (#22). Pure markup: no texture crosses
+                    // into this document, and the initial is escaped like every
+                    // other header field.
+                    ava = {
+                        let initial = m
+                            .from_name
+                            .trim()
+                            .chars()
+                            .next()
+                            .or_else(|| m.from_addr.trim().chars().next())
+                            .map(|c| c.to_uppercase().to_string())
+                            .unwrap_or_else(|| "?".to_string());
+                        let hue = m
+                            .from_addr
+                            .to_ascii_lowercase()
+                            .bytes()
+                            .fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32))
+                            % 360;
+                        format!(
+                            "<span class=\"vireo-ava\" style=\"background:hsl({hue},52%,{l}%)\">{}</span>",
+                            escape_text(&initial),
+                            l = if dark { 38 } else { 45 },
+                        )
+                    },
                     addr = if m.from_addr.is_empty() {
                         String::new()
                     } else {
@@ -1286,15 +1312,20 @@ impl MessageView {
                iframe.vireo-frame.anim{{transition:height 240ms cubic-bezier(0.4,0,0.2,1);}}\
                @media (prefers-reduced-motion:reduce){{iframe.vireo-frame.anim{{transition:none;}}}}\
                .vireo-msg{{background:{bg};border:1px solid rgba(128,128,128,0.28);\
-                 border-radius:12px;overflow:hidden;margin-bottom:14px;}}\
+                 border-radius:12px;overflow:hidden;margin:0 auto 14px;max-width:1000px;}}\
                .vireo-msg:last-child{{margin-bottom:0;}}\
                .vireo-msg{{user-select:none;}}\
+               body:not(.vireo-conv) iframe.vireo-frame{{max-width:1000px;margin:0 auto;}}\
                .vireo-msg.selected{{border-color:{accent};box-shadow:0 0 0 2px {accent};}}\
-               .vireo-msg.selected .vireo-msg-hdr{{background:{accent}26;\
+               .vireo-msg.selected .vireo-msg-hdr{{background-image:linear-gradient({accent}26,{accent}26);\
                  border-bottom-color:{accent}59;}}\
                .vireo-msg-hdr{{cursor:pointer;}}\
-               .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;transition:background 120ms ease;border-bottom:1px solid rgba(128,128,128,0.2);}}\
-               .vireo-msg-hdr:hover{{background:rgba(128,128,128,0.16);}}\
+               .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;transition:background 120ms ease;border-bottom:1px solid rgba(128,128,128,0.2);\
+                 position:sticky;top:0;z-index:1;background-color:{bg};}}\
+               .vireo-msg:hover .vireo-msg-hdr{{background-image:linear-gradient(rgba(128,128,128,0.16),rgba(128,128,128,0.16));}}\
+               .vireo-ava{{width:26px;height:26px;border-radius:50%;flex:none;align-self:center;\
+                 display:flex;align-items:center;justify-content:center;color:#fff;\
+                 font-size:0.8em;font-weight:700;}}\
                .vireo-from{{font-weight:700;}}\
                .vireo-addr{{opacity:0.55;font-size:0.9em;}}\
                .vireo-date{{margin-left:auto;opacity:0.55;font-size:0.85em;}}\
