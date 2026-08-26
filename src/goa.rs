@@ -93,6 +93,29 @@ fn get_bool(map: &HashMap<String, OwnedValue>, key: &str) -> bool {
     map.get(key).and_then(|v| bool::try_from(v).ok()).unwrap_or(false)
 }
 
+/// Split a GOA `ImapHost`/`SmtpHost` value into host and port. GOA stores a
+/// custom port inside the host string ("mail.example.com:1143", or
+/// "[2001:db8::1]:1993" for IPv6); with no port present, `default_port` applies.
+fn host_and_port(value: String, default_port: u16) -> (String, u16) {
+    if let Some(rest) = value.strip_prefix('[') {
+        if let Some((host, suffix)) = rest.split_once(']') {
+            let port = suffix
+                .strip_prefix(':')
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(default_port);
+            return (host.to_string(), port);
+        }
+    }
+    // A single colon separates host from port; more than one means a bare IPv6
+    // address with no port at all.
+    if value.matches(':').count() == 1 {
+        if let Some((host, port)) = value.rsplit_once(':') {
+            return (host.to_string(), port.parse().unwrap_or(default_port));
+        }
+    }
+    (value, default_port)
+}
+
 type ManagedObjects =
     HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>>;
 
@@ -135,7 +158,6 @@ fn try_list() -> Result<Vec<GoaMailAccount>, String> {
 
         let imap_ssl = get_bool(mail, "ImapUseSsl");
         let smtp_ssl = get_bool(mail, "SmtpUseSsl");
-        let smtp_tls = get_bool(mail, "SmtpUseTls");
         let email = {
             let e = get_str(mail, "EmailAddress");
             if e.is_empty() {
@@ -149,6 +171,13 @@ fn try_list() -> Result<Vec<GoaMailAccount>, String> {
         }
         let imap_user = get_str(mail, "ImapUserName");
         let smtp_user = get_str(mail, "SmtpUserName");
+        // The host strings may carry a custom port ("host:1143"); without one,
+        // the conventional port for the advertised transport applies (993/143
+        // for IMAP, 465 for implicit-TLS SMTP, 587 for STARTTLS).
+        let (imap_host, imap_port) =
+            host_and_port(get_str(mail, "ImapHost"), if imap_ssl { 993 } else { 143 });
+        let (smtp_host, smtp_port) =
+            host_and_port(get_str(mail, "SmtpHost"), if smtp_ssl { 465 } else { 587 });
 
         out.push(GoaMailAccount {
             id: get_str(account, "Id"),
@@ -162,17 +191,11 @@ fn try_list() -> Result<Vec<GoaMailAccount>, String> {
                 }
             },
             provider: get_str(account, "ProviderName"),
-            imap_host: get_str(mail, "ImapHost"),
-            imap_port: if imap_ssl { 993 } else { 143 },
+            imap_host,
+            imap_port,
             imap_user: imap_user.clone(),
-            smtp_host: get_str(mail, "SmtpHost"),
-            smtp_port: if smtp_ssl {
-                465
-            } else if smtp_tls {
-                587
-            } else {
-                587
-            },
+            smtp_host,
+            smtp_port,
             smtp_user: smtp_user.clone(),
             smtp_separate: !smtp_user.is_empty() && smtp_user != imap_user,
             password_based: ifaces.contains_key(IFACE_PASSWORD),
@@ -336,6 +359,43 @@ pub fn mail_passwords(goa_id: &str) -> (Option<String>, Option<String>) {
         tracing::warn!("GNOME Online Accounts returned no password for {goa_id}");
     }
     (imap, smtp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::host_and_port;
+
+    #[test]
+    fn goa_host_may_include_a_custom_port() {
+        assert_eq!(
+            host_and_port("mail.example.com:1143".into(), 143),
+            ("mail.example.com".into(), 1143)
+        );
+        assert_eq!(
+            host_and_port("[2001:db8::1]:1993".into(), 993),
+            ("2001:db8::1".into(), 1993)
+        );
+    }
+
+    #[test]
+    fn bare_hosts_fall_back_to_the_default_port() {
+        assert_eq!(
+            host_and_port("mail.example.com".into(), 993),
+            ("mail.example.com".into(), 993)
+        );
+        // A bare IPv6 address has many colons but no port.
+        assert_eq!(host_and_port("2001:db8::1".into(), 143), ("2001:db8::1".into(), 143));
+        // A bracketed IPv6 address without a port.
+        assert_eq!(host_and_port("[2001:db8::1]".into(), 143), ("2001:db8::1".into(), 143));
+    }
+
+    #[test]
+    fn unparseable_ports_fall_back_to_the_default() {
+        assert_eq!(
+            host_and_port("mail.example.com:imaps".into(), 993),
+            ("mail.example.com".into(), 993)
+        );
+    }
 }
 
 
