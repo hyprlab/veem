@@ -1,10 +1,11 @@
 //! In-message attachment drawer: a resizable footer beneath the reader body that
 //! shows every attachment on the open message as a wrapping grid of thumbnails
-//! (images) or colour-coded type icons (everything else), each with the filename
-//! beneath it.
+//! (images and PDFs) or colour-coded type icons (everything else), each with the
+//! filename beneath it.
 //!
 //! It reuses the gallery's thumbnail/icon/open helpers ([`texture_from`],
-//! [`icon_for`], [`icon_color_class`], [`open_bytes`]). Hovering a cell reveals
+//! [`thumbnail_texture`], [`icon_for`], [`icon_color_class`], [`open_bytes`]).
+//! Hovering a cell reveals
 //! the same Download/Open quick actions used in the gallery; right-clicking opens
 //! a matching context menu; single-clicking an image opens a modal lightbox
 //! (prev/next through the message's images), and clicking a non-image opens it in
@@ -26,7 +27,9 @@ use relm4::prelude::*;
 
 use crate::config::{self, DrawerState};
 use crate::models::{is_image_name, Attachment};
-use crate::ui::attachments_gallery::{icon_color_class, icon_for, open_bytes, texture_from};
+use crate::ui::attachments_gallery::{
+    icon_color_class, icon_for, open_bytes, texture_from, thumbnail_texture,
+};
 
 const MIN_THUMB: f64 = 56.0;
 const MAX_THUMB: f64 = 220.0;
@@ -285,7 +288,7 @@ impl SimpleComponent for AttachmentDrawer {
             }
             AttachmentDrawerInput::Open(i) => {
                 if let Some(att) = self.items.get(i) {
-                    open_bytes(&att.name, &att.data);
+                    open_bytes(&att.name, &att.data, self.window().as_ref());
                 }
             }
             AttachmentDrawerInput::Download(i) => {
@@ -298,7 +301,7 @@ impl SimpleComponent for AttachmentDrawer {
                 if is_image_name(&att.name) && texture_from(&att.data).is_some() {
                     self.show_lightbox(i);
                 } else {
-                    open_bytes(&att.name, &att.data);
+                    open_bytes(&att.name, &att.data, self.window().as_ref());
                 }
             }
             AttachmentDrawerInput::ContextMenu { index, x, y } => {
@@ -602,9 +605,10 @@ impl AttachmentDrawer {
         {
             let images = images.clone();
             let pos = pos.clone();
+            let win = win.clone();
             open_btn.connect_clicked(move |_| {
                 let (name, data) = &images[pos.get()];
-                open_bytes(name, data);
+                open_bytes(name, data, Some(&win));
             });
         }
         {
@@ -643,8 +647,8 @@ fn nav_button(icon: &str, tip: &str) -> gtk::Button {
     b
 }
 
-/// Build one grid cell: a square thumbnail (image texture or type icon) with
-/// hover Download/Open actions and the filename beneath it.
+/// Build one grid cell: a square thumbnail (image/PDF texture or type icon)
+/// with hover Download/Open actions and the filename beneath it.
 fn build_cell(
     index: usize,
     att: &Attachment,
@@ -655,11 +659,9 @@ fn build_cell(
     cell.add_css_class("drawer-cell");
     cell.set_halign(gtk::Align::Center);
 
-    // The thumbnail content: a cover-cropped image, or a centred type icon.
-    let content: gtk::Widget = match is_image_name(&att.name)
-        .then(|| texture_from(&att.data))
-        .flatten()
-    {
+    // The thumbnail content: a cover-cropped image/PDF-page render, or a
+    // centred type icon.
+    let content: gtk::Widget = match thumbnail_texture(&att.name, &att.data) {
         Some(tex) => {
             let pic = gtk::Picture::for_paintable(&tex);
             pic.set_content_fit(gtk::ContentFit::Cover);
