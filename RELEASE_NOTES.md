@@ -2,7 +2,28 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.14.2
+## What's new in 1.14.3
+
+Better GNOME Online Accounts integration, contributed by
+[Anton Palgunov](https://github.com/Toxblh) (thank you!) and adapted from his
+pull request:
+
+- **Custom server ports work.** An Online Account whose mail server lives on a
+  non-standard port (IPv6 addresses included) now connects to that port instead
+  of the default one.
+- **The Mail switch in GNOME Settings pauses instead of forgetting.** Turn an
+  account's Mail service off and Vireo sets the account aside — turn it back on
+  and it returns exactly as you left it: label, colour, signature and sidebar
+  place intact.
+- **Vireo reacts to Online Accounts changes instantly and smoothly**, without
+  the brief stutters a Settings edit could cause before.
+- **Connection tests are honest for Gmail and Microsoft accounts.** The SMTP
+  check now authenticates the way sending actually does, so it no longer
+  reports a failure for accounts that send fine.
+- **No more endless "connecting…".** A mail server that accepts the connection
+  and then stalls is given 30 seconds before Vireo reports the problem.
+
+## In 1.14.2
 
 - **The window tiles to half a screen.** Snapping to the left or right edge
   (or Super+←/→) works now: the window's minimum width no longer exceeds half

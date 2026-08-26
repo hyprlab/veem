@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.14.3" date="2026-08-26" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.14.3</url>
+      <description>
+        <p>Better GNOME Online Accounts integration, contributed by Anton Palgunov: custom server ports (IPv6 included) are honored, turning an account's Mail service off in GNOME Settings pauses the account and turning it back on restores it with every local setting intact, changes in Online Accounts are picked up without stutters, connection tests authenticate OAuth accounts correctly, and stalled IMAP connections time out after 30 seconds.</p>
+      </description>
+    </release>
     <release version="1.14.2" date="2026-08-26" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.14.2</url>
       <description>

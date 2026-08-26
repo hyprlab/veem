@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.14.3 — 2026-08-26
+
+### GNOME Online Accounts
+
+Adapted from PR #7 by Anton Palgunov (@Toxblh).
+
+- **Custom server ports are honored.** GOA stores a non-standard port inside
+  the host string itself (`mail.example.com:1143`, `[2001:db8::1]:1993`);
+  discovery now splits host and port apart — IPv6 brackets included — instead
+  of discarding the port and assuming 993/143 and 465/587.
+- **Pausing instead of losing.** Switching an account's Mail service off in
+  GNOME Settings pauses the account in Vireo: workers stop, it leaves the
+  sidebar, and every local setting (label, colour, emoji, signature, sidebar
+  state) survives. Switching Mail back on restores it, including whether it
+  was enabled in Vireo before the pause. New `AccountConfig` fields
+  `goa_mail_disabled` and `goa_enabled_before_mail_disabled`; the accounts
+  window locks the enable toggle and says why while GNOME Settings owns it.
+- **GOA changes are handled off the main thread, debounced.** One Settings
+  edit emits a burst of D-Bus signals; the watcher now coalesces them for
+  300 ms and takes a single `GetManagedObjects` snapshot on its own thread,
+  delivered inside the `GoaChanged` message — the GTK main thread no longer
+  performs blocking D-Bus I/O. The watcher also subscribes to
+  `PropertiesChanged` on account objects, so property edits (the Mail toggle
+  among them) are seen at all, not just removals.
+
+### Connections
+
+- **The connection test authenticates SMTP the way sending does.** OAuth
+  accounts (Gmail, Microsoft) are tested with XOAUTH2 and a fresh token
+  instead of PLAIN/LOGIN with a password they don't have — so their test no
+  longer reports a false failure. The server address is passed as a
+  `(host, port)` pair, so a bare IPv6 SMTP host no longer mis-parses.
+- **IMAP connection attempts time out after 30 seconds.** TCP connect, the
+  TLS handshake and authentication together now run under one deadline, so a
+  server that accepts the socket and stalls surfaces an error naming the host
+  instead of hanging the worker forever.
+
 ## 1.14.2 — 2026-08-26
 
 ### The window
