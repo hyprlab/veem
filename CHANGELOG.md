@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.15.1 — 2026-08-26
+
+### Attachments
+
+- **Attachments download the moment a message or conversation opens** — disk
+  cache first, then the server. The reader's "load attachments" button (a
+  download icon that turned into the paperclip) is gone: the toolbar shows a
+  spinner while fetching and the paperclip when they land. Applies to single
+  messages, whole threads, popped-out windows and attachments discovered late
+  in a body (inline PDFs, #9); `AttachmentsPending` remains handled as a
+  safety net that fetches instead of asking.
+- **The gallery lightbox renders PDFs in-app**: a full-size first-page render
+  (1600px, off the main thread behind a spinner page, cached per content
+  hash — failures too, so a broken PDF isn't re-rendered on every arrow
+  press). Stepping through mixed images and PDFs stays in the lightbox.
+- **Table view: headers line up with their columns** — the header buttons'
+  own padding was offsetting every label — and rows gain the grid's quick
+  actions as a trailing column (Download, Open, Go to Message), with a
+  matching header spacer.
+
 ## 1.15.0 — 2026-08-26
 
 ### Attachments

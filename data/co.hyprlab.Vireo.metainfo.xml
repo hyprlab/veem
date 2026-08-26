@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.15.1" date="2026-08-26" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.15.1</url>
+      <description>
+        <p>Attachment polish: opening a message or conversation now downloads its attachments automatically (no more "load attachments" click), the gallery's lightbox renders PDF first pages in-app at full size, and the table view's columns line up with per-row Download, Open and Go-to-Message actions.</p>
+      </description>
+    </release>
     <release version="1.15.0" date="2026-08-26" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.15.0</url>
       <description>
