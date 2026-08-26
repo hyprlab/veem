@@ -348,7 +348,9 @@ impl NotificationCenter {
         if self.is_error_state() {
             "co.hyprlab.Vireo-dialog-warning-symbolic"
         } else {
-            "co.hyprlab.Vireo-dialog-information-symbolic"
+            // The bell — the same icon as the toolbar button that opens this
+            // panel, so the two read as one feature.
+            "co.hyprlab.Vireo-preferences-system-notifications-symbolic"
         }
     }
 

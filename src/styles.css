@@ -391,15 +391,24 @@ headerbar.rail-header {
   opacity: 0.7;
 }
 
+/* An accent-coloured, outlined semi-transparent pill, so the expand/collapse
+   control reads at a glance instead of vanishing into the row. */
 .thread-toggle {
-  min-width: 22px;
-  min-height: 22px;
-  padding: 0;
+  min-width: 26px;
+  min-height: 18px;
+  padding: 0 5px;
+  border-radius: 9999px;
+  color: @accent_color;
+  background: alpha(@accent_bg_color, 0.12);
+  border: 1px solid alpha(@accent_color, 0.45);
+}
+
+.thread-toggle:hover {
+  background: alpha(@accent_bg_color, 0.25);
 }
 
 .thread-toggle image {
   -gtk-icon-size: 13px;
-  opacity: 0.6;
 }
 
 .message-listbox > row.thread-child .message-row {

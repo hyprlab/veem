@@ -62,6 +62,13 @@ pub struct RowInit {
 /// the list and read live when a drag starts.
 pub type DragKeys = std::rc::Rc<std::cell::RefCell<Vec<(u32, u32, u32, u32)>>>;
 
+/// The message-list pane's floor: room for a row's full Actions Palette.
+const LIST_MIN_WIDTH: i32 = 350;
+/// How far a conversation's child rows indent (22px margin + 2px accent edge —
+/// see `.thread-child` in the stylesheet). While any child row is on screen the
+/// pane's floor grows by this much, so the indent never clips the right edge.
+const THREAD_INDENT: i32 = 24;
+
 /// A background face lookup's answer, correlated by sender address (a recycled
 /// row compares before using it). The tiers are personal-first: the contact's
 /// own photo, their Gravatar, then the icon their domain publishes (#30), with
@@ -1315,8 +1322,9 @@ impl SimpleComponent for MessageList {
                 // for a row's full Actions Palette (avatar + dot + the reserved
                 // actions line), so opening the palette never needs to clip —
                 // the narrow-window breakpoint rails the sidebar in time to
-                // afford this even in a half-screen tile.
-                set_size_request: (350, -1),
+                // afford this even in a half-screen tile. (Grows by the thread
+                // indent while a conversation is expanded — see the rebuild.)
+                set_size_request: (LIST_MIN_WIDTH, -1),
 
                 // Reaching the bottom pulls in the next page (and, if the index is
                 // still loading, shows the spinner below until more arrive).
@@ -2388,10 +2396,12 @@ impl MessageList {
         // any of them can map selected row indices back to messages.
         self.publish_drag_keys();
 
+        let mut any_child = false;
         {
             let mut guard = self.rows.guard();
             guard.clear();
             for (m, meta) in self.shown.iter().zip(metas.into_iter()) {
+                any_child |= meta.is_child;
                 let ring_class = if self.colorize && self.account_colors.contains_key(&m.account_id) {
                     Some(format!("vireo-acct-ring-{}", m.account_id))
                 } else {
@@ -2413,6 +2423,14 @@ impl MessageList {
                     drag_keys: self.drag_keys.clone(),
                 });
             }
+        }
+
+        // While a conversation is expanded its child rows indent; the pane's
+        // floor grows by the same so their right edge is never clipped, and
+        // drops back once everything is collapsed again.
+        if let Some(scroller) = &self.scroller {
+            let floor = if any_child { LIST_MIN_WIDTH + THREAD_INDENT } else { LIST_MIN_WIDTH };
+            scroller.set_size_request(floor, -1);
         }
 
         // Restore the highlight on the message being viewed, if it's still shown.
