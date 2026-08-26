@@ -2,7 +2,22 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.15.2
+## What's new in 1.15.3
+
+- **Send-as aliases.** If other mailboxes forward into this one, you can now
+  answer as them: give an account extra From addresses in the account editor,
+  pick them from the composer's From menu — and replies to mail sent to an
+  alias choose that alias by themselves. Mail still travels through the
+  account's own server. (Suggested by
+  [somepaulo](https://github.com/somepaulo) — thank you!)
+- **Attachments open the way you'd expect.** In the message drawer, a double
+  click is now the gesture: photos and PDFs preview in the lightbox (with an
+  Open button for the full app), everything else opens in its app directly.
+  Single clicks no longer steal the double click, which could leave opening
+  seemingly broken. The toolbar's attachment menu works the same way.
+- The conversation chevron pill loses the two faint dots at its rounded ends.
+
+## In 1.15.2
 
 A community-feedback release — most of it answers a thorough issue series from
 [p-mitana](https://github.com/p-mitana) (thank you!):

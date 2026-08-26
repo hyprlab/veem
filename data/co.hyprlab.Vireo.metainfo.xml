@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.15.3" date="2026-08-26" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.15.3</url>
+      <description>
+        <p>Send-as aliases: give an account extra From addresses, pick them in the composer, and replies to mail sent to an alias answer as that alias automatically. Attachment opening is now a clean double-click gesture — photos and PDFs preview in the lightbox, other types open in their app — and the conversation chevron pill renders smoothly.</p>
+      </description>
+    </release>
     <release version="1.15.2" date="2026-08-26" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.15.2</url>
       <description>

@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.15.3 — 2026-08-26
+
+### Send-as aliases (#34)
+
+- An account can declare extra From identities — a "Send-as aliases" field in
+  the account editor (`Ann <ann@work.org>, ann@shop.org`). The composer's
+  From menu offers every identity; an alias changes only the From header on
+  the wire (and the Message-ID's domain, so replies thread back) — SMTP
+  server, credentials and the Sent copy stay the account's. Replying to mail
+  addressed to an alias answers from that alias automatically. Aliases
+  persist in accounts.toml; two new tests pin the wire format.
+
+### Attachments
+
+- **The drawer activates on double-click only.** Its single-click lightbox
+  stole the first click of every double-click (the modal opened, the second
+  click landed in it), which made "open externally" unreachable and read as
+  the Open path being broken. Single clicks now do nothing; double-click
+  previews images/PDFs in the lightbox (whose Open button launches the
+  default app) and opens other types externally at once. The toolbar
+  attachment menu matches: double-click a row to open, and its Preview
+  button drives the lightbox directly — which also fixes a latent index
+  mismatch when the drawer's list view was sorted.
+
+### Fit and finish
+
+- The conversation chevron pill's border-radius drops from 9999px to a
+  concrete 10px: GTK paints an oversized radius on a 1px-bordered pill with
+  a faint dot at the centre of each rounded end.
+
 ## 1.15.2 — 2026-08-26
 
 A community-feedback release: most of this answers p-mitana's issue
