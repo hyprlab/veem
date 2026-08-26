@@ -883,6 +883,19 @@ struct StateFile {
     /// The drawer's list view sorts Z→A instead of A→Z.
     #[serde(default)]
     drawer_sort_desc: bool,
+    /// Attachments gallery shows a table instead of the thumbnail grid.
+    #[serde(default)]
+    gallery_table_view: bool,
+    /// Attachments gallery thumbnail cell width in px.
+    #[serde(default = "default_gallery_thumb_width")]
+    gallery_thumb_width: i32,
+    /// Attachments gallery sort criterion (the sort dropdown's row index).
+    #[serde(default)]
+    gallery_sort: u32,
+}
+
+fn default_gallery_thumb_width() -> i32 {
+    230
 }
 
 fn state_path() -> Option<PathBuf> {
@@ -972,6 +985,38 @@ pub fn save_drawer_list_view(list_view: bool) {
 pub fn save_drawer_sort_desc(desc: bool) {
     let mut s = load_state();
     s.drawer_sort_desc = desc;
+    save_state(&s);
+}
+
+/// The attachments gallery's remembered view settings:
+/// (table view, thumbnail width px, sort index).
+pub fn load_gallery_view() -> (bool, i32, u32) {
+    let s = load_state();
+    (
+        s.gallery_table_view,
+        s.gallery_thumb_width.clamp(140, 380),
+        s.gallery_sort,
+    )
+}
+
+/// Persist whether the attachments gallery shows the table view.
+pub fn save_gallery_table_view(table: bool) {
+    let mut s = load_state();
+    s.gallery_table_view = table;
+    save_state(&s);
+}
+
+/// Persist the attachments gallery's thumbnail width.
+pub fn save_gallery_thumb_width(width: i32) {
+    let mut s = load_state();
+    s.gallery_thumb_width = width;
+    save_state(&s);
+}
+
+/// Persist the attachments gallery's sort criterion (dropdown row index).
+pub fn save_gallery_sort(sort: u32) {
+    let mut s = load_state();
+    s.gallery_sort = sort;
     save_state(&s);
 }
 

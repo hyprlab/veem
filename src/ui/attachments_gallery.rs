@@ -16,16 +16,26 @@ use crate::models::{is_image_name, GalleryItem};
 pub struct AttachmentsGallery {
     /// Full set of attachments, unfiltered — the source for search and sort.
     all_items: Vec<GalleryItem>,
-    /// Indices into `all_items`, filtered by `query` and ordered by `sort`: the
-    /// list actually shown in the grid and stepped through in the lightbox.
+    /// Indices into `all_items`, filtered by `query`/`type_filter` and ordered
+    /// by `sort`: the list actually shown and stepped through in the lightbox.
     items: Vec<usize>,
     query: String,
     sort: SortBy,
     /// Index into `items` currently shown in the lightbox, if any.
     preview: Option<usize>,
     loading: bool,
+    /// Show the sortable table instead of the thumbnail grid (persisted).
+    view_table: bool,
+    /// Grid thumbnail cell width in px, driven by the footer slider (persisted).
+    thumb_width: i32,
+    /// The footer type dropdown's row: 0 = all, then one bucket per row.
+    type_filter: u32,
+    /// Debounce for the size slider — one rebuild after the drag settles.
+    resize_timer: Option<glib::SourceId>,
     flow: gtk::FlowBox,
-    /// Reusable right-click context menu, parented to the grid.
+    /// The table view's rows (the grid's sibling stack page).
+    table: gtk::ListBox,
+    /// Reusable right-click context menu, parented to the gallery root.
     menu: gtk::Popover,
 }
 
@@ -61,6 +71,23 @@ impl SortBy {
             _ => SortBy::Newest,
         }
     }
+
+    /// The dropdown row for a criterion — [`SortBy::from_index`]'s inverse, so
+    /// a table-header click can move the dropdown's selection with it.
+    fn index(self) -> u32 {
+        match self {
+            SortBy::Newest => 0,
+            SortBy::Oldest => 1,
+            SortBy::Name => 2,
+            SortBy::NameDesc => 3,
+            SortBy::Sender => 4,
+            SortBy::SenderDesc => 5,
+            SortBy::Largest => 6,
+            SortBy::Smallest => 7,
+            SortBy::Type => 8,
+            SortBy::TypeDesc => 9,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -73,6 +100,18 @@ pub enum GalleryInput {
     SetQuery(String),
     /// Re-sort the grid; the value is the sort dropdown's selected row index.
     SetSort(u32),
+    /// A table column header was clicked: sort by that column, or flip its
+    /// direction when it is already the active column (0 name, 1 sender,
+    /// 2 date, 3 size, 4 type).
+    SortColumn(u8),
+    /// Switch between the thumbnail grid and the table.
+    SetViewTable(bool),
+    /// The footer size slider moved (grid thumbnail width, px).
+    SetThumbWidth(f64),
+    /// The size slider settled — rebuild the grid at the new width.
+    ApplyThumbWidth,
+    /// Show only one type bucket (the footer type dropdown's row; 0 = all).
+    SetTypeFilter(u32),
     /// A grid cell was activated (single click) — open the lightbox on that item.
     Activate(u32),
     Prev,
@@ -129,25 +168,6 @@ impl Component for AttachmentsGallery {
                             sender.input(GalleryInput::SetQuery(e.text().to_string()));
                         },
                     },
-                    gtk::DropDown {
-                        set_tooltip_text: Some("Sort"),
-                        #[wrap(Some)]
-                        set_model = &gtk::StringList::new(&[
-                            "Newest first",
-                            "Oldest first",
-                            "Name (A–Z)",
-                            "Name (Z–A)",
-                            "Sender (A–Z)",
-                            "Sender (Z–A)",
-                            "Largest first",
-                            "Smallest first",
-                            "Type (A–Z)",
-                            "Type (Z–A)",
-                        ]),
-                        connect_selected_notify[sender] => move |d| {
-                            sender.input(GalleryInput::SetSort(d.selected()));
-                        },
-                    },
                 },
 
                 gtk::Stack {
@@ -196,6 +216,177 @@ impl Component for AttachmentsGallery {
                             sender.input(GalleryInput::Activate(child.index() as u32));
                         },
                     },
+                    },
+
+                    // Table view: fixed sortable column headers over the rows.
+                    add_named[Some("table")] = &gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
+
+                        gtk::Box {
+                            add_css_class: "gallery-table-header",
+                            set_spacing: 10,
+
+                            // Aligns the headers with the rows' leading thumbnail.
+                            gtk::Box { set_width_request: 28 },
+                            gtk::Button {
+                                add_css_class: "flat",
+                                set_hexpand: true,
+                                connect_clicked => GalleryInput::SortColumn(0),
+                                gtk::Label {
+                                    #[watch]
+                                    set_label: &column_header("Name", model.sort, SortBy::Name, SortBy::NameDesc),
+                                    set_xalign: 0.0,
+                                },
+                            },
+                            gtk::Button {
+                                add_css_class: "flat",
+                                set_width_request: 170,
+                                connect_clicked => GalleryInput::SortColumn(1),
+                                gtk::Label {
+                                    #[watch]
+                                    set_label: &column_header("Sender", model.sort, SortBy::Sender, SortBy::SenderDesc),
+                                    set_xalign: 0.0,
+                                },
+                            },
+                            gtk::Button {
+                                add_css_class: "flat",
+                                set_width_request: 90,
+                                connect_clicked => GalleryInput::SortColumn(4),
+                                gtk::Label {
+                                    #[watch]
+                                    set_label: &column_header("Type", model.sort, SortBy::Type, SortBy::TypeDesc),
+                                    set_xalign: 0.0,
+                                },
+                            },
+                            gtk::Button {
+                                add_css_class: "flat",
+                                set_width_request: 110,
+                                connect_clicked => GalleryInput::SortColumn(2),
+                                gtk::Label {
+                                    #[watch]
+                                    set_label: &column_header("Date", model.sort, SortBy::Oldest, SortBy::Newest),
+                                    set_xalign: 0.0,
+                                },
+                            },
+                            gtk::Button {
+                                add_css_class: "flat",
+                                set_width_request: 90,
+                                connect_clicked => GalleryInput::SortColumn(3),
+                                gtk::Label {
+                                    #[watch]
+                                    set_label: &column_header("Size", model.sort, SortBy::Smallest, SortBy::Largest),
+                                    set_xalign: 1.0,
+                                    set_hexpand: true,
+                                },
+                            },
+                        },
+
+                        gtk::ScrolledWindow {
+                            set_hscrollbar_policy: gtk::PolicyType::Never,
+                            set_vexpand: true,
+
+                            #[local_ref]
+                            table -> gtk::ListBox {
+                                set_selection_mode: gtk::SelectionMode::None,
+                                set_activate_on_single_click: true,
+                                add_css_class: "gallery-table",
+                                connect_row_activated[sender] => move |_, row| {
+                                    sender.input(GalleryInput::Activate(row.index() as u32));
+                                },
+                            },
+                        },
+                    },
+                },
+
+                // Footer: view toggle, filtering/ordering, size, count — the
+                // gallery's controls in one place, out of the content's way.
+                gtk::ActionBar {
+                    add_css_class: "gallery-footer",
+                    #[watch]
+                    set_revealed: !model.all_items.is_empty(),
+
+                    pack_start = &gtk::Box {
+                        add_css_class: "linked",
+
+                        gtk::ToggleButton {
+                            set_icon_name: "co.hyprlab.Vireo-view-grid-symbolic",
+                            set_tooltip_text: Some("Thumbnail grid"),
+                            #[watch]
+                            #[block_signal(grid_toggle)]
+                            set_active: !model.view_table,
+                            connect_clicked[sender] => move |_| {
+                                sender.input(GalleryInput::SetViewTable(false));
+                            } @grid_toggle,
+                        },
+                        gtk::ToggleButton {
+                            set_icon_name: "co.hyprlab.Vireo-view-list-bullet-symbolic",
+                            set_tooltip_text: Some("Table"),
+                            #[watch]
+                            #[block_signal(table_toggle)]
+                            set_active: model.view_table,
+                            connect_clicked[sender] => move |_| {
+                                sender.input(GalleryInput::SetViewTable(true));
+                            } @table_toggle,
+                        },
+                    },
+
+                    pack_start = &gtk::DropDown {
+                        set_tooltip_text: Some("Show only this type"),
+                        #[wrap(Some)]
+                        set_model = &gtk::StringList::new(&[
+                            "All types",
+                            "Images",
+                            "PDFs",
+                            "Documents",
+                            "Archives",
+                            "Audio & Video",
+                            "Other",
+                        ]),
+                        connect_selected_notify[sender] => move |d| {
+                            sender.input(GalleryInput::SetTypeFilter(d.selected()));
+                        },
+                    },
+
+                    #[name = "sort_dropdown"]
+                    pack_start = &gtk::DropDown {
+                        set_tooltip_text: Some("Sort"),
+                        set_selected: model.sort.index(),
+                        #[wrap(Some)]
+                        set_model = &gtk::StringList::new(&[
+                            "Newest first",
+                            "Oldest first",
+                            "Name (A–Z)",
+                            "Name (Z–A)",
+                            "Sender (A–Z)",
+                            "Sender (Z–A)",
+                            "Largest first",
+                            "Smallest first",
+                            "Type (A–Z)",
+                            "Type (Z–A)",
+                        ]),
+                        connect_selected_notify[sender] => move |d| {
+                            sender.input(GalleryInput::SetSort(d.selected()));
+                        },
+                    },
+
+                    pack_end = &gtk::Label {
+                        add_css_class: "dim-label",
+                        #[watch]
+                        set_label: &count_text(model.items.len(), model.all_items.len()),
+                    },
+
+                    pack_end = &gtk::Scale {
+                        set_range: (140.0, 380.0),
+                        set_value: model.thumb_width as f64,
+                        set_increments: (10.0, 40.0),
+                        set_width_request: 140,
+                        set_draw_value: false,
+                        set_tooltip_text: Some("Thumbnail size"),
+                        #[watch]
+                        set_visible: !model.view_table,
+                        connect_value_changed[sender] => move |s| {
+                            sender.input(GalleryInput::SetThumbWidth(s.value()));
+                        },
                     },
                 },
             },
@@ -335,17 +526,24 @@ impl Component for AttachmentsGallery {
         menu.set_has_arrow(false);
         menu.set_position(gtk::PositionType::Bottom);
         menu.add_css_class("menu");
+        let (view_table, thumb_width, sort_index) = crate::config::load_gallery_view();
         let model = AttachmentsGallery {
             all_items: Vec::new(),
             items: Vec::new(),
             query: String::new(),
-            sort: SortBy::default(),
+            sort: SortBy::from_index(sort_index),
             preview: None,
             loading: false,
+            view_table,
+            thumb_width,
+            type_filter: 0,
+            resize_timer: None,
             flow: gtk::FlowBox::new(),
+            table: gtk::ListBox::new(),
             menu,
         };
         let flow = &model.flow;
+        let table = &model.table;
         let widgets = view_output!();
         // Parent the context menu to the gallery root (not the FlowBox, whose
         // children must be FlowBoxChild and which we clear on every rebuild).
@@ -381,19 +579,85 @@ impl Component for AttachmentsGallery {
                 self.loading = false;
                 self.preview = None;
                 self.apply();
-                self.rebuild_grid(&sender);
+                self.rebuild_view(&sender);
             }
             GalleryInput::SetQuery(q) => {
                 self.query = q;
                 self.preview = None;
                 self.apply();
-                self.rebuild_grid(&sender);
+                self.rebuild_view(&sender);
             }
             GalleryInput::SetSort(i) => {
-                self.sort = SortBy::from_index(i);
-                self.preview = None;
-                self.apply();
-                self.rebuild_grid(&sender);
+                let sort = SortBy::from_index(i);
+                if self.sort != sort {
+                    self.sort = sort;
+                    self.preview = None;
+                    self.apply();
+                    self.rebuild_view(&sender);
+                    crate::config::save_gallery_sort(i);
+                }
+            }
+            GalleryInput::SortColumn(col) => {
+                // First click sorts a column its natural way; a second flips it.
+                let sort = match (col, self.sort) {
+                    (0, SortBy::Name) => SortBy::NameDesc,
+                    (0, _) => SortBy::Name,
+                    (1, SortBy::Sender) => SortBy::SenderDesc,
+                    (1, _) => SortBy::Sender,
+                    (2, SortBy::Newest) => SortBy::Oldest,
+                    (2, _) => SortBy::Newest,
+                    (3, SortBy::Largest) => SortBy::Smallest,
+                    (3, _) => SortBy::Largest,
+                    (4, SortBy::Type) => SortBy::TypeDesc,
+                    (4, _) | (_, _) => SortBy::Type,
+                };
+                // The dropdown follows; its notify handler sees the same value
+                // and does nothing further.
+                widgets.sort_dropdown.set_selected(sort.index());
+                if self.sort != sort {
+                    self.sort = sort;
+                    self.preview = None;
+                    self.apply();
+                    self.rebuild_view(&sender);
+                    crate::config::save_gallery_sort(sort.index());
+                }
+            }
+            GalleryInput::SetViewTable(table) => {
+                if self.view_table != table {
+                    self.view_table = table;
+                    self.rebuild_view(&sender);
+                    crate::config::save_gallery_table_view(table);
+                }
+            }
+            GalleryInput::SetThumbWidth(v) => {
+                let width = (v.round() as i32).clamp(140, 380);
+                if width != self.thumb_width {
+                    self.thumb_width = width;
+                    // One rebuild once the drag settles, not one per pixel.
+                    if let Some(id) = self.resize_timer.take() {
+                        id.remove();
+                    }
+                    let s = sender.clone();
+                    self.resize_timer = Some(glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(150),
+                        move || s.input(GalleryInput::ApplyThumbWidth),
+                    ));
+                }
+            }
+            GalleryInput::ApplyThumbWidth => {
+                self.resize_timer = None;
+                if !self.view_table {
+                    self.rebuild_view(&sender);
+                }
+                crate::config::save_gallery_thumb_width(self.thumb_width);
+            }
+            GalleryInput::SetTypeFilter(bucket) => {
+                if self.type_filter != bucket {
+                    self.type_filter = bucket;
+                    self.preview = None;
+                    self.apply();
+                    self.rebuild_view(&sender);
+                }
             }
             GalleryInput::SetLoading(on) => self.loading = on,
             GalleryInput::Activate(i) => {
@@ -439,13 +703,15 @@ impl AttachmentsGallery {
             "empty"
         } else if self.items.is_empty() {
             "noresults"
+        } else if self.view_table {
+            "table"
         } else {
             "grid"
         }
     }
 
     /// Recompute the displayed `items` (indices into `all_items`) from the
-    /// current search `query` and `sort`.
+    /// current search `query`, `type_filter` and `sort`.
     fn apply(&mut self) {
         let query = self.query.to_ascii_lowercase();
         let tokens: Vec<&str> = query.split_whitespace().collect();
@@ -453,6 +719,7 @@ impl AttachmentsGallery {
             .all_items
             .iter()
             .enumerate()
+            .filter(|(_, it)| self.type_filter == 0 || type_bucket(&it.name) == self.type_filter)
             .filter(|(_, it)| {
                 if tokens.is_empty() {
                     return true;
@@ -497,6 +764,17 @@ impl AttachmentsGallery {
         widgets.preview_picture.set_paintable(texture.as_ref());
     }
 
+    /// Repopulate whichever view is showing. The other keeps stale children;
+    /// switching to it rebuilds it, so only one view's widgets are ever built
+    /// for a given change.
+    fn rebuild_view(&mut self, sender: &ComponentSender<Self>) {
+        if self.view_table {
+            self.rebuild_table(sender);
+        } else {
+            self.rebuild_grid(sender);
+        }
+    }
+
     fn rebuild_grid(&mut self, sender: &ComponentSender<Self>) {
         // Remove existing cells; only FlowBoxChild children (not, say, a popover
         // that happens to be parented nearby).
@@ -510,7 +788,19 @@ impl AttachmentsGallery {
         }
         for display in 0..self.items.len() {
             if let Some(item) = self.item_at(display) {
-                self.flow.append(&build_cell(display, item, sender));
+                self.flow
+                    .append(&build_cell(display, item, self.thumb_width, sender));
+            }
+        }
+    }
+
+    fn rebuild_table(&mut self, sender: &ComponentSender<Self>) {
+        while let Some(row) = self.table.first_child() {
+            self.table.remove(&row);
+        }
+        for display in 0..self.items.len() {
+            if let Some(item) = self.item_at(display) {
+                self.table.append(&build_row(display, item, sender));
             }
         }
     }
@@ -597,11 +887,15 @@ impl AttachmentsGallery {
         }
 
         self.menu.set_child(Some(&menu));
-        // Point at the click position, translated from the cell into the menu
-        // parent's coordinate space, so the menu opens under the pointer.
-        if let (Some(child), Some(parent)) =
-            (self.flow.child_at_index(index as i32), self.menu.parent())
-        {
+        // Point at the click position, translated from the clicked cell/row
+        // into the menu parent's coordinate space, so it opens under the
+        // pointer whichever view is showing.
+        let source: Option<gtk::Widget> = if self.view_table {
+            self.table.row_at_index(index as i32).map(|r| r.upcast())
+        } else {
+            self.flow.child_at_index(index as i32).map(|c| c.upcast())
+        };
+        if let (Some(child), Some(parent)) = (source, self.menu.parent()) {
             let point = gtk::graphene::Point::new(x as f32, y as f32);
             if let Some(p) = child.compute_point(&parent, &point) {
                 self.menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
@@ -621,6 +915,7 @@ impl AttachmentsGallery {
 fn build_cell(
     index: usize,
     item: &GalleryItem,
+    width: i32,
     sender: &ComponentSender<AttachmentsGallery>,
 ) -> gtk::Widget {
     let cell = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -664,9 +959,9 @@ fn build_cell(
     // Lock the thumbnail section to a 4:3 aspect ratio; its width tracks the
     // (responsive) column width and the height follows, filling the cell.
     let aspect = RatioBox::new(&thumb_holder);
-    // Preferred column width — the FlowBox packs at least 3 of these per row and
-    // adds more as the window widens (up to max-children-per-line).
-    aspect.set_width_request(230);
+    // Preferred column width (the footer slider's value) — the FlowBox packs at
+    // least 3 per row and adds more as the window widens.
+    aspect.set_width_request(width);
     aspect.set_hexpand(true);
 
     // Overlay quick-action buttons at the thumbnail's bottom-right corner; they
@@ -856,6 +1151,139 @@ fn sort_indices(idx: &mut [usize], all: &[GalleryItem], sort: SortBy) {
         SortBy::TypeDesc => {
             idx.sort_by_key(|&a| Reverse((ext_of(&all[a].name), all[a].name.to_ascii_lowercase())))
         }
+    }
+}
+
+/// One table row: mini thumbnail/type icon, name, sender, type, date, size —
+/// the same widths as the header buttons, so the columns line up.
+fn build_row(
+    index: usize,
+    item: &GalleryItem,
+    sender: &ComponentSender<AttachmentsGallery>,
+) -> gtk::ListBoxRow {
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    line.add_css_class("gallery-table-row");
+
+    // Cache-only mini thumbnail: a decode already paid for is shown, but a
+    // 24px row never spawns a render of its own.
+    let lead: gtk::Widget = match item.data.as_ref().map(|d| thumbnail_texture(&item.name, d)) {
+        Some(Thumbnail::Ready(tex)) => {
+            let pic = gtk::Picture::for_paintable(&tex);
+            pic.set_content_fit(gtk::ContentFit::Cover);
+            pic.set_size_request(28, 28);
+            pic.add_css_class("gallery-table-thumb");
+            pic.upcast()
+        }
+        _ => {
+            let img = gtk::Image::from_icon_name(icon_for(&item.name));
+            img.set_pixel_size(20);
+            img.set_size_request(28, 28);
+            img.add_css_class("gallery-file-icon");
+            img.add_css_class(icon_color_class(&item.name));
+            img.upcast()
+        }
+    };
+    line.append(&lead);
+
+    let name = gtk::Label::new(Some(&item.name));
+    name.set_xalign(0.0);
+    name.set_hexpand(true);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    name.set_tooltip_text(Some(&format!("{} — {}", item.subject, item.human_size())));
+    line.append(&name);
+
+    let sender_label = gtk::Label::new(Some(&item.from_name));
+    sender_label.set_xalign(0.0);
+    sender_label.set_width_request(170);
+    sender_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    sender_label.set_max_width_chars(1);
+    line.append(&sender_label);
+
+    let kind = gtk::Label::new(Some(&ext_of(&item.name).to_ascii_uppercase()));
+    kind.set_xalign(0.0);
+    kind.set_width_request(90);
+    kind.add_css_class("dim-label");
+    line.append(&kind);
+
+    let date = gtk::Label::new(Some(&date_text(item.timestamp)));
+    date.set_xalign(0.0);
+    date.set_width_request(110);
+    date.add_css_class("dim-label");
+    line.append(&date);
+
+    let size = gtk::Label::new(Some(&item.human_size()));
+    size.set_xalign(1.0);
+    size.set_width_request(90);
+    size.add_css_class("dim-label");
+    size.add_css_class("numeric");
+    line.append(&size);
+
+    let row = gtk::ListBoxRow::new();
+    row.set_child(Some(&line));
+
+    // The same gestures the grid cells carry: right-click for the context
+    // menu, double-click to open externally (single click previews).
+    let right = gtk::GestureClick::new();
+    right.set_button(gtk::gdk::BUTTON_SECONDARY);
+    let s = sender.clone();
+    right.connect_pressed(move |_, _, x, y| {
+        s.input(GalleryInput::ContextMenu { index, x, y });
+    });
+    row.add_controller(right);
+    let dbl = gtk::GestureClick::new();
+    dbl.set_button(gtk::gdk::BUTTON_PRIMARY);
+    let s = sender.clone();
+    dbl.connect_pressed(move |_, n, _, _| {
+        if n == 2 {
+            s.input(GalleryInput::OpenExternal(index));
+        }
+    });
+    row.add_controller(dbl);
+    row
+}
+
+/// A column header's label, carrying the sort arrow when it is the active
+/// column: `asc`/`desc` are the two criteria that column maps to.
+fn column_header(label: &str, current: SortBy, asc: SortBy, desc: SortBy) -> String {
+    if current == asc {
+        format!("{label} \u{2191}")
+    } else if current == desc {
+        format!("{label} \u{2193}")
+    } else {
+        label.to_string()
+    }
+}
+
+/// The footer's item count: what's shown of what's there.
+fn count_text(shown: usize, total: usize) -> String {
+    if shown == total {
+        format!("{total} attachment{}", if total == 1 { "" } else { "s" })
+    } else {
+        format!("{shown} of {total}")
+    }
+}
+
+/// "Aug 26, 2026" for a table row, or nothing when the timestamp is unknown.
+fn date_text(timestamp: i64) -> String {
+    glib::DateTime::from_unix_local(timestamp)
+        .ok()
+        .and_then(|d| d.format("%b %e, %Y").ok())
+        .map(|s| s.to_string())
+        .unwrap_or_default()
+}
+
+/// The footer type dropdown's bucket for a filename. Row 0 is "All types";
+/// the rest must match the `StringList` built in the view.
+fn type_bucket(name: &str) -> u32 {
+    match ext_of(name).as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "heic" | "heif" | "avif" | "ico" => 1,
+        "pdf" => 2,
+        "doc" | "docx" | "odt" | "rtf" | "txt" | "md" | "xls" | "xlsx" | "ods" | "csv" | "ppt"
+        | "pptx" | "odp" | "ics" => 3,
+        "zip" | "gz" | "tar" | "7z" | "rar" | "xz" | "bz2" => 4,
+        "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov" | "mkv" | "webm" | "avi"
+        | "m4v" => 5,
+        _ => 6,
     }
 }
 
@@ -1345,6 +1773,42 @@ mod tests {
             .as_bytes(),
         );
         out
+    }
+
+    #[test]
+    fn type_buckets_match_the_footer_dropdown_rows() {
+        assert_eq!(type_bucket("photo.JPG"), 1);
+        assert_eq!(type_bucket("report.pdf"), 2);
+        assert_eq!(type_bucket("notes.docx"), 3);
+        assert_eq!(type_bucket("backup.tar"), 4);
+        assert_eq!(type_bucket("song.flac"), 5);
+        assert_eq!(type_bucket("unknown.xyz"), 6);
+    }
+
+    #[test]
+    fn sort_index_roundtrips_every_criterion() {
+        for i in 0..10 {
+            assert_eq!(SortBy::from_index(i).index(), i);
+        }
+    }
+
+    #[test]
+    fn column_headers_carry_the_sort_arrow() {
+        use super::column_header;
+        assert_eq!(column_header("Name", SortBy::Name, SortBy::Name, SortBy::NameDesc), "Name ↑");
+        assert_eq!(
+            column_header("Name", SortBy::NameDesc, SortBy::Name, SortBy::NameDesc),
+            "Name ↓"
+        );
+        assert_eq!(column_header("Name", SortBy::Newest, SortBy::Name, SortBy::NameDesc), "Name");
+    }
+
+    #[test]
+    fn counts_read_naturally() {
+        use super::count_text;
+        assert_eq!(count_text(1, 1), "1 attachment");
+        assert_eq!(count_text(42, 42), "42 attachments");
+        assert_eq!(count_text(12, 42), "12 of 42");
     }
 
     #[test]
