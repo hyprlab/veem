@@ -2,7 +2,35 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.14.4
+## What's new in 1.15.0
+
+An attachments release, with three contributions by
+[Isaac](https://github.com/thecalamityjoe87) (thank you!) adapted from his pull
+requests:
+
+- **Opening attachments works again.** A single wrong flag constant meant no
+  attachment could even be staged for opening — and quietly disabled a
+  symlink protection at the same time. Both fixed; opening now also goes
+  through GNOME's portal, so a file type with no default app gets the app
+  chooser instead of a click that does nothing.
+- **PDFs show their first page.** In the attachments gallery and the drawer
+  beneath a message, a PDF now appears as its actual first page instead of a
+  generic icon. Every thumbnail renders in the background behind a brief
+  spinner — the window never freezes, however many attachments you have —
+  and finished renders are reused for the rest of the session.
+- **The attachments gallery grew a control footer.** Switch between the
+  thumbnail grid and a sortable table (click a column header to sort, again
+  to flip), filter by type, resize thumbnails with a slider, and see how many
+  attachments match. Your view, size and sort choices are remembered.
+- **Conversations show their attachments immediately.** Opening a thread now
+  fills the attachment drawer with everything attached anywhere in the
+  conversation; before, it stayed empty until you clicked around.
+- **The reader says who a message went to.** A "To:" line joins the Cc line
+  for single messages — handy for Sent mail and auto-forwarded addresses.
+- For release-page readers: each GitHub release now carries only its own
+  notes (thanks @yioannides for the nudge, #46).
+
+## In 1.14.4
 
 **Your contacts' photos, beside their mail.** When a sender has a photo in
 GNOME Contacts, that photo now fills the circle next to their messages — in the

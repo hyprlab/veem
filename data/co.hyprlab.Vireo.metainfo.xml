@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.15.0" date="2026-08-26" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.15.0</url>
+      <description>
+        <p>An attachments release, with contributions by Isaac: opening attachments works again (a wrong open() flag prevented staging entirely) and goes through the desktop portal; PDFs show their first page as thumbnails, rendered in the background so the window never freezes; the attachments gallery gains a control footer with a sortable table view, type filter and thumbnail-size slider; conversations fill the attachment drawer immediately; and the reader shows who a message was sent to.</p>
+      </description>
+    </release>
     <release version="1.14.4" date="2026-08-26" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.14.4</url>
       <description>

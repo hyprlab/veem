@@ -1,5 +1,70 @@
 # Changelog
 
+## 1.15.0 — 2026-08-26
+
+### Attachments
+
+- **Opening an attachment works again** (adapted from PR #44 by Isaac,
+  @thecalamityjoe87). The staging code passed `0o200000` as O_NOFOLLOW, but on
+  Linux that value is O_DIRECTORY — creating a regular file with it fails, so
+  no attachment could be staged, and the symlink refusal the flag was meant to
+  provide was silently absent. The constant is now the real O_NOFOLLOW
+  (`0o400000`), with a comment naming the old bug. Opening also goes through
+  the XDG portal (`gtk::UriLauncher`, properly parented) instead of
+  `AppInfo::launch_default_for_uri`, which under Flatpak — or for a type with
+  no registered default app — silently does nothing; the portal shows GNOME's
+  app chooser instead, and the old call remains as a fallback when the portal
+  itself is unreachable.
+- **PDF attachments show their first page as the thumbnail** in the gallery
+  and the in-message drawer (adapted from PR #49 / issue #48, also Isaac):
+  rendered via poppler-glib at 360px on a white ground, falling back to the
+  type icon when a PDF won't parse. The Flatpak manifest gains a poppler
+  module (config after Evince's, JPEG2000 off); native builds need
+  poppler-glib-devel / libpoppler-glib-dev.
+- **All thumbnails decode off the GTK thread, behind per-cell spinners.**
+  Rendering PDF pages (and decoding images) while cells were being built froze
+  the window — long enough for GNOME's Force Quit dialog on a real mailbox.
+  Cells now show a spinner immediately, workers produce the texture, and
+  finished renders are cached by content hash so rebuilds, searches and
+  revisits this session never decode the same attachment twice. The gallery's
+  "Loading attachments…" page also actually shows now (its flag was being
+  reset by the clear that followed it).
+- **The attachment drawer covers whole conversations.** Opening a thread never
+  loaded attachments at all — the request lived only in the single-message
+  path, so the drawer stayed empty until a member was clicked and re-clicked.
+  A conversation now asks the disk cache for every member's attachments as it
+  opens and shows the deduplicated union, re-merging as members' attachments
+  or late-arriving related messages land. Selecting one message out of the
+  thread still shows just that message's attachments.
+
+### The attachments gallery
+
+- **A control footer**: grid ↔ table view toggle, a type filter (images,
+  PDFs, documents, archives, audio & video, other), the sort dropdown (moved
+  down from the toolbar, which keeps just the search), a thumbnail-size
+  slider (140–380px, one debounced rebuild per drag), and a shown-of-total
+  count. View choice, thumbnail size and sort order persist across sessions.
+- **A table view**: name, sender, type, date and size under clickable column
+  headers — click to sort, click again to flip, with the dropdown following.
+  Rows keep the grid's behaviours (click to preview, double-click to open,
+  right-click for the menu) and reuse already-rendered mini thumbnails
+  without ever spawning renders of their own.
+
+### The reader
+
+- **A "To:" line above the Cc line** for single messages (adapted from PR #43,
+  Isaac) — at a glance, who a Sent/replied message went to, or which of
+  several addresses an auto-forward landed on. Conversation cards already
+  carry this in their recipients chip (1.14.2), so nothing changes there.
+
+### Project
+
+- **GitHub release pages carry only their own release's notes** (issue #46,
+  suggested by @yioannides). `tools/release-notes.sh` extracts one version's
+  section (RELEASE_NOTES.md, falling back to CHANGELOG.md) with a footer
+  linking the full history; all 72 existing releases were rewritten through
+  it.
+
 ## 1.14.4 — 2026-08-26
 
 ### Sender avatars
