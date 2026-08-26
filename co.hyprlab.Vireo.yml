@@ -64,8 +64,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/hyprlab/vireo.git
-        tag: v1.14.3
-        commit: a6654ecb074cebf0f5276fed27c575a92f64515b
+        tag: v1.14.4
+        commit: 0338675567ed76fed5d41425ce9155c248495e7a
       # Vendored crate sources for the offline Flatpak build. Generate with:
       #   flatpak-cargo-generator.py Cargo.lock -o cargo-sources.json
       - cargo-sources.json
