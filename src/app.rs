@@ -152,9 +152,6 @@ pub struct AppModel {
     attachments: Vec<Attachment>,
     /// True while the current message's attachments are downloading.
     attachments_loading: bool,
-    /// The current message has attachments that aren't downloaded yet; offer a
-    /// "Load attachments" button instead of fetching automatically.
-    attachments_available: bool,
     /// Cache of fetched attachments, keyed by (account_id, message_id), so
     /// revisiting a message doesn't re-download them.
     attachment_cache: HashMap<(u32, u32), Vec<Attachment>>,
@@ -489,7 +486,6 @@ pub enum AppMsg {
     SaveAllAttachments,
     /// User clicked "Load attachments" for a message whose attachments weren't
     /// pre-downloaded — fetch them from the server now.
-    LoadAttachmentsNow,
     SendMessage(Box<OutgoingMessage>),
     SaveDraftMessage(Box<OutgoingMessage>),
     DraftSaved,
@@ -977,17 +973,6 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: model.attachments_loading,
                                 },
-                                // Shown for messages whose attachments weren't
-                                // pre-downloaded — load them only when asked.
-                                pack_end = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-folder-download-symbolic",
-                                    set_tooltip_text: Some("Load attachments from server"),
-                                    add_css_class: "flat",
-                                    add_css_class: "attach-present",
-                                    #[watch]
-                                    set_visible: model.attachments_available && !model.attachments_loading,
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::LoadAttachmentsNow),
-                                },
                                 pack_end = &gtk::MenuButton {
                                     set_icon_name: "co.hyprlab.Vireo-mail-attachment-symbolic",
                                     set_tooltip_text: Some("Attachments"),
@@ -1181,7 +1166,6 @@ impl SimpleComponent for AppModel {
             selected: None,
             attachments: Vec::new(),
             attachments_loading: false,
-            attachments_available: false,
             attachment_cache: HashMap::new(),
             attach_list: gtk::Box::new(gtk::Orientation::Vertical, 0),
             unified: false,
@@ -1591,7 +1575,6 @@ impl SimpleComponent for AppModel {
                 self.current_thread.clear();
                 self.attachments.clear();
                 self.attachments_loading = false;
-                self.attachments_available = false;
                 self.sync_attachment_drawer();
                 self.message_list.emit(MessageListInput::SetSelected(None));
                 self.message_list.emit(MessageListInput::SetColorize(self.accounts.len() > 1));
@@ -1694,7 +1677,6 @@ impl SimpleComponent for AppModel {
                 self.current_thread.clear();
                 self.attachments.clear();
                 self.attachments_loading = false;
-                self.attachments_available = false;
                 self.sync_attachment_drawer();
                 self.show_message(None, false);
                 self.message_list.emit(MessageListInput::SetSelected(None));
@@ -1934,7 +1916,6 @@ impl SimpleComponent for AppModel {
                 self.current_thread.clear();
                 self.attachments.clear();
                 self.attachments_loading = false;
-                self.attachments_available = false;
                 self.sync_attachment_drawer();
                 self.show_message(None, false);
             }
@@ -1975,7 +1956,6 @@ impl SimpleComponent for AppModel {
                 }
                 self.attachments.clear();
                 self.attachments_loading = false;
-                self.attachments_available = false;
                 self.sync_attachment_drawer();
                 let account_id = m.account_id;
                 let folder_path = self.resolve_folder_path(&m);
@@ -2111,21 +2091,21 @@ impl SimpleComponent for AppModel {
                     self.show_message(Some(display), needs_body);
                 }
 
-                // Attachments: use the in-memory cache if present; otherwise ask
-                // the worker to serve only from its disk cache (download = false).
-                // Pre-downloaded (recent) attachments come back immediately; for
-                // others the worker replies AttachmentsPending and we offer a
-                // "Load attachments" button rather than fetching automatically.
+                // Attachments: use the in-memory cache if present; otherwise
+                // fetch them (disk cache first, then the server). Opening the
+                // message is the request — the paperclip appears when they
+                // land, with no "load attachments" click in between.
                 if m.has_attachment {
                     if let Some(cached) = self.attachment_cache.get(&(account_id, m.id)).cloned() {
                         self.attachments = cached;
                         self.rebuild_attach_popover(&sender);
                     } else if let Some(path) = folder_path {
+                        self.attachments_loading = true;
                         self.send_to(account_id, MailRequest::LoadAttachments {
                             message_id: m.id,
                             path,
                             uid: m.uid,
-                            download: false,
+                            download: true,
                         });
                     }
                 }
@@ -3318,7 +3298,6 @@ impl SimpleComponent for AppModel {
                     .is_some_and(|c| c.id == message_id && c.account_id == account_id)
                 {
                     self.attachments_loading = false;
-                    self.attachments_available = false;
                     self.attachments = items.clone();
                     self.rebuild_attach_popover(&sender);
                 }
@@ -3331,6 +3310,7 @@ impl SimpleComponent for AppModel {
                         .iter()
                         .any(|tm| tm.id == message_id && tm.account_id == account_id)
                 {
+                    self.attachments_loading = false;
                     self.refresh_thread_attachments(&sender);
                 }
                 if let Some(p) = self.popouts.get(&(account_id, message_id)) {
@@ -3339,14 +3319,32 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::AttachmentsPending { account_id, message_id } => {
-                // Attachments exist but aren't downloaded; offer the load button.
-                if self
+                // Attachments exist but weren't on disk. Opening the message
+                // was the request — fetch them now rather than asking for a
+                // click (the old "load attachments" button). Every reader path
+                // now downloads outright, so this is a safety net for any
+                // cache-only probe that still answers "present, not fetched".
+                let msg = self
                     .current
                     .as_ref()
-                    .is_some_and(|c| c.id == message_id && c.account_id == account_id)
-                {
-                    self.attachments_loading = false;
-                    self.attachments_available = true;
+                    .filter(|c| c.id == message_id && c.account_id == account_id)
+                    .cloned()
+                    .or_else(|| {
+                        self.current_thread
+                            .iter()
+                            .find(|m| m.id == message_id && m.account_id == account_id)
+                            .cloned()
+                    });
+                if let Some(m) = msg {
+                    if let Some(path) = self.resolve_folder_path(&m) {
+                        self.attachments_loading = true;
+                        self.send_to(account_id, MailRequest::LoadAttachments {
+                            message_id,
+                            path,
+                            uid: m.uid,
+                            download: true,
+                        });
+                    }
                 }
                 if let Some(p) = self.popouts.get(&(account_id, message_id)) {
                     p.controller.emit(MessageWindowInput::AttachmentsPending);
@@ -3406,25 +3404,11 @@ impl SimpleComponent for AppModel {
                         self.attachments = cached;
                         self.rebuild_attach_popover(&sender);
                     } else if let Some(path) = self.resolve_folder_path(&message) {
+                        self.attachments_loading = true;
                         self.send_to(account_id, MailRequest::LoadAttachments {
                             message_id,
                             path,
                             uid: message.uid,
-                            download: false,
-                        });
-                    }
-                }
-            }
-
-            AppMsg::LoadAttachmentsNow => {
-                if let Some(m) = self.current.clone() {
-                    if let Some(path) = self.resolve_folder_path(&m) {
-                        self.attachments_available = false;
-                        self.attachments_loading = true;
-                        self.send_to(m.account_id, MailRequest::LoadAttachments {
-                            message_id: m.id,
-                            path,
-                            uid: m.uid,
                             download: true,
                         });
                     }
@@ -3821,7 +3805,6 @@ impl AppModel {
         self.attachments.clear();
         self.sync_attachment_drawer();
         self.attachments_loading = false;
-        self.attachments_available = false;
         self.attachment_cache.clear();
         self.current = None;
         self.busy.clear();
@@ -4232,12 +4215,15 @@ impl AppModel {
                     .map(|p| (tm.account_id, tm.id, tm.uid, p))
             })
             .collect();
+        if !wanted.is_empty() {
+            self.attachments_loading = true;
+        }
         for (account_id, message_id, uid, path) in wanted {
             self.send_to(account_id, MailRequest::LoadAttachments {
                 message_id,
                 path,
                 uid,
-                download: false,
+                download: true,
             });
         }
         self.refresh_thread_attachments(sender);
@@ -4305,7 +4291,6 @@ impl AppModel {
         self.attachments.clear();
         self.sync_attachment_drawer();
         self.attachments_loading = false;
-        self.attachments_available = false;
         self.message_list.emit(MessageListInput::SetSelected(None));
         self.message_list.emit(MessageListInput::SetColorize(false));
         self.message_list.emit(MessageListInput::ResetPaging);
@@ -4487,19 +4472,21 @@ impl AppModel {
             }
         }
 
-        // Attachments: use the in-memory cache if present; otherwise ask the
-        // worker for them (cache-only) and route the reply to this window, just
-        // like the main reader does.
+        // Attachments: use the in-memory cache if present; otherwise fetch
+        // them (disk cache first, then the server) and route the reply to
+        // this window, just like the main reader does.
         let mut atts: Vec<Attachment> = Vec::new();
+        let mut atts_loading = false;
         if display.has_attachment {
             if let Some(cached) = self.attachment_cache.get(&key).cloned() {
                 atts = cached;
             } else if let Some(path) = self.resolve_folder_path(&m) {
+                atts_loading = true;
                 self.send_to(account_id, MailRequest::LoadAttachments {
                     message_id: m.id,
                     path,
                     uid: m.uid,
-                    download: false,
+                    download: true,
                 });
             }
         }
@@ -4516,7 +4503,7 @@ impl AppModel {
             loading: needs_body,
             attachments: atts,
             attachments_available: false,
-            attachments_loading: false,
+            attachments_loading: atts_loading,
             content_dark: self.message_theme.dark_override(),
         };
 
@@ -4620,7 +4607,6 @@ impl AppModel {
         message.body = crate::worker::extract_body(&item.raw);
         message.date = crate::models::OutboxItem::waiting_label(item.queued_at);
         self.attachments = crate::worker::extract_attachments_of(&item.raw);
-        self.attachments_available = !self.attachments.is_empty();
         self.attachments_loading = false;
         self.sync_attachment_drawer();
         self.current = Some(message.clone());
@@ -5970,7 +5956,6 @@ impl AppModel {
             self.attachments.clear();
             self.sync_attachment_drawer();
             self.attachments_loading = false;
-            self.attachments_available = false;
         }
     }
 

@@ -13,6 +13,10 @@ use relm4::prelude::*;
 
 use crate::models::{is_image_name, GalleryItem};
 
+/// Width of the table's trailing quick-actions column (three icon buttons);
+/// the header carries a spacer of the same width so the columns line up.
+const TABLE_ACTIONS_WIDTH: i32 = 100;
+
 pub struct AttachmentsGallery {
     /// Full set of attachments, unfiltered — the source for search and sort.
     all_items: Vec<GalleryItem>,
@@ -23,6 +27,10 @@ pub struct AttachmentsGallery {
     sort: SortBy,
     /// Index into `items` currently shown in the lightbox, if any.
     preview: Option<usize>,
+    /// What the lightbox shows for the current item: a decoded image, or a
+    /// PDF's first page once its full-size render lands (None while a PDF
+    /// render is in flight, and for types with nothing to show).
+    preview_texture: Option<gdk::Texture>,
     loading: bool,
     /// Show the sortable table instead of the thumbnail grid (persisted).
     view_table: bool,
@@ -131,6 +139,9 @@ pub enum GalleryInput {
     OpenExternal(usize),
     /// Right-click on cell `index` at `(x, y)` (cell-relative) — show its menu there.
     ContextMenu { index: usize, x: f64, y: f64 },
+    /// A lightbox-size PDF render finished (keyed by content hash) — show it
+    /// if that PDF is still the one being previewed.
+    PreviewRendered(u64),
 }
 
 #[derive(Debug)]
@@ -279,6 +290,8 @@ impl Component for AttachmentsGallery {
                                     set_hexpand: true,
                                 },
                             },
+                            // Aligns with the rows' trailing actions column.
+                            gtk::Box { set_width_request: TABLE_ACTIONS_WIDTH },
                         },
 
                         gtk::ScrolledWindow {
@@ -441,12 +454,31 @@ impl Component for AttachmentsGallery {
                         set_hexpand: true,
                         set_vexpand: true,
                         #[watch]
-                        set_visible_child_name: if model.current().is_some_and(|i| i.is_image() && i.data.is_some()) { "image" } else { "file" },
+                        set_visible_child_name: if model.preview_texture.is_some() {
+                            "image"
+                        } else if model.current().is_some_and(|i| is_pdf_name(&i.name) && i.data.is_some()) {
+                            // A PDF whose full-size render is still on its way.
+                            "rendering"
+                        } else {
+                            "file"
+                        },
 
                         #[name = "preview_picture"]
                         add_named[Some("image")] = &gtk::Picture {
                             set_can_shrink: true,
                             set_content_fit: gtk::ContentFit::Contain,
+                            #[watch]
+                            set_paintable: model.preview_texture.as_ref(),
+                        },
+
+                        add_named[Some("rendering")] = &gtk::Box {
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                            gtk::Spinner {
+                                set_spinning: true,
+                                set_width_request: 36,
+                                set_height_request: 36,
+                            },
                         },
 
                         add_named[Some("file")] = &gtk::Box {
@@ -533,6 +565,7 @@ impl Component for AttachmentsGallery {
             query: String::new(),
             sort: SortBy::from_index(sort_index),
             preview: None,
+            preview_texture: None,
             loading: false,
             view_table,
             thumb_width,
@@ -578,6 +611,7 @@ impl Component for AttachmentsGallery {
                 self.all_items = items;
                 self.loading = false;
                 self.preview = None;
+                self.preview_texture = None;
                 self.apply();
                 self.rebuild_view(&sender);
             }
@@ -663,12 +697,25 @@ impl Component for AttachmentsGallery {
             GalleryInput::Activate(i) => {
                 if (i as usize) < self.items.len() {
                     self.preview = Some(i as usize);
-                    self.load_preview_image(widgets);
+                    self.refresh_preview(&sender);
                 }
             }
-            GalleryInput::Prev => self.step(-1, widgets),
-            GalleryInput::Next => self.step(1, widgets),
-            GalleryInput::ClosePreview => self.preview = None,
+            GalleryInput::Prev => self.step(-1, &sender),
+            GalleryInput::Next => self.step(1, &sender),
+            GalleryInput::ClosePreview => {
+                self.preview = None;
+                self.preview_texture = None;
+            }
+            GalleryInput::PreviewRendered(key) => {
+                // Only meaningful if the rendered PDF is still on show.
+                let still_current = self
+                    .current()
+                    .and_then(|i| i.data.as_ref())
+                    .is_some_and(|d| thumb_cache_key(d) == key);
+                if still_current {
+                    self.refresh_preview(&sender);
+                }
+            }
             GalleryInput::OpenCurrent => {
                 if let Some(i) = self.preview {
                     self.open_item(i);
@@ -743,25 +790,61 @@ impl AttachmentsGallery {
         self.preview.and_then(|i| self.item_at(i))
     }
 
-    fn step(&mut self, delta: i32, widgets: &mut AttachmentsGalleryWidgets) {
+    fn step(&mut self, delta: i32, sender: &ComponentSender<Self>) {
         if self.items.is_empty() {
             return;
         }
         if let Some(i) = self.preview {
             let n = self.items.len() as i32;
             self.preview = Some((((i as i32 + delta) % n + n) % n) as usize);
-            self.load_preview_image(widgets);
+            self.refresh_preview(sender);
         }
     }
 
-    /// Point the lightbox Picture at the current image's bytes (if it is one).
-    fn load_preview_image(&self, widgets: &AttachmentsGalleryWidgets) {
-        let texture = self
-            .current()
-            .filter(|i| i.is_image())
-            .and_then(|i| i.data.as_ref())
-            .and_then(|d| texture_from(d));
-        widgets.preview_picture.set_paintable(texture.as_ref());
+    /// Work out what the lightbox shows for the current item: an image decodes
+    /// on the spot; a PDF's first page comes from the full-size render cache,
+    /// or a worker renders it now and [`GalleryInput::PreviewRendered`] circles
+    /// back here. Anything else has no texture — the file-icon page shows.
+    fn refresh_preview(&mut self, sender: &ComponentSender<Self>) {
+        self.preview_texture = None;
+        let Some(item) = self.current() else { return };
+        let Some(data) = item.data.as_ref() else { return };
+        if item.is_image() {
+            self.preview_texture = texture_from(data);
+            return;
+        }
+        if !is_pdf_name(&item.name) {
+            return;
+        }
+        let key = thumb_cache_key(data);
+        match PDF_PREVIEWS.with(|c| c.borrow().get(&key).cloned()) {
+            Some(texture) => self.preview_texture = texture,
+            None => {
+                // Not rendered yet (and `None` is only cached for failures, so
+                // a broken PDF isn't re-rendered on every arrow press).
+                let started = PENDING_PREVIEWS.with(|p| p.borrow_mut().insert(key));
+                if !started {
+                    return;
+                }
+                let data = data.clone();
+                let s = sender.clone();
+                glib::spawn_future_local(async move {
+                    let tex = gtk::gio::spawn_blocking(move || {
+                        pdf_page_texture(&data, PREVIEW_RENDER_WIDTH)
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    PDF_PREVIEWS.with(|c| {
+                        c.borrow_mut().insert(key, tex);
+                    });
+                    PENDING_PREVIEWS.with(|p| {
+                        p.borrow_mut().remove(&key);
+                    });
+                    s.input(GalleryInput::PreviewRendered(key));
+                });
+            }
+        }
     }
 
     /// Repopulate whichever view is showing. The other keeps stale children;
@@ -1218,6 +1301,33 @@ fn build_row(
     size.add_css_class("numeric");
     line.append(&size);
 
+    // The same quick actions the grid cells carry, as a trailing column.
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    actions.set_width_request(TABLE_ACTIONS_WIDTH);
+    actions.set_halign(gtk::Align::End);
+    let act = |icon: &str, tip: &str| {
+        let b = gtk::Button::from_icon_name(icon);
+        b.add_css_class("flat");
+        b.set_valign(gtk::Align::Center);
+        b.set_tooltip_text(Some(tip));
+        b
+    };
+    if item.data.is_some() {
+        let download = act("co.hyprlab.Vireo-folder-download-symbolic", "Download");
+        let s = sender.clone();
+        download.connect_clicked(move |_| s.input(GalleryInput::DownloadItem(index)));
+        actions.append(&download);
+        let open = act("co.hyprlab.Vireo-document-open-symbolic", "Open");
+        let s = sender.clone();
+        open.connect_clicked(move |_| s.input(GalleryInput::OpenItem(index)));
+        actions.append(&open);
+    }
+    let goto = act("co.hyprlab.Vireo-mail-unread-symbolic", "Go to Message");
+    let s = sender.clone();
+    goto.connect_clicked(move |_| s.input(GalleryInput::GoToItem(index)));
+    actions.append(&goto);
+    line.append(&actions);
+
     let row = gtk::ListBoxRow::new();
     row.set_child(Some(&line));
 
@@ -1332,6 +1442,19 @@ thread_local! {
     /// Main-thread only; results land here from `spawn_thumbnail_render`.
     static THUMB_CACHE: std::cell::RefCell<std::collections::HashMap<u64, Option<gdk::Texture>>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Lightbox-size PDF page renders, cached separately from the thumbnails
+    /// (same key, much bigger pixels). Failures cache too.
+    static PDF_PREVIEWS: std::cell::RefCell<std::collections::HashMap<u64, Option<gdk::Texture>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Preview renders in flight, so stepping back and forth doesn't stack
+    /// duplicate renders of the same PDF.
+    static PENDING_PREVIEWS: std::cell::RefCell<std::collections::HashSet<u64>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Whether a filename names a PDF (by extension).
+fn is_pdf_name(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".pdf")
 }
 
 fn thumb_cache_key(data: &[u8]) -> u64 {
@@ -1346,7 +1469,7 @@ fn thumb_cache_key(data: &[u8]) -> u64 {
 /// image or a PDF's first page — answered from the render cache, or `Pending`
 /// until a worker produces it.
 pub(crate) fn thumbnail_texture(name: &str, data: &[u8]) -> Thumbnail {
-    if !is_image_name(name) && !name.to_ascii_lowercase().ends_with(".pdf") {
+    if !is_image_name(name) && !is_pdf_name(name) {
         return Thumbnail::Fallback;
     }
     match THUMB_CACHE.with(|c| c.borrow().get(&thumb_cache_key(data)).cloned()) {
@@ -1372,7 +1495,7 @@ pub(crate) fn spawn_thumbnail_render(
             if image {
                 texture_from(&data)
             } else {
-                pdf_thumbnail(&data)
+                pdf_page_texture(&data, THUMB_RENDER_WIDTH)
             }
         })
         .await
@@ -1398,10 +1521,16 @@ pub(crate) fn thumbnail_spinner() -> gtk::Spinner {
     spinner
 }
 
-/// Render a PDF's first page to a texture, by way of an in-memory PNG — the
-/// same route every other thumbnail here already goes through, so cropping,
-/// caching, and format all stay uniform.
-fn pdf_thumbnail(data: &[u8]) -> Option<gdk::Texture> {
+/// Width thumbnails render at — soft would do, but sharp is cheap at 360px.
+const THUMB_RENDER_WIDTH: f64 = 360.0;
+/// Width the lightbox renders a PDF page at: sharp on a large window without
+/// tripping the decoder's pixel ceiling (A4 portrait at 1600 ≈ 3.6M pixels).
+const PREVIEW_RENDER_WIDTH: f64 = 1600.0;
+
+/// Render a PDF's first page to a texture at `target_width`, by way of an
+/// in-memory PNG — the same route every other thumbnail here already goes
+/// through, so cropping, caching, and format all stay uniform.
+fn pdf_page_texture(data: &[u8], target_width: f64) -> Option<gdk::Texture> {
     let doc = poppler::Document::from_bytes(&glib::Bytes::from(data), None).ok()?;
     let page = doc.page(0)?;
     let (w, h) = page.size();
@@ -1409,12 +1538,11 @@ fn pdf_thumbnail(data: &[u8]) -> Option<gdk::Texture> {
         return None;
     }
     // Poppler's default is one pixel per point (72 dpi) — fine for text but
-    // soft as a thumbnail, so render at a fixed, sharper width instead.
-    const TARGET_WIDTH: f64 = 360.0;
-    let scale = TARGET_WIDTH / w;
+    // soft on screen, so render at the caller's width instead.
+    let scale = target_width / w;
     let surface = gtk::cairo::ImageSurface::create(
         gtk::cairo::Format::ARgb32,
-        TARGET_WIDTH.round() as i32,
+        target_width.round() as i32,
         (h * scale).round() as i32,
     )
     .ok()?;
@@ -1813,9 +1941,9 @@ mod tests {
 
     #[test]
     fn pdf_thumbnail_renders_the_first_page() {
-        let tex = pdf_thumbnail(&minimal_pdf()).expect("should render a page");
+        let tex = pdf_page_texture(&minimal_pdf(), 360.0).expect("should render a page");
         assert!(tex.width() > 0 && tex.height() > 0);
-        assert!(pdf_thumbnail(b"not a real pdf").is_none());
+        assert!(pdf_page_texture(b"not a real pdf", 360.0).is_none());
     }
 
     #[test]

@@ -764,9 +764,13 @@ headerbar.rail-header {
   padding: 2px 18px;
   border-bottom: 1px solid alpha(currentColor, 0.12);
 }
+/* Header buttons must not pad horizontally: their labels have to start at the
+   exact x their column's row cells do, or nothing lines up. */
 .gallery-table-header button {
   font-weight: 600;
   font-size: 0.9em;
+  padding: 2px 0;
+  min-width: 0;
 }
 .gallery-table {
   background: transparent;
@@ -774,6 +778,7 @@ headerbar.rail-header {
 }
 .gallery-table row {
   border-radius: 8px;
+  padding: 0;
 }
 .gallery-table-row {
   padding: 6px;
