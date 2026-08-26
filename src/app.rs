@@ -162,6 +162,12 @@ pub struct AppModel {
     /// Mirror of "the lightbox is open", readable synchronously by the
     /// window's key controller (closures only get a sender, not the model).
     lightbox_open: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Current lightbox zoom (1, 2 or 4) — a click on the document cycles it,
+    /// Escape unwinds it before closing.
+    lightbox_zoom: i32,
+    /// The lightbox picture + its scroller, for applying zoom sizes.
+    lightbox_picture: Option<gtk::Picture>,
+    lightbox_scroller: Option<gtk::ScrolledWindow>,
     /// Popover content box for the attachments button.
     attach_list: gtk::Box,
     /// True when the unified "All Inboxes" view is active (no single folder).
@@ -460,6 +466,10 @@ pub enum AppMsg {
     LightboxPrev,
     LightboxNext,
     LightboxClose,
+    /// Click on the document: cycle zoom 1x → 2x → 4x → 1x.
+    LightboxZoomCycle,
+    /// Escape: unwind zoom first; close only from normal view.
+    LightboxEscape,
     /// Open the shown lightbox item in its default application.
     LightboxOpenCurrent,
     /// Save the shown lightbox item via a file chooser.
@@ -613,7 +623,7 @@ impl SimpleComponent for AppModel {
                         return gtk::glib::Propagation::Proceed;
                     }
                     match key {
-                        gtk::gdk::Key::Escape => sender.input(AppMsg::LightboxClose),
+                        gtk::gdk::Key::Escape => sender.input(AppMsg::LightboxEscape),
                         gtk::gdk::Key::Left => sender.input(AppMsg::LightboxPrev),
                         gtk::gdk::Key::Right => sender.input(AppMsg::LightboxNext),
                         _ => return gtk::glib::Propagation::Proceed,
@@ -1130,18 +1140,29 @@ impl SimpleComponent for AppModel {
                                 "rendering"
                             },
 
-                            add_named[Some("image")] = &gtk::Picture {
-                                set_can_shrink: true,
-                                set_content_fit: gtk::ContentFit::Contain,
-                                #[watch]
-                                set_paintable: model.lightbox_texture.as_ref(),
-                                // Double-click opens externally, like the gallery.
-                                add_controller = gtk::GestureClick {
-                                    set_button: gtk::gdk::BUTTON_PRIMARY,
-                                    connect_pressed[sender] => move |_, n, _, _| {
-                                        if n == 2 {
-                                            sender.input(AppMsg::LightboxOpenCurrent);
-                                        }
+                            #[name = "lightbox_scroller"]
+                            add_named[Some("image")] = &gtk::ScrolledWindow {
+                                set_hscrollbar_policy: gtk::PolicyType::Automatic,
+                                set_vscrollbar_policy: gtk::PolicyType::Automatic,
+                                set_hexpand: true,
+                                set_vexpand: true,
+
+                                #[name = "lightbox_picture"]
+                                gtk::Picture {
+                                    set_can_shrink: true,
+                                    set_content_fit: gtk::ContentFit::Contain,
+                                    #[watch]
+                                    set_paintable: model.lightbox_texture.as_ref(),
+                                    // A click zooms (1x → 2x → 4x → 1x);
+                                    // Escape unwinds. Opening lives in the
+                                    // bottom bar's Open button.
+                                    add_controller = gtk::GestureClick {
+                                        set_button: gtk::gdk::BUTTON_PRIMARY,
+                                        connect_pressed[sender] => move |_, n, _, _| {
+                                            if n == 1 {
+                                                sender.input(AppMsg::LightboxZoomCycle);
+                                            }
+                                        },
                                     },
                                 },
                             },
@@ -1364,6 +1385,9 @@ impl SimpleComponent for AppModel {
             lightbox_pos: 0,
             lightbox_texture: None,
             lightbox_open: std::rc::Rc::new(std::cell::Cell::new(false)),
+            lightbox_zoom: 1,
+            lightbox_picture: None,
+            lightbox_scroller: None,
             attachments_loading: false,
             attachment_cache: HashMap::new(),
             attach_list: gtk::Box::new(gtk::Orientation::Vertical, 0),
@@ -1755,6 +1779,9 @@ impl SimpleComponent for AppModel {
         {
             sender.input(AppMsg::ShowKeyringHelp { problem: false });
         }
+
+        model.lightbox_picture = Some(widgets.lightbox_picture.clone());
+        model.lightbox_scroller = Some(widgets.lightbox_scroller.clone());
 
         ComponentParts { model, widgets }
     }
@@ -2743,6 +2770,7 @@ impl SimpleComponent for AppModel {
                     self.lightbox_pos = start.min(items.len() - 1);
                     self.lightbox_items = items;
                     self.lightbox_open.set(true);
+                    self.lightbox_set_zoom(1);
                     self.lightbox_refresh(&sender);
                 }
             }
@@ -2752,6 +2780,24 @@ impl SimpleComponent for AppModel {
                 self.lightbox_items.clear();
                 self.lightbox_texture = None;
                 self.lightbox_open.set(false);
+                self.lightbox_set_zoom(1);
+            }
+            AppMsg::LightboxZoomCycle => {
+                let next = match self.lightbox_zoom {
+                    1 => 2,
+                    2 => 4,
+                    _ => 1,
+                };
+                self.lightbox_set_zoom(next);
+            }
+            AppMsg::LightboxEscape => {
+                // Zoomed in, Escape returns to the fitted view; from there it
+                // closes the lightbox.
+                if self.lightbox_zoom != 1 {
+                    self.lightbox_set_zoom(1);
+                } else {
+                    sender.input(AppMsg::LightboxClose);
+                }
             }
             AppMsg::LightboxOpenCurrent => {
                 if let Some(att) = self.lightbox_items.get(self.lightbox_pos) {
@@ -4478,7 +4524,25 @@ impl AppModel {
             return;
         }
         self.lightbox_pos = (((self.lightbox_pos as i32 + delta) % n + n) % n) as usize;
+        self.lightbox_set_zoom(1);
         self.lightbox_refresh(sender);
+    }
+
+    /// Apply a lightbox zoom level. At 1x the picture fits its scroller; at
+    /// 2x/4x its box grows to that multiple of the viewport (Contain keeps the
+    /// aspect) and the scroller pans the overflow.
+    fn lightbox_set_zoom(&mut self, zoom: i32) {
+        self.lightbox_zoom = zoom;
+        let (Some(picture), Some(scroller)) =
+            (&self.lightbox_picture, &self.lightbox_scroller)
+        else {
+            return;
+        };
+        if zoom <= 1 {
+            picture.set_size_request(-1, -1);
+        } else {
+            picture.set_size_request(scroller.width() * zoom, scroller.height() * zoom);
+        }
     }
 
     /// Work out the lightbox texture for the current item: images decode on
