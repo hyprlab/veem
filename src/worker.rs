@@ -2855,15 +2855,29 @@ async fn test_smtp(account: &AccountConfig) -> Result<(), String> {
     use lettre::transport::smtp::extension::ClientId;
 
     let host = smtp_host(account);
-    let (user, pass) = if account.smtp_separate {
-        (account.smtp_username.clone(), account.smtp_password.clone())
+    // Authenticate the same way the send path does: XOAUTH2 with a fresh token
+    // for OAuth accounts, otherwise the password (SMTP-specific if configured).
+    let (creds, mechanisms): (Credentials, &[Mechanism]) = if account.oauth {
+        let token = fetch_oauth_token(account)
+            .await
+            .ok_or_else(|| "could not get an OAuth token".to_string())?;
+        (Credentials::new(oauth_user(account), token), &[Mechanism::Xoauth2])
+    } else if account.smtp_separate {
+        (
+            Credentials::new(account.smtp_username.clone(), account.smtp_password.clone()),
+            &[Mechanism::Plain, Mechanism::Login],
+        )
     } else {
-        (account.username.clone(), account.password.clone())
+        (
+            Credentials::new(account.username.clone(), account.password.clone()),
+            &[Mechanism::Plain, Mechanism::Login],
+        )
     };
-    let creds = Credentials::new(user, pass);
     let hello = ClientId::default();
     let tls = smtp_tls_parameters(&host).map_err(|e| e.to_string())?;
-    let addr = format!("{host}:{}", account.smtp_port);
+    // A (host, port) pair resolves bare IPv6 addresses correctly; a "host:port"
+    // string would mis-parse their colons.
+    let addr = (host.as_str(), account.smtp_port);
     let timeout = Some(std::time::Duration::from_secs(20));
 
     // Port 465 is implicit TLS; everything else uses STARTTLS.
@@ -2878,11 +2892,7 @@ async fn test_smtp(account: &AccountConfig) -> Result<(), String> {
         conn.starttls(tls, &hello).await.map_err(|e| e.to_string())?;
         conn
     };
-    let result = conn
-        .auth(&[Mechanism::Plain, Mechanism::Login], &creds)
-        .await
-        .map(|_| ())
-        .map_err(|e| e.to_string());
+    let result = conn.auth(mechanisms, &creds).await.map(|_| ()).map_err(|e| e.to_string());
     let _ = conn.quit().await;
     result
 }
