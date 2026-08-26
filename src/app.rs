@@ -500,9 +500,10 @@ pub enum AppMsg {
     AccountRemoved { email: String },
     AccountEnabledChanged { email: String, enabled: bool },
     ImportGoaAccount(Box<AccountConfig>),
-    /// GNOME Online Accounts changed on the session bus — re-reconcile and drop
-    /// any imported account whose GOA account was removed.
-    GoaChanged,
+    /// GNOME Online Accounts changed on the session bus. Carries the fresh live
+    /// state, already fetched (debounced) on the watcher thread so the GTK main
+    /// thread never does D-Bus I/O — re-reconcile against it.
+    GoaChanged(crate::goa::GoaLiveState),
     /// The system resumed from sleep — worker IMAP sockets are stale, so
     /// reconnect every account and reload the visible folder.
     SystemResumed,
@@ -1028,11 +1029,14 @@ impl SimpleComponent for AppModel {
         let icon_only = sidebar_state.icon_only;
 
         // Load accounts, then drop any imported GOA account that GNOME Online
-        // Accounts no longer has (removed or Mail-disabled there). Reconciliation
-        // is skipped when GOA is unreachable, so a momentary outage never wipes
-        // imported accounts. Live changes are handled by the watcher below.
+        // Accounts no longer has (removed there). Reconciliation is skipped when
+        // GOA is unreachable, so a momentary outage never wipes imported
+        // accounts. Live changes are handled by the watcher below.
         let mut config = config::load().unwrap_or_default();
-        let goa_removed = reconcile_goa(&mut config);
+        let goa_removed = match crate::goa::live_state() {
+            Some(live) => reconcile_goa(&mut config, &live),
+            None => Vec::new(),
+        };
         if !goa_removed.is_empty() {
             for email in &goa_removed {
                 config::delete_password(email);
@@ -1244,12 +1248,14 @@ impl SimpleComponent for AppModel {
             gallery_by_account: HashMap::new(),
         };
         model.spawn_workers(&sender);
-        // Watch GNOME Online Accounts so an account removed there disappears from
-        // Vireo live (no restart needed); reconciliation happens on GoaChanged.
-        crate::goa::watch_removals({
+        // Watch GNOME Online Accounts so a change there (account removed, Mail
+        // toggled) is reflected in Vireo live, no restart needed. The watcher
+        // debounces signal bursts and snapshots GOA on its own thread;
+        // reconciliation happens on GoaChanged.
+        crate::goa::watch_changes({
             let s = sender.input_sender().clone();
-            move || {
-                let _ = s.send(AppMsg::GoaChanged);
+            move |state| {
+                let _ = s.send(AppMsg::GoaChanged(state));
             }
         });
         // Watch for resume-from-sleep: suspended IMAP sockets die silently, so
@@ -2845,11 +2851,11 @@ impl SimpleComponent for AppModel {
                 self.reconnect_all(&sender);
             }
 
-            AppMsg::GoaChanged => {
-                // A GOA account was removed/disabled in GNOME Settings. Drop any
-                // imported account that no longer exists there. (Adding an account
-                // to GOA never auto-imports — that stays a manual choice.)
-                let removed = reconcile_goa(&mut self.config);
+            AppMsg::GoaChanged(live) => {
+                // GOA changed in GNOME Settings. Drop any imported account that
+                // no longer exists there. (Adding an account to GOA never
+                // auto-imports — that stays a manual choice.)
+                let removed = reconcile_goa(&mut self.config, &live);
                 if !removed.is_empty() {
                     for email in &removed {
                         config::delete_password(email);
@@ -6322,17 +6328,14 @@ fn demo_mode() -> bool {
     std::env::var_os("VIREO_DEMO").is_some()
 }
 
-/// Drop imported accounts whose GNOME Online Account no longer exists (removed or
-/// Mail-disabled in GNOME Settings), returning the emails dropped. Keeps every
-/// account — a no-op — when GOA can't be reached, so a momentarily-unavailable GOA
-/// never wipes imported accounts.
-fn reconcile_goa(config: &mut Vec<AccountConfig>) -> Vec<String> {
-    let Some(live) = crate::goa::live_account_ids() else {
-        return Vec::new();
-    };
+/// Drop imported accounts whose GNOME Online Account no longer exists (removed
+/// in GNOME Settings), returning the emails dropped. `live` is a snapshot the
+/// caller obtained while GOA was reachable — when it isn't, skip reconciliation
+/// entirely, so a momentarily-unavailable GOA never wipes imported accounts.
+fn reconcile_goa(config: &mut Vec<AccountConfig>, live: &crate::goa::GoaLiveState) -> Vec<String> {
     let mut removed = Vec::new();
     config.retain(|c| match &c.goa_id {
-        Some(id) if !live.contains(id) => {
+        Some(id) if !live.account_ids.contains(id) => {
             removed.push(c.email.clone());
             false
         }

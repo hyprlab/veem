@@ -7,7 +7,7 @@
 //! in Vireo's keyring on import; OAuth2 providers (Gmail, Microsoft) authenticate
 //! with a GOA-issued access token (XOAUTH2) fetched fresh at connect time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 
@@ -205,12 +205,23 @@ fn try_list() -> Result<Vec<GoaMailAccount>, String> {
     Ok(out)
 }
 
-/// Live set of ids for accounts that currently exist in GNOME Online Accounts
-/// (any account object, mail-capable or not — so merely disabling Mail doesn't
-/// count as removal). Returns `None` when GOA / the session bus can't be reached —
-/// callers MUST treat that as "unknown", not "no accounts", or they'd wrongly
-/// prune every imported GOA account whenever GOA is momentarily unavailable.
-pub fn live_account_ids() -> Option<std::collections::HashSet<String>> {
+/// What currently exists in GNOME Online Accounts, as far as reconciliation
+/// cares: which account objects are present at all, and which of them have their
+/// Mail service switched off in GNOME Settings.
+#[derive(Debug, Clone)]
+pub struct GoaLiveState {
+    /// Ids of every GOA account object, mail-capable or not — so merely
+    /// disabling Mail doesn't count as removal.
+    pub account_ids: HashSet<String>,
+    /// Ids whose Mail service is explicitly disabled in GNOME Settings.
+    pub disabled_mail_ids: HashSet<String>,
+}
+
+/// Snapshot the live GOA account state in one `GetManagedObjects` call. Returns
+/// `None` when GOA / the session bus can't be reached — callers MUST treat that
+/// as "unknown", not "no accounts", or they'd wrongly prune every imported GOA
+/// account whenever GOA is momentarily unavailable. Blocking.
+pub fn live_state() -> Option<GoaLiveState> {
     let conn = zbus::blocking::Connection::session().ok()?;
     let reply = conn
         .call_method(
@@ -222,31 +233,61 @@ pub fn live_account_ids() -> Option<std::collections::HashSet<String>> {
         )
         .ok()?;
     let (objects,): (ManagedObjects,) = reply.body().deserialize().ok()?;
-    Some(
-        objects
-            .values()
-            .filter_map(|ifaces| ifaces.get(IFACE_ACCOUNT))
-            .map(|account| get_str(account, "Id"))
-            .filter(|id| !id.is_empty())
-            .collect(),
-    )
+    let mut state =
+        GoaLiveState { account_ids: HashSet::new(), disabled_mail_ids: HashSet::new() };
+    for account in objects.values().filter_map(|ifaces| ifaces.get(IFACE_ACCOUNT)) {
+        let id = get_str(account, "Id");
+        if id.is_empty() {
+            continue;
+        }
+        if get_bool(account, "MailDisabled") {
+            state.disabled_mail_ids.insert(id.clone());
+        }
+        state.account_ids.insert(id);
+    }
+    Some(state)
 }
 
-/// Watch GNOME Online Accounts for account/interface removals, invoking
-/// `on_change` on each. Runs on a dedicated thread; silently no-ops if GOA or the
-/// session bus is unavailable. Lets Vireo prune accounts removed in GNOME Settings
-/// without a restart.
-pub fn watch_removals<F: Fn() + Send + 'static>(on_change: F) {
+/// Watch GNOME Online Accounts for changes — account removals and property
+/// edits (e.g. the Mail service being switched on or off) — and hand `on_change`
+/// a fresh [`GoaLiveState`] for each. Signals arrive in bursts for a single
+/// Settings edit, so they are coalesced for 300 ms and snapshotted once, on a
+/// dedicated thread — never the GTK main thread. Silently no-ops if GOA or the
+/// session bus is unavailable.
+pub fn watch_changes<F: Fn(GoaLiveState) + Send + 'static>(on_change: F) {
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
     let _ = std::thread::Builder::new()
-        .name("goa-watch".into())
+        .name("goa-watch-dispatch".into())
         .spawn(move || {
-            if let Err(e) = watch_loop(&on_change) {
-                tracing::debug!("GOA watch stopped: {e}");
+            while rx.recv().is_ok() {
+                // Swallow the burst, then snapshot once it goes quiet.
+                while rx.recv_timeout(std::time::Duration::from_millis(300)).is_ok() {}
+                if let Some(state) = live_state() {
+                    on_change(state);
+                }
+            }
+        });
+
+    let removed_tx = tx.clone();
+    let _ = std::thread::Builder::new()
+        .name("goa-removed-watch".into())
+        .spawn(move || {
+            if let Err(e) = watch_removed_signals(&removed_tx) {
+                tracing::debug!("GOA removal watch stopped: {e}");
+            }
+        });
+    let _ = std::thread::Builder::new()
+        .name("goa-properties-watch".into())
+        .spawn(move || {
+            if let Err(e) = watch_property_signals(&tx) {
+                tracing::debug!("GOA properties watch stopped: {e}");
             }
         });
 }
 
-fn watch_loop<F: Fn()>(on_change: &F) -> Result<(), Box<dyn std::error::Error>> {
+fn watch_removed_signals(
+    tx: &std::sync::mpsc::Sender<()>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let conn = zbus::blocking::Connection::session()?;
     let om = zbus::blocking::fdo::ObjectManagerProxy::builder(&conn)
         .destination(GOA_DEST)?
@@ -255,7 +296,28 @@ fn watch_loop<F: Fn()>(on_change: &F) -> Result<(), Box<dyn std::error::Error>> 
     // Blocks until GOA emits an InterfacesRemoved signal; ends if the bus closes.
     let mut removed = om.receive_interfaces_removed()?;
     for _ in removed.by_ref() {
-        on_change();
+        let _ = tx.send(());
+    }
+    Ok(())
+}
+
+/// Property edits (MailDisabled among them) don't touch the ObjectManager; they
+/// surface as `PropertiesChanged` on the account objects themselves.
+fn watch_property_signals(
+    tx: &std::sync::mpsc::Sender<()>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let conn = zbus::blocking::Connection::session()?;
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .sender(GOA_DEST)?
+        .interface("org.freedesktop.DBus.Properties")?
+        .member("PropertiesChanged")?
+        .path_namespace("/org/gnome/OnlineAccounts/Accounts")?
+        .build();
+    let signals = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, Some(32))?;
+    for signal in signals {
+        signal?;
+        let _ = tx.send(());
     }
     Ok(())
 }
