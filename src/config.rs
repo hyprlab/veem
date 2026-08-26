@@ -97,6 +97,11 @@ pub struct AccountConfig {
     /// When unset, the email address is shown.
     #[serde(default)]
     pub label: Option<String>,
+    /// Send-as aliases: extra From identities offered in the composer (#34).
+    /// Each entry is "Name <address>" or a bare address; mail still goes out
+    /// through this account's SMTP.
+    #[serde(default)]
+    pub aliases: Vec<String>,
     /// Whether the account is active. Disabled accounts stay configured but don't
     /// connect, sync, or appear in the sidebar.
     #[serde(default = "default_enabled")]

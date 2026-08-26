@@ -4702,6 +4702,7 @@ impl AppModel {
             references: String::new(),
             draft_origin: None,
             outbox_origin: Some(id),
+            reply_addressed_to: String::new(),
         };
         // The Outbox stays the folder on screen: its list is still what's listed,
         // so its toolbar has to stay too. Leaving it would strand the user in a
@@ -4738,26 +4739,68 @@ impl AppModel {
         windowed: bool,
         can_toggle: bool,
     ) -> (u32, ComposeInit) {
-        // Selectable "from" accounts, in display order, with their signatures.
+        // Selectable "from" identities, in display order: each account, then
+        // one entry per send-as alias it defines (#34) — same transport and
+        // signature, a different From on the wire.
         let accounts: Vec<ComposeAccount> = self
             .ordered_emails()
             .iter()
-            .filter_map(|email| {
-                let a = self.accounts.iter().find(|a| &a.email == email)?;
+            .flat_map(|email| {
+                let Some(a) = self.accounts.iter().find(|a| &a.email == email) else {
+                    return Vec::new();
+                };
                 let label = if a.name.trim().is_empty() {
                     a.email.clone()
                 } else {
                     format!("{} <{}>", a.name, a.email)
                 };
-                let signature = self
-                    .config
-                    .get(a.id.saturating_sub(1) as usize)
-                    .and_then(|c| c.signature.clone())
-                    .unwrap_or_default();
-                Some(ComposeAccount { id: a.id, label, signature })
+                let cfg = self.config.get(a.id.saturating_sub(1) as usize);
+                let signature = cfg.and_then(|c| c.signature.clone()).unwrap_or_default();
+                let mut identities = vec![ComposeAccount {
+                    id: a.id,
+                    label,
+                    signature: signature.clone(),
+                    email: a.email.clone(),
+                    alias_from: None,
+                }];
+                for alias in cfg.map(|c| c.aliases.as_slice()).unwrap_or_default() {
+                    let (name, addr) = split_identity(alias);
+                    if addr.is_empty() {
+                        continue;
+                    }
+                    let display = if name.is_empty() {
+                        addr.clone()
+                    } else {
+                        format!("{name} <{addr}>")
+                    };
+                    identities.push(ComposeAccount {
+                        id: a.id,
+                        label: display.clone(),
+                        signature: signature.clone(),
+                        email: addr,
+                        alias_from: Some(display),
+                    });
+                }
+                identities
             })
             .collect();
-        let selected = accounts.iter().position(|c| c.id == account_id).unwrap_or(0);
+        // Default identity: for a reply, whichever of the account's addresses
+        // the original was sent to — mail to an alias is answered as the alias.
+        // Otherwise (and when nothing matches) the account's own address.
+        let hay = prefill.reply_addressed_to.to_lowercase();
+        let selected = (!hay.is_empty())
+            .then(|| {
+                accounts.iter().position(|c| {
+                    c.id == account_id && hay.contains(c.email.to_lowercase().as_str())
+                })
+            })
+            .flatten()
+            .or_else(|| {
+                accounts
+                    .iter()
+                    .position(|c| c.id == account_id && c.alias_from.is_none())
+            })
+            .unwrap_or(0);
 
         // Exclude the user's own addresses from recipient suggestions.
         let own: Vec<String> = self.accounts.iter().map(|a| a.email.clone()).collect();
@@ -6630,6 +6673,17 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
     }
 }
 
+/// "Name <addr>" or a bare address → (name, addr).
+fn split_identity(s: &str) -> (String, String) {
+    match s.split_once('<') {
+        Some((n, rest)) => (
+            n.trim().trim_matches('"').to_string(),
+            rest.trim_end_matches('>').trim().to_string(),
+        ),
+        None => (String::new(), s.trim().to_string()),
+    }
+}
+
 fn reply_prefill(m: &Message) -> ComposePrefill {
     let subject = if m.subject.to_lowercase().starts_with("re:") {
         m.subject.clone()
@@ -6642,6 +6696,9 @@ fn reply_prefill(m: &Message) -> ComposePrefill {
         to: m.from_addr.clone(),
         cc: String::new(),
         subject,
+        // Who the original went to, so a mail addressed to one of the
+        // account's send-as aliases is answered from that alias (#34).
+        reply_addressed_to: format!("{}, {}", m.to, m.cc),
         body_html: quote_block(&attribution, &text),
         // What makes this a reply rather than a new conversation: In-Reply-To
         // names the parent, References carries the chain it belongs to.
@@ -6933,6 +6990,20 @@ fn next_after_vanish(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn identities_split_into_name_and_address() {
+        use super::split_identity;
+        assert_eq!(
+            split_identity("Ann Work <ann@work.example>"),
+            ("Ann Work".into(), "ann@work.example".into())
+        );
+        assert_eq!(split_identity("ann@shop.example"), (String::new(), "ann@shop.example".into()));
+        assert_eq!(
+            split_identity("\"Quoted\" <q@x.example>"),
+            ("Quoted".into(), "q@x.example".into())
+        );
+    }
+
     use super::*;
 
     /// A conversation member as the related-lookup hands it over: what matters

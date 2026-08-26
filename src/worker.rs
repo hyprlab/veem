@@ -178,6 +178,10 @@ pub enum MailRequest {
 pub struct OutgoingMessage {
     /// The account to send from.
     pub from_account_id: u32,
+    /// Send-as alias (#34): the full From for the wire ("Name <alias@host>"),
+    /// or `None` to send as the account itself. The transport (SMTP server,
+    /// credentials) is the account's either way.
+    pub from_alias: Option<String>,
     /// Comma-separated recipient addresses.
     pub to: String,
     pub cc: String,
@@ -2240,7 +2244,15 @@ fn mailbox(name: &str, addr: &str) -> Result<Mailbox, SmtpError> {
 /// Build the RFC 822 email (headers + MIME body) from a composed message. Shared
 /// by SMTP sending and by saving to Drafts (no network).
 fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreMessage, SmtpError> {
-    let from = mailbox(&account.name, &account.email)?;
+    // A send-as alias replaces the From header only; everything else about the
+    // send — server, credentials, the Sent copy — stays the account's (#34).
+    let (from, from_addr) = match msg.from_alias.as_deref() {
+        Some(alias) => match parse_recipients(alias).into_iter().next() {
+            Some((name, addr)) => (mailbox(&name, &addr)?, addr),
+            None => (mailbox(&account.name, &account.email)?, account.email.clone()),
+        },
+        None => (mailbox(&account.name, &account.email)?, account.email.clone()),
+    };
     let mut builder = LettreMessage::builder().from(from);
     for (name, addr) in parse_recipients(&msg.to) {
         builder = builder.to(mailbox(&name, &addr)?);
@@ -2257,7 +2269,7 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
     // here means the copy we keep and the copy that arrives share the same id.
     let mut builder = builder
         .subject(msg.subject.clone())
-        .message_id(Some(new_message_id(&account.email)));
+        .message_id(Some(new_message_id(&from_addr)));
     // Threading headers, re-wrapped in the angle brackets the wire format wants
     // (they are stored stripped). References carries the whole chain so a client
     // can place the reply even if it never saw the immediate parent.
@@ -5409,6 +5421,7 @@ mod tests {
             signature: None,
             signature_html: false,
             label: None,
+            aliases: Vec::new(),
             enabled: true,
             goa_id: None,
             goa_mail_disabled: false,
@@ -5422,6 +5435,7 @@ mod tests {
     fn sample_outgoing() -> OutgoingMessage {
         OutgoingMessage {
             from_account_id: 1,
+            from_alias: None,
             to: String::new(),
             cc: String::new(),
             bcc: String::new(),
@@ -5861,6 +5875,22 @@ mod tests {
         // A missing sender is legal (SMTP's null reverse-path), so it is not a
         // reason to refuse.
         assert!(outbox_envelope(&queued("", &["ada@example.com"])).is_some());
+    }
+
+    #[test]
+    fn an_alias_replaces_from_but_not_the_transport() {
+        let account = sample_account();
+        let mut msg = sample_outgoing();
+        msg.to = "someone@example.com".into();
+        msg.from_alias = Some("Ann Work <ann@work.example>".into());
+        let email = build_email(&account, &msg).expect("builds");
+        let wire = String::from_utf8(email.formatted()).expect("utf8");
+        let from_line = wire.lines().find(|l| l.starts_with("From:")).expect("From header");
+        assert!(from_line.contains("ann@work.example"), "alias address on the wire: {from_line}");
+        assert!(!from_line.contains(&account.email), "account address replaced: {from_line}");
+        // The Message-ID follows the alias's domain, so replies thread back.
+        let id_line = wire.lines().find(|l| l.starts_with("Message-ID:")).expect("id");
+        assert!(id_line.contains("@work.example"), "id in alias domain: {id_line}");
     }
 
     #[test]

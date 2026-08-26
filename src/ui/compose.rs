@@ -66,6 +66,11 @@ pub struct ComposeAccount {
     pub label: String,
     /// Signature text appended to the body when this account is selected.
     pub signature: String,
+    /// The identity's sending address (the account's own, or an alias's).
+    pub email: String,
+    /// Set for a send-as alias (#34): the full From to put on the wire
+    /// ("Name <alias@host>"). `None` sends as the account itself.
+    pub alias_from: Option<String>,
 }
 
 /// Initial field contents (empty for a new message; populated for reply/forward).
@@ -88,6 +93,9 @@ pub struct ComposePrefill {
     pub draft_origin: Option<DraftOrigin>,
     /// When editing a queued Outbox message, the row this replaces.
     pub outbox_origin: Option<u32>,
+    /// For a reply: the original's To+Cc, so the composer can answer from the
+    /// alias the mail was addressed to (#34). Empty otherwise.
+    pub reply_addressed_to: String,
 }
 
 /// Everything the compose pane needs to open.
@@ -148,11 +156,11 @@ pub struct Compose {
 pub enum ComposeInput {
     Send,
     /// The editor's HTML + plain text came back asynchronously — finish sending.
-    SendBody { html: String, text: String, to: String, cc: String, bcc: String, subject: String, from_account_id: u32 },
+    SendBody { html: String, text: String, to: String, cc: String, bcc: String, subject: String, from_account_id: u32, from_alias: Option<String> },
     /// Save the current message to Drafts.
     SaveDraft,
     /// The editor content came back — finish saving the draft.
-    SaveDraftBody { html: String, text: String, to: String, cc: String, bcc: String, subject: String, from_account_id: u32 },
+    SaveDraftBody { html: String, text: String, to: String, cc: String, bcc: String, subject: String, from_account_id: u32, from_alias: Option<String> },
     Cancel,
     /// The user clicked the inline/window toggle button.
     ToggleWindowed,
@@ -707,6 +715,7 @@ impl Component for Compose {
                 let subject = widgets.subject_row.text().to_string();
                 let idx = widgets.from_row.selected() as usize;
                 let from_account_id = self.accounts.get(idx).map(|a| a.id).unwrap_or(1);
+                let from_alias = self.accounts.get(idx).and_then(|a| a.alias_from.clone());
 
                 // Pull the HTML and a plain-text version out of the editor (async),
                 // then finish sending via SendBody.
@@ -720,12 +729,14 @@ impl Component for Compose {
                         bcc: bcc.clone(),
                         subject: subject.clone(),
                         from_account_id,
+                        from_alias: from_alias.clone(),
                     });
                 });
             }
 
-            ComposeInput::SendBody { html, text, to, cc, bcc, subject, from_account_id } => {
-                let out = self.build_outgoing(from_account_id, to, cc, bcc, subject, text, html);
+            ComposeInput::SendBody { html, text, to, cc, bcc, subject, from_account_id, from_alias } => {
+                let out =
+                    self.build_outgoing(from_account_id, from_alias, to, cc, bcc, subject, text, html);
                 let _ = sender.output(ComposeOutput::Send(Box::new(out)));
                 let _ = sender.output(ComposeOutput::Close(self.compose_id));
             }
@@ -738,6 +749,7 @@ impl Component for Compose {
                 let subject = widgets.subject_row.text().to_string();
                 let idx = widgets.from_row.selected() as usize;
                 let from_account_id = self.accounts.get(idx).map(|a| a.id).unwrap_or(1);
+                let from_alias = self.accounts.get(idx).and_then(|a| a.alias_from.clone());
                 let s = sender.clone();
                 self.editor.extract(move |html, text| {
                     s.input(ComposeInput::SaveDraftBody {
@@ -748,12 +760,14 @@ impl Component for Compose {
                         bcc: bcc.clone(),
                         subject: subject.clone(),
                         from_account_id,
+                        from_alias: from_alias.clone(),
                     });
                 });
             }
 
-            ComposeInput::SaveDraftBody { html, text, to, cc, bcc, subject, from_account_id } => {
-                let out = self.build_outgoing(from_account_id, to, cc, bcc, subject, text, html);
+            ComposeInput::SaveDraftBody { html, text, to, cc, bcc, subject, from_account_id, from_alias } => {
+                let out =
+                    self.build_outgoing(from_account_id, from_alias, to, cc, bcc, subject, text, html);
                 let _ = sender.output(ComposeOutput::SaveDraft(Box::new(out)));
                 let _ = sender.output(ComposeOutput::Close(self.compose_id));
             }
@@ -768,6 +782,7 @@ impl Compose {
     fn build_outgoing(
         &self,
         from_account_id: u32,
+        from_alias: Option<String>,
         to: String,
         cc: String,
         bcc: String,
@@ -777,6 +792,7 @@ impl Compose {
     ) -> OutgoingMessage {
         OutgoingMessage {
             from_account_id,
+            from_alias,
             to,
             cc,
             bcc,

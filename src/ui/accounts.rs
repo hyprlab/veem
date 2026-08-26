@@ -466,6 +466,20 @@ impl Component for AccountsWindow {
                                     set_title: "Label (defaults to email address)",
                                 },
 
+                                // Send-as aliases (#34): extra From identities
+                                // the composer offers; mail still leaves through
+                                // this account's SMTP.
+                                #[name = "aliases_row"]
+                                adw::EntryRow {
+                                    set_title: "Send-as aliases (comma-separated)",
+                                    set_tooltip_text: Some(
+                                        "Extra From addresses this account may send as, \
+                                         e.g. Ann <ann@work.org>, ann@shop.org. The \
+                                         composer offers them in its From menu, and \
+                                         replies to an alias answer from it.",
+                                    ),
+                                },
+
                                 adw::ActionRow {
                                     set_title: "Circle color",
                                     #[name = "color_btn"]
@@ -1337,6 +1351,12 @@ fn read_account(widgets: &AccountsWindowWidgets, emoji: Option<String>) -> Accou
                 Some(l)
             }
         },
+        aliases: trimmed(&widgets.aliases_row)
+            .split(',')
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .map(str::to_string)
+            .collect(),
         // Defaults for a new account; preserved from the original when editing.
         enabled: true,
         goa_id: None,
@@ -1384,6 +1404,7 @@ fn fill_editor(widgets: &AccountsWindowWidgets, acc: &AccountConfig) {
     widgets.smtp_separate_row.set_active(acc.smtp_separate);
     widgets.smtp_user_row.set_text(&acc.smtp_username);
     widgets.smtp_pass_row.set_text(&acc.smtp_password);
+    widgets.aliases_row.set_text(&acc.aliases.join(", "));
     // Show the effective label (custom, or the email address).
     widgets
         .label_row
@@ -1463,6 +1484,7 @@ fn clear_editor(widgets: &AccountsWindowWidgets) {
     widgets.smtp_user_row.set_text("");
     widgets.smtp_pass_row.set_text("");
     widgets.label_row.set_text("");
+    widgets.aliases_row.set_text("");
     widgets.oauth_client_id_row.set_text("");
     widgets.oauth_secret_row.set_text("");
     widgets.oauth_auth_url_row.set_text("");

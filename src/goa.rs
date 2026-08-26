@@ -73,6 +73,7 @@ impl GoaMailAccount {
             signature: None,
             signature_html: false,
             label: None,
+            aliases: Vec::new(),
             enabled: true,
             goa_id: Some(self.id.clone()),
             goa_mail_disabled: false,
