@@ -582,6 +582,17 @@ impl Component for AttachmentsGallery {
         // children must be FlowBoxChild and which we clear on every rebuild).
         model.menu.set_parent(&root);
 
+        // Double-clicking the preview opens the document in its external app.
+        let dbl = gtk::GestureClick::new();
+        dbl.set_button(gtk::gdk::BUTTON_PRIMARY);
+        let ds = sender.clone();
+        dbl.connect_pressed(move |_, n, _, _| {
+            if n == 2 {
+                ds.input(GalleryInput::OpenCurrent);
+            }
+        });
+        widgets.preview_picture.add_controller(dbl);
+
         // Arrow keys navigate the lightbox; Escape closes it.
         let key = gtk::EventControllerKey::new();
         let ks = sender.clone();
@@ -1653,12 +1664,16 @@ pub(crate) fn open_bytes(name: &str, data: &[u8], parent: Option<&gtk::Window>) 
         // through the document portal, which exports it where the handler can
         // read it. When even that fails (a broken portal), say so instead of
         // doing nothing — a host-side AppInfo fallback can't work here.
-        let owned = parent.cloned();
         let file = gtk::gio::File::for_path(&path);
+        let staged = path.clone();
         gtk::FileLauncher::new(Some(&file)).launch(parent, gtk::gio::Cancellable::NONE, move |res| {
             if let Err(e) = res {
                 tracing::warn!("portal file launch failed: {e}");
-                launch_failed_dialog(owned.as_ref());
+                // The default-handler launch failed inside the portal. Retry
+                // with the app chooser (`ask: true`): the backend's dialog
+                // launches the chosen app through its own machinery, and
+                // "always open with" sticks in the permission store.
+                portal_open_with_chooser(staged.clone(), e.to_string());
             }
         });
     } else if let Err(e) =
@@ -1669,7 +1684,7 @@ pub(crate) fn open_bytes(name: &str, data: &[u8], parent: Option<&gtk::Window>) 
         gtk::UriLauncher::new(&uri).launch(parent, gtk::gio::Cancellable::NONE, move |res| {
             if let Err(e) = res {
                 tracing::warn!("portal launch also failed: {e}");
-                launch_failed_dialog(owned.as_ref());
+                launch_failed_dialog(owned.as_ref(), &e.to_string());
             }
         });
     }
@@ -1677,15 +1692,51 @@ pub(crate) fn open_bytes(name: &str, data: &[u8], parent: Option<&gtk::Window>) 
 
 /// Both launch roads failed — tell the user what happened and what still
 /// works, rather than leaving a click that does nothing.
-fn launch_failed_dialog(parent: Option<&gtk::Window>) {
+fn launch_failed_dialog(parent: Option<&gtk::Window>, error: &str) {
     let dialog = gtk::AlertDialog::builder()
         .message("The file could not be opened")
-        .detail(
-            "Your desktop's app portal did not launch an application.              Use Download to save the file, then open it from Files.",
-        )
+        // No Flatseal toggle can help here: portal access is not a
+        // permission, and the failure is inside the portal's own launcher.
+        // Offer the steps that actually work.
+        .detail(format!(
+            "The desktop portal reported: {error}\n\n\
+             \u{2022} Download the file, then open it from Files\n\
+             \u{2022} Updating \u{201c}xdg-desktop-portal\u{201d} and logging back in may fix direct opening"
+        ))
         .modal(true)
         .build();
     dialog.show(parent);
+}
+
+/// Ask the portal to open `path` with an app the user picks (`ask: true`).
+/// Runs on its own thread — one blocking D-Bus call; the chooser itself is the
+/// portal backend's dialog, which launches the chosen app through different
+/// machinery than the failed direct launch. Only if even this call fails does
+/// the error dialog appear (back on the main loop), carrying `first_error`
+/// from the direct launch too.
+fn portal_open_with_chooser(path: std::path::PathBuf, first_error: String) {
+    std::thread::spawn(move || {
+        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let file = std::fs::File::open(&path)?;
+            let conn = zbus::blocking::Connection::session()?;
+            let mut options: std::collections::HashMap<&str, zbus::zvariant::Value> =
+                std::collections::HashMap::new();
+            options.insert("ask", zbus::zvariant::Value::from(true));
+            conn.call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.OpenURI"),
+                "OpenFile",
+                &("", zbus::zvariant::Fd::from(&file), options),
+            )?;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            tracing::warn!("chooser open failed too: {e}");
+            let detail = format!("{first_error}; chooser: {e}");
+            gtk::glib::idle_add_once(move || launch_failed_dialog(None, &detail));
+        }
+    });
 }
 
 /// The private directory opened attachments are staged in, created if needed.

@@ -723,6 +723,22 @@ impl AttachmentDrawer {
             }
         };
 
+        // Double-clicking the preview opens the document in its external app.
+        {
+            let images = images.clone();
+            let pos = pos.clone();
+            let w = win.clone();
+            let dbl = gtk::GestureClick::new();
+            dbl.set_button(gtk::gdk::BUTTON_PRIMARY);
+            dbl.connect_pressed(move |_, n, _, _| {
+                if n == 2 {
+                    let (name, data) = &images[pos.get()];
+                    open_bytes(name, data, Some(&w));
+                }
+            });
+            picture.add_controller(dbl);
+        }
+
         {
             let step = step.clone();
             prev.connect_clicked(move |_| step(-1));
