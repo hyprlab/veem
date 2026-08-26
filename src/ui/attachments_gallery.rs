@@ -646,7 +646,7 @@ fn build_cell(
             let holder = thumb_holder.downgrade();
             let name = item.name.clone();
             let data = item.data.clone().unwrap_or_default();
-            spawn_pdf_render(data, move |tex| {
+            spawn_thumbnail_render(&item.name, data, move |tex| {
                 // The cell may be gone by now (search narrowed, list rebuilt);
                 // the render still landed in the cache for the next build.
                 let Some(holder) = holder.upgrade() else { return };
@@ -889,23 +889,24 @@ pub(crate) enum Thumbnail {
     /// A texture is available immediately: a decoded image, or a PDF page
     /// already in the render cache.
     Ready(gdk::Texture),
-    /// A PDF whose page hasn't been rendered yet. Show a spinner and call
-    /// [`spawn_pdf_render`] — rendering a page takes long enough that doing it
-    /// while building cells froze the whole window (the "Force Quit" dialog).
+    /// An image or PDF not decoded/rendered yet. Show a spinner and call
+    /// [`spawn_thumbnail_render`] — decoding on the main thread while cells
+    /// were being built froze the whole window (the "Force Quit" dialog).
     Pending,
-    /// No thumbnail for this type (or the image didn't decode): type icon.
+    /// No thumbnail for this type (or it wouldn't decode): type icon.
     Fallback,
 }
 
 thread_local! {
-    /// Finished PDF renders (successes and failures), keyed by content hash —
-    /// a gallery rebuild or a revisit never renders the same page twice.
-    /// Main-thread only; results land here from `spawn_pdf_render`.
-    static PDF_THUMBS: std::cell::RefCell<std::collections::HashMap<u64, Option<gdk::Texture>>> =
+    /// Finished thumbnail renders — decoded images and PDF pages alike,
+    /// successes and failures, keyed by content hash — so a gallery rebuild or
+    /// a revisit this session never decodes the same attachment twice.
+    /// Main-thread only; results land here from `spawn_thumbnail_render`.
+    static THUMB_CACHE: std::cell::RefCell<std::collections::HashMap<u64, Option<gdk::Texture>>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
-fn pdf_cache_key(data: &[u8]) -> u64 {
+fn thumb_cache_key(data: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     data.len().hash(&mut h);
@@ -913,39 +914,43 @@ fn pdf_cache_key(data: &[u8]) -> u64 {
     h.finish()
 }
 
-/// A grid-cell thumbnail for any attachment type that has one: a decoded image,
-/// or a PDF's first page (from cache, or `Pending` until a worker renders it).
+/// A grid-cell thumbnail for any attachment type that has one — a decoded
+/// image or a PDF's first page — answered from the render cache, or `Pending`
+/// until a worker produces it.
 pub(crate) fn thumbnail_texture(name: &str, data: &[u8]) -> Thumbnail {
-    if is_image_name(name) {
-        match texture_from(data) {
-            Some(tex) => Thumbnail::Ready(tex),
-            None => Thumbnail::Fallback,
-        }
-    } else if name.to_ascii_lowercase().ends_with(".pdf") {
-        match PDF_THUMBS.with(|c| c.borrow().get(&pdf_cache_key(data)).cloned()) {
-            Some(Some(tex)) => Thumbnail::Ready(tex),
-            Some(None) => Thumbnail::Fallback,
-            None => Thumbnail::Pending,
-        }
-    } else {
-        Thumbnail::Fallback
+    if !is_image_name(name) && !name.to_ascii_lowercase().ends_with(".pdf") {
+        return Thumbnail::Fallback;
+    }
+    match THUMB_CACHE.with(|c| c.borrow().get(&thumb_cache_key(data)).cloned()) {
+        Some(Some(tex)) => Thumbnail::Ready(tex),
+        Some(None) => Thumbnail::Fallback,
+        None => Thumbnail::Pending,
     }
 }
 
-/// Render a PDF's first page off the main thread, then hand the result to
-/// `on_done` back on it (and record it in the cache either way). The GTK loop
-/// keeps running — cells show their spinner instead of the window freezing.
-pub(crate) fn spawn_pdf_render(
+/// Decode an image, or render a PDF's first page, off the main thread; hand
+/// the result to `on_done` back on it and record it in the cache either way.
+/// The GTK loop keeps running — cells show their spinner instead of the
+/// window freezing.
+pub(crate) fn spawn_thumbnail_render(
+    name: &str,
     data: Vec<u8>,
     on_done: impl FnOnce(Option<gdk::Texture>) + 'static,
 ) {
-    let key = pdf_cache_key(&data);
+    let key = thumb_cache_key(&data);
+    let image = is_image_name(name);
     glib::spawn_future_local(async move {
-        let tex = gtk::gio::spawn_blocking(move || pdf_thumbnail(&data))
-            .await
-            .ok()
-            .flatten();
-        PDF_THUMBS.with(|c| {
+        let tex = gtk::gio::spawn_blocking(move || {
+            if image {
+                texture_from(&data)
+            } else {
+                pdf_thumbnail(&data)
+            }
+        })
+        .await
+        .ok()
+        .flatten();
+        THUMB_CACHE.with(|c| {
             c.borrow_mut().insert(key, tex.clone());
         });
         on_done(tex);

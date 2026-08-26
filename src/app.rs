@@ -1644,8 +1644,10 @@ impl SimpleComponent for AppModel {
                 self.showing_outbox = false;
                 self.showing_gallery = true;
                 self.gallery_by_account.clear();
-                self.gallery.emit(GalleryInput::SetLoading(true));
+                // Clear first, then flag loading — SetItems resets the loading
+                // flag, so the other order cancels the spinner it just showed.
                 self.gallery.emit(GalleryInput::SetItems(Vec::new()));
+                self.gallery.emit(GalleryInput::SetLoading(true));
                 // Load each account's attachments (across all gallery folders)
                 // from the cache.
                 let ids: Vec<u32> = self.accounts.iter().map(|a| a.id).collect();

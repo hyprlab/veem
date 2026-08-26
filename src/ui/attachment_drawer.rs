@@ -28,8 +28,8 @@ use relm4::prelude::*;
 use crate::config::{self, DrawerState};
 use crate::models::{is_image_name, Attachment};
 use crate::ui::attachments_gallery::{
-    icon_color_class, icon_for, open_bytes, spawn_pdf_render, texture_from, thumbnail_texture,
-    Thumbnail,
+    icon_color_class, icon_for, open_bytes, spawn_thumbnail_render, texture_from,
+    thumbnail_texture, Thumbnail,
 };
 
 /// The drawer's cover-cropped picture for a ready thumbnail texture.
@@ -776,8 +776,8 @@ fn build_cell(
     cell.set_halign(gtk::Align::Center);
 
     // The thumbnail content: a cover-cropped image/PDF-page render, or a
-    // centred type icon. A PDF not yet in the render cache gets a spinner
-    // while a worker renders its page — never a frozen window.
+    // centred type icon. Anything not yet in the render cache gets a spinner
+    // while a worker decodes it — never a frozen window.
     let content: gtk::Widget = match thumbnail_texture(&att.name, &att.data) {
         Thumbnail::Ready(tex) => drawer_picture(&tex),
         Thumbnail::Fallback => drawer_icon(&att.name, thumb),
@@ -788,7 +788,7 @@ fn build_cell(
             holder.append(&crate::ui::attachments_gallery::thumbnail_spinner());
             let weak = holder.downgrade();
             let name = att.name.clone();
-            spawn_pdf_render(att.data.clone(), move |tex| {
+            spawn_thumbnail_render(&att.name, att.data.clone(), move |tex| {
                 let Some(holder) = weak.upgrade() else { return };
                 while let Some(child) = holder.first_child() {
                     holder.remove(&child);
