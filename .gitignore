@@ -19,3 +19,6 @@ cargo-sources.json
 
 # Local Claude Code settings
 .claude/
+
+# Local-build manifest (tools/local-manifest.sh output)
+co.hyprlab.Vireo.local.yml
