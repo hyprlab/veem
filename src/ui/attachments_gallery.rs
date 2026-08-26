@@ -1445,6 +1445,19 @@ pub(crate) fn is_pdf_name(name: &str) -> bool {
     name.to_ascii_lowercase().ends_with(".pdf")
 }
 
+/// The content hash the thumbnail/preview caches key on — for callers that
+/// need to correlate an async render with the item it belongs to.
+pub(crate) fn content_key(data: &[u8]) -> u64 {
+    thumb_cache_key(data)
+}
+
+/// A full-size PDF page already in the preview cache, if any.
+pub(crate) fn cached_pdf_preview(data: &[u8]) -> Option<gdk::Texture> {
+    PDF_PREVIEWS
+        .with(|c| c.borrow().get(&thumb_cache_key(data)).cloned())
+        .flatten()
+}
+
 /// A lightbox-size render of a PDF's first page: handed to `on_done` on the
 /// main thread — at once from the cache, or after a worker renders it.
 /// Failures cache too, so a broken PDF is rendered at most once.

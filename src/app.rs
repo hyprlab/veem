@@ -153,6 +153,15 @@ pub struct AppModel {
     /// Cache of fetched attachments, keyed by (account_id, message_id), so
     /// revisiting a message doesn't re-download them.
     attachment_cache: HashMap<(u32, u32), Vec<Attachment>>,
+    /// The app-wide attachment lightbox (drawer + toolbar previews): the
+    /// previewable items on show, the current index, and its texture. The
+    /// overlay fills the whole window — a separate window meant double chrome.
+    lightbox_items: Vec<Attachment>,
+    lightbox_pos: usize,
+    lightbox_texture: Option<gtk::gdk::Texture>,
+    /// Mirror of "the lightbox is open", readable synchronously by the
+    /// window's key controller (closures only get a sender, not the model).
+    lightbox_open: std::rc::Rc<std::cell::Cell<bool>>,
     /// Popover content box for the attachments button.
     attach_list: gtk::Box,
     /// True when the unified "All Inboxes" view is active (no single folder).
@@ -445,6 +454,19 @@ pub enum AppMsg {
     SetDimRemoteBanner(bool),
     SetShowRemoteBanner(bool),
     SetGravatar(bool),
+    /// Show the full-window attachment lightbox (from the drawer or the
+    /// toolbar popover's Preview) over these previewable items.
+    ShowLightbox { items: Vec<Attachment>, start: usize },
+    LightboxPrev,
+    LightboxNext,
+    LightboxClose,
+    /// Open the shown lightbox item in its default application.
+    LightboxOpenCurrent,
+    /// Save the shown lightbox item via a file chooser.
+    LightboxDownloadCurrent,
+    /// A full-size PDF render finished (content hash) — show it if that item
+    /// is still on screen.
+    LightboxRendered(u64),
     /// The GNOME Contacts photo index changed (EDS sync, or the first load
     /// finished) — refresh the sender circles that are on screen.
     ContactPhotosChanged,
@@ -582,8 +604,29 @@ impl SimpleComponent for AppModel {
                 std::process::exit(0)
             },
 
+            // Escape/arrows drive the lightbox from anywhere (capture phase,
+            // gated on the open flag so normal typing is untouched).
+            add_controller = gtk::EventControllerKey {
+                set_propagation_phase: gtk::PropagationPhase::Capture,
+                connect_key_pressed[sender, open = model.lightbox_open.clone()] => move |_, key, _, _| {
+                    if !open.get() {
+                        return gtk::glib::Propagation::Proceed;
+                    }
+                    match key {
+                        gtk::gdk::Key::Escape => sender.input(AppMsg::LightboxClose),
+                        gtk::gdk::Key::Left => sender.input(AppMsg::LightboxPrev),
+                        gtk::gdk::Key::Right => sender.input(AppMsg::LightboxNext),
+                        _ => return gtk::glib::Propagation::Proceed,
+                    }
+                    gtk::glib::Propagation::Stop
+                },
+            },
+
             #[wrap(Some)]
-            set_content = &gtk::Box {
+            set_content = &gtk::Overlay {
+
+                #[wrap(Some)]
+                set_child = &gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
 
                 append: model.notifications.widget(),
@@ -1025,6 +1068,135 @@ impl SimpleComponent for AppModel {
                     },
                     },
                 },
+                },
+
+                // ======== Full-window attachment lightbox ========
+                // Covers all three panes; shown for images and PDFs coming
+                // from the drawer or the toolbar popover's Preview. Same look
+                // as the gallery's own lightbox (same CSS), no extra window.
+                add_overlay = &gtk::Box {
+                    add_css_class: "gallery-lightbox",
+                    set_orientation: gtk::Orientation::Vertical,
+                    #[watch]
+                    set_visible: !model.lightbox_items.is_empty(),
+
+                    gtk::CenterBox {
+                        add_css_class: "gallery-lightbox-bar",
+                        #[wrap(Some)]
+                        set_start_widget = &gtk::Label {
+                            #[watch]
+                            set_label: model
+                                .lightbox_items
+                                .get(model.lightbox_pos)
+                                .map(|a| a.name.as_str())
+                                .unwrap_or(""),
+                            set_ellipsize: gtk::pango::EllipsizeMode::Middle,
+                            set_halign: gtk::Align::Start,
+                            add_css_class: "gallery-lightbox-title",
+                        },
+                        #[wrap(Some)]
+                        set_end_widget = &gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-window-close-symbolic",
+                            set_tooltip_text: Some("Close"),
+                            add_css_class: "circular",
+                            add_css_class: "flat",
+                            connect_clicked => AppMsg::LightboxClose,
+                        },
+                    },
+
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_vexpand: true,
+                        set_spacing: 8,
+
+                        gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-go-previous-symbolic",
+                            set_tooltip_text: Some("Previous"),
+                            set_valign: gtk::Align::Center,
+                            add_css_class: "circular",
+                            add_css_class: "osd",
+                            #[watch]
+                            set_visible: model.lightbox_items.len() > 1,
+                            connect_clicked => AppMsg::LightboxPrev,
+                        },
+
+                        gtk::Stack {
+                            set_hexpand: true,
+                            set_vexpand: true,
+                            #[watch]
+                            set_visible_child_name: if model.lightbox_texture.is_some() {
+                                "image"
+                            } else {
+                                "rendering"
+                            },
+
+                            add_named[Some("image")] = &gtk::Picture {
+                                set_can_shrink: true,
+                                set_content_fit: gtk::ContentFit::Contain,
+                                #[watch]
+                                set_paintable: model.lightbox_texture.as_ref(),
+                                // Double-click opens externally, like the gallery.
+                                add_controller = gtk::GestureClick {
+                                    set_button: gtk::gdk::BUTTON_PRIMARY,
+                                    connect_pressed[sender] => move |_, n, _, _| {
+                                        if n == 2 {
+                                            sender.input(AppMsg::LightboxOpenCurrent);
+                                        }
+                                    },
+                                },
+                            },
+
+                            add_named[Some("rendering")] = &gtk::Box {
+                                set_halign: gtk::Align::Center,
+                                set_valign: gtk::Align::Center,
+                                gtk::Spinner {
+                                    set_spinning: true,
+                                    set_width_request: 36,
+                                    set_height_request: 36,
+                                },
+                            },
+                        },
+
+                        gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-go-next-symbolic",
+                            set_tooltip_text: Some("Next"),
+                            set_valign: gtk::Align::Center,
+                            add_css_class: "circular",
+                            add_css_class: "osd",
+                            #[watch]
+                            set_visible: model.lightbox_items.len() > 1,
+                            connect_clicked => AppMsg::LightboxNext,
+                        },
+                    },
+
+                    gtk::CenterBox {
+                        add_css_class: "gallery-lightbox-bar",
+                        #[wrap(Some)]
+                        set_start_widget = &gtk::Label {
+                            #[watch]
+                            set_label: &model.lightbox_caption(),
+                            set_halign: gtk::Align::Start,
+                            set_ellipsize: gtk::pango::EllipsizeMode::End,
+                            add_css_class: "dim-label",
+                        },
+                        #[wrap(Some)]
+                        set_end_widget = &gtk::Box {
+                            set_spacing: 6,
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-document-open-symbolic",
+                                set_tooltip_text: Some("Open"),
+                                add_css_class: "flat",
+                                connect_clicked => AppMsg::LightboxOpenCurrent,
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-folder-download-symbolic",
+                                set_tooltip_text: Some("Download…"),
+                                add_css_class: "flat",
+                                connect_clicked => AppMsg::LightboxDownloadCurrent,
+                            },
+                        },
+                    },
+                },
             },
         }
     }
@@ -1131,7 +1303,11 @@ impl SimpleComponent for AppModel {
                 state: config::load_drawer_state(),
                 reader: message_view.widget().clone().upcast(),
             })
-            .detach();
+            .forward(sender.input_sender(), |out| match out {
+                crate::ui::attachment_drawer::DrawerOutput::ShowLightbox { items, start } => {
+                    AppMsg::ShowLightbox { items, start }
+                }
+            });
 
         let gallery =
             AttachmentsGallery::builder()
@@ -1184,6 +1360,10 @@ impl SimpleComponent for AppModel {
             folders_expanded,
             selected: None,
             attachments: Vec::new(),
+            lightbox_items: Vec::new(),
+            lightbox_pos: 0,
+            lightbox_texture: None,
+            lightbox_open: std::rc::Rc::new(std::cell::Cell::new(false)),
             attachments_loading: false,
             attachment_cache: HashMap::new(),
             attach_list: gtk::Box::new(gtk::Orientation::Vertical, 0),
@@ -2558,6 +2738,54 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::ShowLightbox { items, start } => {
+                if !items.is_empty() {
+                    self.lightbox_pos = start.min(items.len() - 1);
+                    self.lightbox_items = items;
+                    self.lightbox_open.set(true);
+                    self.lightbox_refresh(&sender);
+                }
+            }
+            AppMsg::LightboxPrev => self.lightbox_step(-1, &sender),
+            AppMsg::LightboxNext => self.lightbox_step(1, &sender),
+            AppMsg::LightboxClose => {
+                self.lightbox_items.clear();
+                self.lightbox_texture = None;
+                self.lightbox_open.set(false);
+            }
+            AppMsg::LightboxOpenCurrent => {
+                if let Some(att) = self.lightbox_items.get(self.lightbox_pos) {
+                    crate::ui::attachments_gallery::open_bytes(
+                        &att.name,
+                        &att.data,
+                        Some(self.window.upcast_ref()),
+                    );
+                }
+            }
+            AppMsg::LightboxDownloadCurrent => {
+                if let Some(att) = self.lightbox_items.get(self.lightbox_pos).cloned() {
+                    let dialog = gtk::FileDialog::builder()
+                        .initial_name(&att.name)
+                        .title("Save Attachment")
+                        .build();
+                    dialog.save(Some(&self.window), gtk::gio::Cancellable::NONE, move |res| {
+                        if let Ok(file) = res {
+                            if let Some(path) = file.path() {
+                                let _ = std::fs::write(path, &att.data);
+                            }
+                        }
+                    });
+                }
+            }
+            AppMsg::LightboxRendered(key) => {
+                let still_current = self
+                    .lightbox_items
+                    .get(self.lightbox_pos)
+                    .is_some_and(|a| crate::ui::attachments_gallery::content_key(&a.data) == key);
+                if still_current {
+                    self.lightbox_refresh(&sender);
+                }
+            }
             AppMsg::ContactPhotosChanged => {
                 // Both components skip the work when sender circles are off.
                 self.message_list.emit(MessageListInput::ContactPhotosChanged);
@@ -4231,6 +4459,52 @@ impl AppModel {
     /// Push the current attachments into the in-message thumbnail drawer (which
     /// hides itself when the list is empty). Called wherever `self.attachments`
     /// changes so the drawer always mirrors the open message.
+    /// "name · n of m" for the lightbox's bottom bar.
+    fn lightbox_caption(&self) -> String {
+        match self.lightbox_items.get(self.lightbox_pos) {
+            Some(att) => format!(
+                "{} \u{b7} {} of {}",
+                att.name,
+                self.lightbox_pos + 1,
+                self.lightbox_items.len()
+            ),
+            None => String::new(),
+        }
+    }
+
+    fn lightbox_step(&mut self, delta: i32, sender: &ComponentSender<Self>) {
+        let n = self.lightbox_items.len() as i32;
+        if n == 0 {
+            return;
+        }
+        self.lightbox_pos = (((self.lightbox_pos as i32 + delta) % n + n) % n) as usize;
+        self.lightbox_refresh(sender);
+    }
+
+    /// Work out the lightbox texture for the current item: images decode on
+    /// the spot; a PDF's page comes from the shared full-size cache or a
+    /// worker render that circles back via [`AppMsg::LightboxRendered`].
+    fn lightbox_refresh(&mut self, sender: &ComponentSender<Self>) {
+        use crate::ui::attachments_gallery as gallery;
+        self.lightbox_texture = None;
+        let Some(att) = self.lightbox_items.get(self.lightbox_pos) else { return };
+        if crate::models::is_image_name(&att.name) {
+            self.lightbox_texture = gallery::texture_from(&att.data);
+            return;
+        }
+        // Cache hit paints immediately (and, crucially, spawns nothing — a
+        // hit that re-entered via LightboxRendered would loop forever).
+        if let Some(tex) = gallery::cached_pdf_preview(&att.data) {
+            self.lightbox_texture = Some(tex);
+            return;
+        }
+        let key = gallery::content_key(&att.data);
+        let s = sender.clone();
+        gallery::lightbox_pdf_texture(&att.data, move |_| {
+            s.input(AppMsg::LightboxRendered(key));
+        });
+    }
+
     fn sync_attachment_drawer(&self) {
         self.attachment_drawer
             .emit(AttachmentDrawerInput::SetItems(self.attachments.clone()));

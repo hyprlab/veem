@@ -7,10 +7,10 @@
 //! [`thumbnail_texture`], [`icon_for`], [`icon_color_class`], [`open_bytes`]).
 //! Hovering a cell reveals
 //! the same Download/Open quick actions used in the gallery; right-clicking opens
-//! a matching context menu; double-clicking previews images and PDFs in a modal
-//! lightbox (prev/next through the message's previewables, Open/Download in its
-//! bar) and opens any other type in its default app. Single clicks do nothing —
-//! a first click must never steal the second.
+//! a matching context menu; double-clicking previews images and PDFs in the
+//! app's full-window lightbox (via [`DrawerOutput::ShowLightbox`]) and opens
+//! any other type in its default app. Single clicks do nothing — a first click
+//! must never steal the second.
 //!
 //! Sizing: the drawer *owns* a vertical `GtkPaned` whose top pane is the reader
 //! body (passed in via [`DrawerInit`]) and whose bottom pane is the drawer. The
@@ -29,8 +29,8 @@ use relm4::prelude::*;
 use crate::config::{self, DrawerState};
 use crate::models::{is_image_name, Attachment};
 use crate::ui::attachments_gallery::{
-    icon_color_class, icon_for, is_pdf_name, lightbox_pdf_texture, open_bytes,
-    spawn_thumbnail_render, texture_from, thumbnail_texture, Thumbnail,
+    icon_color_class, icon_for, is_pdf_name, open_bytes, spawn_thumbnail_render, texture_from,
+    thumbnail_texture, Thumbnail,
 };
 
 /// Whether an attachment can be shown in the drawer's lightbox: a decodable
@@ -103,6 +103,14 @@ pub struct AttachmentDrawer {
     positioned: Rc<Cell<bool>>,
 }
 
+/// What the drawer asks the app to do.
+#[derive(Debug)]
+pub enum DrawerOutput {
+    /// Show the app's full-window lightbox over these previewable
+    /// attachments, starting at `start`.
+    ShowLightbox { items: Vec<Attachment>, start: usize },
+}
+
 #[derive(Debug)]
 pub enum AttachmentDrawerInput {
     /// Replace the shown attachments (empty hides the drawer).
@@ -135,7 +143,7 @@ pub enum AttachmentDrawerInput {
 impl SimpleComponent for AttachmentDrawer {
     type Init = DrawerInit;
     type Input = AttachmentDrawerInput;
-    type Output = ();
+    type Output = DrawerOutput;
 
     view! {
         #[root]
@@ -405,14 +413,14 @@ impl SimpleComponent for AttachmentDrawer {
                 let Some(orig) = self.display_order.get(i).copied() else { return };
                 let Some(att) = self.items.get(orig) else { return };
                 if previewable(att) {
-                    self.show_lightbox(orig);
+                    self.show_lightbox(orig, &sender);
                 } else {
                     open_bytes(&att.name, &att.data, self.window().as_ref());
                 }
             }
             AttachmentDrawerInput::Preview(orig) => {
                 if self.items.get(orig).is_some_and(previewable) {
-                    self.show_lightbox(orig);
+                    self.show_lightbox(orig, &sender);
                 }
             }
             AttachmentDrawerInput::ContextMenu { index, x, y } => {
@@ -581,19 +589,16 @@ impl AttachmentDrawer {
         self.menu.popup();
     }
 
-    /// Open a modal lightbox stepping through the message's previewable
-    /// attachments: images, and PDFs shown as their rendered first page.
-    fn show_lightbox(&self, start: usize) {
-        let images: Vec<(String, Vec<u8>)> = self
-            .items
-            .iter()
-            .filter(|a| previewable(a))
-            .map(|a| (a.name.clone(), a.data.clone()))
-            .collect();
-        if images.is_empty() {
+    /// Ask the app to show its full-window lightbox over the message's
+    /// previewable attachments (images and PDFs), starting at `start`
+    /// (attachments order). The overlay lives at the window level so it fills
+    /// Vireo itself — a separate preview window meant double chrome.
+    fn show_lightbox(&self, start: usize, sender: &ComponentSender<Self>) {
+        let items: Vec<Attachment> =
+            self.items.iter().filter(|a| previewable(a)).cloned().collect();
+        if items.is_empty() {
             return;
         }
-        // Map the activated item index to its slot among the previewables.
         let start_pos = self
             .items
             .iter()
@@ -601,218 +606,8 @@ impl AttachmentDrawer {
             .filter(|a| previewable(a))
             .count()
             .saturating_sub(1);
-
-        let win = gtk::Window::builder()
-            .modal(true)
-            .default_width(920)
-            .default_height(720)
-            .title(&images[start_pos].0)
-            .build();
-        if let Some(parent) = self.window() {
-            win.set_transient_for(Some(&parent));
-        }
-
-        let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        outer.add_css_class("gallery-lightbox");
-
-        // Top bar: filename + close.
-        let top = gtk::CenterBox::new();
-        top.add_css_class("gallery-lightbox-bar");
-        let title = gtk::Label::new(Some(&images[start_pos].0));
-        title.add_css_class("gallery-lightbox-title");
-        title.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        top.set_center_widget(Some(&title));
-        let close = gtk::Button::from_icon_name("co.hyprlab.Vireo-window-close-symbolic");
-        close.add_css_class("flat");
-        close.add_css_class("circular");
-        close.set_tooltip_text(Some("Close"));
-        let w = win.clone();
-        close.connect_clicked(move |_| w.close());
-        top.set_end_widget(Some(&close));
-        outer.append(&top);
-
-        // Middle: prev · picture · next.
-        let mid = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        mid.set_vexpand(true);
-        let prev = nav_button("co.hyprlab.Vireo-go-previous-symbolic", "Previous");
-        let picture = gtk::Picture::new();
-        picture.set_hexpand(true);
-        picture.set_vexpand(true);
-        picture.set_content_fit(gtk::ContentFit::Contain);
-        let next = nav_button("co.hyprlab.Vireo-go-next-symbolic", "Next");
-        let multi = images.len() > 1;
-        prev.set_visible(multi);
-        next.set_visible(multi);
-        mid.append(&prev);
-        mid.append(&picture);
-        mid.append(&next);
-        outer.append(&mid);
-
-        // Bottom bar: caption + Open / Download.
-        let bottom = gtk::CenterBox::new();
-        bottom.add_css_class("gallery-lightbox-bar");
-        let caption = gtk::Label::new(None);
-        caption.add_css_class("dim-label");
-        bottom.set_center_widget(Some(&caption));
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let open_btn = gtk::Button::from_icon_name("co.hyprlab.Vireo-document-open-symbolic");
-        open_btn.add_css_class("flat");
-        open_btn.set_tooltip_text(Some("Open"));
-        let download_btn = gtk::Button::from_icon_name("co.hyprlab.Vireo-folder-download-symbolic");
-        download_btn.add_css_class("flat");
-        download_btn.set_tooltip_text(Some("Download…"));
-        actions.append(&open_btn);
-        actions.append(&download_btn);
-        bottom.set_end_widget(Some(&actions));
-        outer.append(&bottom);
-
-        win.set_child(Some(&outer));
-
-        // Shared cursor into `images`; render() repaints the picture + labels.
-        let pos = Rc::new(Cell::new(start_pos));
-        let images = Rc::new(images);
-        let render = {
-            let images = images.clone();
-            let pos = pos.clone();
-            let picture = picture.clone();
-            let title = title.clone();
-            let caption = caption.clone();
-            let win = win.clone();
-            move || {
-                let (name, data) = &images[pos.get()];
-                if is_image_name(name) {
-                    if let Some(tex) = texture_from(data) {
-                        picture.set_paintable(Some(&tex));
-                    }
-                } else {
-                    // A PDF renders on a worker; blank (or the previous page)
-                    // gives way the moment its page lands — unless the user
-                    // has already stepped on.
-                    picture.set_paintable(gtk::gdk::Paintable::NONE);
-                    let expect = pos.get();
-                    let pos = pos.clone();
-                    let picture = picture.clone();
-                    lightbox_pdf_texture(data, move |tex| {
-                        if pos.get() == expect {
-                            if let Some(tex) = tex {
-                                picture.set_paintable(Some(&tex));
-                            }
-                        }
-                    });
-                }
-                title.set_text(name);
-                caption.set_text(&format!(
-                    "{} · {} of {}",
-                    name,
-                    pos.get() + 1,
-                    images.len()
-                ));
-                win.set_title(Some(name));
-            }
-        };
-
-        let step = {
-            let images = images.clone();
-            let pos = pos.clone();
-            let render = render.clone();
-            move |delta: i32| {
-                let n = images.len() as i32;
-                let cur = pos.get() as i32;
-                pos.set((((cur + delta) % n + n) % n) as usize);
-                render();
-            }
-        };
-
-        // Double-clicking the preview opens the document in its external app.
-        {
-            let images = images.clone();
-            let pos = pos.clone();
-            let w = win.clone();
-            let dbl = gtk::GestureClick::new();
-            dbl.set_button(gtk::gdk::BUTTON_PRIMARY);
-            dbl.connect_pressed(move |_, n, _, _| {
-                if n == 2 {
-                    let (name, data) = &images[pos.get()];
-                    open_bytes(name, data, Some(&w));
-                }
-            });
-            picture.add_controller(dbl);
-        }
-
-        {
-            let step = step.clone();
-            prev.connect_clicked(move |_| step(-1));
-        }
-        {
-            let step = step.clone();
-            next.connect_clicked(move |_| step(1));
-        }
-
-        // Escape closes; ←/→ step (when there's more than one image).
-        let keys = gtk::EventControllerKey::new();
-        let w = win.clone();
-        keys.connect_key_pressed(move |_, key, _, _| {
-            match key {
-                gtk::gdk::Key::Escape => {
-                    w.close();
-                    glib::Propagation::Stop
-                }
-                gtk::gdk::Key::Left => {
-                    step(-1);
-                    glib::Propagation::Stop
-                }
-                gtk::gdk::Key::Right => {
-                    step(1);
-                    glib::Propagation::Stop
-                }
-                _ => glib::Propagation::Proceed,
-            }
-        });
-        win.add_controller(keys);
-
-        {
-            let images = images.clone();
-            let pos = pos.clone();
-            let win = win.clone();
-            open_btn.connect_clicked(move |_| {
-                let (name, data) = &images[pos.get()];
-                open_bytes(name, data, Some(&win));
-            });
-        }
-        {
-            let images = images.clone();
-            let pos = pos.clone();
-            let win = win.clone();
-            download_btn.connect_clicked(move |_| {
-                let (name, data) = &images[pos.get()];
-                let dialog = gtk::FileDialog::builder()
-                    .initial_name(name)
-                    .title("Save Attachment")
-                    .build();
-                let data = data.clone();
-                dialog.save(Some(&win), gtk::gio::Cancellable::NONE, move |res| {
-                    if let Ok(file) = res {
-                        if let Some(path) = file.path() {
-                            let _ = std::fs::write(path, &data);
-                        }
-                    }
-                });
-            });
-        }
-
-        render();
-        win.present();
+        let _ = sender.output(DrawerOutput::ShowLightbox { items, start: start_pos });
     }
-}
-
-/// A circular nav button for the lightbox's prev/next.
-fn nav_button(icon: &str, tip: &str) -> gtk::Button {
-    let b = gtk::Button::from_icon_name(icon);
-    b.add_css_class("circular");
-    b.add_css_class("osd");
-    b.set_valign(gtk::Align::Center);
-    b.set_tooltip_text(Some(tip));
-    b
 }
 
 /// Build one grid cell: a square thumbnail (image/PDF texture or type icon)
