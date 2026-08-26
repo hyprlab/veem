@@ -2757,7 +2757,24 @@ fn imap_uses_starttls(account: &AccountConfig) -> bool {
         && (account.imap_port == 143 || is_loopback_host(&account.imap_host))
 }
 
+/// Hard ceiling on one IMAP connection attempt — TCP, TLS, and authentication
+/// together. A server (or middlebox) that accepts the socket and then stalls
+/// would otherwise hang the worker with no error ever surfacing.
+const IMAP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 async fn connect(account: &AccountConfig) -> Result<ImapSession, Box<dyn std::error::Error>> {
+    match tokio::time::timeout(IMAP_CONNECT_TIMEOUT, connect_inner(account)).await {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "connecting to {} timed out after {} seconds",
+            account.imap_host,
+            IMAP_CONNECT_TIMEOUT.as_secs()
+        )
+        .into()),
+    }
+}
+
+async fn connect_inner(account: &AccountConfig) -> Result<ImapSession, Box<dyn std::error::Error>> {
     let tcp = TcpStream::connect((account.imap_host.as_str(), account.imap_port)).await?;
     let tls = tls_connector(&account.imap_host);
     let client = if imap_uses_starttls(account) {
