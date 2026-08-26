@@ -392,11 +392,12 @@ headerbar.rail-header {
 }
 
 /* An accent-coloured, outlined semi-transparent pill, so the expand/collapse
-   control reads at a glance instead of vanishing into the row. */
+   control reads at a glance instead of vanishing into the row. Its metrics
+   mirror the .thread-count chip beside it, so the pair sit as equals. */
 .thread-toggle {
-  min-width: 26px;
-  min-height: 18px;
-  padding: 0 5px;
+  min-width: 16px;
+  min-height: 0;
+  padding: 1px 5px;
   border-radius: 9999px;
   color: @accent_color;
   background: alpha(@accent_bg_color, 0.12);
@@ -408,7 +409,7 @@ headerbar.rail-header {
 }
 
 .thread-toggle image {
-  -gtk-icon-size: 13px;
+  -gtk-icon-size: 11px;
 }
 
 .message-listbox > row.thread-child .message-row {
