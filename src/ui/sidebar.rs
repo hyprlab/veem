@@ -124,6 +124,11 @@ pub enum SidebarInput {
     /// The "Attachments" row was chosen.
     AttachmentsRowSelected,
     FolderRowSelected { account_id: u32, index: i32 },
+    /// Select a folder row programmatically — the app navigated there itself
+    /// ("Go to Message" from the gallery, a notification click) and the
+    /// highlight must follow. State is set before the row, so the resulting
+    /// row-selected signal hits the already-selected guard and stops.
+    SelectFolderRow { account_id: u32, path: String },
     /// A per-account inbox row under "All Inboxes" was chosen.
     UnifiedInboxRowSelected(i32),
     /// Toggle the "All Inboxes" per-account inbox sub-list.
@@ -423,6 +428,15 @@ impl Component for Sidebar {
                         name: folder.name.clone(),
                         path: folder.path.clone(),
                     });
+                }
+            }
+
+            SidebarInput::SelectFolderRow { account_id, path } => {
+                let key = Sel::Folder(account_id, path.clone());
+                if self.selected != key {
+                    self.selected = key.clone();
+                    self.clear_other_selections(key);
+                    self.select_folder(account_id, &path);
                 }
             }
 

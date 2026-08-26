@@ -28,9 +28,15 @@ use relm4::prelude::*;
 use crate::config::{self, DrawerState};
 use crate::models::{is_image_name, Attachment};
 use crate::ui::attachments_gallery::{
-    icon_color_class, icon_for, open_bytes, spawn_thumbnail_render, texture_from,
-    thumbnail_texture, Thumbnail,
+    icon_color_class, icon_for, is_pdf_name, lightbox_pdf_texture, open_bytes,
+    spawn_thumbnail_render, texture_from, thumbnail_texture, Thumbnail,
 };
+
+/// Whether an attachment can be shown in the drawer's lightbox: a decodable
+/// image, or a PDF (whose first page renders on demand).
+fn previewable(att: &Attachment) -> bool {
+    (is_image_name(&att.name) && texture_from(&att.data).is_some()) || is_pdf_name(&att.name)
+}
 
 /// The drawer's cover-cropped picture for a ready thumbnail texture.
 fn drawer_picture(tex: &gtk::gdk::Texture) -> gtk::Widget {
@@ -388,12 +394,13 @@ impl SimpleComponent for AttachmentDrawer {
                 }
             }
             AttachmentDrawerInput::Activate(i) => {
+                // Single click previews images and PDFs in the lightbox; other
+                // types do nothing here — a double click opens them externally,
+                // so a stray click never launches an app.
                 let Some(orig) = self.display_order.get(i).copied() else { return };
                 let Some(att) = self.items.get(orig) else { return };
-                if is_image_name(&att.name) && texture_from(&att.data).is_some() {
+                if previewable(att) {
                     self.show_lightbox(orig);
-                } else {
-                    open_bytes(&att.name, &att.data, self.window().as_ref());
                 }
             }
             AttachmentDrawerInput::ContextMenu { index, x, y } => {
@@ -562,24 +569,24 @@ impl AttachmentDrawer {
         self.menu.popup();
     }
 
-    /// Open a modal lightbox stepping through the message's image attachments.
+    /// Open a modal lightbox stepping through the message's previewable
+    /// attachments: images, and PDFs shown as their rendered first page.
     fn show_lightbox(&self, start: usize) {
-        // Image attachments only, paired with their bytes; prev/next cycle these.
         let images: Vec<(String, Vec<u8>)> = self
             .items
             .iter()
-            .filter(|a| is_image_name(&a.name) && texture_from(&a.data).is_some())
+            .filter(|a| previewable(a))
             .map(|a| (a.name.clone(), a.data.clone()))
             .collect();
         if images.is_empty() {
             return;
         }
-        // Map the activated item index to its slot among the images.
+        // Map the activated item index to its slot among the previewables.
         let start_pos = self
             .items
             .iter()
             .take(start + 1)
-            .filter(|a| is_image_name(&a.name) && texture_from(&a.data).is_some())
+            .filter(|a| previewable(a))
             .count()
             .saturating_sub(1);
 
@@ -661,8 +668,25 @@ impl AttachmentDrawer {
             let win = win.clone();
             move || {
                 let (name, data) = &images[pos.get()];
-                if let Some(tex) = texture_from(data) {
-                    picture.set_paintable(Some(&tex));
+                if is_image_name(name) {
+                    if let Some(tex) = texture_from(data) {
+                        picture.set_paintable(Some(&tex));
+                    }
+                } else {
+                    // A PDF renders on a worker; blank (or the previous page)
+                    // gives way the moment its page lands — unless the user
+                    // has already stepped on.
+                    picture.set_paintable(gtk::gdk::Paintable::NONE);
+                    let expect = pos.get();
+                    let pos = pos.clone();
+                    let picture = picture.clone();
+                    lightbox_pdf_texture(data, move |tex| {
+                        if pos.get() == expect {
+                            if let Some(tex) = tex {
+                                picture.set_paintable(Some(&tex));
+                            }
+                        }
+                    });
                 }
                 title.set_text(name);
                 caption.set_text(&format!(
@@ -862,8 +886,27 @@ fn build_cell(
         s.input(AttachmentDrawerInput::ContextMenu { index, x, y });
     });
     child.add_controller(right);
+    add_double_click_open(&child, index, sender);
 
     child
+}
+
+/// Double-click (primary) opens the attachment in its default application —
+/// any type, previewable or not.
+fn add_double_click_open(
+    child: &gtk::FlowBoxChild,
+    index: usize,
+    sender: &ComponentSender<AttachmentDrawer>,
+) {
+    let dbl = gtk::GestureClick::new();
+    dbl.set_button(gtk::gdk::BUTTON_PRIMARY);
+    let s = sender.clone();
+    dbl.connect_pressed(move |_, n, _, _| {
+        if n == 2 {
+            s.input(AttachmentDrawerInput::Open(index));
+        }
+    });
+    child.add_controller(dbl);
 }
 
 /// One row of the drawer's list view: type icon, filename, size, and the same
@@ -922,6 +965,7 @@ fn build_list_row(
         s.input(AttachmentDrawerInput::ContextMenu { index, x, y });
     });
     child.add_controller(right);
+    add_double_click_open(&child, index, sender);
 
     child
 }

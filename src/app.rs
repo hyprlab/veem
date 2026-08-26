@@ -4287,6 +4287,14 @@ impl AppModel {
     fn select_folder(&mut self, account_id: u32, folder_id: u32, name: String, path: String) {
         self.showing_gallery = false;
         self.showing_outbox = false;
+        // Mirror the selection in the sidebar. Navigation that starts in the
+        // sidebar hits its already-selected guard; navigation from anywhere
+        // else ("Go to Message", a notification) moves the highlight — which
+        // also lets the Attachments row be clicked again to return.
+        self.sidebar.emit(SidebarInput::SelectFolderRow {
+            account_id,
+            path: path.clone(),
+        });
         self.unified = false;
         self.attachments.clear();
         self.sync_attachment_drawer();

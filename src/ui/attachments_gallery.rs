@@ -820,27 +820,8 @@ impl AttachmentsGallery {
         match PDF_PREVIEWS.with(|c| c.borrow().get(&key).cloned()) {
             Some(texture) => self.preview_texture = texture,
             None => {
-                // Not rendered yet (and `None` is only cached for failures, so
-                // a broken PDF isn't re-rendered on every arrow press).
-                let started = PENDING_PREVIEWS.with(|p| p.borrow_mut().insert(key));
-                if !started {
-                    return;
-                }
-                let data = data.clone();
                 let s = sender.clone();
-                glib::spawn_future_local(async move {
-                    let tex = gtk::gio::spawn_blocking(move || {
-                        pdf_page_texture(&data, PREVIEW_RENDER_WIDTH)
-                    })
-                    .await
-                    .ok()
-                    .flatten();
-                    PDF_PREVIEWS.with(|c| {
-                        c.borrow_mut().insert(key, tex);
-                    });
-                    PENDING_PREVIEWS.with(|p| {
-                        p.borrow_mut().remove(&key);
-                    });
+                lightbox_pdf_texture(data, move |_| {
                     s.input(GalleryInput::PreviewRendered(key));
                 });
             }
@@ -1446,15 +1427,37 @@ thread_local! {
     /// (same key, much bigger pixels). Failures cache too.
     static PDF_PREVIEWS: std::cell::RefCell<std::collections::HashMap<u64, Option<gdk::Texture>>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
-    /// Preview renders in flight, so stepping back and forth doesn't stack
-    /// duplicate renders of the same PDF.
-    static PENDING_PREVIEWS: std::cell::RefCell<std::collections::HashSet<u64>> =
-        std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
 /// Whether a filename names a PDF (by extension).
-fn is_pdf_name(name: &str) -> bool {
+pub(crate) fn is_pdf_name(name: &str) -> bool {
     name.to_ascii_lowercase().ends_with(".pdf")
+}
+
+/// A lightbox-size render of a PDF's first page: handed to `on_done` on the
+/// main thread — at once from the cache, or after a worker renders it.
+/// Failures cache too, so a broken PDF is rendered at most once.
+pub(crate) fn lightbox_pdf_texture(
+    data: &[u8],
+    on_done: impl FnOnce(Option<gdk::Texture>) + 'static,
+) {
+    let key = thumb_cache_key(data);
+    if let Some(cached) = PDF_PREVIEWS.with(|c| c.borrow().get(&key).cloned()) {
+        on_done(cached);
+        return;
+    }
+    let data = data.to_vec();
+    glib::spawn_future_local(async move {
+        let tex =
+            gtk::gio::spawn_blocking(move || pdf_page_texture(&data, PREVIEW_RENDER_WIDTH))
+                .await
+                .ok()
+                .flatten();
+        PDF_PREVIEWS.with(|c| {
+            c.borrow_mut().insert(key, tex.clone());
+        });
+        on_done(tex);
+    });
 }
 
 fn thumb_cache_key(data: &[u8]) -> u64 {
@@ -1636,17 +1639,28 @@ pub(crate) fn open_bytes(name: &str, data: &[u8], parent: Option<&gtk::Window>) 
     }
     drop(file);
     let uri = format!("file://{}", path.to_string_lossy());
-    gtk::UriLauncher::new(&uri).launch(parent, gtk::gio::Cancellable::NONE, move |res| {
-        // Falls back to the non-portal launch path if the portal itself is
-        // unreachable or misbehaving (some sandboxes/containers, or a desktop
-        // with no working `xdg-desktop-portal` backend) rather than leaving
-        // the click looking like it did nothing.
-        if let Err(e) = res {
-            tracing::warn!("portal launch failed, falling back: {e}");
-            let _ =
-                gtk::gio::AppInfo::launch_default_for_uri(&uri, gtk::gio::AppLaunchContext::NONE);
-        }
-    });
+    // Outside Flatpak, GIO launches the default handler directly; the portal
+    // route has been seen accepting an OpenURI request and then launching
+    // nothing — reported success, no app, click looked dead. Inside the
+    // sandbox the portal is the only road out and GIO's launcher is the one
+    // that can't work. So each side leads with the road that works for it
+    // and keeps the other as the fallback.
+    if std::path::Path::new("/.flatpak-info").exists() {
+        gtk::UriLauncher::new(&uri).launch(parent, gtk::gio::Cancellable::NONE, move |res| {
+            if let Err(e) = res {
+                tracing::warn!("portal launch failed, falling back: {e}");
+                let _ = gtk::gio::AppInfo::launch_default_for_uri(
+                    &uri,
+                    gtk::gio::AppLaunchContext::NONE,
+                );
+            }
+        });
+    } else if let Err(e) =
+        gtk::gio::AppInfo::launch_default_for_uri(&uri, gtk::gio::AppLaunchContext::NONE)
+    {
+        tracing::warn!("gio launch failed ({e}), trying the portal");
+        gtk::UriLauncher::new(&uri).launch(parent, gtk::gio::Cancellable::NONE, |_| {});
+    }
 }
 
 /// The private directory opened attachments are staged in, created if needed.
