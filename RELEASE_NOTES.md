@@ -2,7 +2,30 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.15.1
+## What's new in 1.15.2
+
+A community-feedback release — most of it answers a thorough issue series from
+[p-mitana](https://github.com/p-mitana) (thank you!):
+
+- **Conversations read at a glance.** Every card in a thread now leads with a
+  tinted initials avatar, so senders — and your own replies — stand apart.
+  Card headers stay pinned while you scroll a long message, hovering a card
+  highlights its header, and text keeps to a comfortable reading width.
+- **Inline forwarding actually works.** The inline composer now shows its
+  address fields — To is right there, with Cc, Bcc and Subject a click away —
+  no more popping out to a window just to type a recipient.
+- **Sent folders say who you wrote to**, not your own name on every row, and
+  the little circle shows the recipient too.
+- **The message list remembers its width** across restarts.
+- **Attachments polish:** PDFs and photos preview in the message drawer's
+  lightbox on a single click, a double click opens anything in its app (and
+  that works now on systems where the desktop portal quietly did nothing),
+  and "Go to Message" lands you properly in the message's folder.
+- Clearer icons: View Source shows code brackets, sender verification a
+  checkmark seal, and the status bar its bell. The conversation chevron is a
+  neat accent pill, and expanded conversations no longer clip their replies.
+
+## In 1.15.1
 
 Attachment polish, following 1.15.0 on the same day:
 

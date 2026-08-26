@@ -1,5 +1,57 @@
 # Changelog
 
+## 1.15.2 — 2026-08-26
+
+A community-feedback release: most of this answers p-mitana's issue
+series (#22, #25, #27, #28 — #23 was already fixed in 1.13.4) and the
+inline-forward half of #52.
+
+### The reader (#22)
+
+- **Conversation cards lead with an initials avatar**, tinted per sender
+  address (pure escaped markup — no image bytes cross into the sandboxed
+  document), so who wrote each card and which are your own Sent replies reads
+  at a glance.
+- **Card headers stick** to the top while their message scrolls, over an
+  opaque ground; hovering anywhere on a card tints its header.
+- **Reading width caps at 1000px**, centred, for cards and single messages.
+- **View Source** shows angle brackets (new `code-symbolic`) instead of the
+  ghost; the **sender-authentication badge** is a checkmark seal (new
+  `verified-checkmark-symbolic`) instead of the lightbulb.
+
+### The composer (#25, #52)
+
+- **The inline reply/forward pane shows its address fields.** From (with more
+  than one account) and To in every host — an inline forward was literally
+  unaddressable before. Subject shows for new messages and drafts, and waits
+  behind the To row's "More" button for replies/forwards, with Cc and Bcc
+  (Cc surfaces on its own when a reply-all carries it). Focus lands in To
+  when it's empty.
+
+### The message list (#27, #28)
+
+- **Sent-folder rows name their recipients** — "To: <names>", with the circle
+  showing (and face-looking-up) the first recipient instead of the sender.
+- **The pane width survives a restart**: divider drags persist (debounced,
+  one write per drag; clamped 350–4000px) and the window opens with it. The
+  fixed opening width is gone; `state.toml` gains `list_pane_width`.
+
+### Attachments and chrome
+
+- **The drawer previews in-app**: single click shows images *and PDFs* in its
+  lightbox (PDF first pages render on workers into the shared full-size
+  cache); other types ignore single clicks, and double click opens anything
+  externally — grid cells and list rows alike.
+- **Opening externally works outside Flatpak** even where the XDG portal
+  accepts an OpenURI and silently launches nothing: native builds lead with
+  GIO and fall back to the portal; the Flatpak keeps portal-first.
+- **"Go to Message" moves the sidebar highlight** to the message's folder
+  (same for notification opens), so Attachments can be clicked to return.
+- The status bar leads with the bell (matching its toolbar button), the
+  thread chevron is an accent-outlined pill sized to its count chip, and an
+  expanded conversation widens the list floor by the indent so child rows
+  never clip.
+
 ## 1.15.1 — 2026-08-26
 
 ### Attachments
