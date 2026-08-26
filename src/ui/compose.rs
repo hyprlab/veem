@@ -246,10 +246,11 @@ impl Component for Compose {
                     set_spacing: 12,
                     add_css_class: "compose-pane",
 
-                    // The recipient/subject fields are shown only in the windowed
-                    // host; inline, only the reply body is offered (expand to a
-                    // window to edit From/To/Cc/Bcc/Subject). Visibility is set in
-                    // `init` and toggled on SetWindowed.
+                    // From and To are always offered, inline included — a
+                    // forward is unaddressable without To (#25, #52). Cc, Bcc,
+                    // and (for replies/forwards) the prefilled Subject wait
+                    // behind the To row's "More" button; per-row visibility is
+                    // set in `init`.
                     #[name = "fields_list"]
                     gtk::ListBox {
                         add_css_class: "boxed-list",
@@ -370,9 +371,40 @@ impl Component for Compose {
         // "collapse back inline").
         widgets.toggle_btn.set_visible(model.can_toggle);
         set_toggle_icon(&widgets.toggle_btn, model.windowed);
-        // Inline shows only the reply body; the fields appear when windowed.
-        widgets.fields_list.set_visible(model.windowed);
         size_for_host(&root, &widgets.editor_holder, model.windowed);
+
+        // Per-row visibility (#25): To always; Cc/Bcc only when prefilled (a
+        // reply-all carries Cc); Subject stays up for a new message or draft,
+        // where it's the user's to write, and hides behind "More" for replies
+        // and forwards, where it arrived prefilled. `can_toggle` is true for
+        // exactly the reply/forward composers.
+        let cc_shown = !prefill.cc.trim().is_empty();
+        let bcc_shown = !prefill.bcc.trim().is_empty();
+        let subject_shown = !model.can_toggle;
+        widgets.cc_row.set_visible(cc_shown);
+        widgets.bcc_row.set_visible(bcc_shown);
+        widgets.subject_row.set_visible(subject_shown);
+        if !(cc_shown && bcc_shown && subject_shown) {
+            let more = gtk::Button::with_label("More");
+            more.add_css_class("flat");
+            more.set_valign(gtk::Align::Center);
+            more.set_tooltip_text(Some(if subject_shown {
+                "Show Cc and Bcc"
+            } else {
+                "Show Cc, Bcc and Subject"
+            }));
+            let cc = widgets.cc_row.clone();
+            let bcc = widgets.bcc_row.clone();
+            let subject = widgets.subject_row.clone();
+            let btn = more.clone();
+            more.connect_clicked(move |_| {
+                cc.set_visible(true);
+                bcc.set_visible(true);
+                subject.set_visible(true);
+                btn.set_visible(false);
+            });
+            widgets.to_row.add_suffix(&more);
+        }
 
         // Populate the From dropdown.
         let labels: Vec<&str> = model.accounts.iter().map(|a| a.label.as_str()).collect();
@@ -502,7 +534,6 @@ impl Component for Compose {
             ComposeInput::SetWindowed(windowed) => {
                 self.windowed = windowed;
                 set_toggle_icon(&widgets.toggle_btn, windowed);
-                widgets.fields_list.set_visible(windowed);
                 size_for_host(root, &widgets.editor_holder, windowed);
             }
 
