@@ -4169,7 +4169,7 @@ impl AppModel {
                     if let Some(p) = &pop {
                         p.popdown();
                     }
-                    let _ = d.send(AttachmentDrawerInput::Activate(i));
+                    let _ = d.send(AttachmentDrawerInput::Preview(i));
                 });
                 row.append(&preview);
             }
@@ -4195,6 +4195,22 @@ impl AppModel {
                 let _ = d.send(AttachmentDrawerInput::Download(i));
             });
             row.append(&download);
+
+            // Double-clicking the row itself opens the attachment in its
+            // default app, matching the drawer's gesture.
+            let dbl = gtk::GestureClick::new();
+            dbl.set_button(gtk::gdk::BUTTON_PRIMARY);
+            let s = sender.input_sender().clone();
+            let pop = popover.clone();
+            dbl.connect_pressed(move |_, n, _, _| {
+                if n == 2 {
+                    if let Some(p) = &pop {
+                        p.popdown();
+                    }
+                    let _ = s.send(AppMsg::OpenAttachment(i));
+                }
+            });
+            row.add_controller(dbl);
 
             self.attach_list.append(&row);
         }

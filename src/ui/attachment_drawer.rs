@@ -7,9 +7,10 @@
 //! [`thumbnail_texture`], [`icon_for`], [`icon_color_class`], [`open_bytes`]).
 //! Hovering a cell reveals
 //! the same Download/Open quick actions used in the gallery; right-clicking opens
-//! a matching context menu; single-clicking an image opens a modal lightbox
-//! (prev/next through the message's images), and clicking a non-image opens it in
-//! its default app.
+//! a matching context menu; double-clicking previews images and PDFs in a modal
+//! lightbox (prev/next through the message's previewables, Open/Download in its
+//! bar) and opens any other type in its default app. Single clicks do nothing —
+//! a first click must never steal the second.
 //!
 //! Sizing: the drawer *owns* a vertical `GtkPaned` whose top pane is the reader
 //! body (passed in via [`DrawerInit`]) and whose bottom pane is the drawer. The
@@ -118,10 +119,14 @@ pub enum AttachmentDrawerInput {
     ToggleSortOrder,
     /// Open an attachment in its default application.
     Open(usize),
+    /// Double-click on a cell/row (display order): preview images and PDFs in
+    /// the lightbox, open anything else in its default app.
+    DoubleClick(usize),
+    /// Open the lightbox on item `orig` (attachments order) — used by the
+    /// toolbar popover's Preview button.
+    Preview(usize),
     /// Save an attachment to disk (file chooser).
     Download(usize),
-    /// Single-click: lightbox for images, open for anything else.
-    Activate(usize),
     /// Right-click at (x, y) within the cell.
     ContextMenu { index: usize, x: f64, y: f64 },
 }
@@ -294,9 +299,7 @@ impl SimpleComponent for AttachmentDrawer {
                         #[watch]
                         set_max_children_per_line: if model.list_view { 1 } else { 40 },
                         add_css_class: "attachment-drawer-flow",
-                        connect_child_activated[sender] => move |_, child| {
-                            sender.input(AttachmentDrawerInput::Activate(child.index() as usize));
-                        },
+
                     },
                 },
             },
@@ -393,13 +396,22 @@ impl SimpleComponent for AttachmentDrawer {
                     self.save_attachment(&att);
                 }
             }
-            AttachmentDrawerInput::Activate(i) => {
-                // Single click previews images and PDFs in the lightbox; other
-                // types do nothing here — a double click opens them externally,
-                // so a stray click never launches an app.
+            AttachmentDrawerInput::DoubleClick(i) => {
+                // Single clicks do nothing at all (a first click must never
+                // steal the second — a modal lightbox on click one made the
+                // double-click unreachable). Double-click previews images and
+                // PDFs in the lightbox, whose Open button launches the default
+                // app; anything else opens externally at once.
                 let Some(orig) = self.display_order.get(i).copied() else { return };
                 let Some(att) = self.items.get(orig) else { return };
                 if previewable(att) {
+                    self.show_lightbox(orig);
+                } else {
+                    open_bytes(&att.name, &att.data, self.window().as_ref());
+                }
+            }
+            AttachmentDrawerInput::Preview(orig) => {
+                if self.items.get(orig).is_some_and(previewable) {
                     self.show_lightbox(orig);
                 }
             }
@@ -891,8 +903,8 @@ fn build_cell(
     child
 }
 
-/// Double-click (primary) opens the attachment in its default application —
-/// any type, previewable or not.
+/// Double-click (primary): the drawer's activation gesture — previewable
+/// types open the lightbox, everything else its default application.
 fn add_double_click_open(
     child: &gtk::FlowBoxChild,
     index: usize,
@@ -903,7 +915,7 @@ fn add_double_click_open(
     let s = sender.clone();
     dbl.connect_pressed(move |_, n, _, _| {
         if n == 2 {
-            s.input(AttachmentDrawerInput::Open(index));
+            s.input(AttachmentDrawerInput::DoubleClick(index));
         }
     });
     child.add_controller(dbl);

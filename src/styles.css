@@ -398,7 +398,9 @@ headerbar.rail-header {
   min-width: 16px;
   min-height: 0;
   padding: 1px 5px;
-  border-radius: 9999px;
+  /* A concrete radius, not 9999px: GTK renders an oversized radius on a
+     1px-bordered pill with a faint dot at the centre of each rounded end. */
+  border-radius: 10px;
   color: @accent_color;
   background: alpha(@accent_bg_color, 0.12);
   border: 1px solid alpha(@accent_color, 0.45);
