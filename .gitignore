@@ -16,3 +16,6 @@ cargo-sources.json
 
 # Native package build output (tools/build-packages.sh)
 /packaging/out/
+
+# Local Claude Code settings
+.claude/
