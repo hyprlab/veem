@@ -31,6 +31,11 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
         "typedev",
         "Gmail conversations: one message per thread, one fetch for its bodies",
     ),
+    (
+        "Anton Palgunov",
+        "Toxblh",
+        "Online Accounts: custom ports, pausing with the Mail toggle, live change handling",
+    ),
 ];
 
 /// Width of the collapsed, icon-only sidebar rail.
