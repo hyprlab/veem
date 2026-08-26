@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.14.4 — 2026-08-26
+
+### Sender avatars
+
+Adapted from PR #8 by Anton Palgunov (@Toxblh), unified with the sender-logo
+pipeline that had grown on main in the meantime.
+
+- **GNOME Contacts photos as avatars.** A background thread indexes photo
+  locations (not bytes) from Evolution Data Server's local and CardDAV
+  address-book caches, with a stat-fingerprint stability check against
+  half-written SQLite files. Sender circles resolve personal-first: contact
+  photo → Gravatar → domain icon → coloured initials, each tier consulted
+  only while its switch is on — so switching a tier off hides its cached
+  images immediately (this also fixed cached sender logos surviving the
+  "Show sender logos" switch being turned off).
+- **vCard PHOTO parsing** handles Nextcloud `data:` URIs, standard folded
+  `ENCODING=b`, grouped (`item1.PHOTO`) properties, and EDS-materialized
+  `file://` photos. Remote PHOTO URLs are never fetched.
+- **Confinement and decode hardening.** `file://` photos are canonicalized
+  and confined to EDS's own data/cache directories (`confine_to_roots`, with
+  tests for `..` traversal, symlink escape, lookalike sibling directories,
+  unresolvable roots and host-bearing URIs). Only known raster formats reach
+  the decoder — never SVG — and images are size-capped, pixel-capped and
+  downscaled to 160px during decode, off the GTK thread.
+- **Gravatar improvements.** Requests are coalesced per sender with a
+  concurrency cap, timeouts and a 30-second retry backoff; only a definitive
+  404 is cached as a miss. No hash leaves the machine before the local
+  contact index has had a chance to answer, and the hash sent is now SHA-256
+  rather than dictionary-reversible MD5 (the `md5` dependency is gone).
+- **Fresh without flicker.** An EDS/CardDAV sync bumps the index generation
+  and refreshes visible circles without moving the list's scroll position;
+  generation-stamped caching discards stale results rather than masking a
+  newly synchronized photo. The reader correlates avatar results by sender
+  address instead of mailbox-scoped IMAP uid.
+
 ## 1.14.3 — 2026-08-26
 
 ### GNOME Online Accounts

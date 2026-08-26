@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.14.4" date="2026-08-26" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.14.4</url>
+      <description>
+        <p>Sender avatars now show your GNOME Contacts photos, contributed by Anton Palgunov. The circle beside a message resolves personal-first — the contact's own photo, then Gravatar and the sender's site icon when enabled, then coloured initials — reading photos from the local address-book cache with no network request, picking up changes within moments, and hiding a tier's images immediately when it is switched off.</p>
+      </description>
+    </release>
     <release version="1.14.3" date="2026-08-26" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.14.3</url>
       <description>

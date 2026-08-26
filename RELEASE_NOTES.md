@@ -2,7 +2,28 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.14.3
+## What's new in 1.14.4
+
+**Your contacts' photos, beside their mail.** When a sender has a photo in
+GNOME Contacts, that photo now fills the circle next to their messages — in the
+list and in the reader. Contributed by
+[Anton Palgunov](https://github.com/Toxblh) (thank you!) and adapted from his
+pull request:
+
+- **Personal first.** The circle shows the contact's own photo when there is
+  one; only then Gravatar (if you've turned it on), then the sender's site
+  icon (likewise), then the familiar coloured initials.
+- **Private by design.** Photos are read from your address book's local cache —
+  no network request, and nothing a vCard says can make Vireo read files
+  outside it or fetch a remote picture. When Gravatar is consulted at all, it
+  now receives a stronger SHA-256 hash, and never before your local contacts
+  have had the chance to answer first.
+- **Always current.** Add or change a photo in GNOME Contacts and your mail
+  picks it up within moments, without the list jumping.
+- Turning Gravatar or sender logos off now hides their images immediately —
+  including ones already on screen.
+
+## In 1.14.3
 
 Better GNOME Online Accounts integration, contributed by
 [Anton Palgunov](https://github.com/Toxblh) (thank you!) and adapted from his
