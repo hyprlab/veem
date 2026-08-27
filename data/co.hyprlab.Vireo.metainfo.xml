@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.16.0" date="2026-08-27" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.16.0</url>
+      <description>
+        <p>Nested folders render as a collapsible tree with drag-and-drop moving; dark mode adapts every email's colours so text always reads; a new app-wide light/dark/system preference; the sidebar can float over the panes on hover; thread messages show as cards on a rail; GNOME-styled context menus with icons; plus server-robustness hardening.</p>
+      </description>
+    </release>
     <release version="1.15.7" date="2026-08-26" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.15.7</url>
       <description>

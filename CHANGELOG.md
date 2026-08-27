@@ -1,5 +1,91 @@
 # Changelog
 
+## 1.16.0 — 2026-08-27
+
+### Folder tree (issue #51)
+
+- **Custom folders render as a collapsible hierarchy.** Parents get a caret
+  that spins open/closed (CSS `-gtk-icon-transform` transition); descendants
+  hide by row visibility, so selection indices, context menus, and drop
+  targets never shift. Collapsed nodes persist per account+path in
+  `sidebar.toml`. Nested rows carry a full-path tooltip ("Work › 2025 ›
+  Archive"). Expanding/collapsing slides rows via per-row revealers.
+- **Folders move by drag-and-drop.** One IMAP RENAME moves the subtree
+  (RFC 3501 §6.3.5); drop on a folder to nest, on the "Folders" header for
+  top level. Guarded: same account only, never into own subtree, never under
+  special folders, name collisions refused with a notification. The move is
+  **optimistic** — the local list is reshaped exactly as the worker will
+  report it (same sort, same index-assigned ids; unread map, selection, and
+  collapsed nodes re-keyed) so the sidebar updates instantly and the
+  confirming refresh is a recognised no-op.
+- **The sidebar can no longer jump or flash on rebuilds.** Four mechanisms,
+  each real: scroll offset pinned during the layout pass; a freeze-frame
+  snapshot shown over the widget swap; rebuild-created revealers start at
+  duration 0 so content reaches full height in one pass; and the viewport's
+  scroll-to-focus is off (a destroyed focused row made GTK yank the view).
+
+### Server robustness
+
+- **An empty LIST is never trusted** (INBOX always exists): a wedged iCloud
+  session's empty response used to wipe an account's folder list — cached,
+  so it survived restarts. Both list paths and the app now keep what they
+  have.
+- **Interior NUL bytes are scrubbed from message text** at every ingestion
+  point (envelope builders, preview extractor, cache loaders, body
+  delivery). One wild message with a 0x00 aborted glib mid-`set_label`,
+  killing the message list and then the app.
+- **`folder_namespace` means INBOX-rooted only**: it previously took the
+  first nested folder's parent as "the namespace", sending new folders and
+  top-level moves under a random folder on servers like iCloud. Delimiter
+  inference likewise stopped trusting the first dot it saw.
+
+### Dark mode (issues #35, #62)
+
+- **Automatic contrast for mail.** Message documents pass through a colour
+  adaptation engine at render time (never the disk cache): every declared
+  colour — hex/rgb()/named, inline styles, `<style>` blocks with `@media`,
+  legacy `font`/`bgcolor`/`text` attributes — is flipped in HSL when its
+  lightness is wrong for a dark ground. Dark text lightens, light
+  backgrounds become surfaces, dark-designed mail passes untouched,
+  url()/data: payloads are never touched, and CSS comments with semicolons
+  can't split declarations (the Buy Me a Coffee trap).
+- **Reader grounds follow the live theme** (`view_bg_color`, page shaded a
+  step deeper) instead of hard-coded pairs; grounds join the render
+  fingerprint. Trust-badge colours use libadwaita's
+  success/warning/error named colours.
+- **App theme preference**: Follow system / Light / Dark for the chrome
+  itself (AdwStyleManager), separate from the message-content theme.
+
+### Sidebar
+
+- **Hover-expand peek** (preference): hovering the icon rail floats the full
+  sidebar over the panes; it folds 1s after the pointer leaves. Click-open
+  uses the same overlay. Fixed the scrim-dismiss watcher killing every peek
+  mid-open; open/close animate with a deferred show and staged restore; a
+  ghost rail snapshot (cached on pointer-enter) keeps the panes still and
+  the strip painted; at wide widths the arrow pins the sidebar open
+  (persisted). The hamburger and the footer toggle hold their rail
+  positions while floating.
+- The expand/collapse toggle is a standard-size icon button
+  (sidebar-show-symbolic): right-aligned expanded, centred on the rail.
+
+### Message list & reader
+
+- **Thread members are inset pill cards** on a dotted rail with node dots
+  (ringed to mask the rail). Selection dims via `:focus-within` instead of
+  vanishing when the reader takes focus; clicking the reader's empty space
+  no longer unselects the list (falls back to the viewed message).
+- **Context menus share one GNOME-styled builder** (PR #63 by Isaac) with
+  per-entry icons matching the toolbar, a restored "N selected" caption,
+  and the same treatment in the drawer, gallery, and sidebar.
+- **The reader header collapses into an overflow menu** below 560px
+  (AdwBreakpointBin) so the close button can't be pushed off; reader floor
+  drops 480→400px. List floor is a constant 374px (a member card's palette).
+- **The attachments drawer replaces the toolbar attachments menu**, with
+  Save All in its header; the quiet blocked-content banner is the only
+  style — compact, with small pill buttons — and its brightness preference
+  is gone.
+
 ## 1.15.7 — 2026-08-26
 
 - **Panning a zoomed lightbox document is smooth.** The drag gesture lived on

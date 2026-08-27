@@ -2,6 +2,49 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.16.0
+
+A big one: the folder tree, dark mode that always reads, and a sidebar
+that floats.
+
+- **Your folders are a real tree now.** Nested IMAP folders show as a
+  collapsible hierarchy with smoothly spinning carets and sliding rows,
+  full-path tooltips to tell nine "Archive"s apart — and you can **move
+  folders by drag-and-drop**: drop one on another to nest it, or on the
+  "Folders" header to bring it to the top level. Moves apply instantly and
+  sync in the background. (Requested by JeremiahCornelius, issue #51.)
+- **Dark mode emails are always readable.** Vireo now adapts every colour a
+  message declares — dark text lightens, light backgrounds deepen, mail
+  designed dark passes through untouched — so black-on-black text can't
+  happen. The reader's own backgrounds follow your GTK theme instead of
+  fixed colours, and the verified-sender check uses the theme's proper
+  green in both schemes. (Reported by isorropisths, issue #35.)
+- **Pick your look.** New Appearance preference: follow the system, or
+  force the app light or dark — independent of the message-content theme.
+- **The sidebar floats.** In a narrow window (or whenever you keep it
+  collapsed), the icon rail can expand over your mail as a floating panel —
+  on click, or just by hovering with the new "Expand the sidebar on hover"
+  preference — and folds back a moment after the pointer leaves. At full
+  width, the arrow pins it open like before.
+- **Conversations look like conversations.** Expanded thread messages are
+  now inset cards on a dotted rail, the selected message keeps a (dimmed)
+  highlight while you read, and right-click menus across the app share one
+  GNOME-styled design with icons matching the toolbar.
+- **Quieter warnings, tidier chrome.** The blocked-remote-content banner is
+  now always the compact grey style with small pill buttons; the reader
+  toolbar collapses into a ⋯ menu when space runs short instead of pushing
+  the close button off screen; attachments live in the drawer (with Save
+  All) instead of a toolbar menu.
+- Plus hardening: a flaky server response can no longer blank an account's
+  folder list, and a malformed message can no longer take the message list
+  down with it.
+
+With thanks to **yioannides** and **p-mitana**, whose detailed GNOME design
+feedback in issue #62 shaped the thread cards, the banner, the menus, and
+the theme-colour work — and to **Isaac** (thecalamityjoe87) for the shared
+context-menu builder (PR #63), **JeremiahCornelius** for the folder-tree
+request, and **isorropisths** for the dark-mode report.
+
 ## What's new in 1.15.7
 
 - Panning a zoomed attachment preview is smooth now — no more jitter while
