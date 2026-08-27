@@ -1107,15 +1107,14 @@ impl MessageView {
                iframe.vireo-frame{{width:100%;border:0;display:block;background:{bg};}}\
                iframe.vireo-frame.anim{{transition:height 240ms cubic-bezier(0.4,0,0.2,1);}}\
                @media (prefers-reduced-motion:reduce){{iframe.vireo-frame.anim{{transition:none;}}}}\
-               .vireo-msg{{background:{bg};border:1px solid rgba(128,128,128,0.28);\
+               .vireo-msg{{background:{bg};\
                  border-radius:12px;overflow:hidden;margin:0 0 14px;}}\
                .vireo-msg:last-child{{margin-bottom:0;}}\
                .vireo-msg{{user-select:none;}}\
-               .vireo-msg.selected{{border-color:{accent};box-shadow:0 0 0 2px {accent};}}\
+               .vireo-msg.selected{{box-shadow:0 0 0 2px {accent};}}\
                .vireo-msg-hdr{{cursor:pointer;}}\
-               .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;transition:background 120ms ease;border-bottom:1px solid rgba(128,128,128,0.2);\
+               .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;border-bottom:1px solid rgba(128,128,128,0.2);\
                  position:sticky;top:0;z-index:1;background-color:{bg};}}\
-               .vireo-msg:hover .vireo-msg-hdr{{background-image:linear-gradient(rgba(128,128,128,0.16),rgba(128,128,128,0.16));}}\
                .vireo-ava{{width:26px;height:26px;border-radius:50%;flex:none;align-self:center;\
                  display:flex;align-items:center;justify-content:center;color:#fff;\
                  font-size:0.8em;font-weight:700;}}\
@@ -3202,7 +3201,7 @@ mod tests {
         );
         assert!(doc.contains("class=\"vireo-msg selected\" data-key=\"1:2\""), "{doc}");
         assert_eq!(doc.matches("vireo-msg selected").count(), 1, "only the selected one");
-        assert!(doc.contains("border-color:#ff8800"), "outlined in the accent: {doc}");
+        assert!(doc.contains("box-shadow:0 0 0 2px #ff8800"), "outlined in the accent: {doc}");
     }
 
     /// A lone message gets the same card chrome a conversation does — one
