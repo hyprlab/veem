@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.15.6" date="2026-08-26" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.15.6</url>
+      <description>
+        <p>Opening attachments from the Flatpak truly works now — three deep sandbox bugs fixed and verified live. The attachment preview fills the Vireo window itself instead of opening a second window, and a click zooms the document 3x right where you clicked, with drag to pan and Escape to fit.</p>
+      </description>
+    </release>
     <release version="1.15.5" date="2026-08-26" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.15.5</url>
       <description>

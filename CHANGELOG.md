@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.15.6 — 2026-08-26
+
+### The Flatpak really opens attachments now
+
+Three sandboxed-open fixes, found by testing against a real installed
+Flatpak (`flatpak-builder --run` turned out to have no session bus at
+all — nothing portal-shaped can be tested there):
+
+- **Staging moved to `$XDG_RUNTIME_DIR/app/$FLATPAK_ID`.** The document
+  portal validates an exported fd by re-opening its path in the HOST
+  namespace; a file in the sandbox's private /tmp fails that silently,
+  killing every OpenFile before any UI.
+- **The portal protocol is spoken directly** (GIO D-Bus): GTK's
+  FileLauncher mis-finishes its own async task in this runtime — its
+  callback never fires, so successes and failures alike vanished. We now
+  subscribe to the request's Response first (own handle_token, no race),
+  pass the fd, and read the verdict: quiet attempt, then one `ask: true`
+  chooser retry (cancel respected), dialog only on real failure.
+- **Options marshal as `a{sv}`** via `Variant::tuple_from_iter` — a Rust
+  tuple's ToVariant boxed the dict as "(shv)" and the portal rejected
+  every call.
+
+Verified live: chooser → Papers on a machine whose direct portal
+launches are broken.
+
+### The lightbox
+
+- **Fills the Vireo window** instead of opening a second window with its
+  own titlebar — same overlay look as the gallery's, driven by the app
+  (`DrawerOutput::ShowLightbox`), with Escape/arrow keys handled at the
+  window level (capture phase, gated on the lightbox being open).
+- **Click to zoom 3x, anchored at the click** — the clicked content
+  centres in the viewport (a tick callback waits for the resize to lay
+  out before positioning). Click or Escape returns to fitted; Escape
+  from fitted closes; **dragging pans** the zoomed document (a shared
+  movement threshold keeps a pan from also zooming).
+
 ## 1.15.5 — 2026-08-26
 
 ### Opening attachments: a chooser fallback, and the truth on failure
