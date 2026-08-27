@@ -1089,6 +1089,9 @@ impl MessageView {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         dark.hash(&mut h);
+        // A theme change can move the grounds without flipping `dark` (a
+        // different GTK theme variant, say) — the document must follow.
+        self.theme_grounds(dark).hash(&mut h);
         self.remote_allowed.hash(&mut h);
         self.thread.len().hash(&mut h);
         for m in &self.thread {
@@ -1108,6 +1111,9 @@ impl MessageView {
     }
 
     fn document_html(&self, dark: bool) -> String {
+        // Hand the live theme grounds to the (display-free, testable) document
+        // builder without widening its signature — see LIVE_GROUNDS.
+        LIVE_GROUNDS.with(|g| *g.borrow_mut() = Some(self.theme_grounds(dark)));
         Self::conversation_document(
             &self.thread,
             &self.folder_labels,
@@ -1252,17 +1258,18 @@ impl MessageView {
         }
         let scheme = if dark { "dark" } else { "light" };
         // Paint the wrapper and the (still-loading) iframes in the theme colour so
-        // there's no white flash before each message's content renders.
-        let bg = if dark { GROUND.1 } else { GROUND.0 };
+        // there's no white flash before each message's content renders. The live
+        // theme's grounds when the reader set them (issue #62); the stock GNOME
+        // values otherwise (tests).
+        let (bg, deep) = LIVE_GROUNDS.with(|g| g.borrow().clone()).unwrap_or_else(|| {
+            let (g, p) = if dark { (GROUND.1, PAGE.1) } else { (GROUND.0, PAGE.0) };
+            (g.to_string(), p.to_string())
+        });
         // In a conversation each message is a card, which only reads as one
         // against a slightly different ground. A single message keeps the plain
         // full-bleed page — a lone card floating in a margin is just wasted
         // width.
-        let page = match (conversation, dark) {
-            (false, _) => bg,
-            (true, true) => PAGE.1,
-            (true, false) => PAGE.0,
-        };
+        let page = if conversation { deep } else { bg.clone() };
         let body_class = if conversation { " class=\"vireo-conv\"" } else { "" };
         // Defence in depth for the wrapper: the only script allowed to run is the
         // one carrying this render's nonce, which is ours. Anything a message
@@ -1409,19 +1416,44 @@ impl MessageView {
         print_header_html(self.thread.first().or(self.current.as_ref()))
     }
 
+    /// The reader's two grounds for `dark`, resolved from the live libadwaita
+    /// theme instead of hard-coded values (issue #62): GROUND is the theme's
+    /// own view background, and PAGE shades it a step deeper so conversation
+    /// cards keep reading as cards under any theme variant. When the reader is
+    /// forcing a scheme the app isn't currently in, the theme can't answer for
+    /// that mode, so the stock GNOME values stand in.
+    #[allow(deprecated)] // lookup_color: named theme colours have no successor yet
+    fn theme_grounds(&self, dark: bool) -> (String, String) {
+        if dark == adw::StyleManager::default().is_dark() {
+            if let Some(c) = self.webview.style_context().lookup_color("view_bg_color") {
+                let hex = |r: f32, g: f32, b: f32| {
+                    format!(
+                        "#{:02x}{:02x}{:02x}",
+                        (r * 255.0).round() as u8,
+                        (g * 255.0).round() as u8,
+                        (b * 255.0).round() as u8,
+                    )
+                };
+                // The stock pairs' own ratios: #1e1e1e→#141414 and #fff→#f1f1f1.
+                let f = if dark { 0.667 } else { 0.945 };
+                let ground = hex(c.red(), c.green(), c.blue());
+                let page = hex(c.red() * f, c.green() * f, c.blue() * f);
+                return (ground, page);
+            }
+        }
+        let (g, p) = if dark { (GROUND.1, PAGE.1) } else { (GROUND.0, PAGE.0) };
+        (g.to_string(), p.to_string())
+    }
+
     /// Paint the WebView canvas in the theme colour so unstyled bodies (and the
     /// gap before a load) match light/dark mode instead of flashing white.
     fn apply_webview_bg(&self, dark: bool) {
         // Whatever is about to be shown: a conversation's cards sit on the deeper
         // page, a lone message on the plain ground. The cover matches it so the
         // spinner gives way to the document without a change of colour.
-        let ground = match (self.thread.len() > 1, dark) {
-            (true, false) => PAGE.0,
-            (true, true) => PAGE.1,
-            (false, false) => GROUND.0,
-            (false, true) => GROUND.1,
-        };
-        self.webview.set_background_color(&ground_rgba(ground));
+        let (ground, page) = self.theme_grounds(dark);
+        let ground = if self.thread.len() > 1 { page } else { ground };
+        self.webview.set_background_color(&ground_rgba(&ground));
         let bg = ground;
         // The spinner and the cover stand in for the message, so they answer to
         // the message's theme: #1e1e1e matches the document's own dark ground,
@@ -2089,6 +2121,16 @@ fn inject_csp(html: &str, allow_remote: bool, dark: bool) -> String {
 /// handing over to the document changes nothing on screen.
 const GROUND: (&str, &str) = ("#ffffff", "#1e1e1e");
 const PAGE: (&str, &str) = ("#f1f1f1", "#141414");
+
+thread_local! {
+    /// The grounds as resolved from the live libadwaita theme, refreshed by
+    /// `document_html` just before each build (issue #62). The document
+    /// builder is a static fn so tests can exercise it without a display —
+    /// this hands it the theme without widening that signature. `None` (as in
+    /// tests) falls back to the stock GNOME values above.
+    static LIVE_GROUNDS: std::cell::RefCell<Option<(String, String)>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 /// That ground as a colour the WebView itself can be painted with.
 fn ground_rgba(hex: &str) -> gtk::gdk::RGBA {

@@ -767,9 +767,11 @@ headerbar.rail-header {
 
 /* Sender-check badge in the reader toolbar: an icon button like its neighbours,
    tinted by verdict. No padding or radius of its own — it has to line up with
-   Reply/Archive/View Source, so it takes the toolbar's own button metrics. */
+   Reply/Archive/View Source, so it takes the toolbar's own button metrics.
+   libadwaita's named colours, not fixed hex: they shift per colour scheme, so
+   the green (and the others) read correctly in dark mode too (issue #62). */
 .trust-pass {
-  color: #1a7f37;
+  color: @success_color;
 }
 
 .trust-unverified {
@@ -777,11 +779,11 @@ headerbar.rail-header {
 }
 
 .trust-suspicious {
-  color: #b35000;
+  color: @warning_color;
 }
 
 .trust-fail {
-  color: #c01c28;
+  color: @error_color;
 }
 
 .sender-detail {
