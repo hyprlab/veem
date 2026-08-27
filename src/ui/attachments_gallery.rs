@@ -1744,11 +1744,17 @@ fn portal_open_file(path: std::path::PathBuf, ask: bool, parent: Option<gtk::Win
             let code = params.child_value(0).get::<u32>().unwrap_or(2);
             match (code, ask) {
                 (0, _) => {}
+                // The user cancelled — on EITHER attempt. When no default
+                // handler is registered, the backend shows its chooser even
+                // on the quiet attempt, so a cancel can arrive with
+                // ask == false too; treating that as a failure re-asked and
+                // the dialog popped right back up (issue #65). A cancel is
+                // an answer, never a reason to ask again.
+                (1, _) => {}
                 (_, false) => {
                     tracing::warn!("portal open answered {code}; retrying with the chooser");
                     portal_open_file(retry_path.clone(), true, retry_parent.clone());
                 }
-                (1, true) => {} // the user closed the chooser — their call
                 (_, true) => launch_failed_dialog(
                     retry_parent.as_ref(),
                     &format!("the portal answered response code {code}"),
