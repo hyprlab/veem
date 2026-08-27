@@ -344,6 +344,16 @@ fn delete_key(key: &str) {
 // Privacy settings (remote-content allowlist)
 // ---------------------------------------------------------------------------
 
+/// The app's own theme: follow the system, or force light/dark regardless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AppTheme {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 /// How email message content is themed, independent of the app UI theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -461,6 +471,9 @@ struct PrivacyFile {
     /// full sidebar out over the panes without needing the expand button.
     #[serde(default)]
     sidebar_hover_expand: bool,
+    /// The app chrome's theme: follow the system, or force light/dark.
+    #[serde(default)]
+    app_theme: AppTheme,
     /// Lines of message text shown under the subject in the list: 0 turns the
     /// preview off entirely, and stops it being fetched.
     #[serde(default = "default_preview_lines")]
@@ -544,6 +557,7 @@ impl Default for PrivacyFile {
             notification_content: default_notification_content(),
             show_attachments: default_show_attachments(),
             sidebar_hover_expand: false,
+            app_theme: AppTheme::default(),
             preview_lines: default_preview_lines(),
             single_key_shortcuts: false,
             run_in_background: false,
@@ -655,6 +669,10 @@ pub fn load_sidebar_hover_expand() -> bool {
     load_privacy().sidebar_hover_expand
 }
 
+pub fn load_app_theme() -> AppTheme {
+    load_privacy().app_theme
+}
+
 /// Lines of message text shown under the subject in the list; 0 means previews
 /// are off. Clamped in case the file was edited by hand.
 pub fn load_preview_lines() -> u32 {
@@ -703,6 +721,7 @@ pub fn save_privacy(
     autostart: bool,
     show_remote_banner: bool,
     sidebar_hover_expand: bool,
+    app_theme: AppTheme,
 ) {
     let Some(path) = privacy_path() else {
         return;
@@ -734,6 +753,7 @@ pub fn save_privacy(
         autostart,
         show_remote_banner,
         sidebar_hover_expand,
+        app_theme,
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {

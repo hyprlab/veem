@@ -242,6 +242,8 @@ pub struct AppModel {
     rail_snapshot: std::rc::Rc<std::cell::RefCell<Option<gtk::gdk::Paintable>>>,
     /// Preference: hovering the icon rail opens the peek by itself.
     sidebar_hover_expand: bool,
+    /// The app chrome's theme preference (follow system / light / dark).
+    app_theme: config::AppTheme,
     /// Held so the in-flight collapse/expand width animation isn't dropped.
     sidebar_anim: Option<adw::TimedAnimation>,
     current: Option<Message>,
@@ -525,6 +527,8 @@ pub enum AppMsg {
     SetShowAttachments(bool),
     /// Preference: hovering the narrow-window rail floats the sidebar out.
     SetSidebarHoverExpand(bool),
+    /// Preference: the app chrome's theme (follow system / light / dark).
+    SetAppTheme(config::AppTheme),
     /// The cursor entered the sidebar pane — open the hover peek (rail +
     /// preference permitting).
     SidebarHoverEnter,
@@ -1473,6 +1477,7 @@ impl SimpleComponent for AppModel {
             peek_rail_ghost: None,
             rail_snapshot: std::rc::Rc::new(std::cell::RefCell::new(None)),
             sidebar_hover_expand: config::load_sidebar_hover_expand(),
+            app_theme: config::load_app_theme(),
             current: None,
             allowed_senders: config::load_allowed_senders(),
             auto_remote_content: config::load_auto_remote_content(),
@@ -1587,6 +1592,8 @@ impl SimpleComponent for AppModel {
             .emit(MessageViewInput::SetContentTheme(model.message_theme.dark_override()));
         model.arm_auto_fetch(&sender);
 
+        // The app-wide theme choice must be in force before the first frame.
+        apply_app_theme(model.app_theme);
         let widgets = view_output!();
         // Collapse the reader header's actions into the overflow menu when the
         // pane can no longer fit the full row — squeezing it further must never
@@ -2256,6 +2263,14 @@ impl SimpleComponent for AppModel {
             AppMsg::SetSidebarHoverExpand(on) => {
                 if self.sidebar_hover_expand != on {
                     self.sidebar_hover_expand = on;
+                    self.save_settings();
+                }
+            }
+
+            AppMsg::SetAppTheme(theme) => {
+                if self.app_theme != theme {
+                    self.app_theme = theme;
+                    apply_app_theme(theme);
                     self.save_settings();
                 }
             }
@@ -3433,6 +3448,7 @@ impl SimpleComponent for AppModel {
                     notification_content: self.notification_content,
                     show_attachments: self.show_attachments,
                     sidebar_hover_expand: self.sidebar_hover_expand,
+                    app_theme: self.app_theme,
                     preview_lines: self.preview_lines,
                     single_key_shortcuts: self.single_key.get(),
                     run_in_background: self.run_in_background.get(),
@@ -3465,6 +3481,7 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetSidebarHoverExpand(on) => {
                             AppMsg::SetSidebarHoverExpand(on)
                         }
+                        PrefOutput::SetAppTheme(theme) => AppMsg::SetAppTheme(theme),
                         PrefOutput::SetPreviewLines(n) => AppMsg::SetPreviewLines(n),
                         PrefOutput::SetSingleKey(on) => AppMsg::SetSingleKey(on),
                         PrefOutput::SetRunInBackground(on) => AppMsg::SetRunInBackground(on),
@@ -4005,6 +4022,7 @@ impl AppModel {
             self.autostart,
             self.show_remote_banner,
             self.sidebar_hover_expand,
+            self.app_theme,
         );
     }
 
@@ -7251,6 +7269,18 @@ fn save_all_attachments(atts: Vec<Attachment>, parent: Option<adw::ApplicationWi
             }
         }
     });
+}
+
+/// Force (or release) the app-wide colour scheme per the appearance
+/// preference — the whole chrome, not just message content, which has its own
+/// setting.
+fn apply_app_theme(theme: config::AppTheme) {
+    let scheme = match theme {
+        config::AppTheme::System => adw::ColorScheme::Default,
+        config::AppTheme::Light => adw::ColorScheme::ForceLight,
+        config::AppTheme::Dark => adw::ColorScheme::ForceDark,
+    };
+    adw::StyleManager::default().set_color_scheme(scheme);
 }
 
 /// Register the app icon so windows and dialogs can find it by name.

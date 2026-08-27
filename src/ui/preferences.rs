@@ -6,7 +6,7 @@ use adw::prelude::*;
 use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
 
-use crate::config::{ClockStyle, DateStyle, MessageTheme};
+use crate::config::{AppTheme, ClockStyle, DateStyle, MessageTheme};
 
 /// Initial data for the settings window.
 #[derive(Debug)]
@@ -26,6 +26,7 @@ pub struct PrefInit {
     pub threading: bool,
     pub threads_expanded: bool,
     pub message_theme: MessageTheme,
+    pub app_theme: AppTheme,
     pub notifications: bool,
     pub notification_content: bool,
     pub show_attachments: bool,
@@ -35,6 +36,13 @@ pub struct PrefInit {
     pub run_in_background: bool,
     pub autostart: bool,
 }
+
+/// App-chrome appearance options, in combo order.
+const APP_THEMES: &[(&str, AppTheme)] = &[
+    ("Follow system", AppTheme::System),
+    ("Light", AppTheme::Light),
+    ("Dark", AppTheme::Dark),
+];
 
 /// Message-content appearance options, in combo order.
 const MESSAGE_THEMES: &[(&str, MessageTheme)] = &[
@@ -145,6 +153,7 @@ pub enum PrefInput {
     ToggleAutostart(bool),
     ChangePaletteCollapse(u64),
     ChangeMessageTheme(u32),
+    ChangeAppTheme(u32),
 }
 
 #[derive(Debug)]
@@ -168,6 +177,7 @@ pub enum PrefOutput {
     SetNotificationContent(bool),
     SetShowAttachments(bool),
     SetSidebarHoverExpand(bool),
+    SetAppTheme(AppTheme),
     SetPreviewLines(u32),
     SetSingleKey(bool),
     SetRunInBackground(bool),
@@ -345,6 +355,20 @@ impl Component for Preferences {
                             set_subtitle: "Seconds the Actions Palette stays open after the cursor leaves it.",
                             connect_value_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangePaletteCollapse(row.value() as u64));
+                            },
+                        },
+                    },
+
+                    add = &adw::PreferencesGroup {
+                        set_title: "Appearance",
+
+                        #[name = "app_theme_row"]
+                        adw::ComboRow {
+                            set_title: "Style",
+                            set_subtitle: "The app itself. Message content has its own \
+                                           setting under Reading.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeAppTheme(row.selected()));
                             },
                         },
                     },
@@ -630,6 +654,16 @@ impl Component for Preferences {
         );
 
         // Message-content appearance combo.
+        let app_theme_labels: Vec<&str> = APP_THEMES.iter().map(|(l, _)| *l).collect();
+        widgets
+            .app_theme_row
+            .set_model(Some(&gtk::StringList::new(&app_theme_labels)));
+        let app_theme_sel = APP_THEMES
+            .iter()
+            .position(|(_, t)| *t == init.app_theme)
+            .unwrap_or(0);
+        widgets.app_theme_row.set_selected(app_theme_sel as u32);
+
         let theme_labels: Vec<&str> = MESSAGE_THEMES.iter().map(|(l, _)| *l).collect();
         widgets
             .message_theme_row
@@ -717,6 +751,13 @@ impl Component for Preferences {
             }
             PrefInput::ChangePaletteCollapse(secs) => {
                 let _ = sender.output(PrefOutput::SetPaletteCollapse(secs));
+            }
+            PrefInput::ChangeAppTheme(index) => {
+                let theme = APP_THEMES
+                    .get(index as usize)
+                    .map(|(_, t)| *t)
+                    .unwrap_or_default();
+                let _ = sender.output(PrefOutput::SetAppTheme(theme));
             }
             PrefInput::ChangeMessageTheme(index) => {
                 let theme = MESSAGE_THEMES
