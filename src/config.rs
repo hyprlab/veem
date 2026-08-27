@@ -457,8 +457,8 @@ struct PrivacyFile {
     /// account's attachments).
     #[serde(default = "default_show_attachments")]
     show_attachments: bool,
-    /// Narrow-window rail: hovering the rail floats the full sidebar out over
-    /// the panes without needing the expand button.
+    /// Hovering the icon rail (narrow-window or user-collapsed) floats the
+    /// full sidebar out over the panes without needing the expand button.
     #[serde(default)]
     sidebar_hover_expand: bool,
     /// Lines of message text shown under the subject in the list: 0 turns the

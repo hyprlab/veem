@@ -237,7 +237,7 @@ impl Component for Sidebar {
 
                 #[name = "collapse_btn"]
                 gtk::Button {
-                    set_icon_name: "co.hyprlab.Vireo-go-previous-symbolic",
+                    set_icon_name: "co.hyprlab.Vireo-sidebar-show-symbolic",
                     set_tooltip_text: Some("Collapse sidebar"),
                     set_hexpand: true,
                     add_css_class: "flat",
@@ -292,7 +292,6 @@ impl Component for Sidebar {
 
         let widgets = view_output!();
         if init.collapsed {
-            widgets.collapse_btn.set_icon_name("co.hyprlab.Vireo-go-next-symbolic");
             widgets.collapse_btn.set_tooltip_text(Some("Expand sidebar"));
         }
 
@@ -513,11 +512,6 @@ impl Component for Sidebar {
                 // persisted preference.
                 if self.collapsed != collapsed {
                     self.collapsed = collapsed;
-                    widgets.collapse_btn.set_icon_name(if self.collapsed {
-                        "co.hyprlab.Vireo-go-next-symbolic"
-                    } else {
-                        "co.hyprlab.Vireo-go-previous-symbolic"
-                    });
                     widgets.collapse_btn.set_tooltip_text(Some(if self.collapsed {
                         "Expand sidebar"
                     } else {
@@ -530,11 +524,6 @@ impl Component for Sidebar {
 
             SidebarInput::ToggleCollapsed => {
                 self.collapsed = !self.collapsed;
-                widgets.collapse_btn.set_icon_name(if self.collapsed {
-                    "co.hyprlab.Vireo-go-next-symbolic"
-                } else {
-                    "co.hyprlab.Vireo-go-previous-symbolic"
-                });
                 widgets.collapse_btn.set_tooltip_text(Some(if self.collapsed {
                     "Expand sidebar"
                 } else {

@@ -222,7 +222,25 @@ pub struct AppModel {
     /// While narrow: the sidebar is temporarily expanded as an overlay floating
     /// above the panes (so the list and reader keep their widths).
     sidebar_peek: bool,
-    /// Preference: hovering the narrow-window rail opens the peek by itself.
+    /// True while set_sidebar_peek is mutating the split view, so the
+    /// show-sidebar notify (the scrim-dismiss detector) ignores the storm of
+    /// notifies our own transition emits — collapsing the split auto-hides
+    /// the sidebar, which read as an instant dismissal and closed every peek
+    /// the moment it opened.
+    peek_transition: std::rc::Rc<std::cell::Cell<bool>>,
+    /// The pending end-of-close restore (rail + rows return after the slide-
+    /// out animation). Cancelled if the peek reopens mid-flight.
+    peek_close_timer: std::rc::Rc<std::cell::RefCell<Option<gtk::glib::SourceId>>>,
+    /// Snapshot of the rail shown in the content strip while the peek floats,
+    /// so the slide reveals rail icons rather than a blank band.
+    peek_rail_ghost: Option<gtk::Picture>,
+    /// The rail's pixels, captured whenever the pointer enters the sidebar —
+    /// always before a click can land. Snapshotting at open time is too late
+    /// for the expand-button path: the sidebar has already rebuilt its rows
+    /// to the expanded set, which render as nothing until layout runs, and
+    /// the ghost came out blank.
+    rail_snapshot: std::rc::Rc<std::cell::RefCell<Option<gtk::gdk::Paintable>>>,
+    /// Preference: hovering the icon rail opens the peek by itself.
     sidebar_hover_expand: bool,
     /// Held so the in-flight collapse/expand width animation isn't dropped.
     sidebar_anim: Option<adw::TimedAnimation>,
@@ -690,9 +708,25 @@ impl SimpleComponent for AppModel {
                         set_content = model.sidebar.widget(),
                     },
 
+                    // Content wrapper: while the sidebar peek floats, the ghost
+                    // rail Picture (a snapshot of the rail, see set_sidebar_peek)
+                    // sits exactly where the real rail was, so the slide-in/out
+                    // reveals rail icons — never a blank strip.
                     #[wrap(Some)]
+                    set_content = &gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+
+                    #[name = "peek_rail_ghost"]
+                    gtk::Picture {
+                        set_visible: false,
+                        set_width_request: SIDEBAR_RAIL_WIDTH as i32,
+                        set_content_fit: gtk::ContentFit::Cover,
+                        set_valign: gtk::Align::Fill,
+                    },
+
                     #[name = "content_stack"]
-                    set_content = &gtk::Stack {
+                    gtk::Stack {
+                        set_hexpand: true,
                         set_transition_type: gtk::StackTransitionType::Crossfade,
                         // Swap the mail panes for the attachments gallery.
                         #[watch]
@@ -1093,6 +1127,7 @@ impl SimpleComponent for AppModel {
                         },
                     },
                     },
+                    },
                 },
                 },
 
@@ -1433,6 +1468,10 @@ impl SimpleComponent for AppModel {
             auto_rail: false,
             rail_active: icon_only,
             sidebar_peek: false,
+            peek_transition: std::rc::Rc::new(std::cell::Cell::new(false)),
+            peek_close_timer: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            peek_rail_ghost: None,
+            rail_snapshot: std::rc::Rc::new(std::cell::RefCell::new(None)),
             sidebar_hover_expand: config::load_sidebar_hover_expand(),
             current: None,
             allowed_senders: config::load_allowed_senders(),
@@ -1655,8 +1694,12 @@ impl SimpleComponent for AppModel {
         root.add_breakpoint(narrow);
         {
             let s = sender.clone();
+            let guard = model.peek_transition.clone();
             widgets.sidebar_split.connect_show_sidebar_notify(move |split| {
-                if split.is_collapsed() && !split.shows_sidebar() {
+                // Only a *user* dismissal (scrim click / swipe) counts — our
+                // own open/close transitions notify too, and collapsing the
+                // split auto-hides the sidebar mid-open.
+                if !guard.get() && split.is_collapsed() && !split.shows_sidebar() {
                     s.input(AppMsg::SidebarPeekDismissed);
                 }
             });
@@ -1674,7 +1717,20 @@ impl SimpleComponent for AppModel {
             {
                 let s = sender.input_sender().clone();
                 let pending = pending.clone();
+                let snap = model.rail_snapshot.clone();
+                let pane_weak = pane.downgrade();
                 motion.connect_enter(move |_, _, _| {
+                    // Refresh the rail snapshot before anything can change —
+                    // the peek's ghost strip shows these pixels (see
+                    // set_sidebar_peek). While the peek itself is under the
+                    // pointer this captures the expanded panel, but the cache
+                    // is refreshed again on the next rail hover before it is
+                    // ever shown.
+                    if let Some(pane) = pane_weak.upgrade() {
+                        use gtk::gdk::prelude::PaintableExt;
+                        let live = gtk::WidgetPaintable::new(Some(&pane));
+                        *snap.borrow_mut() = Some(live.current_image());
+                    }
                     if let Some(prev) = pending.borrow_mut().take() {
                         prev.remove();
                     }
@@ -1704,6 +1760,7 @@ impl SimpleComponent for AppModel {
             pane.add_controller(motion);
         }
         model.sidebar_split = Some(widgets.sidebar_split.clone());
+        model.peek_rail_ghost = Some(widgets.peek_rail_ghost.clone());
         model.app_title = Some(widgets.app_title.clone());
         model.sidebar_header = Some(widgets.sidebar_header.clone());
         model.sidebar_menu = Some(widgets.sidebar_menu.clone());
@@ -2130,14 +2187,21 @@ impl SimpleComponent for AppModel {
             AppMsg::SidebarCollapsed(collapsed) => {
                 // The sidebar component has already switched its own rows; this
                 // is the app-side reaction (split widths, header, persistence).
-                if self.auto_rail {
+                // At a width that can host the full sidebar, the arrow inside a
+                // floating peek PINS it: the sidebar becomes the normal
+                // side-by-side pane (persisted) and hover-expand goes dormant
+                // until it is collapsed again. In the narrow window the toggle
+                // only opens/closes the overlay — there is no room to pin.
+                if self.sidebar_peek && !self.auto_rail && collapsed {
+                    self.pin_sidebar_from_peek();
+                } else if self.auto_rail || self.sidebar_peek {
                     // Narrow window: expanding is a transient overlay *peek*
                     // floating above the panes — the list and reader keep their
                     // widths — and collapsing just closes it back to the rail.
                     // Neither touches the persisted preference: this is the
                     // window's shape talking, not the user's setting.
                     self.rail_active = collapsed;
-                    self.set_sidebar_peek(!collapsed, false);
+                    self.set_sidebar_peek(!collapsed, false, true);
                 } else {
                     self.sidebar_collapsed = collapsed;
                     self.rail_active = collapsed;
@@ -2154,7 +2218,7 @@ impl SimpleComponent for AppModel {
                     // split view returns to side-by-side. Closing puts the rows
                     // in rail mode, so mark the rail active for the restore
                     // comparison below.
-                    self.set_sidebar_peek(false, true);
+                    self.set_sidebar_peek(false, true, false);
                     self.rail_active = true;
                 }
                 // The rail wins while the window is narrow; the user's own
@@ -2170,20 +2234,22 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::SidebarPeekDismissed => {
-                if self.auto_rail && self.sidebar_peek {
+                if self.sidebar_peek {
                     self.rail_active = true;
-                    self.set_sidebar_peek(false, true);
+                    self.set_sidebar_peek(false, true, true);
                 }
             }
 
             AppMsg::SidebarHoverEnter => {
-                // Hover-expand (preference): the rail floats the full sidebar
-                // out without a click. Only while the narrow-window rail is up
-                // — the same peek the expand button opens, dismissed the same
+                // Hover-expand (preference): the icon rail floats the full
+                // sidebar out without a click — whether the rail comes from
+                // the narrow-window breakpoint or the user's own collapse.
+                // The same peek the expand button opens, dismissed the same
                 // ways (navigation, scrim, or the cursor leaving).
-                if self.sidebar_hover_expand && self.auto_rail && !self.sidebar_peek {
+                let rail_up = self.auto_rail || self.sidebar_collapsed;
+                if self.sidebar_hover_expand && rail_up && !self.sidebar_peek {
                     self.rail_active = false;
-                    self.set_sidebar_peek(true, true);
+                    self.set_sidebar_peek(true, true, true);
                 }
             }
 
@@ -4346,12 +4412,38 @@ impl AppModel {
         result
     }
 
+    /// Pin the floating hover-peek open as the normal side-by-side sidebar:
+    /// the arrow inside the peek, clicked at a width that can host the full
+    /// sidebar, persists the expanded state. The sidebar just railed its rows
+    /// on that click — expand them back, drop the overlay, and save.
+    fn pin_sidebar_from_peek(&mut self) {
+        let Some(split) = self.sidebar_split.clone() else { return };
+        if let Some(timer) = self.peek_close_timer.borrow_mut().take() {
+            timer.remove();
+        }
+        self.sidebar_peek = false;
+        self.sidebar_collapsed = false;
+        self.rail_active = false;
+        self.sidebar.emit(SidebarInput::SetCollapsed(false));
+        self.peek_transition.set(true);
+        split.set_collapsed(false);
+        split.set_show_sidebar(true);
+        self.peek_transition.set(false);
+        if let Some(ghost) = self.peek_rail_ghost.as_ref() {
+            ghost.set_visible(false);
+        }
+        // Side-by-side again: settle at the normal expanded width.
+        self.animate_sidebar(false);
+        self.compact_sidebar_header(false);
+        self.save_sidebar_state();
+    }
+
     /// Close the floating sidebar overlay if it is open — navigation picked in
     /// it is done with it (mirrors how GNOME's own adaptive sidebars behave).
     fn close_sidebar_peek(&mut self) {
-        if self.auto_rail && self.sidebar_peek {
+        if self.sidebar_peek {
             self.rail_active = true;
-            self.set_sidebar_peek(false, true);
+            self.set_sidebar_peek(false, true, true);
         }
     }
 
@@ -4366,33 +4458,121 @@ impl AppModel {
         }
     }
 
+    /// The floating peek's header: expanded, but with the hamburger pinned
+    /// where the rail drew it (see [`set_sidebar_header_peek`]).
+    fn peek_sidebar_header(&self) {
+        if let (Some(header), Some(title), Some(menu)) = (
+            self.sidebar_header.as_ref(),
+            self.app_title.as_ref(),
+            self.sidebar_menu.as_ref(),
+        ) {
+            set_sidebar_header_peek(header, title, menu);
+        }
+    }
+
     /// Open or close the narrow-window sidebar *peek*: the expanded sidebar
     /// floating above the panes as an overlay (the split view's collapsed
     /// mode), so neither the message list nor the reader is resized. `sync_rows`
     /// also switches the sidebar component's rows — the sidebar's own toggle
     /// button has already done that itself, an outside dismissal has not.
-    fn set_sidebar_peek(&mut self, open: bool, sync_rows: bool) {
+    fn set_sidebar_peek(&mut self, open: bool, sync_rows: bool, animate: bool) {
         let Some(split) = self.sidebar_split.clone() else { return };
+        // A reopen or re-close supersedes any pending end-of-close restore.
+        if let Some(timer) = self.peek_close_timer.borrow_mut().take() {
+            timer.remove();
+        }
         self.sidebar_peek = open;
+        // Property notifies fire synchronously inside these setters; the guard
+        // keeps the scrim-dismiss watcher from reading the transition itself
+        // as a dismissal (collapsing auto-hides the sidebar for one notify).
+        self.peek_transition.set(true);
         if open {
+            // Show the rail's frozen pixels in the ghost strip. Collapsing
+            // hands the rail's 80px back to the content, which would shift
+            // the panes left and leave blank space under the sliding panel —
+            // the ghost keeps the panes where they were AND keeps rail icons
+            // visible beneath the animation. The snapshot was cached on
+            // pointer-enter (before the expand click could rebuild the rows);
+            // a live capture is only the fallback.
+            if let Some(ghost) = self.peek_rail_ghost.clone() {
+                use gtk::gdk::prelude::PaintableExt;
+                let img = self.rail_snapshot.borrow().clone().or_else(|| {
+                    split
+                        .sidebar()
+                        .map(|side| gtk::WidgetPaintable::new(Some(&side)).current_image())
+                });
+                ghost.set_paintable(img.as_ref());
+                ghost.set_visible(true);
+            }
             if sync_rows {
                 self.sidebar.emit(SidebarInput::SetCollapsed(false));
             }
-            self.compact_sidebar_header(false);
+            self.peek_sidebar_header();
             split.set_min_sidebar_width(280.0);
             split.set_max_sidebar_width(280.0);
             split.set_collapsed(true);
-            split.set_show_sidebar(true);
-        } else {
-            if sync_rows {
-                self.sidebar.emit(SidebarInput::SetCollapsed(true));
+            if animate {
+                // Show on the next loop iteration, once the hidden collapsed
+                // state has settled — flipping both in one go skips the
+                // slide-in and the panel just pops on.
+                let split = split.clone();
+                let guard = self.peek_transition.clone();
+                gtk::glib::idle_add_local_once(move || {
+                    guard.set(true);
+                    split.set_show_sidebar(true);
+                    guard.set(false);
+                });
+            } else {
+                split.set_show_sidebar(true);
             }
-            self.compact_sidebar_header(true);
-            split.set_min_sidebar_width(SIDEBAR_RAIL_WIDTH);
-            split.set_max_sidebar_width(SIDEBAR_RAIL_WIDTH);
-            split.set_collapsed(false);
-            split.set_show_sidebar(true);
+        } else {
+            // The end-of-close restore: rail widths, rows, and header back in
+            // one go. Runs after the slide-out animation (so nothing inside
+            // the panel jumps mid-flight), or immediately for a resize-driven
+            // close, where the layout is jumping anyway.
+            let restore = {
+                let split = split.clone();
+                let guard = self.peek_transition.clone();
+                let sidebar_sender = self.sidebar.sender().clone();
+                let header = self.sidebar_header.clone();
+                let title = self.app_title.clone();
+                let menu = self.sidebar_menu.clone();
+                let close_timer = self.peek_close_timer.clone();
+                let ghost = self.peek_rail_ghost.clone();
+                move || {
+                    close_timer.borrow_mut().take();
+                    if sync_rows {
+                        let _ = sidebar_sender.send(SidebarInput::SetCollapsed(true));
+                    }
+                    if let (Some(h), Some(t), Some(m)) =
+                        (header.as_ref(), title.as_ref(), menu.as_ref())
+                    {
+                        set_sidebar_header_compact(h, t, m, true);
+                    }
+                    guard.set(true);
+                    split.set_min_sidebar_width(SIDEBAR_RAIL_WIDTH);
+                    split.set_max_sidebar_width(SIDEBAR_RAIL_WIDTH);
+                    split.set_collapsed(false);
+                    split.set_show_sidebar(true);
+                    // The real rail replaces the ghost with identical pixels.
+                    if let Some(g) = ghost.as_ref() {
+                        g.set_visible(false);
+                    }
+                    guard.set(false);
+                }
+            };
+            split.set_show_sidebar(false);
+            if animate {
+                let timer = gtk::glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(320),
+                    restore,
+                );
+                *self.peek_close_timer.borrow_mut() = Some(timer);
+            } else {
+                restore();
+            }
         }
+        self.peek_transition.set(false);
     }
 
     /// Smoothly animate the sidebar rail between its expanded width and the
@@ -7010,21 +7190,20 @@ fn set_sidebar_header_compact(
     menu: &gtk::MenuButton,
     compact: bool,
 ) {
-    // Reparenting the menu button is only valid as a transition: called twice
-    // with the same value, the second `remove` would target a widget that is no
-    // longer a packed child.
-    if header.has_css_class("rail-header") == compact {
-        return;
-    }
     header.set_show_start_title_buttons(!compact);
     header.set_show_end_title_buttons(!compact);
+    // The menu is always in exactly one of three spots — packed end
+    // (expanded), the title slot (rail), or packed start (peek) — and
+    // HeaderBar::remove detaches it from any of them, so transitions are
+    // free to start from whichever state is current.
+    header.remove(menu);
+    menu.set_margin_start(0);
     // In the rail there is no title to show, so the menu button takes the title
     // slot — the only position a header bar centres — instead of hugging the
     // right edge of an 80px strip. Both widgets are held by the model, so the
     // one being displaced survives being unparented here.
     if compact {
         header.add_css_class("rail-header");
-        header.remove(menu);
         header.set_title_widget(Some(menu));
     } else {
         header.remove_css_class("rail-header");
@@ -7032,6 +7211,25 @@ fn set_sidebar_header_compact(
         header.pack_end(menu);
     }
     title.set_visible(!compact);
+}
+
+/// The peek variant of the expanded sidebar header: full-width rows and the
+/// "Vireo" title, but the hamburger stays pinned over the rail's 80px strip
+/// (start side, centred) instead of jumping to the panel's far end — a cursor
+/// heading for it on the rail keeps finding it in the floating panel. Window
+/// controls stay hidden, matching the rail the peek floats out of.
+fn set_sidebar_header_peek(header: &adw::HeaderBar, title: &gtk::Label, menu: &gtk::MenuButton) {
+    header.set_show_start_title_buttons(false);
+    header.set_show_end_title_buttons(false);
+    header.remove(menu);
+    header.remove_css_class("rail-header");
+    header.set_title_widget(Some(title));
+    header.pack_start(menu);
+    // Centre the button over the rail's width, compensating the header's own
+    // start padding, so it sits where the rail drew it.
+    let w = menu.width().max(34);
+    menu.set_margin_start(((SIDEBAR_RAIL_WIDTH as i32 - w) / 2 - 6).max(0));
+    title.set_visible(true);
 }
 
 /// Ask for a folder and write every attachment into it.

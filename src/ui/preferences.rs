@@ -254,9 +254,10 @@ impl Component for Preferences {
                         #[name = "sidebar_hover_expand_row"]
                         adw::SwitchRow {
                             set_title: "Expand the sidebar on hover",
-                            set_subtitle: "In a narrow window, hovering the icon rail floats the \
-                                           full sidebar out over the panes; it folds back a \
-                                           moment after the pointer leaves.",
+                            set_subtitle: "Whenever the sidebar is collapsed to its icon rail, \
+                                           hovering it floats the full sidebar out over the \
+                                           panes; it folds back a moment after the pointer \
+                                           leaves.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleSidebarHoverExpand(row.is_active()));
                             },
