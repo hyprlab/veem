@@ -1014,7 +1014,10 @@ impl Sidebar {
 
                 let revealer = gtk::Revealer::new();
                 revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
-                revealer.set_transition_duration(200);
+                // 0 during the rebuild: an animated reveal grows the content's
+                // height over 200ms, which drags the scroll toward the top
+                // mid-rebuild. Real duration restored one frame later (below).
+                revealer.set_transition_duration(0);
                 revealer.set_reveal_child(self.unified_expanded);
                 revealer.set_child(Some(&sub));
                 container.append(&revealer);
@@ -1252,7 +1255,7 @@ impl Sidebar {
             // Animated folder list.
             let revealer = gtk::Revealer::new();
             revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
-            revealer.set_transition_duration(200);
+            revealer.set_transition_duration(0);
             revealer.set_reveal_child(!section.collapsed);
 
             // Split folders: essential (Inbox/Sent/Trash/Archive/…) are always
@@ -1395,7 +1398,7 @@ impl Sidebar {
                 );
 
                 custom_revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
-                custom_revealer.set_transition_duration(200);
+                custom_revealer.set_transition_duration(0);
                 custom_revealer.set_reveal_child(section.custom_expanded);
                 custom_revealer.set_child(Some(&custom_list));
 
@@ -1476,12 +1479,31 @@ impl Sidebar {
         }
         self.color_provider.load_from_data(&css);
 
+        // The revealers were built with no transition so the rebuilt content
+        // reaches full height in the very first layout pass; hand them their
+        // real animation back once that pass is done, for user toggles.
+        {
+            let revs: Vec<gtk::Revealer> = self
+                .revealers
+                .values()
+                .chain(self.custom_revealers.values())
+                .cloned()
+                .chain(self.unified_revealer.clone())
+                .collect();
+            gtk::glib::idle_add_local_once(move || {
+                for r in &revs {
+                    r.set_transition_duration(200);
+                }
+            });
+        }
+
         // Restore the scroll offset before anything paints: an idle-time
         // restore let one frame render at the top first — a visible flash on
         // every rebuild. The adjustment's `changed` signal fires while the
         // fresh rows are being measured (same layout pass), so pinning the
-        // value there means no frame ever shows the wrong offset; the idle
-        // only finalises and disconnects.
+        // value there means no frame ever shows the wrong offset. The pin
+        // holds through the freeze-frame window — layout can keep settling
+        // for a few frames — then a timer finalises and disconnects.
         if let (Some(pos), Some(scroller)) = (saved_scroll, scroller) {
             if pos > 0.0 {
                 let adj = scroller.vadjustment();
@@ -1493,12 +1515,15 @@ impl Sidebar {
                 }));
                 let adj = scroller.vadjustment();
                 let handler = handler.clone();
-                gtk::glib::idle_add_local_once(move || {
-                    adj.set_value(pos);
-                    if let Some(id) = handler.borrow_mut().take() {
-                        adj.disconnect(id);
-                    }
-                });
+                gtk::glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(120),
+                    move || {
+                        adj.set_value(pos);
+                        if let Some(id) = handler.borrow_mut().take() {
+                            adj.disconnect(id);
+                        }
+                    },
+                );
             }
         }
     }
