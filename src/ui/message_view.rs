@@ -922,9 +922,13 @@ impl MessageView {
         restrict: bool,
         dark: bool,
     ) -> String {
-        // Every message renders as a conversation card — a thread of one uses
-        // the same chrome, so single messages and conversations read alike.
+        // Every message renders with the conversation chrome — a thread of one
+        // gets the same in-document header. But only a real conversation is
+        // *carded*: inset rounded cards on the deeper page. A lone message
+        // goes full-bleed — no gutter, no radius, its ground filling the whole
+        // view — so it reads as a message rather than a card in a margin.
         let conversation = !thread.is_empty();
+        let carded = thread.len() > 1;
         // Card selection only means something between cards: a lone message is
         // already the selection, so it never wears the accent outline.
         let mark_selection = thread.len() > 1;
@@ -1066,9 +1070,10 @@ impl MessageView {
             (g.to_string(), p.to_string())
         });
         // Each message card only reads as a card against a slightly deeper
-        // ground than its own.
-        let page = if conversation { deep } else { bg.clone() };
-        let body_class = if conversation { " class=\"vireo-conv\"" } else { "" };
+        // ground than its own; a full-bleed single message sits on its own
+        // ground, so the whole view is one colour.
+        let page = if carded { deep } else { bg.clone() };
+        let body_class = if carded { " class=\"vireo-conv\"" } else { "" };
         // Defence in depth for the wrapper: the only script allowed to run is the
         // one carrying this render's nonce, which is ours. Anything a message
         // manages to smuggle into this document — an injected `<script>`, an
@@ -1111,6 +1116,7 @@ impl MessageView {
                  border-radius:12px;overflow:hidden;margin:0 0 14px;}}\
                .vireo-msg:last-child{{margin-bottom:0;}}\
                .vireo-msg{{user-select:none;}}\
+               body:not(.vireo-conv) .vireo-msg{{border-radius:0;margin:0;}}\
                .vireo-msg.selected{{box-shadow:0 0 0 2px {accent};}}\
                .vireo-msg-hdr{{cursor:pointer;}}\
                .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;border-bottom:1px solid rgba(128,128,128,0.2);\
@@ -1242,11 +1248,12 @@ impl MessageView {
     /// Paint the WebView canvas in the theme colour so unstyled bodies (and the
     /// gap before a load) match light/dark mode instead of flashing white.
     fn apply_webview_bg(&self, dark: bool) {
-        // Whatever is about to be shown: message cards sit on the deeper page
-        // ground. The cover matches it so the spinner gives way to the document
-        // without a change of colour.
+        // Whatever is about to be shown: a conversation's cards sit on the
+        // deeper page ground, a full-bleed single message on the plain ground.
+        // The cover matches it so the spinner gives way to the document without
+        // a change of colour.
         let (ground, page) = self.theme_grounds(dark);
-        let ground = if self.thread.is_empty() { ground } else { page };
+        let ground = if self.thread.len() > 1 { page } else { ground };
         self.webview.set_background_color(&ground_rgba(&ground));
         let bg = ground;
         // The spinner and the cover stand in for the message, so they answer to
@@ -3204,10 +3211,11 @@ mod tests {
         assert!(doc.contains("box-shadow:0 0 0 2px #ff8800"), "outlined in the accent: {doc}");
     }
 
-    /// A lone message gets the same card chrome a conversation does — one
-    /// standard presentation, whatever the thread's size.
+    /// A lone message gets the same in-document header a conversation card
+    /// does, but goes full-bleed: no card gutter (the vireo-conv padding), and
+    /// no per-card action pills — it reads as a message, not a card.
     #[test]
-    fn a_single_message_is_drawn_as_a_card_too() {
+    fn a_single_message_keeps_the_header_but_goes_full_bleed() {
         let doc = MessageView::conversation_document(
             &[msg_for_print()],
             &std::collections::HashMap::new(),
@@ -3218,10 +3226,12 @@ mod tests {
             true,
             false,
         );
-        assert!(doc.contains("<section class=\"vireo-msg\""), "card chrome: {doc}");
-        assert!(doc.contains("<body class=\"vireo-conv\">"), "conversation padding");
-        // But no per-card action pills: a lone message answers to the toolbar.
+        assert!(doc.contains("<section class=\"vireo-msg\""), "message chrome: {doc}");
+        assert!(doc.contains("class=\"vireo-msg-hdr\""), "in-document header: {doc}");
+        assert!(!doc.contains("<body class=\"vireo-conv\">"), "no card gutter: {doc}");
         assert!(!doc.contains("data-act=\"reply\""), "no card actions: {doc}");
+        // Full-bleed also means the plain ground, not the cards' deeper page.
+        assert!(doc.contains(&format!("background:{}", GROUND.0)), "plain ground: {doc}");
     }
 
     #[test]

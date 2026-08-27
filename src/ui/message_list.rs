@@ -73,6 +73,12 @@ pub type DragKeys = std::rc::Rc<std::cell::RefCell<Vec<(u32, u32, u32, u32)>>>;
 /// dot (8px), three 8px gaps, and the 234px actions-line reservation.
 const LIST_MIN_WIDTH: i32 = 348;
 
+/// What an expanded conversation needs beyond [`LIST_MIN_WIDTH`]: the member
+/// cards' 10px rail indent plus their card margins/padding beyond a plain
+/// pill's. The pane's floor grows by this while any thread is open, so the
+/// cards' (and the head pill's) right inset is never clipped off the pane.
+const THREAD_EXPANDED_EXTRA: i32 = 20;
+
 /// A background face lookup's answer, correlated by sender address (a recycled
 /// row compares before using it). The tiers are personal-first: the contact's
 /// own photo, their Gravatar, then the icon their domain publishes (#30), with
@@ -2477,6 +2483,16 @@ impl MessageList {
         // Republish the row keys before the rows are built, so a drag starting on
         // any of them can map selected row indices back to messages.
         self.publish_drag_keys();
+
+        // Expanded conversations indent their member cards; give the pane the
+        // extra floor that needs while any thread is open, so nothing is
+        // clipped at the right edge (see THREAD_EXPANDED_EXTRA).
+        if let Some(s) = &self.scroller {
+            let any_expanded = metas.iter().any(|meta| meta.is_child);
+            let floor =
+                LIST_MIN_WIDTH + if any_expanded { THREAD_EXPANDED_EXTRA } else { 0 };
+            s.set_size_request(floor, -1);
+        }
 
         {
             let mut guard = self.rows.guard();
