@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.16.2 — 2026-08-27
+
+- **A cancelled attachment chooser stays cancelled (issue #65).** With no
+  default handler registered, the OpenURI backend shows its app chooser even
+  on the quiet (ask=false) attempt; cancelling answered response 1, which
+  the quiet-attempt arm treated as "failed, retry with the chooser" — the
+  dialog popped straight back up. Response 1 is now honoured on either
+  attempt; the genuine-failure retry (response 2, the Fedora 44
+  broken-direct-launch case) is untouched. Verified via a signed local
+  test bundle.
+- **Message list highlights are inset pills.** Hover, unread, thread-unread,
+  and selection (bright and focus-dimmed) all paint on the inner
+  .message-row with the thread cards' rounded inset treatment; padding was
+  trimmed by exactly the new margins so content geometry is unchanged.
+- **Separators float too**: the row hairlines take the same 6px side inset
+  as the pills instead of running wall to wall.
+
 ## 1.16.1 — 2026-08-27
 
 - **Rename folders.** "Rename Folder…" in a custom folder's context menu:

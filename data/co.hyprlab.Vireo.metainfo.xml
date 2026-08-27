@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.16.2" date="2026-08-27" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.16.2</url>
+      <description>
+        <p>Cancelling an attachment's Open With dialog no longer reopens it, and the message list gets rounded inset highlights with floating separators.</p>
+      </description>
+    </release>
     <release version="1.16.1" date="2026-08-27" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.16.1</url>
       <description>
