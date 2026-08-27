@@ -948,17 +948,30 @@ impl MessageView {
                          title=\"Double-click to open in a new window\">\
                          {ava}{dot}<span class=\"vireo-from\">{from}</span>{addr}{folder}{rcpt_toggle}\
                          <span class=\"vireo-date\">{date}</span>\
-                         <span class=\"vireo-acts\">\
-                           <button type=\"button\" class=\"vireo-act\" data-act=\"reply\" \
-                             data-key=\"{aid}:{id}\" title=\"Reply to this message\">Reply</button>\
-                           <button type=\"button\" class=\"vireo-act\" data-act=\"replyall\" \
-                             data-key=\"{aid}:{id}\" title=\"Reply to everyone on this message\">Reply all</button>\
-                           <button type=\"button\" class=\"vireo-act\" data-act=\"forward\" \
-                             data-key=\"{aid}:{id}\" title=\"Forward this message\">Forward</button>\
-                         </span>{rcpt}\
+                         {acts}{rcpt}\
                        </header>{body}{seen_mark}</section>",
                     aid = m.account_id,
                     id = m.id,
+                    // Per-card Reply/Reply all/Forward, only where they earn
+                    // their keep: a real conversation, where the toolbar can't
+                    // say which message it means. A single message answers to
+                    // the toolbar alone — its card carries no action pills.
+                    acts = if thread.len() > 1 {
+                        format!(
+                            "<span class=\"vireo-acts\">\
+                               <button type=\"button\" class=\"vireo-act\" data-act=\"reply\" \
+                                 data-key=\"{aid}:{id}\" title=\"Reply to this message\">Reply</button>\
+                               <button type=\"button\" class=\"vireo-act\" data-act=\"replyall\" \
+                                 data-key=\"{aid}:{id}\" title=\"Reply to everyone on this message\">Reply all</button>\
+                               <button type=\"button\" class=\"vireo-act\" data-act=\"forward\" \
+                                 data-key=\"{aid}:{id}\" title=\"Forward this message\">Forward</button>\
+                             </span>",
+                            aid = m.account_id,
+                            id = m.id,
+                        )
+                    } else {
+                        String::new()
+                    },
                     sel = if mark_selection && selected.contains(&(m.account_id, m.id)) {
                         " selected"
                     } else {
@@ -1099,8 +1112,6 @@ impl MessageView {
                .vireo-msg:last-child{{margin-bottom:0;}}\
                .vireo-msg{{user-select:none;}}\
                .vireo-msg.selected{{border-color:{accent};box-shadow:0 0 0 2px {accent};}}\
-               .vireo-msg.selected .vireo-msg-hdr{{background-image:linear-gradient({accent}26,{accent}26);\
-                 border-bottom-color:{accent}59;}}\
                .vireo-msg-hdr{{cursor:pointer;}}\
                .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;transition:background 120ms ease;border-bottom:1px solid rgba(128,128,128,0.2);\
                  position:sticky;top:0;z-index:1;background-color:{bg};}}\
@@ -3210,7 +3221,8 @@ mod tests {
         );
         assert!(doc.contains("<section class=\"vireo-msg\""), "card chrome: {doc}");
         assert!(doc.contains("<body class=\"vireo-conv\">"), "conversation padding");
-        assert!(doc.contains("data-act=\"reply\""), "card actions present: {doc}");
+        // But no per-card action pills: a lone message answers to the toolbar.
+        assert!(!doc.contains("data-act=\"reply\""), "no card actions: {doc}");
     }
 
     #[test]
