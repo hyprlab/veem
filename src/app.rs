@@ -3545,6 +3545,14 @@ impl SimpleComponent for AppModel {
 
             AppMsg::SetFolders { account_id, folders } => {
                 self.notifications.emit(NotifyInput::ClearConnectivity);
+                // Defence in depth against a wedged session's empty LIST (the
+                // worker filters these too): never trade a real folder list
+                // for nothing.
+                if folders.is_empty()
+                    && self.folders.get(&account_id).is_some_and(|old| !old.is_empty())
+                {
+                    return;
+                }
                 for f in &folders {
                     self.folder_unread.insert((account_id, f.id), f.unread);
                 }
@@ -6046,32 +6054,44 @@ impl AppModel {
                 return c;
             }
         }
-        self.folders
-            .get(&account_id)
-            .and_then(|fs| {
-                fs.iter().find_map(|f| f.path.chars().find(|c| matches!(c, '/' | '.' | '\\')))
-            })
-            .unwrap_or('/')
+        // Prefer '/' over '.' over '\' across the whole list, so one folder
+        // with a dotted display name can't masquerade as the hierarchy
+        // separator on a slash-delimited server.
+        let fs = self.folders.get(&account_id);
+        for d in ['/', '.', '\\'] {
+            if fs.is_some_and(|fs| fs.iter().any(|f| f.path.contains(d))) {
+                return d;
+            }
+        }
+        '/'
     }
 
-    /// The mailbox namespace prefix for an account (e.g. "INBOX." if its folders
-    /// nest under INBOX, otherwise ""), derived from an existing sub-folder.
+    /// The mailbox namespace prefix for an account: "INBOX<delim>" on servers
+    /// that nest everything under INBOX (Dovecot-style), otherwise "". Only
+    /// the INBOX root counts — deriving it from any nested folder's parent
+    /// (as this once did) made "top level" mean "under whichever sub-folder
+    /// happened to be listed first" on servers like iCloud, so new folders
+    /// and header-dropped moves landed inside a random folder.
     fn folder_namespace(&self, account_id: u32) -> String {
-        self.folders
-            .get(&account_id)
-            .map(|folders| {
-                folders
-                    .iter()
-                    .filter(|f| f.kind != FolderKind::Inbox && !f.name.is_empty())
-                    .find_map(|f| {
-                        f.path
-                            .strip_suffix(&f.name)
-                            .filter(|p| !p.is_empty())
-                            .map(|p| p.to_string())
-                    })
-                    .unwrap_or_default()
+        let Some(folders) = self.folders.get(&account_id) else {
+            return String::new();
+        };
+        let delim = folders
+            .iter()
+            .find_map(|f| f.path.chars().find(|c| matches!(c, '/' | '.' | '\\')))
+            .unwrap_or('/');
+        let root = format!("INBOX{delim}");
+        let customs: Vec<&Folder> =
+            folders.iter().filter(|f| f.kind == FolderKind::Custom).collect();
+        if !customs.is_empty()
+            && customs.iter().all(|f| {
+                f.path.len() >= root.len() && f.path[..root.len()].eq_ignore_ascii_case(&root)
             })
-            .unwrap_or_default()
+        {
+            root
+        } else {
+            String::new()
+        }
     }
 
     /// A sensible destination path for a standard folder the account doesn't have

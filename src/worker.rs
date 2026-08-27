@@ -1399,6 +1399,9 @@ async fn connect_and_list(
                 accent: accent_for(account_id).into(),
             }));
             match list_folders(account_id, &mut session).await {
+                // An empty LIST can't be right — INBOX always exists (RFC
+                // 3501). Keep whatever the cache has instead of wiping it.
+                Ok(folders) if folders.is_empty() => {}
                 Ok(folders) => {
                     let changed = cache
                         .map(|c| !crate::cache::folders_equal(&c.load_folders(account_id), &folders))
@@ -3055,6 +3058,14 @@ async fn refresh_folders(
     emit: &impl Fn(WorkerEvent),
 ) {
     if let Ok(folders) = list_folders(account_id, session).await {
+        // A mailbox always has at least INBOX (RFC 3501): an empty LIST is a
+        // wedged or throttled session answering nonsense, not the truth.
+        // Trusting one once wiped an account's whole folder list — cached,
+        // so it stayed wiped across restarts (seen on iCloud after a burst
+        // of RENAMEs).
+        if folders.is_empty() {
+            return;
+        }
         if let Some(c) = cache {
             c.save_folders(account_id, &folders);
         }
