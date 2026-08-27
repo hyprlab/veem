@@ -329,28 +329,42 @@ headerbar.rail-header {
   border-bottom: 1px solid alpha(currentColor, 0.07);
 }
 
+/* Every state tint lives on the inner .message-row as an inset rounded pill
+   — matching the thread member cards — never on the full-width row, so
+   highlights stop touching the list edges and crossing the separators. */
+.message-listbox > row:hover:not(:selected),
+.message-listbox > row.message-unread:not(:selected),
+.message-listbox > row.message-unread:hover:not(:selected),
+.message-listbox > row.thread-unread:not(:selected),
+.message-listbox > row.thread-unread:hover:not(:selected),
+.message-listbox > row:selected,
+.message-listbox > row.activatable:selected:hover,
+.message-listbox > row.activatable:selected:active {
+  background: none;
+}
+
 /* Reactive hover highlight (kept below the selection colour). */
-.message-listbox > row:hover:not(:selected) {
+.message-listbox > row:hover:not(:selected) .message-row {
   background-color: alpha(currentColor, 0.05);
 }
 
-/* Unread messages: pale accent background until read. */
-.message-listbox > row.message-unread:not(:selected) {
+/* Unread messages: pale accent pill until read. */
+.message-listbox > row.message-unread:not(:selected) .message-row {
   background-color: alpha(@accent_bg_color, 0.12);
 }
 
-.message-listbox > row.message-unread:hover:not(:selected) {
+.message-listbox > row.message-unread:hover:not(:selected) .message-row {
   background-color: alpha(@accent_bg_color, 0.2);
 }
 
 /* A conversation with unread messages anywhere in it: a heavier accent than a
    single unread message, so unread replies hidden under a collapsed head can't
    be missed. Cleared once every message in the thread is read. */
-.message-listbox > row.thread-unread:not(:selected) {
+.message-listbox > row.thread-unread:not(:selected) .message-row {
   background-color: alpha(@accent_bg_color, 0.28);
 }
 
-.message-listbox > row.thread-unread:hover:not(:selected) {
+.message-listbox > row.thread-unread:hover:not(:selected) .message-row {
   background-color: alpha(@accent_bg_color, 0.36);
 }
 
@@ -358,27 +372,30 @@ headerbar.rail-header {
    default 25% while the list holds focus, dimming — never vanishing — when
    focus moves to the reader. The hover/active variants are overridden too so
    the highlight stays uniform when the cursor passes over the selected row. */
-.message-listbox > row:selected {
+.message-listbox > row:selected .message-row {
   background-color: alpha(@accent_bg_color, 0.3);
 }
 
-.message-listbox:focus-within > row:selected,
-.message-listbox > row.activatable:selected:hover,
-.message-listbox > row.activatable:selected:active {
+.message-listbox:focus-within > row:selected .message-row,
+.message-listbox > row.activatable:selected:hover .message-row,
+.message-listbox > row.activatable:selected:active .message-row {
   background-color: alpha(@accent_bg_color, 0.5);
 }
 
 .message-row {
-  /* Roomier at the list's edge than between the avatar, the unread dot and the
-     text; the row reads as indented rather than evenly striped. */
-  padding: 10px 12px 10px 16px;
+  /* The pill: inset from the list edges, rounded like the thread cards. The
+     padding is trimmed by exactly the margin so the content sits where it
+     always did — only the highlight's shape changed. */
+  margin: 2px 6px;
+  border-radius: 12px;
+  padding: 8px 6px 8px 10px;
 }
 
 /* Sender circles off (#29): the unread dot leads the row, so it gets the same
-   gap on each side — 12px to the list's edge, and 8px of box spacing plus this
-   margin to the sender's name. */
+   gap on each side — 12px to the list's edge (6px margin + 6px padding), and
+   8px of box spacing plus this margin to the sender's name. */
 .message-row.no-avatar {
-  padding-left: 12px;
+  padding-left: 6px;
 }
 
 .message-row.no-avatar .unread-dot {
