@@ -802,16 +802,12 @@ impl SimpleComponent for AppModel {
                                 // header carries the window's close button).
                                 set_show_start_title_buttons: false,
                                 set_show_end_title_buttons: false,
+                                // No folder title here — the sidebar's selection
+                                // already names it. An empty label keeps the
+                                // window's "Vireo" title from appearing instead.
                                 #[wrap(Some)]
                                 set_title_widget = &gtk::Label {
-                                    #[watch]
-                                    set_label: model.pane_title(),
-                                    // Gives way as the pane narrows instead of
-                                    // holding the whole window wider — a long
-                                    // folder name was part of what kept the
-                                    // window too wide to tile to a screen edge.
-                                    set_ellipsize: gtk::pango::EllipsizeMode::End,
-                                    add_css_class: "pane-title",
+                                    set_label: "",
                                 },
                                 // Leftmost, mirroring the pane it acts on: the
                                 // sidebar expand/collapse toggle (moved here from
@@ -7251,14 +7247,6 @@ impl AppModel {
         }
     }
 
-    /// Title for the message-list pane header.
-    fn pane_title(&self) -> &str {
-        if self.unified {
-            "All Inboxes"
-        } else {
-            self.selected.as_ref().map(|s| s.name.as_str()).unwrap_or("Mailbox")
-        }
-    }
 }
 
 /// The About window's "Release Notes" page, rendered from the single source of
