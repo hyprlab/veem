@@ -433,6 +433,18 @@ impl Component for Sidebar {
             }
 
             SidebarInput::SelectFolderRow { account_id, path } => {
+                // A click on a per-account inbox under "All Inboxes" echoes
+                // back here as its plain folder path; that sub-row already
+                // shows this exact folder, so keep its highlight instead of
+                // jumping to the account section's own Inbox row.
+                if self.selected == Sel::UnifiedInbox(account_id)
+                    && self
+                        .unified_inboxes
+                        .iter()
+                        .any(|r| r.account_id == account_id && r.path == path)
+                {
+                    return;
+                }
                 let key = Sel::Folder(account_id, path.clone());
                 if self.selected != key {
                     self.selected = key.clone();
