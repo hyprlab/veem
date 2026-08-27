@@ -1042,3 +1042,12 @@ headerbar.rail-header {
   min-width: 18px;
   min-height: 18px;
 }
+
+/* The folder-tree caret spins between closed (pointing end) and open
+   (pointing down) instead of swapping glyphs. */
+.tree-expander-icon {
+  transition: -gtk-icon-transform 200ms ease;
+}
+.tree-expander-icon.open {
+  -gtk-icon-transform: rotate(90deg);
+}

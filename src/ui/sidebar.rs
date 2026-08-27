@@ -82,6 +82,9 @@ pub struct Sidebar {
     tree_collapsed: HashMap<u32, std::collections::HashSet<String>>,
     /// Each parent row's expander image, for flipping without a rebuild.
     tree_chevrons: HashMap<(u32, String), gtk::Image>,
+    /// Per-account custom-row revealers (row order), for animated tree
+    /// collapse/expand.
+    tree_row_revealers: HashMap<u32, Vec<gtk::Revealer>>,
     /// The rebuild freeze-frame Picture and its pending lift timer.
     freeze_frame: Option<gtk::Picture>,
     freeze_timer: std::rc::Rc<std::cell::RefCell<Option<gtk::glib::SourceId>>>,
@@ -318,6 +321,7 @@ impl Component for Sidebar {
             custom_folders: HashMap::new(),
             tree_collapsed: HashMap::new(),
             tree_chevrons: HashMap::new(),
+            tree_row_revealers: HashMap::new(),
             freeze_frame: None,
             freeze_timer: std::rc::Rc::new(std::cell::RefCell::new(None)),
             custom_revealers: HashMap::new(),
@@ -675,11 +679,11 @@ impl Component for Sidebar {
                     true
                 };
                 if let Some(img) = self.tree_chevrons.get(&(account_id, path.clone())) {
-                    img.set_icon_name(Some(if collapsed {
-                        "co.hyprlab.Vireo-pan-end-symbolic"
+                    if collapsed {
+                        img.remove_css_class("open");
                     } else {
-                        "co.hyprlab.Vireo-pan-down-symbolic"
-                    }));
+                        img.add_css_class("open");
+                    }
                 }
                 self.apply_tree_visibility(account_id);
                 let _ = sender.output(SidebarOutput::FolderNodeCollapsed {
@@ -748,9 +752,37 @@ impl Sidebar {
             return;
         };
         let collapsed = self.tree_collapsed.get(&account_id).cloned().unwrap_or_default();
+        let revealers = self.tree_row_revealers.get(&account_id);
         for (i, folder) in folders.iter().enumerate() {
-            if let Some(row) = list.row_at_index(i as i32) {
-                row.set_visible(!hidden_by_collapse(&folder.path, &collapsed));
+            let Some(row) = list.row_at_index(i as i32) else { continue };
+            let hidden = hidden_by_collapse(&folder.path, &collapsed);
+            let rev = revealers.and_then(|r| r.get(i));
+            match (hidden, rev) {
+                (false, Some(rev)) => {
+                    // Show the row first, then slide its content open.
+                    row.set_visible(true);
+                    rev.set_reveal_child(true);
+                }
+                (true, Some(rev)) => {
+                    if row.get_visible() {
+                        // Slide closed, then drop the row itself once the
+                        // animation is done — an empty visible row still
+                        // paints its chrome. Skipped if it was re-expanded
+                        // inside the window.
+                        rev.set_reveal_child(false);
+                        let row = row.clone();
+                        let rev = rev.clone();
+                        gtk::glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(220),
+                            move || {
+                                if !rev.reveals_child() {
+                                    row.set_visible(false);
+                                }
+                            },
+                        );
+                    }
+                }
+                (hidden, None) => row.set_visible(!hidden),
             }
         }
     }
@@ -809,6 +841,7 @@ impl Sidebar {
         self.outbox_list = None;
         self.folder_badges.clear();
         self.tree_chevrons.clear();
+        self.tree_row_revealers.clear();
         self.unified_badge = None;
         self.unified_revealer = None;
         self.unified_chevron = None;
@@ -1337,13 +1370,14 @@ impl Sidebar {
                     let lead: Option<gtk::Widget> = if self.collapsed {
                         None
                     } else if has_children {
-                        let img = gtk::Image::from_icon_name(
-                            if collapsed_nodes.contains(&folder.path) {
-                                "co.hyprlab.Vireo-pan-end-symbolic"
-                            } else {
-                                "co.hyprlab.Vireo-pan-down-symbolic"
-                            },
-                        );
+                        // One right-pointing caret; the "open" class rotates it
+                        // 90° via a CSS transition, so toggling spins smoothly
+                        // instead of swapping glyphs.
+                        let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-pan-end-symbolic");
+                        img.add_css_class("tree-expander-icon");
+                        if !collapsed_nodes.contains(&folder.path) {
+                            img.add_css_class("open");
+                        }
                         img.set_pixel_size(12);
                         let btn = gtk::Button::new();
                         btn.set_child(Some(&img));
@@ -1369,8 +1403,26 @@ impl Sidebar {
                     let (row, badge) =
                         build_folder_row(folder, self.collapsed, depth, lead.as_ref());
                     // Hidden while any ancestor is collapsed; the row still
-                    // exists, so selection indices stay stable.
-                    row.set_visible(!hidden_by_collapse(&folder.path, &collapsed_nodes));
+                    // exists, so selection indices stay stable. Its content
+                    // sits in a revealer so user toggles slide open/closed —
+                    // built with no transition (rebuilds must reach full
+                    // height in one pass; see the scroll-jump saga), armed to
+                    // 200ms alongside the section revealers below.
+                    let hidden = hidden_by_collapse(&folder.path, &collapsed_nodes);
+                    if let Some(content) = row.child() {
+                        row.set_child(gtk::Widget::NONE);
+                        let rev = gtk::Revealer::new();
+                        rev.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+                        rev.set_transition_duration(0);
+                        rev.set_child(Some(&content));
+                        rev.set_reveal_child(!hidden);
+                        row.set_child(Some(&rev));
+                        self.tree_row_revealers
+                            .entry(id)
+                            .or_default()
+                            .push(rev);
+                    }
+                    row.set_visible(!hidden);
                     row.add_controller(folder_drop_target(id, folder.path.clone(), sender));
                     // Custom folders can be picked up and dropped on a new
                     // parent (#51); essential folders stay where the server
@@ -1498,6 +1550,7 @@ impl Sidebar {
                 .revealers
                 .values()
                 .chain(self.custom_revealers.values())
+                .chain(self.tree_row_revealers.values().flatten())
                 .cloned()
                 .chain(self.unified_revealer.clone())
                 .collect();
