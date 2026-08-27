@@ -1106,13 +1106,19 @@ impl MessageView {
             None => String::new(),
         };
         // A full-bleed single message's header colour: the chrome (window)
-        // ground, matching the GTK subject block above — except for an
-        // unstyled message (plain mail with no CSS of its own), whose body is
-        // just text on the plain ground; there the header takes that same
-        // ground, so header and message read as one unbroken pane.
+        // ground, matching the GTK subject block above — except when the
+        // message paints no background of its own (plain mail, and much
+        // styled mail too: Apple Mail styles fonts and wrapping but sets no
+        // background). Such a body renders transparent on the plain ground,
+        // so the header takes that same ground and header + message read as
+        // one unbroken pane. The test is for a *background*, not for any
+        // styling — the colon/equals forms keep prose mentioning
+        // "background" from counting.
         let single_hdr = if thread.len() == 1 && {
             let lower = thread[0].body.to_ascii_lowercase();
-            !lower.contains("<style") && !lower.contains("style=")
+            !["background:", "background-color:", "background-image:", "bgcolor="]
+                .iter()
+                .any(|needle| lower.contains(needle))
         } {
             &bg
         } else {
