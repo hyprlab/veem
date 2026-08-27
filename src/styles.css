@@ -332,10 +332,6 @@ headerbar.rail-header {
    — matching the thread member cards — never on the full-width row, so
    highlights stop touching the list edges and crossing the separators. */
 .message-listbox > row:hover:not(:selected),
-.message-listbox > row.message-unread:not(:selected),
-.message-listbox > row.message-unread:hover:not(:selected),
-.message-listbox > row.thread-unread:not(:selected),
-.message-listbox > row.thread-unread:hover:not(:selected),
 .message-listbox > row:selected,
 .message-listbox > row.activatable:selected:hover,
 .message-listbox > row.activatable:selected:active {
@@ -347,25 +343,9 @@ headerbar.rail-header {
   background-color: alpha(currentColor, 0.05);
 }
 
-/* Unread messages: pale accent pill until read. */
-.message-listbox > row.message-unread:not(:selected) .message-row {
-  background-color: alpha(@accent_bg_color, 0.12);
-}
-
-.message-listbox > row.message-unread:hover:not(:selected) .message-row {
-  background-color: alpha(@accent_bg_color, 0.2);
-}
-
-/* A conversation with unread messages anywhere in it: a heavier accent than a
-   single unread message, so unread replies hidden under a collapsed head can't
-   be missed. Cleared once every message in the thread is read. */
-.message-listbox > row.thread-unread:not(:selected) .message-row {
-  background-color: alpha(@accent_bg_color, 0.28);
-}
-
-.message-listbox > row.thread-unread:hover:not(:selected) .message-row {
-  background-color: alpha(@accent_bg_color, 0.36);
-}
+/* Unread state carries no background of its own: the blue dot (lit for an
+   unread message, and on a thread head for any unread reply inside) is the
+   one unread signal. The accent pill is reserved for the selection. */
 
 /* Selected (currently-viewed) message: stronger accent tint than libadwaita's
    default 25% while the list holds focus, dimming — never vanishing — when
@@ -458,8 +438,6 @@ headerbar.rail-header {
 
 /* Every row-level tint off — the card below carries the state instead. */
 .message-listbox > row.thread-child:hover:not(:selected),
-.message-listbox > row.thread-child.message-unread:not(:selected),
-.message-listbox > row.thread-child.message-unread:hover:not(:selected),
 .message-listbox > row.thread-child:selected,
 .message-listbox > row.thread-child.activatable:selected:hover,
 .message-listbox > row.thread-child.activatable:selected:active {
@@ -487,14 +465,6 @@ headerbar.rail-header {
 
 .message-listbox > row.thread-child:hover:not(:selected) .message-row {
   background-color: alpha(currentColor, 0.05);
-}
-
-.message-listbox > row.thread-child.message-unread:not(:selected) .message-row {
-  background-color: alpha(@accent_bg_color, 0.12);
-}
-
-.message-listbox > row.thread-child.message-unread:hover:not(:selected) .message-row {
-  background-color: alpha(@accent_bg_color, 0.2);
 }
 
 .message-listbox > row.thread-child:selected .message-row {
@@ -730,7 +700,8 @@ headerbar.rail-header {
 }
 
 .remote-alert image {
-  color: @warning_color;
+  /* Fixed amber in both schemes, by choice — the one splash of colour. */
+  color: #ffca28;
   /* A step up from the 16px default, matching the taller bar. */
   -gtk-icon-size: 18px;
 }
