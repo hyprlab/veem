@@ -444,16 +444,13 @@ headerbar.rail-header {
   background: none;
 }
 
+/* No right margin: the cards end at the same right edge as every pill in the
+   list (the rows' shared 6px margin), so an expanded thread never opens a gap
+   along the pane's right side. */
 .message-listbox > row.thread-child .message-row {
-  margin: 3px 8px 3px 10px;
+  margin: 3px 0 3px 10px;
   border-radius: 12px;
   padding: 8px 12px;
-}
-
-/* The expanded head tops that column of inset cards: its pill pulls its right
-   edge in to match theirs, so the group reads as one aligned block. */
-.message-listbox > row.thread-head-open .message-row {
-  margin-right: 8px;
 }
 
 /* Node dot where each member meets the rail: an 8px circle whose negative

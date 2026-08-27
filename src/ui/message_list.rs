@@ -74,10 +74,10 @@ pub type DragKeys = std::rc::Rc<std::cell::RefCell<Vec<(u32, u32, u32, u32)>>>;
 const LIST_MIN_WIDTH: i32 = 348;
 
 /// What an expanded conversation needs beyond [`LIST_MIN_WIDTH`]: the member
-/// cards' 10px rail indent plus their card margins/padding beyond a plain
+/// cards' 10px rail indent plus their card margin/padding beyond a plain
 /// pill's. The pane's floor grows by this while any thread is open, so the
 /// cards' (and the head pill's) right inset is never clipped off the pane.
-const THREAD_EXPANDED_EXTRA: i32 = 20;
+const THREAD_EXPANDED_EXTRA: i32 = 12;
 
 /// A background face lookup's answer, correlated by sender address (a recycled
 /// row compares before using it). The tiers are personal-first: the contact's
@@ -817,11 +817,6 @@ impl MessageRow {
         }
         if self.is_thread_child {
             v.push("thread-child");
-        }
-        // An expanded head tops a column of inset member cards; its pill pulls
-        // its right edge in to match theirs (see `.thread-head-open`).
-        if self.thread_count > 1 && self.thread_expanded {
-            v.push("thread-head-open");
         }
         v
     }
