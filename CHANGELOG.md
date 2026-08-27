@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.16.1 — 2026-08-27
+
+- **Rename folders.** "Rename Folder…" in a custom folder's context menu:
+  a dialog pre-filled with the current name renames the leaf in place via
+  the same optimistic machinery as drag-and-drop moves (shared
+  `apply_folder_rename`; display name recomputed from the new leaf,
+  sub-folders ride the server RENAME, collisions refused).
+- **Single-clicking a parent folder toggles its sub-tree** — wired through
+  `row-activated`, which fires on every click including the already-selected
+  row; the caret still works and consumes its own clicks. Leaves select as
+  before.
+- **Unread chips survive folder operations.** A refresh's per-folder STATUS
+  can fail silently (Gmail answers zeros right after a RENAME) and
+  SetFolders adopted them wholesale, wiping every chip. Counts now merge by
+  path and a zero never overwrites a known count; genuine zeros re-assert
+  through per-folder sync events. (The intended 1.16.0-era fix had silently
+  failed to apply — its patch anchor missed; now verified in place.)
+- **New folders appear instantly.** Creation pushes the folder into the
+  local list and runs the shared `normalize_folders` step (worker sort,
+  index ids, unread/selection re-key) instead of waiting out the server
+  round-trip and re-list.
+
 ## 1.16.0 — 2026-08-27
 
 ### Folder tree (issue #51)

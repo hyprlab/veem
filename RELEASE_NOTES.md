@@ -2,6 +2,17 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.16.1
+
+Folder management, rounded out:
+
+- **Rename folders** from the right-click menu — sub-folders keep their
+  place under the new name.
+- **Click a folder to expand it**: single-clicking any folder with
+  sub-folders toggles them open or closed, no need to aim for the caret.
+- **New folders appear instantly**, and moving folders no longer clears
+  the unread count chips (seen on Gmail).
+
 ## What's new in 1.16.0
 
 A big one: the folder tree, dark mode that always reads, and a sidebar
