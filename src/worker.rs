@@ -150,6 +150,9 @@ pub enum MailRequest {
     PurgeMessages { path: String, uids: Vec<u32> },
     /// Create a new mailbox (folder) at `path`.
     CreateFolder { path: String },
+    /// Move/rename a mailbox (drag-and-drop in the sidebar, #51). The server
+    /// renames any child hierarchy along with it (RFC 3501 §6.3.5).
+    RenameFolder { old_path: String, new_path: String },
     /// Delete a mailbox, first moving its contents to `trash` (if set).
     DeleteFolder { path: String, trash: Option<String> },
     /// Send a new message over SMTP, optionally APPENDing a copy to `sent_path`.
@@ -1146,6 +1149,20 @@ async fn run_imap(
                     Err(e) => {
                         emit(WorkerEvent::Error {
                             text: format!("Could not create folder: {e}"),
+                            connectivity: false,
+                        });
+                        lost = true;
+                    }
+                }
+            }
+
+            MailRequest::RenameFolder { old_path, new_path } => {
+                let sess = session.as_mut().unwrap();
+                match rename_folder(sess, &old_path, &new_path).await {
+                    Ok(()) => refresh_folders(account_id, sess, cache.as_ref(), &emit).await,
+                    Err(e) => {
+                        emit(WorkerEvent::Error {
+                            text: format!("Could not move folder: {e}"),
                             connectivity: false,
                         });
                         lost = true;
@@ -2668,6 +2685,19 @@ async fn create_folder(
 ) -> Result<(), async_imap::error::Error> {
     session.create(path).await?;
     let _ = session.subscribe(path).await;
+    Ok(())
+}
+
+/// RENAME a mailbox — the server carries any inferior hierarchy along
+/// (RFC 3501 §6.3.5) — and follow the subscription to the new name.
+async fn rename_folder(
+    session: &mut ImapSession,
+    old_path: &str,
+    new_path: &str,
+) -> Result<(), async_imap::error::Error> {
+    session.rename(old_path, new_path).await?;
+    let _ = session.unsubscribe(old_path).await;
+    let _ = session.subscribe(new_path).await;
     Ok(())
 }
 
@@ -4627,6 +4657,7 @@ async fn run_pop3(
 
             // POP3 has no folders beyond the inbox.
             MailRequest::CreateFolder { .. }
+            | MailRequest::RenameFolder { .. }
             | MailRequest::DeleteFolder { .. }
             | MailRequest::SaveDraft { .. } => {
                 emit(WorkerEvent::Error {
@@ -4845,6 +4876,7 @@ async fn run_mock(
             | MailRequest::MarkSpam { .. }
             | MailRequest::MoveMessage { .. }
             | MailRequest::CreateFolder { .. }
+            | MailRequest::RenameFolder { .. }
             | MailRequest::DeleteFolder { .. }
             | MailRequest::FlushOutbox { .. }
             | MailRequest::DeleteOutbox { .. }

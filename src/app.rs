@@ -435,6 +435,9 @@ pub enum AppMsg {
     DropMoveMessages { dest_account: u32, dest: String, items: Vec<(u32, u32, u32, u32)> },
     /// Create a custom folder under an account (from the right-click menu).
     CreateFolder { account_id: u32, name: String },
+    /// Move a folder under a new parent (sidebar drag-and-drop, #51).
+    /// `dest` is the new parent's path, or "" for the account's top level.
+    MoveFolder { account_id: u32, path: String, dest: String },
     /// Delete a custom folder (its contents are moved to Trash first).
     DeleteFolder { account_id: u32, path: String },
     AccountsReordered(Vec<String>),
@@ -1333,6 +1336,9 @@ impl SimpleComponent for AppModel {
                 SidebarOutput::Context(action) => AppMsg::SidebarContext(action),
                 SidebarOutput::MoveMessages { dest_account, dest, items } => {
                     AppMsg::DropMoveMessages { dest_account, dest, items }
+                }
+                SidebarOutput::MoveFolder { account_id, path, dest } => {
+                    AppMsg::MoveFolder { account_id, path, dest }
                 }
             });
 
@@ -2365,6 +2371,10 @@ impl SimpleComponent for AppModel {
                     );
                     self.send_to(account_id, MailRequest::CreateFolder { path });
                 }
+            }
+
+            AppMsg::MoveFolder { account_id, path, dest } => {
+                self.move_folder(account_id, path, dest);
             }
 
             AppMsg::DeleteFolder { account_id, path } => {
@@ -5897,6 +5907,76 @@ impl AppModel {
         }
         self.message_list.emit(MessageListInput::RemoveMany(removed_ids));
         self.push_unread_counts();
+    }
+
+    /// Move a custom folder under a new parent (or "" = the account's top
+    /// level) via IMAP RENAME, after checking the move makes sense. The server
+    /// carries any sub-hierarchy along with it.
+    fn move_folder(&mut self, account_id: u32, path: String, dest: String) {
+        let complain = |me: &Self, text: &str| {
+            me.notifications.emit(NotifyInput::Push {
+                text: text.to_string(),
+                error: true,
+                connectivity: false,
+            });
+        };
+        let delim = self.folder_delimiter(account_id);
+        // Into itself or its own subtree: there is no such place.
+        if dest == path || dest.starts_with(&format!("{path}{delim}")) {
+            complain(self, "A folder can't be moved into itself.");
+            return;
+        }
+        let folders = self.folders.get(&account_id).cloned().unwrap_or_default();
+        // Only your own folders (or the top level) can hold other folders —
+        // moving one under Sent or Trash is never what a drop meant.
+        if !dest.is_empty()
+            && !folders.iter().any(|f| f.path == dest && f.kind == FolderKind::Custom)
+        {
+            return;
+        }
+        let leaf = path.rsplit(delim).next().unwrap_or(&path).to_string();
+        let new_path = if dest.is_empty() {
+            format!("{}{leaf}", self.folder_namespace(account_id))
+        } else {
+            format!("{dest}{delim}{leaf}")
+        };
+        if new_path == path {
+            return;
+        }
+        if folders.iter().any(|f| f.path == new_path) {
+            complain(self, &format!("A folder named {leaf:?} is already there."));
+            return;
+        }
+        // If the moved folder (or one of its children) is open, clear the view
+        // — its path is about to stop existing.
+        if self.selected.as_ref().is_some_and(|s| {
+            s.account_id == account_id
+                && (s.path == path || s.path.starts_with(&format!("{path}{delim}")))
+        }) {
+            self.current = None;
+            self.current_thread.clear();
+            self.show_message(None, false);
+            self.message_list.emit(MessageListInput::SetLoading { title: String::new() });
+        }
+        self.send_to(account_id, MailRequest::RenameFolder { old_path: path, new_path });
+    }
+
+    /// The account's hierarchy delimiter, inferred from its folder paths (the
+    /// namespace prefix's last character when there is one, else the first
+    /// common delimiter any path uses; '/' as the fallback).
+    fn folder_delimiter(&self, account_id: u32) -> char {
+        let ns = self.folder_namespace(account_id);
+        if let Some(c) = ns.chars().last() {
+            if matches!(c, '/' | '.' | '\\') {
+                return c;
+            }
+        }
+        self.folders
+            .get(&account_id)
+            .and_then(|fs| {
+                fs.iter().find_map(|f| f.path.chars().find(|c| matches!(c, '/' | '.' | '\\')))
+            })
+            .unwrap_or('/')
     }
 
     /// The mailbox namespace prefix for an account (e.g. "INBOX." if its folders

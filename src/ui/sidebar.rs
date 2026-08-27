@@ -182,6 +182,8 @@ pub enum SidebarInput {
 pub enum SidebarOutput {
     /// A folder-tree node was collapsed or expanded (#51) — for persistence.
     FolderNodeCollapsed { account_id: u32, path: String, collapsed: bool },
+    /// A folder was dropped onto a new parent ("" = the account's top level).
+    MoveFolder { account_id: u32, path: String, dest: String },
     UnifiedSelected,
     /// The attachments gallery was selected.
     AttachmentsSelected,
@@ -673,8 +675,27 @@ impl Component for Sidebar {
             }
 
             SidebarInput::DropOnFolder { account_id: dest_account, path: dest, payload } => {
+                // A dragged folder, not messages: reparent it (#51). Folders
+                // never cross accounts — mailboxes belong to one server.
+                if let Some(rest) = payload.strip_prefix("vireo-folder\t") {
+                    let mut it = rest.splitn(2, '\t');
+                    let src_account = it.next().and_then(|s| s.parse::<u32>().ok());
+                    let src_path = it.next().map(String::from);
+                    if let (Some(src_account), Some(src_path)) = (src_account, src_path) {
+                        if src_account == dest_account && src_path != dest {
+                            let _ = sender.output(SidebarOutput::MoveFolder {
+                                account_id: dest_account,
+                                path: src_path,
+                                dest,
+                            });
+                        }
+                    }
+                    return;
+                }
                 let items = parse_move_payload(&payload);
-                if !items.is_empty() {
+                // "" is the Folders header (a folder-move destination only);
+                // messages need a real mailbox.
+                if !items.is_empty() && !dest.is_empty() {
                     let _ = sender.output(SidebarOutput::MoveMessages { dest_account, dest, items });
                 }
             }
@@ -1283,6 +1304,18 @@ impl Sidebar {
                     // exists, so selection indices stay stable.
                     row.set_visible(!hidden_by_collapse(&folder.path, &collapsed_nodes));
                     row.add_controller(folder_drop_target(id, folder.path.clone(), sender));
+                    // Custom folders can be picked up and dropped on a new
+                    // parent (#51); essential folders stay where the server
+                    // put them.
+                    if !self.collapsed {
+                        let drag = gtk::DragSource::new();
+                        drag.set_actions(gtk::gdk::DragAction::MOVE);
+                        let payload = format!("vireo-folder\t{id}\t{}", folder.path);
+                        drag.connect_prepare(move |_, _, _| {
+                            Some(gtk::gdk::ContentProvider::for_value(&payload.to_value()))
+                        });
+                        row.add_controller(drag);
+                    }
                     custom_list.append(&row);
                     if let Some(badge) = badge {
                         self.folder_badges.insert((id, folder.id), badge);
@@ -1332,6 +1365,9 @@ impl Sidebar {
                 folders_toggle.connect_clicked(move |_| {
                     let _ = st.send(SidebarInput::ToggleCustomFoldersLocal(id));
                 });
+                // Dropping a folder on the section header moves it to the
+                // account's top level ("" — resolved to the namespace root).
+                folders_toggle.add_controller(folder_drop_target(id, String::new(), sender));
             }
 
             // "+ Add Folder" button at the bottom of the list for quick creation.
