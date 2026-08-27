@@ -2335,16 +2335,11 @@ fn inject_csp(html: &str, allow_remote: bool, dark: bool) -> String {
          font-src data:; media-src data:"
     };
     let lower = html.to_ascii_lowercase();
-    // An "unstyled" message brings no CSS of its own; give it comfortable padding
-    // so text isn't flush against the edges. Styled emails keep their own layout.
-    let unstyled = !lower.contains("<style") && !lower.contains("style=");
-    let body_pad = if unstyled {
-        // Reset the UA's default 8px body margin so content sits at exactly 16px
-        // (which lines up with the conversation headers).
-        "body{margin:0;padding:16px;box-sizing:border-box;}"
-    } else {
-        ""
-    };
+    // Every message gets a comfortable default inset inside its card: the UA's
+    // 8px body margin is reset so content sits at exactly 14px, balancing the
+    // card's own chrome. Injected ahead of the email's own CSS, so a message
+    // that styles its body (a full-bleed design, say) still wins.
+    let body_pad = "body{margin:0;padding:14px;box-sizing:border-box;}";
     // `color-scheme` makes the browser's default colours (for content that sets
     // none of its own) follow the app's light/dark setting; styled emails keep
     // their own colours untouched.
@@ -2809,7 +2804,7 @@ fn body_html(body: &str) -> String {
     } else {
         format!(
             "<!doctype html><html><head><meta charset=\"utf-8\"><style>\
-             body{{margin:0;padding:16px;font:14px/1.5 system-ui,sans-serif;\
+             body{{margin:0;padding:14px;font:14px/1.5 system-ui,sans-serif;\
              white-space:pre-wrap;word-wrap:break-word}}\
              </style></head><body>{}</body></html>",
             body.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
