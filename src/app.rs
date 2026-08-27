@@ -438,6 +438,8 @@ pub enum AppMsg {
     /// Move a folder under a new parent (sidebar drag-and-drop, #51).
     /// `dest` is the new parent's path, or "" for the account's top level.
     MoveFolder { account_id: u32, path: String, dest: String },
+    /// Rename a folder's leaf name in place (context menu).
+    RenameFolderTo { account_id: u32, path: String, new_name: String },
     /// Delete a custom folder (its contents are moved to Trash first).
     DeleteFolder { account_id: u32, path: String },
     AccountsReordered(Vec<String>),
@@ -2352,6 +2354,9 @@ impl SimpleComponent for AppModel {
                 CtxAction::DeleteFolder { account_id, name, path } => {
                     self.confirm_delete_folder(account_id, name, path, &sender);
                 }
+                CtxAction::RenameFolder { account_id, name, path } => {
+                    self.prompt_rename_folder(account_id, name, path, &sender);
+                }
             },
 
             AppMsg::DropMoveMessages { dest_account, dest, items } => {
@@ -2375,6 +2380,10 @@ impl SimpleComponent for AppModel {
 
             AppMsg::MoveFolder { account_id, path, dest } => {
                 self.move_folder(account_id, path, dest);
+            }
+
+            AppMsg::RenameFolderTo { account_id, path, new_name } => {
+                self.rename_folder_to(account_id, path, new_name);
             }
 
             AppMsg::DeleteFolder { account_id, path } => {
@@ -5976,7 +5985,17 @@ impl AppModel {
             complain(self, &format!("A folder named {leaf:?} is already there."));
             return;
         }
-        // If the moved folder (or one of its children) is open, clear the view
+        self.apply_folder_rename(account_id, path, new_path);
+    }
+
+    /// The shared optimistic machinery behind both folder moves and renames:
+    /// clear the view if the affected subtree is open, reshape the local
+    /// folder list exactly as the worker will report it back, re-key
+    /// everything id- or path-addressed, and hand the RENAME to the server.
+    fn apply_folder_rename(&mut self, account_id: u32, path: String, new_path: String) {
+        let delim = self.folder_delimiter(account_id);
+        // If the affected folder (or one of its children) is open, clear the
+        // view — its path is about to stop existing.
         // — its path is about to stop existing.
         if self.selected.as_ref().is_some_and(|s| {
             s.account_id == account_id
@@ -6003,6 +6022,8 @@ impl AppModel {
                 }
                 if f.path == path {
                     f.path = new_path.clone();
+                    let leaf = f.path.rsplit(delim).next().unwrap_or(&f.path);
+                    f.name = crate::mutf7::decode(leaf);
                 } else if let Some(rest) = f.path.strip_prefix(&old_prefix) {
                     f.path = format!("{new_prefix}{rest}");
                 }
@@ -6226,6 +6247,74 @@ impl AppModel {
             }
         });
         dialog.present();
+    }
+
+    /// Prompt for a folder's new name and rename it in place.
+    fn prompt_rename_folder(
+        &self,
+        account_id: u32,
+        name: String,
+        path: String,
+        sender: &ComponentSender<Self>,
+    ) {
+        let dialog = adw::MessageDialog::new(
+            Some(&self.window),
+            Some(&format!("Rename {name:?}")),
+            Some("Sub-folders keep their place under the new name."),
+        );
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("ok", "Rename");
+        dialog.set_default_response(Some("ok"));
+        dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
+        let entry = gtk::Entry::new();
+        entry.set_text(&name);
+        entry.select_region(0, -1);
+        entry.set_activates_default(true);
+        dialog.set_extra_child(Some(&entry));
+        let s = sender.clone();
+        dialog.connect_response(None, move |_, resp| {
+            if resp == "ok" {
+                let new_name = entry.text().to_string();
+                if !new_name.trim().is_empty() {
+                    s.input(AppMsg::RenameFolderTo {
+                        account_id,
+                        path: path.clone(),
+                        new_name,
+                    });
+                }
+            }
+        });
+        dialog.present();
+    }
+
+    /// Rename a custom folder's leaf in place: same parent, new (encoded)
+    /// name, the same optimistic machinery as a drag-and-drop move.
+    fn rename_folder_to(&mut self, account_id: u32, path: String, new_name: String) {
+        let delim = self.folder_delimiter(account_id);
+        let new_name = new_name.trim();
+        // The path's parent (everything up to and including the last
+        // delimiter) stays; only the leaf changes.
+        let parent = match path.rfind(delim) {
+            Some(at) => &path[..=at],
+            None => "",
+        };
+        let new_path = format!("{parent}{}", crate::mutf7::encode(new_name));
+        if new_path == path {
+            return;
+        }
+        if self
+            .folders
+            .get(&account_id)
+            .is_some_and(|fs| fs.iter().any(|f| f.path == new_path))
+        {
+            self.notifications.emit(NotifyInput::Push {
+                text: format!("A folder named {new_name:?} is already there."),
+                error: true,
+                connectivity: false,
+            });
+            return;
+        }
+        self.apply_folder_rename(account_id, path, new_path);
     }
 
     /// Confirm deleting a custom folder (contents moved to Trash).

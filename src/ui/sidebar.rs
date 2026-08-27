@@ -166,6 +166,9 @@ pub enum SidebarInput {
     ToggleCustomFoldersLocal(u32),
     /// Collapse/expand one folder-tree node (a parent folder's chevron, #51).
     ToggleFolderNode { account_id: u32, path: String },
+    /// A custom-folder row was clicked (fires every click, selected or not):
+    /// parents toggle their sub-tree without needing the caret.
+    FolderRowActivated { account_id: u32, index: i32 },
     ToggleCollapsed,
     /// Show or hide the "Attachments" row.
     SetShowAttachments(bool),
@@ -233,6 +236,8 @@ pub enum CtxAction {
     NewFolder(u32),
     /// Delete a custom folder (its contents are moved to Trash first).
     DeleteFolder { account_id: u32, name: String, path: String },
+    /// Rename a custom folder (its leaf name; children follow via RENAME).
+    RenameFolder { account_id: u32, name: String, path: String },
 }
 
 #[relm4::component(pub)]
@@ -668,29 +673,23 @@ impl Component for Sidebar {
             }
 
             SidebarInput::ToggleFolderNode { account_id, path } => {
-                // Flip the node, restyle its chevron, and re-apply visibility
-                // across the account's tree — no rebuild, so nothing flickers.
-                let nodes = self.tree_collapsed.entry(account_id).or_default();
-                let collapsed = if nodes.contains(&path) {
-                    nodes.remove(&path);
-                    false
-                } else {
-                    nodes.insert(path.clone());
-                    true
-                };
-                if let Some(img) = self.tree_chevrons.get(&(account_id, path.clone())) {
-                    if collapsed {
-                        img.remove_css_class("open");
-                    } else {
-                        img.add_css_class("open");
-                    }
-                }
-                self.apply_tree_visibility(account_id);
-                let _ = sender.output(SidebarOutput::FolderNodeCollapsed {
-                    account_id,
-                    path,
-                    collapsed,
+                self.toggle_folder_node(account_id, path, &sender);
+            }
+
+            SidebarInput::FolderRowActivated { account_id, index } => {
+                // Single-clicking a folder that has sub-folders toggles them —
+                // no need to aim for the caret. Leaves just select as before.
+                let target = self.custom_folders.get(&account_id).and_then(|folders| {
+                    folders.get(index as usize).and_then(|f| {
+                        folders
+                            .iter()
+                            .any(|g| path_is_under(&g.path, &f.path))
+                            .then(|| f.path.clone())
+                    })
                 });
+                if let Some(path) = target {
+                    self.toggle_folder_node(account_id, path, &sender);
+                }
             }
 
             SidebarInput::ExpandForDrop(id) => {
@@ -741,6 +740,34 @@ impl Component for Sidebar {
 impl Sidebar {
     /// Rebuild the list: optional unified row, then per-account headers with
     /// animated folder revealers, and refresh the per-account colour rules.
+    /// Flip one tree node, restyle its caret, and re-apply visibility across
+    /// the account's tree — no rebuild, so nothing flickers. Reports the new
+    /// state for persistence.
+    fn toggle_folder_node(
+        &mut self,
+        account_id: u32,
+        path: String,
+        sender: &ComponentSender<Self>,
+    ) {
+        let nodes = self.tree_collapsed.entry(account_id).or_default();
+        let collapsed = if nodes.contains(&path) {
+            nodes.remove(&path);
+            false
+        } else {
+            nodes.insert(path.clone());
+            true
+        };
+        if let Some(img) = self.tree_chevrons.get(&(account_id, path.clone())) {
+            if collapsed {
+                img.remove_css_class("open");
+            } else {
+                img.add_css_class("open");
+            }
+        }
+        self.apply_tree_visibility(account_id);
+        let _ = sender.output(SidebarOutput::FolderNodeCollapsed { account_id, path, collapsed });
+    }
+
     /// Re-apply row visibility across one account's custom-folder tree (#51):
     /// a row shows unless some ancestor node is collapsed. Rows are never
     /// removed, so selection indices hold still.
@@ -1453,6 +1480,13 @@ impl Sidebar {
                         });
                     }
                 });
+                let s4 = sender.input_sender().clone();
+                custom_list.connect_row_activated(move |_, row| {
+                    let _ = s4.send(SidebarInput::FolderRowActivated {
+                        account_id: id,
+                        index: row.index(),
+                    });
+                });
                 attach_folder_context_menu(
                     &custom_list,
                     id,
@@ -1812,8 +1846,13 @@ fn attach_folder_context_menu(
                 ("Mark as Read", CtxAction::MarkFolderRead { account_id: id, folder_id: f.id }),
                 ("Refresh", CtxAction::RefreshFolder { account_id: id, folder_id: f.id }),
             ];
-            // Only user-created folders can be deleted.
+            // Only user-created folders can be renamed or deleted.
             if f.kind == FolderKind::Custom {
+                items.push(("Rename Folder…", CtxAction::RenameFolder {
+                    account_id: id,
+                    name: f.name.clone(),
+                    path: f.path.clone(),
+                }));
                 items.push(("Delete Folder…", CtxAction::DeleteFolder {
                     account_id: id,
                     name: f.name.clone(),
