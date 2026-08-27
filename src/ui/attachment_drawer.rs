@@ -154,10 +154,11 @@ impl SimpleComponent for AttachmentDrawer {
         #[root]
         gtk::Paned {
             set_orientation: gtk::Orientation::Vertical,
-            set_wide_handle: true,
-            // The handle is styled invisible (see `.drawer-split`): a slim
-            // grabbable strip, no line and no grip. Dragging works while the
-            // drawer is expanded; collapsed drags snap back (PositionChanged).
+            // No wide handle: its stock chrome is a bordered band with a grip.
+            // The plain separator is styled invisible (see `.drawer-split`) —
+            // a slim grabbable strip, no lines, no grip — and while the drawer
+            // is collapsed it is made untargetable entirely (see
+            // set_divider_draggable), so only the expanded drawer resizes.
             add_css_class: "drawer-split",
             // The reader (start child) shrinks to make room; the drawer keeps its
             // set size. This is what prevents the window from growing.
@@ -360,6 +361,8 @@ impl SimpleComponent for AttachmentDrawer {
         let widgets = view_output!();
         // Dock the reader as the top pane (the drawer body is the bottom pane).
         root.set_start_child(Some(&init.reader));
+        // A collapsed drawer starts with its divider locked.
+        model.set_divider_draggable(!model.collapsed);
         ComponentParts { model, widgets }
     }
 
@@ -403,6 +406,7 @@ impl SimpleComponent for AttachmentDrawer {
             AttachmentDrawerInput::ToggleCollapsed => {
                 self.collapsed = !self.collapsed;
                 self.apply_position();
+                self.set_divider_draggable(!self.collapsed);
                 config::save_drawer_collapsed(self.collapsed);
             }
             AttachmentDrawerInput::ToggleListView => {
@@ -482,6 +486,22 @@ impl AttachmentDrawer {
         self.adjusting.set(true);
         self.paned.set_position((total - drawer_h).max(0));
         self.adjusting.set(false);
+    }
+
+    /// Allow or forbid dragging the Paned divider. There is no lock API on
+    /// GtkPaned, so this walks its internal children and toggles pointer
+    /// targeting on the separator (the child that is neither pane) — while off
+    /// it takes no clicks and shows no resize cursor.
+    fn set_divider_draggable(&self, on: bool) {
+        let start = self.paned.start_child();
+        let end = self.paned.end_child();
+        let mut child = self.paned.first_child();
+        while let Some(c) = child {
+            if Some(&c) != start.as_ref() && Some(&c) != end.as_ref() {
+                c.set_can_target(on);
+            }
+            child = c.next_sibling();
+        }
     }
 
     /// Persist the dragged height, debounced past the end of the drag.

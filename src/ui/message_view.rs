@@ -1105,6 +1105,19 @@ impl MessageView {
             Some(n) => format!("<script nonce=\"{n}\">{SIZE_SCRIPT}</script>"),
             None => String::new(),
         };
+        // A full-bleed single message's header colour: the chrome (window)
+        // ground, matching the GTK subject block above — except for an
+        // unstyled message (plain mail with no CSS of its own), whose body is
+        // just text on the plain ground; there the header takes that same
+        // ground, so header and message read as one unbroken pane.
+        let single_hdr = if thread.len() == 1 && {
+            let lower = thread[0].body.to_ascii_lowercase();
+            !lower.contains("<style") && !lower.contains("style=")
+        } {
+            &bg
+        } else {
+            &chrome
+        };
         format!(
             "<!doctype html><html><head><meta charset=\"utf-8\">{csp}\
              <meta name=\"color-scheme\" content=\"{scheme}\">\
@@ -1124,7 +1137,7 @@ impl MessageView {
                .vireo-msg-hdr{{cursor:pointer;}}\
                .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;\
                  position:sticky;top:0;z-index:1;background-color:{bg};}}\
-               body:not(.vireo-conv) .vireo-msg-hdr{{background-color:{chrome};}}\
+               body:not(.vireo-conv) .vireo-msg-hdr{{background-color:{single_hdr};}}\
                .vireo-ava{{width:26px;height:26px;border-radius:50%;flex:none;align-self:center;\
                  display:flex;align-items:center;justify-content:center;color:#fff;\
                  font-size:0.8em;font-weight:700;}}\
