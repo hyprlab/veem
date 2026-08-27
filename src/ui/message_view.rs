@@ -716,6 +716,14 @@ impl Component for MessageView {
                 let _ = sender.output(MessageViewOutput::SelectCards(keys));
             }
             MessageViewInput::SetSelectedCards(keys) => {
+                // The list mirrors every selection change here — including the
+                // plain single "this row is open" state that comes with merely
+                // opening a message or thread, which must not outline anything.
+                // A lone mirrored key is therefore dropped: the accent border
+                // appears only for a deliberate selection — a card header
+                // clicked in the reader (CardClicked, which never routes
+                // through here), or a multi-selection made in the list.
+                let keys = if keys.len() == 1 { Vec::new() } else { keys };
                 if self.selected_cards != keys {
                     self.selected_cards = keys;
                     self.apply_card_selection();

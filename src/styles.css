@@ -450,6 +450,12 @@ headerbar.rail-header {
   padding: 8px 12px;
 }
 
+/* The expanded head tops that column of inset cards: its pill pulls its right
+   edge in to match theirs, so the group reads as one aligned block. */
+.message-listbox > row.thread-head-open .message-row {
+  margin-right: 8px;
+}
+
 /* Node dot where each member meets the rail: an 8px circle whose negative
    margin pulls it out of the row's content box to sit centred on the
    border-drawn rail line. The window-coloured ring masks the rail where it

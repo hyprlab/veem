@@ -812,6 +812,11 @@ impl MessageRow {
         if self.is_thread_child {
             v.push("thread-child");
         }
+        // An expanded head tops a column of inset member cards; its pill pulls
+        // its right edge in to match theirs (see `.thread-head-open`).
+        if self.thread_count > 1 && self.thread_expanded {
+            v.push("thread-head-open");
+        }
         v
     }
 
