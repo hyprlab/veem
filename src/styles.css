@@ -481,9 +481,9 @@ headerbar.rail-header {
    width is reserved up front so revealing the palette never widens the message
    list: the pane's minimum comes from its widest row, and a pane that grows the
    moment you click is disconcerting. The figure is the palette's own metrics —
-   nine buttons at 22px + 4px padding, plus the 20px toggle and 2px spacing. */
+   eight buttons at 22px + 4px padding, plus the 20px toggle and 2px spacing. */
 .actions-line {
-  min-width: 260px;
+  min-width: 234px;
 }
 
 .actions-palette button {

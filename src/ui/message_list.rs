@@ -70,8 +70,8 @@ pub type DragKeys = std::rc::Rc<std::cell::RefCell<Vec<(u32, u32, u32, u32)>>>;
 /// needs to show a row's full Actions Palette — the tightest real constraint
 /// in the list. The sum of the card's insets (10px rail margin, 10px + 8px
 /// card margins, 12px + 12px card padding), the avatar (38px), the unread
-/// dot (8px), three 8px gaps, and the 260px actions-line reservation.
-const LIST_MIN_WIDTH: i32 = 374;
+/// dot (8px), three 8px gaps, and the 234px actions-line reservation.
+const LIST_MIN_WIDTH: i32 = 348;
 
 /// A background face lookup's answer, correlated by sender address (a recycled
 /// row compares before using it). The tiers are personal-first: the contact's
@@ -503,12 +503,6 @@ impl FactoryComponent for MessageRow {
                                 set_tooltip_text: Some("Delete"),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Delete)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-code-symbolic",
-                                set_tooltip_text: Some("View source"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ViewSource)),
                             },
                         },
                     },

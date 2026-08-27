@@ -39,7 +39,8 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
 ];
 
 // The message list's opening width now comes from config (the remembered pane
-// width, #28); its 350px floor lives with the pane in message_list.rs.
+// width, #28); its floor lives with the pane in message_list.rs
+// (LIST_MIN_WIDTH).
 
 /// The narrowest the reader pane may be squeezed. The header's actions
 /// collapse into the overflow menu below READER_ACTIONS_BREAKPOINT, so the
@@ -1012,7 +1013,8 @@ impl SimpleComponent for AppModel {
                                 },
                                 // pack_end fills right-to-left, so these are declared
                                 // in reverse of their visual order. Left to right:
-                                // Archive, Delete, Spam, View Source, Print, sender check.
+                                // Archive, Delete, Spam, Print, sender check.
+                                // (View Source lives in the context menu only.)
                                 pack_end = &gtk::MenuButton {
                                     set_icon_name: "co.hyprlab.Vireo-verified-checkmark-symbolic",
                                     add_css_class: "flat",
@@ -1092,16 +1094,6 @@ impl SimpleComponent for AppModel {
                                     // shows what will come out and prints from
                                     // there, so nobody spends paper to find out.
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::PrintPreview),
-                                },
-                                pack_end = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-code-symbolic",
-                                    set_tooltip_text: Some("View Source"),
-                                    add_css_class: "flat",
-                                    #[watch]
-                                    set_visible: !model.reader_actions_collapsed,
-                                    #[watch]
-                                    set_sensitive: model.current.is_some(),
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::ViewSource),
                                 },
                                 pack_end = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
@@ -1718,16 +1710,16 @@ impl SimpleComponent for AppModel {
             root.maximize();
         }
         // Below this width the expanded sidebar and a full-width Actions
-        // Palette can't both fit (280 sidebar + 350 list + 492 reader), so the
+        // Palette can't both fit (280 sidebar + 324 list + 492 reader), so the
         // sidebar drops to its icon rail automatically — this is what keeps the
         // palette whole when the window is tiled to half of a 1920px screen.
         // With a breakpoint present the window no longer derives its minimum
         // size from its content, so pin an explicit floor: the sidebar rail
-        // (80) + the list's palette floor (350) + the reader header (~492).
-        root.set_size_request(930, 360);
+        // (80) + the list's palette floor (324) + the reader header (~492).
+        root.set_size_request(904, 360);
         let narrow = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
             adw::BreakpointConditionLengthType::MaxWidth,
-            1120.0,
+            1094.0,
             adw::LengthUnit::Px,
         ));
         {
@@ -5033,10 +5025,10 @@ impl AppModel {
                         entry!("Flag", "starred", AppMsg::ToggleStar, has_current)
                     },
                 ],
-                vec![
-                    entry!("Print Preview", "printer", AppMsg::PrintPreview, has_current),
-                    entry!("View Source", "code", AppMsg::ViewSource, has_current),
-                ],
+                // View Source is deliberately absent: it lives in the message
+                // list's context menu only (the Outbox variant above keeps it —
+                // queued rows have no such menu).
+                vec![entry!("Print Preview", "printer", AppMsg::PrintPreview, has_current)],
                 vec![
                     entry!("Mark as Spam", "mail-mark-junk", AppMsg::MarkSpam, has_current),
                     entry!("Archive", "mail-archive", AppMsg::Archive, has_current),

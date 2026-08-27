@@ -1194,13 +1194,13 @@ pub fn save_gallery_sort(sort: u32) {
 
 /// The message-list pane's remembered width (clamped to something sane).
 pub fn load_list_pane_width() -> i32 {
-    load_state().list_pane_width.clamp(350, 4000)
+    load_state().list_pane_width.clamp(324, 4000)
 }
 
 /// Persist the message-list pane's width (#28).
 pub fn save_list_pane_width(width: i32) {
     let mut s = load_state();
-    s.list_pane_width = width.clamp(350, 4000);
+    s.list_pane_width = width.clamp(324, 4000);
     save_state(&s);
 }
 
