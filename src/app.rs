@@ -69,7 +69,7 @@ relm4::new_stateless_action!(ShortcutsAction, WindowActionGroup, "shortcuts");
 relm4::new_stateless_action!(PrintAction, WindowActionGroup, "print");
 relm4::new_stateless_action!(PrintPreviewAction, WindowActionGroup, "print-preview");
 
-use crate::config::{self, AccountConfig};
+use crate::config::{self, split_identity, AccountConfig};
 use crate::models::{Account, Attachment, Folder, FolderKind, Message};
 use crate::ui::accounts::{AccountsOutput, AccountsWindow};
 use crate::ui::compose::{
@@ -1296,6 +1296,9 @@ impl SimpleComponent for AppModel {
         // so a momentary outage never wipes imported accounts. Live changes are
         // handled by the watcher below.
         let mut config = config::load().unwrap_or_default();
+        // Snapshot before reconciling: a removed account's alias-password
+        // keyring entries are keyed by addresses only its config knows.
+        let config_before_goa = config.clone();
         let goa_outcome = match crate::goa::live_state() {
             Some(live) => reconcile_goa(&mut config, &live),
             None => GoaReconcile::default(),
@@ -1303,7 +1306,10 @@ impl SimpleComponent for AppModel {
         let goa_removed = goa_outcome.removed;
         if !goa_removed.is_empty() {
             for email in &goa_removed {
-                config::delete_password(email);
+                match config_before_goa.iter().find(|c| &c.email == email) {
+                    Some(acc) => config::delete_account_secrets(acc),
+                    None => config::delete_password(email),
+                }
             }
             sidebar_state.order.retain(|e| !goa_removed.contains(e));
             sidebar_state.collapsed.retain(|e| !goa_removed.contains(e));
@@ -3355,6 +3361,28 @@ impl SimpleComponent for AppModel {
                 // otherwise leave the account unable to log in after a restart).
                 let expected_secret = (!account.password.is_empty())
                     .then(|| account.password.clone());
+                // An alias dropped (or switched back to the account's SMTP) in
+                // this edit must not leave its SMTP password behind in the
+                // keyring — and an email rename re-keys every alias entry, so
+                // the old ones all go. config::save() below stores the current
+                // set fresh.
+                if let Some(orig) = &original_email {
+                    if let Some(old) = self.config.iter().find(|c| &c.email == orig) {
+                        for old_alias in &old.aliases {
+                            let kept = old.email == new_email
+                                && account.aliases.iter().any(|n| {
+                                    n.has_own_smtp()
+                                        && n.address().eq_ignore_ascii_case(&old_alias.address())
+                                });
+                            if !kept {
+                                config::delete_alias_smtp_password(
+                                    &old.email,
+                                    &old_alias.address(),
+                                );
+                            }
+                        }
+                    }
+                }
                 match original_email {
                     // Editing an existing account (matched by its previous email).
                     Some(orig) => {
@@ -3437,8 +3465,13 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::AccountRemoved { email } => {
+                // Drop the keyring entries while the config (which knows the
+                // alias addresses) is still around.
+                match self.config.iter().find(|c| c.email == email) {
+                    Some(acc) => config::delete_account_secrets(acc),
+                    None => config::delete_password(&email),
+                }
                 self.config.retain(|c| c.email != email);
-                config::delete_password(&email);
                 self.account_order.retain(|e| *e != email);
                 self.collapsed.retain(|e| *e != email);
                 if let Err(e) = config::save(&self.config) {
@@ -3453,10 +3486,17 @@ impl SimpleComponent for AppModel {
                 // no longer exists there; pause/resume any whose Mail service
                 // was toggled. (Adding an account to GOA never auto-imports —
                 // that stays a manual choice.)
+                // Snapshot first: reconcile removes accounts from the config,
+                // and the alias-password keyring entries are keyed by data
+                // (the alias addresses) only the config holds.
+                let before = self.config.clone();
                 let outcome = reconcile_goa(&mut self.config, &live);
                 if !outcome.removed.is_empty() {
                     for email in &outcome.removed {
-                        config::delete_password(email);
+                        match before.iter().find(|c| &c.email == email) {
+                            Some(acc) => config::delete_account_secrets(acc),
+                            None => config::delete_password(email),
+                        }
                         self.account_order.retain(|e| e != email);
                         self.collapsed.retain(|e| e != email);
                         self.folders_expanded.retain(|e| e != email);
@@ -5558,7 +5598,7 @@ impl AppModel {
                     alias_from: None,
                 }];
                 for alias in cfg.map(|c| c.aliases.as_slice()).unwrap_or_default() {
-                    let (name, addr) = split_identity(alias);
+                    let (name, addr) = split_identity(&alias.identity);
                     if addr.is_empty() {
                         continue;
                     }
@@ -6643,6 +6683,17 @@ impl AppModel {
             if a.smtp_separate && a.smtp_password.is_empty() {
                 a.smtp_password = config::load_smtp_password(&a.email).unwrap_or_default();
             }
+            // Aliases with their own SMTP (#34): prefill too, so editing keeps
+            // the stored password (and an email rename can re-store it under
+            // the new address).
+            let email = a.email.clone();
+            for alias in &mut a.aliases {
+                if alias.has_own_smtp() && alias.smtp_password.is_empty() {
+                    alias.smtp_password =
+                        config::load_alias_smtp_password(&email, &alias.address())
+                            .unwrap_or_default();
+                }
+            }
         }
         let win = AccountsWindow::builder()
             .transient_for(&self.window)
@@ -7708,17 +7759,6 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
         WorkerEvent::Error { text, connectivity } => {
             AppMsg::Error { account_id, text, connectivity }
         }
-    }
-}
-
-/// "Name <addr>" or a bare address → (name, addr).
-fn split_identity(s: &str) -> (String, String) {
-    match s.split_once('<') {
-        Some((n, rest)) => (
-            n.trim().trim_matches('"').to_string(),
-            rest.trim_end_matches('>').trim().to_string(),
-        ),
-        None => (String::new(), s.trim().to_string()),
     }
 }
 

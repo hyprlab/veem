@@ -98,10 +98,10 @@ pub struct AccountConfig {
     #[serde(default)]
     pub label: Option<String>,
     /// Send-as aliases: extra From identities offered in the composer (#34).
-    /// Each entry is "Name <address>" or a bare address; mail still goes out
-    /// through this account's SMTP.
-    #[serde(default)]
-    pub aliases: Vec<String>,
+    /// Older configs stored these as plain "Name <address>" strings; both forms
+    /// are accepted on load, and saved back as tables.
+    #[serde(default, deserialize_with = "deserialize_aliases")]
+    pub aliases: Vec<AliasConfig>,
     /// Whether the account is active. Disabled accounts stay configured but don't
     /// connect, sync, or appear in the sidebar.
     #[serde(default = "default_enabled")]
@@ -130,6 +130,90 @@ pub struct AccountConfig {
     /// memory (like `password`); stored on save.
     #[serde(default, skip_serializing)]
     pub oauth_refresh: String,
+}
+
+/// A send-as alias (#34): an extra From identity the composer offers. By
+/// default the mail still leaves through the account's own SMTP; an alias may
+/// instead carry its own SMTP transport (host, credentials), so mail sent as
+/// the alias goes out through the alias's provider — the forwarded-mailbox
+/// setup where e.g. Gmail would otherwise rewrite the sender.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AliasConfig {
+    /// The From identity: "Name <address>" or a bare address.
+    pub identity: String,
+    /// The alias's own SMTP server; empty = send through the account's SMTP.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub smtp_host: String,
+    #[serde(default = "default_smtp_port", skip_serializing_if = "is_default_smtp_port")]
+    pub smtp_port: u16,
+    /// SMTP username (used only when `smtp_host` is set).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub smtp_username: String,
+    /// SMTP password — kept in the keyring (keyed by account + alias address),
+    /// never on disk.
+    #[serde(default, skip_serializing)]
+    pub smtp_password: String,
+}
+
+impl Default for AliasConfig {
+    fn default() -> Self {
+        Self {
+            identity: String::new(),
+            smtp_host: String::new(),
+            smtp_port: default_smtp_port(),
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+        }
+    }
+}
+
+impl AliasConfig {
+    /// The bare address inside `identity`.
+    pub fn address(&self) -> String {
+        split_identity(&self.identity).1
+    }
+
+    /// Whether mail sent as this alias leaves through the alias's own SMTP
+    /// server rather than the account's.
+    pub fn has_own_smtp(&self) -> bool {
+        !self.smtp_host.trim().is_empty()
+    }
+}
+
+fn is_default_smtp_port(port: &u16) -> bool {
+    *port == default_smtp_port()
+}
+
+/// "Name <addr>" or a bare address → (name, addr).
+pub fn split_identity(s: &str) -> (String, String) {
+    match s.split_once('<') {
+        Some((n, rest)) => (
+            n.trim().trim_matches('"').to_string(),
+            rest.trim_end_matches('>').trim().to_string(),
+        ),
+        None => (String::new(), s.trim().to_string()),
+    }
+}
+
+/// Aliases were plain strings before they could carry their own SMTP; accept
+/// either form so existing configs keep loading.
+fn deserialize_aliases<'de, D>(deserializer: D) -> Result<Vec<AliasConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Entry {
+        Plain(String),
+        Full(AliasConfig),
+    }
+    Ok(Vec::<Entry>::deserialize(deserializer)?
+        .into_iter()
+        .map(|e| match e {
+            Entry::Plain(identity) => AliasConfig { identity, ..AliasConfig::default() },
+            Entry::Full(alias) => alias,
+        })
+        .collect())
 }
 
 /// OAuth2 client configuration for an account added directly in Vireo.
@@ -216,6 +300,22 @@ pub fn save(accounts: &[AccountConfig]) -> std::io::Result<()> {
                 tracing::error!("could not store SMTP password for {}: {e}", account.email);
             }
         }
+        // And for each alias that sends through its own SMTP (#34).
+        for alias in &account.aliases {
+            if alias.has_own_smtp() && !alias.smtp_password.is_empty() {
+                if let Err(e) = store_alias_smtp_password(
+                    &account.email,
+                    &alias.address(),
+                    &alias.smtp_password,
+                ) {
+                    tracing::error!(
+                        "could not store SMTP password for alias {} of {}: {e}",
+                        alias.address(),
+                        account.email
+                    );
+                }
+            }
+        }
         // OAuth refresh token (never overwrite a stored one with an empty value).
         if !account.oauth_refresh.is_empty() {
             if let Err(e) = store_oauth_refresh(&account.email, &account.oauth_refresh) {
@@ -268,6 +368,12 @@ fn smtp_key(email: &str) -> String {
     format!("smtp:{email}")
 }
 
+/// Keyring key for an alias's own SMTP password (#34). The alias address is
+/// lowercased so lookups can't miss on letter case.
+fn alias_smtp_key(email: &str, alias_addr: &str) -> String {
+    format!("smtp-alias:{email}:{}", alias_addr.to_lowercase())
+}
+
 /// Keyring key for a natively-added OAuth account's refresh token.
 fn oauth_key(email: &str) -> String {
     format!("oauth:{email}")
@@ -295,6 +401,33 @@ pub fn store_smtp_password(email: &str, password: &str) -> keyring::Result<()> {
 
 pub fn load_smtp_password(email: &str) -> Option<String> {
     load_key(&smtp_key(email))
+}
+
+pub fn store_alias_smtp_password(
+    email: &str,
+    alias_addr: &str,
+    password: &str,
+) -> keyring::Result<()> {
+    keyring_entry(&alias_smtp_key(email, alias_addr))?.set_password(password)
+}
+
+pub fn load_alias_smtp_password(email: &str, alias_addr: &str) -> Option<String> {
+    load_key(&alias_smtp_key(email, alias_addr))
+}
+
+pub fn delete_alias_smtp_password(email: &str, alias_addr: &str) {
+    delete_key(&alias_smtp_key(email, alias_addr));
+}
+
+/// Drop every keyring entry an account owns: its password(s), OAuth token, and
+/// each alias's own SMTP password. Prefer this over bare [`delete_password`]
+/// whenever the account's config is still at hand — the alias entries are keyed
+/// by address, which only the config knows.
+pub fn delete_account_secrets(account: &AccountConfig) {
+    delete_password(&account.email);
+    for alias in &account.aliases {
+        delete_alias_smtp_password(&account.email, &alias.address());
+    }
 }
 
 fn load_key(key: &str) -> Option<String> {
@@ -1074,7 +1207,82 @@ pub fn save_list_pane_width(width: i32) {
 
 #[cfg(test)]
 mod tests {
-    use super::PrivacyFile;
+    use super::{ConfigFile, PrivacyFile};
+
+    #[test]
+    fn plain_string_aliases_still_load() {
+        // The pre-per-alias-SMTP format (#34): a bare array of identity strings.
+        let cfg: ConfigFile = toml::from_str(
+            r#"
+            [[accounts]]
+            name = "Ann"
+            email = "ann@example.org"
+            imap_host = "imap.example.org"
+            username = "ann"
+            aliases = ["Ann Work <ann@work.org>", "ann@shop.org"]
+            "#,
+        )
+        .unwrap();
+        let aliases = &cfg.accounts[0].aliases;
+        assert_eq!(aliases.len(), 2);
+        assert_eq!(aliases[0].identity, "Ann Work <ann@work.org>");
+        assert_eq!(aliases[0].address(), "ann@work.org");
+        assert!(!aliases[0].has_own_smtp(), "a plain alias rides the account's SMTP");
+        assert_eq!(aliases[1].address(), "ann@shop.org");
+    }
+
+    #[test]
+    fn aliases_can_carry_their_own_smtp() {
+        let cfg: ConfigFile = toml::from_str(
+            r#"
+            [[accounts]]
+            name = "Ann"
+            email = "ann@example.org"
+            imap_host = "imap.example.org"
+            username = "ann"
+
+            [[accounts.aliases]]
+            identity = "Ann Work <ann@work.org>"
+            smtp_host = "smtp.work.org"
+            smtp_port = 465
+            smtp_username = "ann@work.org"
+            "#,
+        )
+        .unwrap();
+        let alias = &cfg.accounts[0].aliases[0];
+        assert!(alias.has_own_smtp());
+        assert_eq!(alias.smtp_host, "smtp.work.org");
+        assert_eq!(alias.smtp_port, 465);
+        assert_eq!(alias.smtp_username, "ann@work.org");
+        assert!(alias.smtp_password.is_empty(), "passwords live in the keyring");
+    }
+
+    #[test]
+    fn alias_smtp_password_never_reaches_disk() {
+        let mut cfg: ConfigFile = toml::from_str(
+            r#"
+            [[accounts]]
+            name = "Ann"
+            email = "ann@example.org"
+            imap_host = "imap.example.org"
+            username = "ann"
+
+            [[accounts.aliases]]
+            identity = "ann@work.org"
+            smtp_host = "smtp.work.org"
+            smtp_username = "ann"
+            "#,
+        )
+        .unwrap();
+        cfg.accounts[0].aliases[0].smtp_password = "hunter2".into();
+        let out = toml::to_string_pretty(&cfg).unwrap();
+        assert!(!out.contains("hunter2"), "password serialized to disk: {out}");
+        // And the round trip keeps the alias's transport settings.
+        let back: ConfigFile = toml::from_str(&out).unwrap();
+        let alias = &back.accounts[0].aliases[0];
+        assert_eq!(alias.smtp_host, "smtp.work.org");
+        assert_eq!(alias.smtp_port, 587, "unwritten port falls back to the default");
+    }
 
     #[test]
     fn preview_lines_default_to_one_and_stay_in_range() {

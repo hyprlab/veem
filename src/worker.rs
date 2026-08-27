@@ -182,8 +182,8 @@ pub struct OutgoingMessage {
     /// The account to send from.
     pub from_account_id: u32,
     /// Send-as alias (#34): the full From for the wire ("Name <alias@host>"),
-    /// or `None` to send as the account itself. The transport (SMTP server,
-    /// credentials) is the account's either way.
+    /// or `None` to send as the account itself. The mail leaves through the
+    /// account's SMTP, unless the alias is configured with its own transport.
     pub from_alias: Option<String>,
     /// Comma-separated recipient addresses.
     pub to: String,
@@ -2264,8 +2264,9 @@ fn mailbox(name: &str, addr: &str) -> Result<Mailbox, SmtpError> {
 /// Build the RFC 822 email (headers + MIME body) from a composed message. Shared
 /// by SMTP sending and by saving to Drafts (no network).
 fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreMessage, SmtpError> {
-    // A send-as alias replaces the From header only; everything else about the
-    // send — server, credentials, the Sent copy — stays the account's (#34).
+    // A send-as alias replaces the From header (and, if the alias has its own
+    // SMTP, the transport — see `send_raw_smtp`); the Sent copy and everything
+    // else about the send stays the account's (#34).
     let (from, from_addr) = match msg.from_alias.as_deref() {
         Some(alias) => match parse_recipients(alias).into_iter().next() {
             Some((name, addr)) => (mailbox(&name, &addr)?, addr),
@@ -2389,30 +2390,75 @@ fn smtp_tls_parameters(
     }
 }
 
-/// An SMTP transport for this account, configured but not yet connected.
-async fn smtp_transport(
-    account: &AccountConfig,
-) -> Result<AsyncSmtpTransport<Tokio1Executor>, SmtpError> {
-    let host = smtp_host(account);
-    // Port 465 is implicit TLS; everything else (587, etc.) uses STARTTLS.
-    let implicit_tls = account.smtp_port == 465;
-    let transport_builder = if is_loopback_host(&host) {
-        // A local bridge signs its own certificate (see `is_loopback_host`), so
-        // the relay builders' verification would reject it. TLS is still
-        // required — only the certificate checks are relaxed.
-        let tls = smtp_tls_parameters(&host)?;
+/// The account's send-as alias matching `addr` (case-insensitive), when that
+/// alias carries its own SMTP transport (#34). Plain aliases — and the
+/// account's own address — resolve to `None`: the account's transport.
+fn alias_with_own_smtp<'a>(
+    account: &'a AccountConfig,
+    addr: &str,
+) -> Option<&'a crate::config::AliasConfig> {
+    account
+        .aliases
+        .iter()
+        .find(|a| a.has_own_smtp() && a.address().eq_ignore_ascii_case(addr.trim()))
+}
+
+/// A TLS-configured transport builder for one SMTP endpoint. Port 465 is
+/// implicit TLS; everything else (587, etc.) uses STARTTLS. A loopback bridge
+/// signs its own certificate (see `is_loopback_host`), so the relay builders'
+/// verification would reject it — TLS stays required, only the certificate
+/// checks are relaxed.
+fn smtp_transport_builder(
+    host: &str,
+    port: u16,
+) -> Result<lettre::transport::smtp::AsyncSmtpTransportBuilder, SmtpError> {
+    let implicit_tls = port == 465;
+    let builder = if is_loopback_host(host) {
+        let tls = smtp_tls_parameters(host)?;
         let mode = if implicit_tls {
             lettre::transport::smtp::client::Tls::Wrapper(tls)
         } else {
             lettre::transport::smtp::client::Tls::Required(tls)
         };
-        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&host).tls(mode)
+        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host).tls(mode)
     } else if implicit_tls {
-        AsyncSmtpTransport::<Tokio1Executor>::relay(&host)?
+        AsyncSmtpTransport::<Tokio1Executor>::relay(host)?
     } else {
-        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)?
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)?
     };
-    let mut builder = transport_builder.port(account.smtp_port);
+    Ok(builder.port(port))
+}
+
+/// An SMTP transport, configured but not yet connected: the account's own, or —
+/// when `alias` is given — the alias's separate server and credentials (#34).
+async fn smtp_transport(
+    account: &AccountConfig,
+    alias: Option<&crate::config::AliasConfig>,
+) -> Result<AsyncSmtpTransport<Tokio1Executor>, SmtpError> {
+    if let Some(alias) = alias {
+        // An alias's own transport is always password-authenticated, never the
+        // account's OAuth: it is a different provider's server, which knows
+        // nothing of the account's tokens. The password lives in the keyring
+        // and is fetched here (the in-memory config never carries it).
+        let password = if alias.smtp_password.is_empty() {
+            crate::config::load_alias_smtp_password(&account.email, &alias.address())
+                .ok_or_else(|| -> SmtpError {
+                    format!(
+                        "no SMTP password stored for the alias {} — re-enter it in \
+                         Accounts",
+                        alias.address()
+                    )
+                    .into()
+                })?
+        } else {
+            alias.smtp_password.clone()
+        };
+        return Ok(smtp_transport_builder(alias.smtp_host.trim(), alias.smtp_port)?
+            .credentials(Credentials::new(alias.smtp_username.clone(), password))
+            .build());
+    }
+    let host = smtp_host(account);
+    let mut builder = smtp_transport_builder(&host, account.smtp_port)?;
     if account.oauth {
         // XOAUTH2: the "password" is a fresh OAuth token from GOA.
         let token = fetch_oauth_token(account).await.ok_or_else(|| -> SmtpError {
@@ -2442,7 +2488,14 @@ async fn send_raw_smtp(
     envelope: &lettre::address::Envelope,
     raw: &[u8],
 ) -> Result<(), SmtpError> {
-    let mailer = smtp_transport(account).await?;
+    // The envelope sender names the identity this leaves as. When it is an
+    // alias with its own SMTP, the mail goes out through that transport (#34);
+    // Outbox retries come through here too, so a queued alias send retries on
+    // the alias's server.
+    let alias = envelope
+        .from()
+        .and_then(|f| alias_with_own_smtp(account, f.as_ref()));
+    let mailer = smtp_transport(account, alias).await?;
     mailer.send_raw(envelope, raw).await?;
     Ok(())
 }
@@ -2912,9 +2965,7 @@ async fn test_imap(account: &AccountConfig) -> Result<(), String> {
 /// Connect to the SMTP server and authenticate (then quit) — verifies the send
 /// credentials without delivering anything.
 async fn test_smtp(account: &AccountConfig) -> Result<(), String> {
-    use lettre::transport::smtp::authentication::{Credentials, Mechanism};
-    use lettre::transport::smtp::client::AsyncSmtpConnection;
-    use lettre::transport::smtp::extension::ClientId;
+    use lettre::transport::smtp::authentication::Mechanism;
 
     let host = smtp_host(account);
     // Authenticate the same way the send path does: XOAUTH2 with a fresh token
@@ -2935,15 +2986,66 @@ async fn test_smtp(account: &AccountConfig) -> Result<(), String> {
             &[Mechanism::Plain, Mechanism::Login],
         )
     };
+    smtp_auth_check(&host, account.smtp_port, &creds, mechanisms).await
+}
+
+/// Test a send-as alias's own SMTP server and credentials (#34): connect,
+/// authenticate, quit. Used by the alias editor's Test button; an alias without
+/// its own transport has nothing of its own to test.
+pub async fn test_alias_smtp(
+    account_email: &str,
+    alias: &crate::config::AliasConfig,
+) -> Result<(), String> {
+    use lettre::transport::smtp::authentication::Mechanism;
+
+    let password = if alias.smtp_password.is_empty() {
+        crate::config::load_alias_smtp_password(account_email, &alias.address())
+            .unwrap_or_default()
+    } else {
+        alias.smtp_password.clone()
+    };
+    let creds = Credentials::new(alias.smtp_username.clone(), password);
+    smtp_auth_check(
+        alias.smtp_host.trim(),
+        alias.smtp_port,
+        &creds,
+        &[Mechanism::Plain, Mechanism::Login],
+    )
+    .await
+}
+
+/// Blocking wrapper around [`test_alias_smtp`] — call from `spawn_blocking`,
+/// like [`test_connection_blocking`].
+pub fn test_alias_smtp_blocking(
+    account_email: String,
+    alias: crate::config::AliasConfig,
+) -> Result<(), String> {
+    match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        Ok(rt) => rt.block_on(test_alias_smtp(&account_email, &alias)),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Shared SMTP credential check: connect (implicit TLS on 465, STARTTLS
+/// otherwise), authenticate, quit.
+async fn smtp_auth_check(
+    host: &str,
+    port: u16,
+    creds: &Credentials,
+    mechanisms: &[lettre::transport::smtp::authentication::Mechanism],
+) -> Result<(), String> {
+    use lettre::transport::smtp::client::AsyncSmtpConnection;
+    use lettre::transport::smtp::extension::ClientId;
+
     let hello = ClientId::default();
-    let tls = smtp_tls_parameters(&host).map_err(|e| e.to_string())?;
+    let tls = smtp_tls_parameters(host).map_err(|e| e.to_string())?;
     // A (host, port) pair resolves bare IPv6 addresses correctly; a "host:port"
     // string would mis-parse their colons.
-    let addr = (host.as_str(), account.smtp_port);
+    let addr = (host, port);
     let timeout = Some(std::time::Duration::from_secs(20));
 
     // Port 465 is implicit TLS; everything else uses STARTTLS.
-    let mut conn = if account.smtp_port == 465 {
+    let mut conn = if port == 465 {
         AsyncSmtpConnection::connect_tokio1(addr, timeout, &hello, Some(tls), None)
             .await
             .map_err(|e| e.to_string())?
@@ -2954,7 +3056,7 @@ async fn test_smtp(account: &AccountConfig) -> Result<(), String> {
         conn.starttls(tls, &hello).await.map_err(|e| e.to_string())?;
         conn
     };
-    let result = conn.auth(mechanisms, &creds).await.map(|_| ()).map_err(|e| e.to_string());
+    let result = conn.auth(mechanisms, creds).await.map(|_| ()).map_err(|e| e.to_string());
     let _ = conn.quit().await;
     result
 }
@@ -5943,6 +6045,33 @@ mod tests {
         // The Message-ID follows the alias's domain, so replies thread back.
         let id_line = wire.lines().find(|l| l.starts_with("Message-ID:")).expect("id");
         assert!(id_line.contains("@work.example"), "id in alias domain: {id_line}");
+    }
+
+    #[test]
+    fn only_an_alias_with_its_own_smtp_switches_transport() {
+        use crate::config::AliasConfig;
+        let account = AccountConfig {
+            email: "me@example.com".into(),
+            aliases: vec![
+                AliasConfig { identity: "Plain <plain@fwd.example>".into(), ..Default::default() },
+                AliasConfig {
+                    identity: "Ann Work <ann@work.example>".into(),
+                    smtp_host: "smtp.work.example".into(),
+                    smtp_port: 465,
+                    smtp_username: "ann@work.example".into(),
+                    ..Default::default()
+                },
+            ],
+            ..sample_account()
+        };
+        // A plain alias, and the account's own address, keep the account transport.
+        assert!(alias_with_own_smtp(&account, "plain@fwd.example").is_none());
+        assert!(alias_with_own_smtp(&account, "me@example.com").is_none());
+        // The per-SMTP alias resolves — case-insensitively, as addresses are.
+        let hit = alias_with_own_smtp(&account, "Ann@Work.example").expect("matches");
+        assert_eq!(hit.smtp_host, "smtp.work.example");
+        // An address that is nobody's alias resolves to the account transport.
+        assert!(alias_with_own_smtp(&account, "stranger@else.example").is_none());
     }
 
     #[test]
