@@ -716,13 +716,13 @@ headerbar.rail-header {
 
 /* ---- Remote-content (privacy) alert in the reader ---- */
 
-/* Blocked-remote-content bar: quiet grey ground, amber kept only where it
-   carries meaning — the shield icon. The action buttons stay libadwaita's
-   standard grey. It's a standing notice, not an alarm, and must not eat
-   into the reader. Fixed colours — legible on both light and dark. */
+/* Blocked-remote-content bar: a quiet tint over the theme's own ground, so
+   it follows light/dark switching; amber is kept only where it carries
+   meaning — the shield icon, via the theme's warning colour. The action
+   buttons stay libadwaita's standard grey. It's a standing notice, not an
+   alarm, and must not eat into the reader. */
 .remote-alert {
-  background-color: #3a3a3a;
-  color: rgba(255, 255, 255, 0.88);
+  background-color: alpha(currentColor, 0.08);
   padding: 3px 10px 3px 14px;
   /* 42px content + 3px padding top and bottom = a 48px bar. */
   min-height: 42px;
@@ -730,7 +730,7 @@ headerbar.rail-header {
 }
 
 .remote-alert image {
-  color: #ffca28;
+  color: @warning_color;
   /* A step up from the 16px default, matching the taller bar. */
   -gtk-icon-size: 18px;
 }
