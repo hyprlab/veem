@@ -725,6 +725,13 @@ impl Sidebar {
     }
 
     fn rebuild_normal(&mut self, container: &gtk::Box, sender: &ComponentSender<Self>) {
+        // Keep the scroll offset: rebuilding otherwise snaps the sidebar to
+        // the top — felt on every folder drag-and-drop, whose optimistic move
+        // rebuilds immediately under the pointer.
+        let scroller = container
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_downcast::<gtk::ScrolledWindow>();
+        let saved_scroll = scroller.as_ref().map(|s| s.vadjustment().value());
         while let Some(child) = container.first_child() {
             container.remove(&child);
         }
@@ -1421,6 +1428,14 @@ impl Sidebar {
             ));
         }
         self.color_provider.load_from_data(&css);
+
+        // Restore the scroll offset once the fresh rows have been allocated.
+        if let (Some(pos), Some(scroller)) = (saved_scroll, scroller) {
+            if pos > 0.0 {
+                let adj = scroller.vadjustment();
+                gtk::glib::idle_add_local_once(move || adj.set_value(pos));
+            }
+        }
     }
 
     /// Re-apply the current selection after a rebuild; on first populate (no
