@@ -2374,6 +2374,26 @@ impl SimpleComponent for AppModel {
                         self.folder_namespace(account_id),
                         crate::mutf7::encode(name)
                     );
+                    // Optimistic: the folder appears in the sidebar right
+                    // away (a server round-trip took seconds); the worker's
+                    // confirming refresh matches the prediction and repaints
+                    // nothing.
+                    if !self
+                        .folders
+                        .get(&account_id)
+                        .is_some_and(|fs| fs.iter().any(|f| f.path == path))
+                    {
+                        self.folders.entry(account_id).or_default().push(Folder {
+                            id: 0,
+                            account_id,
+                            name: name.to_string(),
+                            path: path.clone(),
+                            kind: FolderKind::Custom,
+                            unread: 0,
+                        });
+                        self.normalize_folders(account_id);
+                        self.rebuild_sidebar();
+                    }
                     self.send_to(account_id, MailRequest::CreateFolder { path });
                 }
             }
@@ -3562,8 +3582,32 @@ impl SimpleComponent for AppModel {
                 {
                     return;
                 }
+                // Merge unread counts by PATH, and never let a zero overwrite
+                // a known count: a refresh's per-folder STATUS can fail
+                // silently (Gmail right after a RENAME answers zeros), and
+                // adopting them wholesale wiped every unread chip. A genuine
+                // zero re-asserts through the per-folder sync events.
+                let prev_by_path: std::collections::HashMap<String, u32> = self
+                    .folders
+                    .get(&account_id)
+                    .map(|old| {
+                        old.iter()
+                            .map(|f| {
+                                let n = self
+                                    .folder_unread
+                                    .get(&(account_id, f.id))
+                                    .copied()
+                                    .unwrap_or(f.unread);
+                                (f.path.clone(), n)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.folder_unread.retain(|(a, _), _| *a != account_id);
                 for f in &folders {
-                    self.folder_unread.insert((account_id, f.id), f.unread);
+                    let known = prev_by_path.get(&f.path).copied().unwrap_or(0);
+                    let n = if f.unread > 0 { f.unread } else { known };
+                    self.folder_unread.insert((account_id, f.id), n);
                 }
                 // An identical list — above all the refresh confirming an
                 // optimistic folder move, whose local reshape mirrors the
@@ -5988,6 +6032,39 @@ impl AppModel {
         self.apply_folder_rename(account_id, path, new_path);
     }
 
+    /// Bring an account's local folder list back to exactly the shape the
+    /// worker reports: pin the freshest unread counts onto the folders, apply
+    /// the worker's sort, reassign index-based ids, and re-key the unread map
+    /// and the selection. Run after any optimistic mutation (move, rename,
+    /// create) so the confirming server refresh is a recognised no-op.
+    fn normalize_folders(&mut self, account_id: u32) {
+        let Some(folders) = self.folders.get_mut(&account_id) else { return };
+        for f in folders.iter_mut() {
+            if let Some(u) = self.folder_unread.get(&(account_id, f.id)) {
+                f.unread = *u;
+            }
+        }
+        folders.sort_by(|a, b| {
+            crate::worker::folder_order(a.kind)
+                .cmp(&crate::worker::folder_order(b.kind))
+                .then_with(|| a.path.to_lowercase().cmp(&b.path.to_lowercase()))
+        });
+        for (i, f) in folders.iter_mut().enumerate() {
+            f.id = i as u32 + 1;
+        }
+        self.folder_unread.retain(|(a, _), _| *a != account_id);
+        for f in folders.iter() {
+            self.folder_unread.insert((account_id, f.id), f.unread);
+        }
+        if let Some(sel) = self.selected.as_mut() {
+            if sel.account_id == account_id {
+                if let Some(f) = folders.iter().find(|f| f.path == sel.path) {
+                    sel.folder_id = f.id;
+                }
+            }
+        }
+    }
+
     /// The shared optimistic machinery behind both folder moves and renames:
     /// clear the view if the affected subtree is open, reshape the local
     /// folder list exactly as the worker will report it back, re-key
@@ -6016,10 +6093,6 @@ impl AppModel {
         let new_prefix = format!("{new_path}{delim}");
         if let Some(folders) = self.folders.get_mut(&account_id) {
             for f in folders.iter_mut() {
-                // Pin the freshest unread onto the folder so it survives re-id.
-                if let Some(u) = self.folder_unread.get(&(account_id, f.id)) {
-                    f.unread = *u;
-                }
                 if f.path == path {
                     f.path = new_path.clone();
                     let leaf = f.path.rsplit(delim).next().unwrap_or(&f.path);
@@ -6028,27 +6101,8 @@ impl AppModel {
                     f.path = format!("{new_prefix}{rest}");
                 }
             }
-            folders.sort_by(|a, b| {
-                crate::worker::folder_order(a.kind)
-                    .cmp(&crate::worker::folder_order(b.kind))
-                    .then_with(|| a.path.to_lowercase().cmp(&b.path.to_lowercase()))
-            });
-            for (i, f) in folders.iter_mut().enumerate() {
-                f.id = i as u32 + 1;
-            }
-            // Re-key everything that referenced folders by id or old path.
-            self.folder_unread.retain(|(a, _), _| *a != account_id);
-            for f in folders.iter() {
-                self.folder_unread.insert((account_id, f.id), f.unread);
-            }
-            if let Some(sel) = self.selected.as_mut() {
-                if sel.account_id == account_id {
-                    if let Some(f) = folders.iter().find(|f| f.path == sel.path) {
-                        sel.folder_id = f.id;
-                    }
-                }
-            }
         }
+        self.normalize_folders(account_id);
         // Collapsed tree nodes follow the moved subtree to its new home.
         if let Some(email) =
             self.accounts.iter().find(|a| a.id == account_id).map(|a| a.email.clone())
