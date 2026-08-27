@@ -2243,11 +2243,15 @@ fn rewrite_declarations(decls: &str) -> String {
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut start = 0;
-    let bytes = decls.char_indices().collect::<Vec<_>>();
-    let mut flush = |seg: &str, out: &mut String| {
-        out.push_str(&rewrite_one_declaration(seg));
-    };
-    for &(i, c) in &bytes {
+    let mut i = 0;
+    while i < decls.len() {
+        let c = decls[i..].chars().next().unwrap();
+        // Comments may contain `;` — `/* background: #fff; */` must not split
+        // the declaration after it in half (seen in the wild, issue #35).
+        if quote.is_none() && decls[i..].starts_with("/*") {
+            i += decls[i..].find("*/").map(|r| r + 2).unwrap_or(decls.len() - i);
+            continue;
+        }
         match (quote, c) {
             (Some(q), _) if c == q => quote = None,
             (Some(_), _) => {}
@@ -2255,14 +2259,15 @@ fn rewrite_declarations(decls: &str) -> String {
             (None, '(') => depth += 1,
             (None, ')') => depth = depth.saturating_sub(1),
             (None, ';') if depth == 0 => {
-                flush(&decls[start..i], &mut out);
+                out.push_str(&rewrite_one_declaration(&decls[start..i]));
                 out.push(';');
                 start = i + 1;
             }
             _ => {}
         }
+        i += c.len_utf8();
     }
-    flush(&decls[start..], &mut out);
+    out.push_str(&rewrite_one_declaration(&decls[start..]));
     out
 }
 
@@ -2270,9 +2275,26 @@ fn rewrite_declarations(decls: &str) -> String {
 /// colour whose direction we know. Anything unrecognised passes through
 /// byte-for-byte.
 fn rewrite_one_declaration(decl: &str) -> String {
-    let Some(colon) = decl.find(':') else { return decl.to_string() };
-    let prop = decl[..colon].trim().to_ascii_lowercase();
-    let value = &decl[colon + 1..];
+    // Step over any leading comments so `/* old */ background: #fff` still
+    // parses to a property we recognise; the comment is kept verbatim.
+    let mut p = 0;
+    loop {
+        let rest = &decl[p..];
+        let trimmed = rest.trim_start();
+        p += rest.len() - trimmed.len();
+        if trimmed.starts_with("/*") {
+            match trimmed.find("*/") {
+                Some(e) => p += e + 2,
+                None => return decl.to_string(),
+            }
+        } else {
+            break;
+        }
+    }
+    let (head, decl_body) = decl.split_at(p);
+    let Some(colon) = decl_body.find(':') else { return decl.to_string() };
+    let prop = decl_body[..colon].trim().to_ascii_lowercase();
+    let value = &decl_body[colon + 1..];
     let background = match prop.as_str() {
         "color" => false,
         "background-color" | "background" => true,
@@ -2293,7 +2315,7 @@ fn rewrite_one_declaration(decl: &str) -> String {
             ValuePiece::Raw(r) => rewritten.push_str(r),
         }
     }
-    format!("{}:{rewritten}{important}", &decl[..colon])
+    format!("{head}{}:{rewritten}{important}", &decl_body[..colon])
 }
 
 enum ValuePiece<'a> {
@@ -3144,6 +3166,19 @@ mod tests {
         assert_eq!(adapt_colors_for_dark(doc), doc);
     }
 
+    /// A CSS comment carrying a semicolon must not split the declaration
+    /// after it — a real newsletter commented out one background and declared
+    /// another right behind it, and the white slipped through (issue #35).
+    #[test]
+    fn comments_with_semicolons_do_not_hide_declarations() {
+        let doc = "<style>.t{ /* background-color: #f0f2f5; */ background-color: #fff; }</style>";
+        let out = adapt_colors_for_dark(doc);
+        assert!(out.contains("background-color: #141414;"), "{out}");
+        assert!(out.contains("/* background-color: #f0f2f5; */"), "comment kept: {out}");
+        let out = adapt_colors_for_dark(r#"<p style="/* x; */ color: #000">x</p>"#);
+        assert!(out.contains("/* x; */ color: #ffffff"), "{out}");
+    }
+
     /// Mid-lightness brand colours sit fine on either ground: leave them.
     #[test]
     fn mid_tones_are_left_alone() {
@@ -3992,3 +4027,4 @@ mod scan_perf {
         assert!(strip.as_millis() < 250, "stripping took {strip:?}");
     }
 }
+
