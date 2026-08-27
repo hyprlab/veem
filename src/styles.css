@@ -427,9 +427,55 @@ headerbar.rail-header {
   -gtk-icon-size: 11px;
 }
 
+/* Expanded conversation members: inset rounded cards hung off a dotted rail,
+   instead of full-width rectangles crossing the list separators (issue #62).
+   The rail is the row's left border (pushed inward by the margin); all the
+   state colours — hover, unread, selected — move off the row and onto the
+   inner .message-row box, so the highlight is a padded pill that never
+   touches the list edges. */
+.message-listbox > row.thread-child {
+  margin-left: 18px;
+  border-left: 2px dotted alpha(currentColor, 0.3);
+  /* Cards separate themselves; no hairline between members. */
+  border-bottom: none;
+}
+
+/* The expanded head joins its group: no full-width hairline between it and
+   the first member card. */
+.message-listbox > row.thread-head-open {
+  border-bottom: none;
+}
+
+/* Every row-level tint off — the card below carries the state instead. */
+.message-listbox > row.thread-child:hover:not(:selected),
+.message-listbox > row.thread-child.message-unread:not(:selected),
+.message-listbox > row.thread-child.message-unread:hover:not(:selected),
+.message-listbox > row.thread-child:selected,
+.message-listbox > row.thread-child.activatable:selected:hover,
+.message-listbox > row.thread-child.activatable:selected:active {
+  background: none;
+}
+
 .message-listbox > row.thread-child .message-row {
-  margin-left: 22px;
-  border-left: 2px solid alpha(@accent_bg_color, 0.4);
+  margin: 3px 10px 3px 12px;
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+
+.message-listbox > row.thread-child:hover:not(:selected) .message-row {
+  background-color: alpha(currentColor, 0.05);
+}
+
+.message-listbox > row.thread-child.message-unread:not(:selected) .message-row {
+  background-color: alpha(@accent_bg_color, 0.12);
+}
+
+.message-listbox > row.thread-child.message-unread:hover:not(:selected) .message-row {
+  background-color: alpha(@accent_bg_color, 0.2);
+}
+
+.message-listbox > row.thread-child:selected .message-row {
+  background-color: alpha(@accent_bg_color, 0.5);
 }
 
 /* The Actions Palette: quick-action buttons that slide in from the chevron,
