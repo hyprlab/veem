@@ -247,6 +247,7 @@ impl Component for Sidebar {
                 set_vexpand: true,
 
                 #[wrap(Some)]
+                #[name = "sidebar_scroller"]
                 set_child = &gtk::ScrolledWindow {
                     set_vexpand: true,
                     // External, not Never (see the message list's scroller): row
@@ -344,6 +345,16 @@ impl Component for Sidebar {
 
         let widgets = view_output!();
         model.freeze_frame = Some(widgets.freeze_frame.clone());
+        // Never scroll-to-focus: a rebuild (folder drag-and-drop) destroys
+        // the focused row, GTK hands focus to some early widget, and the
+        // viewport would yank the sidebar to the top to show it — the
+        // "jumps up then back down" on every drop. Sidebar scrolling is the
+        // user's alone.
+        if let Some(viewport) =
+            widgets.sidebar_scroller.child().and_downcast::<gtk::Viewport>()
+        {
+            viewport.set_scroll_to_focus(false);
+        }
         if init.collapsed {
             widgets.collapse_btn.set_tooltip_text(Some("Expand sidebar"));
             align_collapse_btn(&widgets.collapse_btn, true, false);
