@@ -10,7 +10,8 @@
 //! a matching context menu; double-clicking previews images and PDFs in the
 //! app's full-window lightbox (via [`DrawerOutput::ShowLightbox`]) and opens
 //! any other type in its default app. Single clicks do nothing — a first click
-//! must never steal the second.
+//! must never steal the second. The header's "Save All…" button writes every
+//! attachment into a chosen folder.
 //!
 //! Sizing: the drawer *owns* a vertical `GtkPaned` whose top pane is the reader
 //! body (passed in via [`DrawerInit`]) and whose bottom pane is the drawer. The
@@ -130,11 +131,10 @@ pub enum AttachmentDrawerInput {
     /// Double-click on a cell/row (display order): preview images and PDFs in
     /// the lightbox, open anything else in its default app.
     DoubleClick(usize),
-    /// Open the lightbox on item `orig` (attachments order) — used by the
-    /// toolbar popover's Preview button.
-    Preview(usize),
     /// Save an attachment to disk (file chooser).
     Download(usize),
+    /// Save every attachment into a chosen folder ("Save All" header button).
+    SaveAll,
     /// Right-click at (x, y) within the cell.
     ContextMenu { index: usize, x: f64, y: f64 },
 }
@@ -206,6 +206,15 @@ impl SimpleComponent for AttachmentDrawer {
                         add_css_class: "heading",
                     },
                     gtk::Box { set_hexpand: true },
+                    gtk::Button {
+                        set_label: "Save All…",
+                        add_css_class: "flat",
+                        set_valign: gtk::Align::Center,
+                        set_tooltip_text: Some("Save every attachment to a folder"),
+                        connect_clicked[sender] => move |_| {
+                            sender.input(AttachmentDrawerInput::SaveAll);
+                        },
+                    },
                     gtk::Button {
                         add_css_class: "flat",
                         set_valign: gtk::Align::Center,
@@ -418,10 +427,8 @@ impl SimpleComponent for AttachmentDrawer {
                     open_bytes(&att.name, &att.data, self.window().as_ref());
                 }
             }
-            AttachmentDrawerInput::Preview(orig) => {
-                if self.items.get(orig).is_some_and(previewable) {
-                    self.show_lightbox(orig, &sender);
-                }
+            AttachmentDrawerInput::SaveAll => {
+                self.save_all();
             }
             AttachmentDrawerInput::ContextMenu { index, x, y } => {
                 self.show_context_menu(index, x, y, &sender);
@@ -543,6 +550,25 @@ impl AttachmentDrawer {
             if let Ok(file) = res {
                 if let Some(path) = file.path() {
                     let _ = std::fs::write(path, &data);
+                }
+            }
+        });
+    }
+
+    /// Ask for a folder and write every attachment into it ("Save All").
+    fn save_all(&self) {
+        if self.items.is_empty() {
+            return;
+        }
+        let atts = self.items.clone();
+        let dialog = gtk::FileDialog::builder().title("Save All Attachments").build();
+        dialog.select_folder(self.window().as_ref(), gtk::gio::Cancellable::NONE, move |res| {
+            if let Ok(folder) = res {
+                if let Some(dir) = folder.path() {
+                    for att in &atts {
+                        let safe = att.name.replace(['/', '\\'], "_");
+                        let _ = std::fs::write(dir.join(&safe), &att.data);
+                    }
                 }
             }
         });

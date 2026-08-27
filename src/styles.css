@@ -182,18 +182,13 @@ headerbar.rail-header {
   background: alpha(currentColor, 0.08);
 }
 
-/* Reader attachment popover rows. */
+/* Popout-window attachment popover rows. */
 .attach-row {
   padding: 4px 6px;
   border-radius: 8px;
 }
 .attach-row:hover {
   background: alpha(currentColor, 0.06);
-}
-/* Image thumbnail preview in a popover row. */
-.attach-thumb {
-  border-radius: 6px;
-  background: alpha(currentColor, 0.05);
 }
 
 /* Tint the attachments button with the GNOME accent when present. */

@@ -146,14 +146,14 @@ pub struct AppModel {
     /// Accounts whose custom-folders section is expanded in the sidebar (by email).
     folders_expanded: Vec<String>,
     selected: Option<SelectedFolder>,
-    /// Attachments of the currently-open message (for the reader toolbar button).
+    /// Attachments of the currently-open message (shown in the drawer).
     attachments: Vec<Attachment>,
     /// True while the current message's attachments are downloading.
     attachments_loading: bool,
     /// Cache of fetched attachments, keyed by (account_id, message_id), so
     /// revisiting a message doesn't re-download them.
     attachment_cache: HashMap<(u32, u32), Vec<Attachment>>,
-    /// The app-wide attachment lightbox (drawer + toolbar previews): the
+    /// The app-wide attachment lightbox (drawer previews): the
     /// previewable items on show, the current index, and its texture. The
     /// overlay fills the whole window — a separate window meant double chrome.
     lightbox_items: Vec<Attachment>,
@@ -168,8 +168,6 @@ pub struct AppModel {
     /// The lightbox picture + its scroller, for applying zoom sizes.
     lightbox_picture: Option<gtk::Picture>,
     lightbox_scroller: Option<gtk::ScrolledWindow>,
-    /// Popover content box for the attachments button.
-    attach_list: gtk::Box,
     /// True when the unified "All Inboxes" view is active (no single folder).
     unified: bool,
     /// account_id → that account's latest inbox messages (for the unified view).
@@ -513,8 +511,6 @@ pub enum AppMsg {
     AddToContacts,
     ContactAdded(Result<crate::contacts::AddOutcome, String>),
     ViewSource,
-    OpenAttachment(usize),
-    SaveAllAttachments,
     /// User clicked "Load attachments" for a message whose attachments weren't
     /// pre-downloaded — fetch them from the server now.
     SendMessage(Box<OutgoingMessage>),
@@ -1046,23 +1042,6 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: model.attachments_loading,
                                 },
-                                pack_end = &gtk::MenuButton {
-                                    set_icon_name: "co.hyprlab.Vireo-mail-attachment-symbolic",
-                                    set_tooltip_text: Some("Attachments"),
-                                    add_css_class: "flat",
-                                    add_css_class: "attach-present",
-                                    #[watch]
-                                    set_visible: !model.attachments.is_empty(),
-                                    #[wrap(Some)]
-                                    set_popover = &gtk::Popover {
-                                        #[local_ref]
-                                        attach_list -> gtk::Box {
-                                            set_orientation: gtk::Orientation::Vertical,
-                                            set_spacing: 4,
-                                            set_width_request: 340,
-                                        },
-                                    },
-                                },
                             },
                             // Reader content: the inline reply/forward pane drops
                             // down (SlideDown revealer) above the message body,
@@ -1083,8 +1062,8 @@ impl SimpleComponent for AppModel {
 
                 // ======== Full-window attachment lightbox ========
                 // Covers all three panes; shown for images and PDFs coming
-                // from the drawer or the toolbar popover's Preview. Same look
-                // as the gallery's own lightbox (same CSS), no extra window.
+                // from the drawer. Same look as the gallery's own lightbox
+                // (same CSS), no extra window.
                 add_overlay = &gtk::Box {
                     add_css_class: "gallery-lightbox",
                     set_orientation: gtk::Orientation::Vertical,
@@ -1383,7 +1362,6 @@ impl SimpleComponent for AppModel {
             lightbox_scroller: None,
             attachments_loading: false,
             attachment_cache: HashMap::new(),
-            attach_list: gtk::Box::new(gtk::Orientation::Vertical, 0),
             unified: false,
             unified_by_account: HashMap::new(),
             message_cache: HashMap::new(),
@@ -1524,7 +1502,6 @@ impl SimpleComponent for AppModel {
             .emit(MessageViewInput::SetContentTheme(model.message_theme.dark_override()));
         model.arm_auto_fetch(&sender);
 
-        let attach_list = &model.attach_list;
         let widgets = view_output!();
         // The inline reply/forward pane sits above the reader body (top of the
         // content box), sliding down over it when revealed.
@@ -2298,7 +2275,7 @@ impl SimpleComponent for AppModel {
                         self.thread_painted = true;
                         self.thread_related_pending = false;
                         self.show_thread();
-                        self.load_thread_attachments(&sender);
+                        self.load_thread_attachments();
                     } else {
                         // Conversation: assemble the thread with any cached bodies,
                         // request the rest, and render it as a scrollable conversation.
@@ -2339,7 +2316,7 @@ impl SimpleComponent for AppModel {
                             self.send_to(aid, MailRequest::LoadBodies { items, path });
                         }
                         self.show_thread();
-                        self.load_thread_attachments(&sender);
+                        self.load_thread_attachments();
                     }
                 } else {
                     self.current_thread.clear();
@@ -2366,7 +2343,7 @@ impl SimpleComponent for AppModel {
                 if m.has_attachment {
                     if let Some(cached) = self.attachment_cache.get(&(account_id, m.id)).cloned() {
                         self.attachments = cached;
-                        self.rebuild_attach_popover(&sender);
+                        self.sync_attachment_drawer();
                     } else if let Some(path) = folder_path {
                         self.attachments_loading = true;
                         self.send_to(account_id, MailRequest::LoadAttachments {
@@ -2466,7 +2443,7 @@ impl SimpleComponent for AppModel {
                     self.queue_thread_render(&sender);
                     // What was pulled in (a reply from Sent, an archived part)
                     // may carry attachments of its own.
-                    self.load_thread_attachments(&sender);
+                    self.load_thread_attachments();
                 }
             }
 
@@ -3637,7 +3614,7 @@ impl SimpleComponent for AppModel {
                 {
                     self.attachments_loading = false;
                     self.attachments = items.clone();
-                    self.rebuild_attach_popover(&sender);
+                    self.sync_attachment_drawer();
                 }
                 // With a conversation open the drawer spans the whole thread, so
                 // any member's arrival re-merges the union (this supersedes the
@@ -3649,7 +3626,7 @@ impl SimpleComponent for AppModel {
                         .any(|tm| tm.id == message_id && tm.account_id == account_id)
                 {
                     self.attachments_loading = false;
-                    self.refresh_thread_attachments(&sender);
+                    self.refresh_thread_attachments();
                 }
                 if let Some(p) = self.popouts.get(&(account_id, message_id)) {
                     p.controller.emit(MessageWindowInput::SetAttachments(items));
@@ -3740,7 +3717,7 @@ impl SimpleComponent for AppModel {
                         self.attachment_cache.get(&(account_id, message_id)).cloned()
                     {
                         self.attachments = cached;
-                        self.rebuild_attach_popover(&sender);
+                        self.sync_attachment_drawer();
                     } else if let Some(path) = self.resolve_folder_path(&message) {
                         self.attachments_loading = true;
                         self.send_to(account_id, MailRequest::LoadAttachments {
@@ -3751,20 +3728,6 @@ impl SimpleComponent for AppModel {
                         });
                     }
                 }
-            }
-
-            AppMsg::OpenAttachment(i) => {
-                if let Some(att) = self.attachments.get(i) {
-                    crate::ui::attachments_gallery::open_bytes(
-                        &att.name,
-                        &att.data,
-                        Some(self.window.upcast_ref()),
-                    );
-                }
-            }
-
-            AppMsg::SaveAllAttachments => {
-                save_all_attachments(self.attachments.clone(), Some(self.window.clone()));
             }
 
             AppMsg::Status { account_id, text } => {
@@ -4418,138 +4381,6 @@ impl AppModel {
         self.allowed_senders.iter().any(|s| *s == addr)
     }
 
-    /// Rebuild the attachments popover (a row per attachment + "Save All").
-    fn rebuild_attach_popover(&self, sender: &ComponentSender<Self>) {
-        use crate::models::is_image_name;
-        use crate::ui::attachments_gallery::{icon_color_class, icon_for, texture_from};
-
-        while let Some(child) = self.attach_list.first_child() {
-            self.attach_list.remove(&child);
-        }
-
-        // So the action buttons can dismiss the popover before opening a dialog
-        // or the lightbox.
-        let popover = self
-            .attach_list
-            .ancestor(gtk::Popover::static_type())
-            .and_downcast::<gtk::Popover>();
-
-        for (i, att) in self.attachments.iter().enumerate() {
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            row.add_css_class("attach-row");
-
-            // Image attachments show a thumbnail; everything else a type icon.
-            let thumb = is_image_name(&att.name)
-                .then(|| texture_from(&att.data))
-                .flatten();
-            match &thumb {
-                Some(tex) => {
-                    let img = gtk::Image::from_paintable(Some(tex));
-                    img.set_pixel_size(36);
-                    img.add_css_class("attach-thumb");
-                    row.append(&img);
-                }
-                None => {
-                    let img = gtk::Image::from_icon_name(icon_for(&att.name));
-                    img.set_pixel_size(28);
-                    img.add_css_class("gallery-file-icon");
-                    img.add_css_class(icon_color_class(&att.name));
-                    row.append(&img);
-                }
-            }
-
-            let info = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            info.set_hexpand(true);
-            info.set_valign(gtk::Align::Center);
-            let name = gtk::Label::new(Some(&att.name));
-            name.set_halign(gtk::Align::Start);
-            name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-            name.set_max_width_chars(22);
-            let size = gtk::Label::new(Some(&att.human_size()));
-            size.set_halign(gtk::Align::Start);
-            size.add_css_class("dim-label");
-            size.add_css_class("caption");
-            info.append(&name);
-            info.append(&size);
-            row.append(&info);
-
-            let action = |icon: &str, tip: &str| {
-                let b = gtk::Button::from_icon_name(icon);
-                b.add_css_class("flat");
-                b.set_valign(gtk::Align::Center);
-                b.set_tooltip_text(Some(tip));
-                b
-            };
-
-            // Preview (images only) reuses the drawer's lightbox; Download reuses
-            // its file chooser; Open launches the default app.
-            if thumb.is_some() {
-                let preview = action("co.hyprlab.Vireo-system-search-symbolic", "Preview");
-                let d = self.attachment_drawer.sender().clone();
-                let pop = popover.clone();
-                preview.connect_clicked(move |_| {
-                    if let Some(p) = &pop {
-                        p.popdown();
-                    }
-                    let _ = d.send(AttachmentDrawerInput::Preview(i));
-                });
-                row.append(&preview);
-            }
-
-            let open = action("co.hyprlab.Vireo-document-open-symbolic", "Open");
-            let s = sender.input_sender().clone();
-            let pop = popover.clone();
-            open.connect_clicked(move |_| {
-                if let Some(p) = &pop {
-                    p.popdown();
-                }
-                let _ = s.send(AppMsg::OpenAttachment(i));
-            });
-            row.append(&open);
-
-            let download = action("co.hyprlab.Vireo-folder-download-symbolic", "Download");
-            let d = self.attachment_drawer.sender().clone();
-            let pop = popover.clone();
-            download.connect_clicked(move |_| {
-                if let Some(p) = &pop {
-                    p.popdown();
-                }
-                let _ = d.send(AttachmentDrawerInput::Download(i));
-            });
-            row.append(&download);
-
-            // Double-clicking the row itself opens the attachment in its
-            // default app, matching the drawer's gesture.
-            let dbl = gtk::GestureClick::new();
-            dbl.set_button(gtk::gdk::BUTTON_PRIMARY);
-            let s = sender.input_sender().clone();
-            let pop = popover.clone();
-            dbl.connect_pressed(move |_, n, _, _| {
-                if n == 2 {
-                    if let Some(p) = &pop {
-                        p.popdown();
-                    }
-                    let _ = s.send(AppMsg::OpenAttachment(i));
-                }
-            });
-            row.add_controller(dbl);
-
-            self.attach_list.append(&row);
-        }
-        if !self.attachments.is_empty() {
-            self.attach_list
-                .append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-            let save = gtk::Button::with_label("Save All…");
-            save.add_css_class("flat");
-            let s = sender.input_sender().clone();
-            save.connect_clicked(move |_| {
-                let _ = s.send(AppMsg::SaveAllAttachments);
-            });
-            self.attach_list.append(&save);
-        }
-        self.sync_attachment_drawer();
-    }
-
     /// Push the current attachments into the in-message thumbnail drawer (which
     /// hides itself when the list is empty). Called wherever `self.attachments`
     /// changes so the drawer always mirrors the open message.
@@ -4661,7 +4492,7 @@ impl AppModel {
     /// member's attachments (never the network) and show what's already in
     /// hand. Opening a thread used to load nothing at all — the drawer only
     /// appeared after clicking a member, which runs the single-message path.
-    fn load_thread_attachments(&mut self, sender: &ComponentSender<Self>) {
+    fn load_thread_attachments(&mut self) {
         let wanted: Vec<(u32, u32, u32, String)> = self
             .current_thread
             .iter()
@@ -4683,13 +4514,13 @@ impl AppModel {
                 download: true,
             });
         }
-        self.refresh_thread_attachments(sender);
+        self.refresh_thread_attachments();
     }
 
     /// Point the drawer at the union of cached attachments across the open
     /// conversation. A reply pulled in from Sent can duplicate what it was
     /// sent with, so identical (name, size) pairs are shown once.
-    fn refresh_thread_attachments(&mut self, sender: &ComponentSender<Self>) {
+    fn refresh_thread_attachments(&mut self) {
         let mut seen = HashSet::new();
         let mut merged = Vec::new();
         for tm in &self.current_thread {
@@ -4702,7 +4533,7 @@ impl AppModel {
             }
         }
         self.attachments = merged;
-        self.rebuild_attach_popover(sender);
+        self.sync_attachment_drawer();
     }
 
     /// Present a read-only window showing raw message source (monospace).
