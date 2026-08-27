@@ -285,6 +285,11 @@ impl Component for MessageView {
                             set_hexpand: true,
                             set_halign: gtk::Align::Start,
                             set_wrap: true,
+                            // Ask for the full single-line width and wrap only
+                            // when the pane really is too narrow — without this
+                            // a wrapping label requests minimal width and folds
+                            // to two lines even with room to spare.
+                            set_natural_wrap_mode: gtk::NaturalWrapMode::None,
                             set_xalign: 0.0,
                         },
                         gtk::Button {
