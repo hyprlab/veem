@@ -82,6 +82,9 @@ pub struct Sidebar {
     tree_collapsed: HashMap<u32, std::collections::HashSet<String>>,
     /// Each parent row's expander image, for flipping without a rebuild.
     tree_chevrons: HashMap<(u32, String), gtk::Image>,
+    /// The rebuild freeze-frame Picture and its pending lift timer.
+    freeze_frame: Option<gtk::Picture>,
+    freeze_timer: std::rc::Rc<std::cell::RefCell<Option<gtk::glib::SourceId>>>,
     /// The "Folders" section revealer and its chevron, per account.
     custom_revealers: HashMap<u32, gtk::Revealer>,
     custom_chevrons: HashMap<u32, gtk::Image>,
@@ -240,17 +243,31 @@ impl Component for Sidebar {
         gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
 
-            gtk::ScrolledWindow {
+            gtk::Overlay {
                 set_vexpand: true,
-                // External, not Never (see the message list's scroller): row
-                // content — a deeply indented folder tree, say — must not force
-                // the window's minimum width past what edge-tiling allows. The
-                // split view's min/max sidebar widths govern instead.
-                set_hscrollbar_policy: gtk::PolicyType::External,
 
-                #[name = "normal_box"]
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Vertical,
+                #[wrap(Some)]
+                set_child = &gtk::ScrolledWindow {
+                    set_vexpand: true,
+                    // External, not Never (see the message list's scroller): row
+                    // content — a deeply indented folder tree, say — must not force
+                    // the window's minimum width past what edge-tiling allows. The
+                    // split view's min/max sidebar widths govern instead.
+                    set_hscrollbar_policy: gtk::PolicyType::External,
+
+                    #[name = "normal_box"]
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
+                    },
+                },
+
+                // Freeze-frame for rebuilds: the sidebar's last-rendered pixels,
+                // shown over the swap so recreating every row never shimmers.
+                #[name = "freeze_frame"]
+                add_overlay = &gtk::Picture {
+                    set_visible: false,
+                    set_can_target: false,
+                    set_content_fit: gtk::ContentFit::Fill,
                 },
             },
 
@@ -290,7 +307,7 @@ impl Component for Sidebar {
             );
         }
 
-        let model = Sidebar {
+        let mut model = Sidebar {
             sections: Vec::new(),
             show_unified: false,
             revealers: HashMap::new(),
@@ -300,6 +317,8 @@ impl Component for Sidebar {
             custom_folders: HashMap::new(),
             tree_collapsed: HashMap::new(),
             tree_chevrons: HashMap::new(),
+            freeze_frame: None,
+            freeze_timer: std::rc::Rc::new(std::cell::RefCell::new(None)),
             custom_revealers: HashMap::new(),
             custom_chevrons: HashMap::new(),
             unified_list: None,
@@ -324,6 +343,7 @@ impl Component for Sidebar {
         };
 
         let widgets = view_output!();
+        model.freeze_frame = Some(widgets.freeze_frame.clone());
         if init.collapsed {
             widgets.collapse_btn.set_tooltip_text(Some("Expand sidebar"));
             align_collapse_btn(&widgets.collapse_btn, true, false);
@@ -732,6 +752,33 @@ impl Sidebar {
             .ancestor(gtk::ScrolledWindow::static_type())
             .and_downcast::<gtk::ScrolledWindow>();
         let saved_scroll = scroller.as_ref().map(|s| s.vadjustment().value());
+        // Freeze the sidebar's last-rendered pixels over the swap: even with
+        // the scroll pinned, tearing down and recreating every row can
+        // shimmer for a frame. The snapshot covers the rebuild and lifts a
+        // few frames later, once the fresh tree has painted beneath it —
+        // identical pixels, so the crossover is invisible.
+        if let (Some(freeze), Some(scroller)) = (self.freeze_frame.clone(), scroller.as_ref()) {
+            if container.first_child().is_some() {
+                use gtk::gdk::prelude::PaintableExt;
+                let live = gtk::WidgetPaintable::new(Some(scroller));
+                freeze.set_paintable(Some(&live.current_image()));
+                freeze.set_visible(true);
+                let timer = gtk::glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(80),
+                    {
+                        let freeze = freeze.clone();
+                        let slot = self.freeze_timer.clone();
+                        move || {
+                            slot.borrow_mut().take();
+                            freeze.set_visible(false);
+                        }
+                    },
+                );
+                if let Some(prev) = self.freeze_timer.borrow_mut().replace(timer) {
+                    prev.remove();
+                }
+            }
+        }
         while let Some(child) = container.first_child() {
             container.remove(&child);
         }
