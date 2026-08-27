@@ -1807,7 +1807,11 @@ impl SimpleComponent for AppModel {
                     vadj.set_value(v0 - dy);
                 });
             }
-            widgets.lightbox_picture.add_controller(drag);
+            // On the SCROLLER, not the picture: the picture's own coordinate
+            // space moves with every pan, so offsets measured in it oscillate
+            // — scroll, shift, un-scroll — and the drag jitters. The scroller
+            // stays put, so its offsets are stable.
+            widgets.lightbox_scroller.add_controller(drag);
 
             let click = gtk::GestureClick::new();
             click.set_button(gtk::gdk::BUTTON_PRIMARY);
@@ -2405,7 +2409,11 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::OpenAttachmentItem(att) => {
-                open_attachment(&att);
+                crate::ui::attachments_gallery::open_bytes(
+                    &att.name,
+                    &att.data,
+                    Some(self.window.upcast_ref()),
+                );
             }
 
             AppMsg::SaveAttachmentItems(items) => {
@@ -3747,7 +3755,11 @@ impl SimpleComponent for AppModel {
 
             AppMsg::OpenAttachment(i) => {
                 if let Some(att) = self.attachments.get(i) {
-                    open_attachment(att);
+                    crate::ui::attachments_gallery::open_bytes(
+                        &att.name,
+                        &att.data,
+                        Some(self.window.upcast_ref()),
+                    );
                 }
             }
 
@@ -6994,22 +7006,6 @@ fn set_sidebar_header_compact(
         header.pack_end(menu);
     }
     title.set_visible(!compact);
-}
-
-fn open_attachment(att: &Attachment) {
-    let dir = std::env::temp_dir().join("vireo-attachments");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let safe = att.name.replace(['/', '\\'], "_");
-    let path = dir.join(&safe);
-    if std::fs::write(&path, &att.data).is_ok() {
-        let uri = format!("file://{}", path.display());
-        let _ = gtk::gio::AppInfo::launch_default_for_uri(
-            &uri,
-            None::<&gtk::gio::AppLaunchContext>,
-        );
-    }
 }
 
 /// Ask for a folder and write every attachment into it.
