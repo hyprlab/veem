@@ -373,6 +373,29 @@ impl GalleryItem {
 }
 
 impl Message {
+    /// Strip interior NUL bytes from every text field. GTK's C strings end at
+    /// the first NUL and glib panics rather than truncate when handed one
+    /// mid-string — a single message with a stray 0x00 in its envelope (they
+    /// exist in the wild) took the whole message list down with it. Called at
+    /// the ingestion choke points (envelope parse, cache load), so nothing
+    /// NUL-bearing ever reaches a label, tooltip, or document.
+    pub fn scrub_nuls(&mut self) {
+        for s in [
+            &mut self.from_name,
+            &mut self.from_addr,
+            &mut self.to,
+            &mut self.cc,
+            &mut self.subject,
+            &mut self.preview,
+            &mut self.body,
+            &mut self.date,
+        ] {
+            if s.contains('\0') {
+                *s = s.replace('\0', " ");
+            }
+        }
+    }
+
     /// Full receipt date and time for the reader header, e.g.
     /// "Jun 27, 2026 at 3:15 PM". Falls back to the short label if unknown.
     pub fn datetime_full(&self) -> String {

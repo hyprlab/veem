@@ -3232,10 +3232,13 @@ async fn fetch_window(
 /// The preview snippet from a fetch that asked for `BODY.PEEK[1]`.
 fn preview_of(fetch: &Fetch) -> String {
     use async_imap::imap_proto::types::SectionPath;
-    fetch
+    let p = fetch
         .section(&SectionPath::Part(vec![1], None))
         .map(preview_from_part)
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // GTK labels abort on interior NULs, and decoded message text can carry
+    // them.
+    if p.contains('\0') { p.replace('\0', " ") } else { p }
 }
 
 /// How much of a message's first body part to fetch for the list preview. Enough
@@ -3561,7 +3564,7 @@ fn summary_from_headers(account_id: u32, fetch: &Fetch, folder_id: u32) -> Messa
 
     let (message_id, references) = mp_thread_ids(parsed.as_ref());
 
-    Message {
+    let mut msg = Message {
         id: uid,
         account_id,
         folder_id,
@@ -3580,7 +3583,9 @@ fn summary_from_headers(account_id: u32, fetch: &Fetch, folder_id: u32) -> Messa
         has_attachment,
         message_id,
         references,
-    }
+    };
+    msg.scrub_nuls();
+    msg
 }
 
 /// Extract (message_id, references) from a parsed message for threading. References
@@ -4108,7 +4113,7 @@ fn build_summary(account_id: u32, fetch: &Fetch, folder_id: u32) -> Message {
         .unwrap_or_default();
     let references = merge_msgids(&references_of(fetch), &in_reply_to);
 
-    Message {
+    let mut msg = Message {
         id: uid,
         account_id,
         folder_id,
@@ -4127,7 +4132,9 @@ fn build_summary(account_id: u32, fetch: &Fetch, folder_id: u32) -> Message {
         has_attachment,
         message_id,
         references,
-    }
+    };
+    msg.scrub_nuls();
+    msg
 }
 
 /// Normalize a single Message-ID: strip angle brackets/whitespace, lowercase.
@@ -4425,7 +4432,7 @@ fn summary_from_raw(account_id: u32, folder_id: u32, uid: u32, raw: &[u8]) -> Me
     let has_attachment = parsed.as_ref().map(|p| p.attachment_count() > 0).unwrap_or(false);
     let (message_id, references) = mp_thread_ids(parsed.as_ref());
 
-    Message {
+    let mut msg = Message {
         id: uid,
         account_id,
         folder_id,
@@ -4444,7 +4451,9 @@ fn summary_from_raw(account_id: u32, folder_id: u32, uid: u32, raw: &[u8]) -> Me
         has_attachment,
         message_id,
         references,
-    }
+    };
+    msg.scrub_nuls();
+    msg
 }
 
 /// The folder list for a POP3 account: just the inbox.

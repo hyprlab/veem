@@ -327,7 +327,7 @@ impl Cache {
             )?;
             let rows = stmt.query_map(params![account_id, folder_path], |row| {
                 let uid: u32 = row.get(0)?;
-                Ok(Message {
+                let mut m = Message {
                     id: uid,
                     account_id,
                     folder_id,
@@ -346,7 +346,11 @@ impl Cache {
                     has_attachment: row.get(8)?,
                     message_id: row.get(11)?,
                     references: row.get(12)?,
-                })
+                };
+                // Rows written before NUL-scrubbing existed may still carry
+                // one; GTK labels abort on interior NULs.
+                m.scrub_nuls();
+                Ok(m)
             })?;
             rows.collect()
         };
@@ -534,9 +538,7 @@ impl Cache {
             binds.push(&limit as &dyn rusqlite::ToSql);
             let rows = stmt.query_map(binds.as_slice(), |row| {
                 let uid: u32 = row.get(1)?;
-                Ok((
-                    row.get::<_, String>(0)?,
-                    Message {
+                let mut m = Message {
                         id: uid,
                         account_id,
                         folder_id: 0, // filled in by the caller, which knows the ids
@@ -555,8 +557,9 @@ impl Cache {
                         has_attachment: row.get(9)?,
                         message_id: row.get(12)?,
                         references: row.get(13)?,
-                    },
-                ))
+                };
+                m.scrub_nuls();
+                Ok((row.get::<_, String>(0)?, m))
             })?;
             rows.collect()
         };

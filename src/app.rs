@@ -3728,6 +3728,10 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::Body { account_id, message_id, path, body } => {
+                // Interior NULs abort glib string conversion (labels and the
+                // WebView document alike); decoded mail bodies can carry them.
+                let body =
+                    if body.contains('\0') { body.replace('\0', " ") } else { body };
                 self.body_cache
                     .insert((account_id, message_id), body.clone());
                 // If this body was fetched to open a draft, open the editor now.
