@@ -355,12 +355,14 @@ headerbar.rail-header {
 }
 
 /* Selected (currently-viewed) message: stronger accent tint than libadwaita's
-   default 25%. The hover/active variants are overridden too so the highlight
-   stays uniform when the cursor passes over the selected row. */
+   default 25% while the list holds focus, dimming — never vanishing — when
+   focus moves to the reader. The hover/active variants are overridden too so
+   the highlight stays uniform when the cursor passes over the selected row. */
 .message-listbox > row:selected {
-  background-color: alpha(@accent_bg_color, 0.5);
+  background-color: alpha(@accent_bg_color, 0.3);
 }
 
+.message-listbox:focus-within > row:selected,
 .message-listbox > row.activatable:selected:hover,
 .message-listbox > row.activatable:selected:active {
   background-color: alpha(@accent_bg_color, 0.5);
@@ -488,6 +490,10 @@ headerbar.rail-header {
 }
 
 .message-listbox > row.thread-child:selected .message-row {
+  background-color: alpha(@accent_bg_color, 0.3);
+}
+
+.message-listbox:focus-within > row.thread-child:selected .message-row {
   background-color: alpha(@accent_bg_color, 0.5);
 }
 

@@ -66,16 +66,12 @@ pub struct RowInit {
 /// the list and read live when a drag starts.
 pub type DragKeys = std::rc::Rc<std::cell::RefCell<Vec<(u32, u32, u32, u32)>>>;
 
-/// The message-list pane's floor: room for a row's full Actions Palette, plus
-/// slack for the head row's trailing count chip and expand chevron — at the
-/// exact palette width those were the first casualties of the right-edge clip.
-const LIST_MIN_WIDTH: i32 = 380;
-/// Extra width a conversation's child rows consume as inset cards: the 10px
-/// rail margin plus the card's 10px + 8px side margins, less the 4px the
-/// card's tighter padding gives back (see `.thread-child` in the stylesheet),
-/// with a little slack. While any child row is on screen the pane's floor
-/// grows by this much, so the cards' right edge is never clipped.
-const THREAD_INDENT: i32 = 28;
+/// The message-list pane's floor: exactly what a conversation-member card
+/// needs to show a row's full Actions Palette — the tightest real constraint
+/// in the list. The sum of the card's insets (10px rail margin, 10px + 8px
+/// card margins, 12px + 12px card padding), the avatar (38px), the unread
+/// dot (8px), three 8px gaps, and the 260px actions-line reservation.
+const LIST_MIN_WIDTH: i32 = 374;
 
 /// A background face lookup's answer, correlated by sender address (a recycled
 /// row compares before using it). The tiers are personal-first: the contact's
@@ -1833,6 +1829,15 @@ impl SimpleComponent for MessageList {
                 }
             }
             MessageListInput::SelectFromReader { keys } => {
+                // An empty set means the reader cleared its card selection (a
+                // click on the document's empty space). The list keeps the
+                // viewed message highlighted rather than losing its anchor —
+                // the focus-within CSS dims the highlight instead.
+                let keys = if keys.is_empty() {
+                    self.selected_id.into_iter().collect()
+                } else {
+                    keys
+                };
                 // The list shows only a thread's head while it is collapsed, so
                 // selecting a reply has to open the thread first — otherwise
                 // there is no row to select and only the head would ever answer.
@@ -2479,12 +2484,10 @@ impl MessageList {
         // any of them can map selected row indices back to messages.
         self.publish_drag_keys();
 
-        let mut any_child = false;
         {
             let mut guard = self.rows.guard();
             guard.clear();
             for (m, meta) in self.shown.iter().zip(metas.into_iter()) {
-                any_child |= meta.is_child;
                 let ring_class = if self.colorize && self.account_colors.contains_key(&m.account_id) {
                     Some(format!("vireo-acct-ring-{}", m.account_id))
                 } else {
@@ -2507,14 +2510,6 @@ impl MessageList {
                     show_recipient: self.show_recipient,
                 });
             }
-        }
-
-        // While a conversation is expanded its child rows indent; the pane's
-        // floor grows by the same so their right edge is never clipped, and
-        // drops back once everything is collapsed again.
-        if let Some(scroller) = &self.scroller {
-            let floor = if any_child { LIST_MIN_WIDTH + THREAD_INDENT } else { LIST_MIN_WIDTH };
-            scroller.set_size_request(floor, -1);
         }
 
         // Restore the highlight on the message being viewed, if it's still shown.
