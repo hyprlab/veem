@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.15.7 — 2026-08-26
+
+- **Panning a zoomed lightbox document is smooth.** The drag gesture lived on
+  the picture, whose coordinate space moves with every pan — each scroll
+  displaced its own measurement and the view jittered. It now lives on the
+  scroller, whose space stays put.
+- **The toolbar attachment menu's Open works.** It still ran a fossilised
+  third copy of the open logic — private-/tmp staging plus a bare AppInfo
+  launch, exactly what the sandbox work fixed elsewhere. Both its paths now
+  delegate to `open_bytes`, and the fossil is deleted so a third copy can't
+  drift again.
+
 ## 1.15.6 — 2026-08-26
 
 ### The Flatpak really opens attachments now

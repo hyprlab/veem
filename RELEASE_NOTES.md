@@ -2,7 +2,14 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.15.6
+## What's new in 1.15.7
+
+- Panning a zoomed attachment preview is smooth now — no more jitter while
+  dragging.
+- The toolbar attachment menu's Open button opens files properly, matching
+  the drawer and the gallery.
+
+## In 1.15.6
 
 - **Opening attachments from the Flatpak truly works now.** Three deep
   sandbox bugs — where the file was staged, how the system portal was
