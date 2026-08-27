@@ -4847,7 +4847,13 @@ impl AppModel {
                 })
             })
             .collect();
-        let show_unified = self.accounts.len() > 1;
+        // Count enabled accounts from config, not just the workers that have
+        // reported in: at startup the accounts stream in one by one, and
+        // counting only the connected ones made the first sidebar build look
+        // single-account — its default selection then landed on that account's
+        // inbox (possibly inside a collapsed section, so nothing visibly
+        // highlighted) instead of the "All Inboxes" the app should open with.
+        let show_unified = self.config.iter().filter(|c| c.enabled).count() > 1;
         let unified_unread = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
         self.sidebar.emit(SidebarInput::SetContents {
             sections,
