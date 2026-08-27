@@ -1074,8 +1074,16 @@ impl MessageView {
         });
         // Each message card only reads as a card against a slightly deeper
         // ground than its own; a full-bleed single message sits on its own
-        // ground, so the whole view is one colour.
-        let page = if carded { deep } else { bg.clone() };
+        // ground — the chrome ground when it paints no background (see
+        // `plain_css` below) — so the whole view is one colour.
+        let single_ground = if !thread.is_empty() && thread.len() == 1
+            && !paints_own_background(&thread[0].body)
+        {
+            chrome.clone()
+        } else {
+            bg.clone()
+        };
+        let page = if carded { deep } else { single_ground };
         let body_class = if carded { " class=\"vireo-conv\"" } else { "" };
         // Defence in depth for the wrapper: the only script allowed to run is the
         // one carrying this render's nonce, which is ours. Anything a message
@@ -1105,24 +1113,22 @@ impl MessageView {
             Some(n) => format!("<script nonce=\"{n}\">{SIZE_SCRIPT}</script>"),
             None => String::new(),
         };
-        // A full-bleed single message's header colour: the chrome (window)
-        // ground, matching the GTK subject block above — except when the
-        // message paints no background of its own (plain mail, and much
-        // styled mail too: Apple Mail styles fonts and wrapping but sets no
-        // background). Such a body renders transparent on the plain ground,
-        // so the header takes that same ground and header + message read as
-        // one unbroken pane. The test is for a *background*, not for any
-        // styling — the colon/equals forms keep prose mentioning
-        // "background" from counting.
-        let single_hdr = if thread.len() == 1 && {
-            let lower = thread[0].body.to_ascii_lowercase();
-            !["background:", "background-color:", "background-image:", "bgcolor="]
-                .iter()
-                .any(|needle| lower.contains(needle))
-        } {
-            &bg
+        // A single message that paints no background of its own (plain mail,
+        // and much styled mail too — Apple Mail styles fonts and wrapping but
+        // sets no background) takes the chrome ground for its *whole* frame,
+        // matching the GTK subject block and the header above it: one
+        // unbroken pane from subject to the end of the message. A message
+        // that declares a background keeps the plain ground so its design
+        // renders as intended.
+        let single_plain =
+            thread.len() == 1 && !paints_own_background(&thread[0].body);
+        let plain_css = if single_plain {
+            format!(
+                "body:not(.vireo-conv) .vireo-msg,\
+                 body:not(.vireo-conv) iframe.vireo-frame{{background:{chrome};}}"
+            )
         } else {
-            &chrome
+            String::new()
         };
         format!(
             "<!doctype html><html><head><meta charset=\"utf-8\">{csp}\
@@ -1143,7 +1149,8 @@ impl MessageView {
                .vireo-msg-hdr{{cursor:pointer;}}\
                .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;\
                  position:sticky;top:0;z-index:1;background-color:{bg};}}\
-               body:not(.vireo-conv) .vireo-msg-hdr{{background-color:{single_hdr};}}\
+               body:not(.vireo-conv) .vireo-msg-hdr{{background-color:{chrome};}}\
+               {plain_css}\
                .vireo-ava{{width:26px;height:26px;border-radius:50%;flex:none;align-self:center;\
                  display:flex;align-items:center;justify-content:center;color:#fff;\
                  font-size:0.8em;font-weight:700;}}\
@@ -1287,11 +1294,18 @@ impl MessageView {
     /// gap before a load) match light/dark mode instead of flashing white.
     fn apply_webview_bg(&self, dark: bool) {
         // Whatever is about to be shown: a conversation's cards sit on the
-        // deeper page ground, a full-bleed single message on the plain ground.
-        // The cover matches it so the spinner gives way to the document without
-        // a change of colour.
-        let (ground, page, _chrome) = self.theme_grounds(dark);
-        let ground = if self.thread.len() > 1 { page } else { ground };
+        // deeper page ground, a full-bleed single message on the plain ground
+        // — or the chrome ground when it paints no background of its own.
+        // The cover matches it so the spinner gives way to the document
+        // without a change of colour.
+        let (ground, page, chrome) = self.theme_grounds(dark);
+        let ground = if self.thread.len() > 1 {
+            page
+        } else if self.thread.len() == 1 && !paints_own_background(&self.thread[0].body) {
+            chrome
+        } else {
+            ground
+        };
         self.webview.set_background_color(&ground_rgba(&ground));
         let bg = ground;
         // The spinner and the cover stand in for the message, so they answer to
@@ -1556,6 +1570,15 @@ fn default_image_name(mime: &str) -> String {
         other => other.rsplit('/').next().unwrap_or("img"),
     };
     format!("image.{ext}")
+}
+
+/// Whether a message body paints a background of its own. The colon/equals
+/// forms keep prose that merely mentions "background" from counting.
+fn paints_own_background(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    ["background:", "background-color:", "background-image:", "bgcolor="]
+        .iter()
+        .any(|needle| lower.contains(needle))
 }
 
 /// How many addresses a message's To + Cc headers name.
