@@ -37,6 +37,8 @@ pub struct SectionData {
     pub color: String,
     /// Avatar emoji; when absent, account-name initials are shown.
     pub emoji: Option<String>,
+    /// Custom-folder paths whose tree node is collapsed (#51).
+    pub tree_collapsed: Vec<String>,
 }
 
 /// Initial state for the sidebar.
@@ -73,6 +75,13 @@ pub struct Sidebar {
     /// under a collapsible "Folders" section. Selection indices into these are
     /// offset past the account's essential folders.
     custom_folder_lists: HashMap<u32, gtk::ListBox>,
+    /// Per-account custom folders, in row order, for tree-visibility math.
+    custom_folders: HashMap<u32, Vec<Folder>>,
+    /// Collapsed tree nodes per account (paths), mirrored from SectionData and
+    /// flipped locally as chevrons are clicked (#51).
+    tree_collapsed: HashMap<u32, std::collections::HashSet<String>>,
+    /// Each parent row's expander image, for flipping without a rebuild.
+    tree_chevrons: HashMap<(u32, String), gtk::Image>,
     /// The "Folders" section revealer and its chevron, per account.
     custom_revealers: HashMap<u32, gtk::Revealer>,
     custom_chevrons: HashMap<u32, gtk::Image>,
@@ -149,6 +158,8 @@ pub enum SidebarInput {
     SetPeeking(bool),
     /// Toggle the collapsible "Folders" (custom folders) section for an account.
     ToggleCustomFoldersLocal(u32),
+    /// Collapse/expand one folder-tree node (a parent folder's chevron, #51).
+    ToggleFolderNode { account_id: u32, path: String },
     ToggleCollapsed,
     /// Show or hide the "Attachments" row.
     SetShowAttachments(bool),
@@ -169,6 +180,8 @@ pub enum SidebarInput {
 
 #[derive(Debug)]
 pub enum SidebarOutput {
+    /// A folder-tree node was collapsed or expanded (#51) — for persistence.
+    FolderNodeCollapsed { account_id: u32, path: String, collapsed: bool },
     UnifiedSelected,
     /// The attachments gallery was selected.
     AttachmentsSelected,
@@ -282,6 +295,9 @@ impl Component for Sidebar {
             chevrons: HashMap::new(),
             folder_lists: HashMap::new(),
             custom_folder_lists: HashMap::new(),
+            custom_folders: HashMap::new(),
+            tree_collapsed: HashMap::new(),
+            tree_chevrons: HashMap::new(),
             custom_revealers: HashMap::new(),
             custom_chevrons: HashMap::new(),
             unified_list: None,
@@ -329,6 +345,14 @@ impl Component for Sidebar {
                 for s in &mut sections {
                     s.folders.sort_by_key(|f| f.kind == FolderKind::Custom);
                 }
+                // Seed the tree's collapsed nodes from the persisted state;
+                // later chevron clicks flip the local copy.
+                self.tree_collapsed = sections
+                    .iter()
+                    .map(|s| {
+                        (s.account.id, s.tree_collapsed.iter().cloned().collect())
+                    })
+                    .collect();
                 self.sections = sections;
                 self.show_unified = show_unified;
                 self.unified_unread = unified_unread;
@@ -606,6 +630,32 @@ impl Component for Sidebar {
                 }
             }
 
+            SidebarInput::ToggleFolderNode { account_id, path } => {
+                // Flip the node, restyle its chevron, and re-apply visibility
+                // across the account's tree — no rebuild, so nothing flickers.
+                let nodes = self.tree_collapsed.entry(account_id).or_default();
+                let collapsed = if nodes.contains(&path) {
+                    nodes.remove(&path);
+                    false
+                } else {
+                    nodes.insert(path.clone());
+                    true
+                };
+                if let Some(img) = self.tree_chevrons.get(&(account_id, path.clone())) {
+                    img.set_icon_name(Some(if collapsed {
+                        "co.hyprlab.Vireo-pan-end-symbolic"
+                    } else {
+                        "co.hyprlab.Vireo-pan-down-symbolic"
+                    }));
+                }
+                self.apply_tree_visibility(account_id);
+                let _ = sender.output(SidebarOutput::FolderNodeCollapsed {
+                    account_id,
+                    path,
+                    collapsed,
+                });
+            }
+
             SidebarInput::ExpandForDrop(id) => {
                 // Expand a collapsed account so its folders become drop targets.
                 if let Some(rev) = self.revealers.get(&id) {
@@ -635,6 +685,24 @@ impl Component for Sidebar {
 impl Sidebar {
     /// Rebuild the list: optional unified row, then per-account headers with
     /// animated folder revealers, and refresh the per-account colour rules.
+    /// Re-apply row visibility across one account's custom-folder tree (#51):
+    /// a row shows unless some ancestor node is collapsed. Rows are never
+    /// removed, so selection indices hold still.
+    fn apply_tree_visibility(&self, account_id: u32) {
+        let (Some(list), Some(folders)) = (
+            self.custom_folder_lists.get(&account_id),
+            self.custom_folders.get(&account_id),
+        ) else {
+            return;
+        };
+        let collapsed = self.tree_collapsed.get(&account_id).cloned().unwrap_or_default();
+        for (i, folder) in folders.iter().enumerate() {
+            if let Some(row) = list.row_at_index(i as i32) {
+                row.set_visible(!hidden_by_collapse(&folder.path, &collapsed));
+            }
+        }
+    }
+
     fn rebuild_normal(&mut self, container: &gtk::Box, sender: &ComponentSender<Self>) {
         while let Some(child) = container.first_child() {
             container.remove(&child);
@@ -654,6 +722,7 @@ impl Sidebar {
         self.attachments_list = None;
         self.outbox_list = None;
         self.folder_badges.clear();
+        self.tree_chevrons.clear();
         self.unified_badge = None;
         self.unified_revealer = None;
         self.unified_chevron = None;
@@ -1131,7 +1200,7 @@ impl Sidebar {
             list.set_selection_mode(gtk::SelectionMode::Single);
             list.add_css_class("navigation-sidebar");
             for folder in &essential {
-                let (row, badge) = build_folder_row(folder, self.collapsed, 0);
+                let (row, badge) = build_folder_row(folder, self.collapsed, 0, None);
                 row.add_controller(folder_drop_target(id, folder.path.clone(), sender));
                 list.append(&row);
                 if let Some(badge) = badge {
@@ -1166,15 +1235,61 @@ impl Sidebar {
             });
             let folders_toggle = gtk::Button::new();
             if !custom.is_empty() {
+                let collapsed_nodes =
+                    self.tree_collapsed.get(&id).cloned().unwrap_or_default();
                 for folder in &custom {
                     let depth = folder_depth(folder, &custom);
-                    let (row, badge) = build_folder_row(folder, self.collapsed, depth);
+                    // The expander slot (#51): a chevron for folders with
+                    // sub-folders, an equal-width spacer for leaves so names
+                    // at one depth stay aligned. Rail mode has no room for
+                    // either.
+                    let has_children =
+                        custom.iter().any(|g| path_is_under(&g.path, &folder.path));
+                    let lead: Option<gtk::Widget> = if self.collapsed {
+                        None
+                    } else if has_children {
+                        let img = gtk::Image::from_icon_name(
+                            if collapsed_nodes.contains(&folder.path) {
+                                "co.hyprlab.Vireo-pan-end-symbolic"
+                            } else {
+                                "co.hyprlab.Vireo-pan-down-symbolic"
+                            },
+                        );
+                        img.set_pixel_size(12);
+                        let btn = gtk::Button::new();
+                        btn.set_child(Some(&img));
+                        btn.add_css_class("flat");
+                        btn.add_css_class("tree-expander");
+                        btn.set_valign(gtk::Align::Center);
+                        btn.set_tooltip_text(Some("Show or hide sub-folders"));
+                        let st = sender.input_sender().clone();
+                        let path = folder.path.clone();
+                        btn.connect_clicked(move |_| {
+                            let _ = st.send(SidebarInput::ToggleFolderNode {
+                                account_id: id,
+                                path: path.clone(),
+                            });
+                        });
+                        self.tree_chevrons.insert((id, folder.path.clone()), img);
+                        Some(btn.upcast())
+                    } else {
+                        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                        spacer.set_width_request(TREE_EXPANDER_WIDTH);
+                        Some(spacer.upcast())
+                    };
+                    let (row, badge) =
+                        build_folder_row(folder, self.collapsed, depth, lead.as_ref());
+                    // Hidden while any ancestor is collapsed; the row still
+                    // exists, so selection indices stay stable.
+                    row.set_visible(!hidden_by_collapse(&folder.path, &collapsed_nodes));
                     row.add_controller(folder_drop_target(id, folder.path.clone(), sender));
                     custom_list.append(&row);
                     if let Some(badge) = badge {
                         self.folder_badges.insert((id, folder.id), badge);
                     }
                 }
+                self.custom_folders
+                    .insert(id, custom.iter().map(|f| (*f).clone()).collect());
                 let s3 = sender.input_sender().clone();
                 custom_list.connect_row_selected(move |_, row| {
                     if let Some(row) = row {
@@ -1521,6 +1636,27 @@ fn account_initials(name: &str, email: &str) -> String {
     }
 }
 
+/// Width of the tree-expander slot: chevron button and leaf spacer alike, so
+/// folder names at one depth line up whether or not they have children (#51).
+const TREE_EXPANDER_WIDTH: i32 = 18;
+
+/// Whether `child` sits under `parent` in the mailbox hierarchy — a strict
+/// descendant, with a real delimiter at the boundary (any of the common ones;
+/// see folder_depth for why the delimiter itself never reaches the UI).
+fn path_is_under(child: &str, parent: &str) -> bool {
+    child.len() > parent.len() + 1
+        && child.starts_with(parent)
+        && matches!(child.as_bytes()[parent.len()], b'/' | b'.' | b'\\')
+}
+
+/// Whether a folder row is hidden because some ancestor node is collapsed.
+fn hidden_by_collapse(
+    path: &str,
+    collapsed: &std::collections::HashSet<String>,
+) -> bool {
+    collapsed.iter().any(|p| path_is_under(path, p))
+}
+
 /// Place the footer's expand/collapse toggle: right-aligned in the expanded
 /// sidebar, centred on the rail, and — while the floating hover-peek is up —
 /// held at the rail's spot (left, centred over the rail's 80px strip, less
@@ -1676,10 +1812,25 @@ fn build_folder_row(
     folder: &Folder,
     collapsed: bool,
     depth: usize,
+    lead: Option<&gtk::Widget>,
 ) -> (gtk::ListBoxRow, Option<gtk::Label>) {
     let row = gtk::ListBoxRow::new();
     let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     hbox.add_css_class("folder-row");
+    // Custom folders show only their leaf name; the tooltip carries the whole
+    // hierarchy, so nine folders all named "Archive" stay tellable apart (#51).
+    if folder.kind == FolderKind::Custom && folder.path.contains(['/', '.', '\\']) {
+        let pretty = folder
+            .path
+            .split(['/', '.', '\\'])
+            .map(crate::mutf7::decode)
+            .collect::<Vec<_>>()
+            .join(" › ");
+        row.set_tooltip_text(Some(&pretty));
+    }
+    if let Some(lead) = lead {
+        hbox.append(lead);
+    }
     if !collapsed && depth > 0 {
         // Indent nested folders; capped so a pathological hierarchy can't push
         // the name out of the sidebar.
@@ -1727,6 +1878,7 @@ fn build_folder_row(
 #[cfg(test)]
 mod tests {
     use super::folder_depth;
+    use super::hidden_by_collapse;
     use super::parse_move_payload;
     use crate::models::{Folder, FolderKind};
 
@@ -1767,6 +1919,23 @@ mod tests {
         let refs: Vec<&Folder> = folders.iter().collect();
         assert_eq!(folder_depth(&folders[1], &refs), 0);
         assert_eq!(folder_depth(&folders[2], &refs), 1);
+    }
+
+    #[test]
+    fn a_collapsed_node_hides_descendants_and_nothing_else() {
+        let mut collapsed = std::collections::HashSet::new();
+        collapsed.insert("Clients".to_string());
+        // Direct child and grandchild hide; a sibling sharing the prefix does
+        // not, and neither does the collapsed node itself.
+        assert!(hidden_by_collapse("Clients/Acme", &collapsed));
+        assert!(hidden_by_collapse("Clients/Acme/Invoices", &collapsed));
+        assert!(!hidden_by_collapse("ClientsB", &collapsed));
+        assert!(!hidden_by_collapse("Clients", &collapsed));
+        // Dotted hierarchies collapse the same way.
+        collapsed.clear();
+        collapsed.insert("INBOX.2025".to_string());
+        assert!(hidden_by_collapse("INBOX.2025.Archive", &collapsed));
+        assert!(!hidden_by_collapse("INBOX.2026.Archive", &collapsed));
     }
 
     #[test]

@@ -1034,3 +1034,11 @@ headerbar.rail-header {
 .drawer-list-row {
   padding: 2px 6px;
 }
+
+/* Folder-tree expander (#51): a chevron sized to exactly the leaf spacer's
+   width, so names at one depth align whether or not a folder has children. */
+.tree-expander {
+  padding: 0;
+  min-width: 18px;
+  min-height: 18px;
+}

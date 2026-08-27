@@ -151,6 +151,9 @@ pub struct AppModel {
     collapsed: Vec<String>,
     /// Accounts whose custom-folders section is expanded in the sidebar (by email).
     folders_expanded: Vec<String>,
+    /// Collapsed folder-tree nodes ("email\tpath") — the sidebar's custom
+    /// folders render as a collapsible hierarchy (#51).
+    tree_collapsed: Vec<String>,
     selected: Option<SelectedFolder>,
     /// Attachments of the currently-open message (shown in the drawer).
     attachments: Vec<Attachment>,
@@ -404,6 +407,8 @@ pub enum AppMsg {
     OpenAttachmentMessage { account_id: u32, folder_path: String, uid: u32 },
     FolderSelected { account_id: u32, folder_id: u32, name: String, path: String },
     ToggleCollapse(u32),
+    /// A sidebar folder-tree node was collapsed/expanded (#51) — persist it.
+    FolderNodeCollapsed { account_id: u32, path: String, collapsed: bool },
     ToggleCustomFolders(u32),
     SidebarCollapsed(bool),
     /// The narrow-window breakpoint applied/unapplied — collapse the sidebar to
@@ -1306,6 +1311,7 @@ impl SimpleComponent for AppModel {
         let order = sidebar_state.order;
         let collapsed = sidebar_state.collapsed;
         let folders_expanded = sidebar_state.folders_expanded;
+        let tree_collapsed = sidebar_state.tree_collapsed;
 
         let show_attachments = config::load_show_attachments();
         let sidebar = Sidebar::builder()
@@ -1320,6 +1326,9 @@ impl SimpleComponent for AppModel {
                 SidebarOutput::ToggleCollapse(id) => AppMsg::ToggleCollapse(id),
                 SidebarOutput::ToggleCustomFolders(id) => AppMsg::ToggleCustomFolders(id),
                 SidebarOutput::CollapsedChanged(collapsed) => AppMsg::SidebarCollapsed(collapsed),
+                SidebarOutput::FolderNodeCollapsed { account_id, path, collapsed } => {
+                    AppMsg::FolderNodeCollapsed { account_id, path, collapsed }
+                }
                 SidebarOutput::AddAccount => AppMsg::AddFirstAccount,
                 SidebarOutput::Context(action) => AppMsg::SidebarContext(action),
                 SidebarOutput::MoveMessages { dest_account, dest, items } => {
@@ -1426,6 +1435,7 @@ impl SimpleComponent for AppModel {
             account_order: order,
             collapsed,
             folders_expanded,
+            tree_collapsed,
             selected: None,
             attachments: Vec::new(),
             lightbox_items: Vec::new(),
@@ -2186,6 +2196,23 @@ impl SimpleComponent for AppModel {
                         self.folders_expanded.remove(pos);
                     } else {
                         self.folders_expanded.push(email);
+                    }
+                    self.save_sidebar_state();
+                }
+            }
+
+            AppMsg::FolderNodeCollapsed { account_id, path, collapsed } => {
+                // The sidebar already reshaped its rows; just remember it.
+                if let Some(email) =
+                    self.accounts.iter().find(|a| a.id == account_id).map(|a| a.email.clone())
+                {
+                    let key = format!("{email}\t{path}");
+                    if collapsed {
+                        if !self.tree_collapsed.contains(&key) {
+                            self.tree_collapsed.push(key);
+                        }
+                    } else {
+                        self.tree_collapsed.retain(|k| *k != key);
                     }
                     self.save_sidebar_state();
                 }
@@ -4406,6 +4433,7 @@ impl AppModel {
             collapsed: self.collapsed.clone(),
             folders_expanded: self.folders_expanded.clone(),
             icon_only: self.sidebar_collapsed,
+            tree_collapsed: self.tree_collapsed.clone(),
         });
     }
 
@@ -4672,6 +4700,13 @@ impl AppModel {
                     .collect();
                 let color = self.account_color(account.id);
                 let emoji = self.account_emoji(account.id);
+                // This account's collapsed tree nodes, keyed "email\tpath".
+                let prefix = format!("{email}\t");
+                let tree_collapsed = self
+                    .tree_collapsed
+                    .iter()
+                    .filter_map(|k| k.strip_prefix(&prefix).map(String::from))
+                    .collect();
                 Some(SectionData {
                     collapsed: self.collapsed.contains(email),
                     custom_expanded: self.folders_expanded.contains(email),
@@ -4679,6 +4714,7 @@ impl AppModel {
                     emoji,
                     account,
                     folders,
+                    tree_collapsed,
                 })
             })
             .collect();

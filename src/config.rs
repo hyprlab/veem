@@ -783,6 +783,9 @@ struct SidebarFile {
     /// Whether the whole sidebar is in icon-only (collapsed) mode.
     #[serde(default)]
     icon_only: bool,
+    /// Collapsed folder-tree nodes, as "email\tpath" entries.
+    #[serde(default)]
+    tree_collapsed: Vec<String>,
 }
 
 fn sidebar_path() -> Option<PathBuf> {
@@ -800,6 +803,8 @@ pub struct SidebarState {
     pub folders_expanded: Vec<String>,
     /// Whether the sidebar is in icon-only mode.
     pub icon_only: bool,
+    /// Collapsed folder-tree nodes, as "email\tpath" entries.
+    pub tree_collapsed: Vec<String>,
 }
 
 pub fn load_sidebar_state() -> SidebarState {
@@ -815,6 +820,7 @@ pub fn load_sidebar_state() -> SidebarState {
             collapsed: s.collapsed,
             folders_expanded: s.folders_expanded,
             icon_only: s.icon_only,
+            tree_collapsed: s.tree_collapsed,
         })
         .unwrap_or_default()
 }
@@ -831,6 +837,7 @@ pub fn save_sidebar_state(state: &SidebarState) {
         collapsed: state.collapsed.clone(),
         folders_expanded: state.folders_expanded.clone(),
         icon_only: state.icon_only,
+        tree_collapsed: state.tree_collapsed.clone(),
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {
