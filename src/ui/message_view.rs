@@ -318,13 +318,6 @@ impl Component for MessageView {
 
                 },
 
-                gtk::Separator {
-                    // The rule under the subject belongs with the carded
-                    // conversation look; a full-bleed single message flows
-                    // straight from the subject into its header instead.
-                    #[watch]
-                    set_visible: model.thread.len() > 1,
-                },
 
                 #[name = "body_stack"]
                 gtk::Stack {
@@ -1129,9 +1122,9 @@ impl MessageView {
                body:not(.vireo-conv) .vireo-msg{{border-radius:0;margin:0;}}\
                .vireo-msg.selected{{box-shadow:0 0 0 2px {accent};}}\
                .vireo-msg-hdr{{cursor:pointer;}}\
-               .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;border-bottom:1px solid rgba(128,128,128,0.2);\
+               .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;\
                  position:sticky;top:0;z-index:1;background-color:{bg};}}\
-               body:not(.vireo-conv) .vireo-msg-hdr{{background-color:{chrome};border-bottom:none;}}\
+               body:not(.vireo-conv) .vireo-msg-hdr{{background-color:{chrome};}}\
                .vireo-ava{{width:26px;height:26px;border-radius:50%;flex:none;align-self:center;\
                  display:flex;align-items:center;justify-content:center;color:#fff;\
                  font-size:0.8em;font-weight:700;}}\
