@@ -182,6 +182,24 @@ headerbar.rail-header {
   background: alpha(currentColor, 0.08);
 }
 
+/* Right-click context menus (see ui/context_menu.rs): a flat icon + label
+   button per row, padded and rounded like GNOME's native popover menu items.
+   Real menu rows (GtkModelButton/PopoverMenu items) are regular weight and a
+   comfortable minimum width regardless of label length — plain GtkButton
+   defaults to bold text and hugs its content, so both are overridden here. */
+.context-menu-list {
+  padding: 6px;
+  min-width: 190px;
+}
+.context-menu-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+.context-menu-item,
+.context-menu-item label {
+  font-weight: normal;
+}
+
 /* Reader attachment popover rows. */
 .attach-row {
   padding: 4px 6px;

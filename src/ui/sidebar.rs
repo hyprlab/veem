@@ -14,6 +14,7 @@ use gtk::prelude::*;
 use relm4::prelude::*;
 
 use crate::models::{Account, Folder, FolderKind};
+use crate::ui::context_menu::{show_context_menu, MenuEntry};
 
 /// A per-account inbox shown in the expandable "All Inboxes" sub-list.
 #[derive(Clone)]
@@ -1496,8 +1497,8 @@ fn account_initials(name: &str, email: &str) -> String {
     }
 }
 
-/// Pop up a right-click context menu of `items` anchored at (x, y) in `parent`.
-/// The popover unparents itself when dismissed (weak refs avoid a leak cycle).
+/// Pop up a right-click context menu of `items` anchored at (x, y) in
+/// `parent`, styled to GNOME HIG (sized to content, no scrollbar).
 fn show_sidebar_menu(
     parent: &impl IsA<gtk::Widget>,
     x: f64,
@@ -1505,35 +1506,16 @@ fn show_sidebar_menu(
     items: Vec<(&str, CtxAction)>,
     sender: &ComponentSender<Sidebar>,
 ) {
-    let popover = gtk::Popover::new();
-    popover.set_has_arrow(false);
-    popover.set_position(gtk::PositionType::Bottom);
-    popover.add_css_class("menu");
-
-    let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    menu.add_css_class("context-menu");
-    for (label, action) in items {
-        let btn = gtk::Button::with_label(label);
-        btn.add_css_class("flat");
-        btn.set_halign(gtk::Align::Fill);
-        if let Some(lbl) = btn.child().and_downcast::<gtk::Label>() {
-            lbl.set_xalign(0.0);
-        }
-        let s = sender.clone();
-        let weak = popover.downgrade();
-        btn.connect_clicked(move |_| {
-            let _ = s.output(SidebarOutput::Context(action.clone()));
-            if let Some(p) = weak.upgrade() {
-                p.popdown();
-            }
-        });
-        menu.append(&btn);
-    }
-    popover.set_child(Some(&menu));
-    popover.set_parent(parent);
-    popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-    popover.connect_closed(|p| p.unparent());
-    popover.popup();
+    let entries = items
+        .into_iter()
+        .map(|(label, action)| {
+            let s = sender.clone();
+            MenuEntry::new(label, move || {
+                let _ = s.output(SidebarOutput::Context(action.clone()));
+            })
+        })
+        .collect();
+    show_context_menu(parent, x, y, vec![entries]);
 }
 
 /// A row in the "All Inboxes" sub-list: a small account pill, the account name,
