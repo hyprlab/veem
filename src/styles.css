@@ -434,7 +434,7 @@ headerbar.rail-header {
    inner .message-row box, so the highlight is a padded pill that never
    touches the list edges. */
 .message-listbox > row.thread-child {
-  margin-left: 18px;
+  margin-left: 10px;
   border-left: 2px dotted alpha(currentColor, 0.3);
   /* Cards separate themselves; no hairline between members. */
   border-bottom: none;
@@ -457,20 +457,22 @@ headerbar.rail-header {
 }
 
 .message-listbox > row.thread-child .message-row {
-  margin: 3px 10px 3px 12px;
+  margin: 3px 8px 3px 10px;
   border-radius: 12px;
   padding: 8px 12px;
 }
 
 /* Node dot where each member meets the rail: an 8px circle whose negative
    margin pulls it out of the row's content box to sit centred on the
-   border-drawn rail line. */
+   border-drawn rail line. The window-coloured ring masks the rail where it
+   passes behind the dot, so the dot reads as a node punched into the line. */
 .thread-node {
   min-width: 8px;
   min-height: 8px;
   border-radius: 4px;
   margin-left: -5px;
   background-color: alpha(currentColor, 0.5);
+  box-shadow: 0 0 0 2px @window_bg_color;
 }
 
 .message-listbox > row.thread-child:hover:not(:selected) .message-row {

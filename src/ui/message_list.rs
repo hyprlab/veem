@@ -70,12 +70,12 @@ pub type DragKeys = std::rc::Rc<std::cell::RefCell<Vec<(u32, u32, u32, u32)>>>;
 /// slack for the head row's trailing count chip and expand chevron — at the
 /// exact palette width those were the first casualties of the right-edge clip.
 const LIST_MIN_WIDTH: i32 = 380;
-/// Extra width a conversation's child rows consume as inset cards: the 18px
-/// rail margin plus the card's 12px + 10px side margins, less the 4px the
-/// card's tighter padding gives back (see `.thread-child` in the stylesheet).
-/// While any child row is on screen the pane's floor grows by this much, so
-/// the cards' right edge is never clipped.
-const THREAD_INDENT: i32 = 40;
+/// Extra width a conversation's child rows consume as inset cards: the 10px
+/// rail margin plus the card's 10px + 8px side margins, less the 4px the
+/// card's tighter padding gives back (see `.thread-child` in the stylesheet),
+/// with a little slack. While any child row is on screen the pane's floor
+/// grows by this much, so the cards' right edge is never clipped.
+const THREAD_INDENT: i32 = 28;
 
 /// A background face lookup's answer, correlated by sender address (a recycled
 /// row compares before using it). The tiers are personal-first: the contact's
