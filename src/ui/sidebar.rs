@@ -239,8 +239,14 @@ impl Component for Sidebar {
                 gtk::Button {
                     set_icon_name: "co.hyprlab.Vireo-sidebar-show-symbolic",
                     set_tooltip_text: Some("Collapse sidebar"),
+                    // A standard icon button, not a full-width strip: its icon
+                    // lines up with the folder icons' column when expanded and
+                    // centres like the rail icons when collapsed (see the
+                    // halign switches alongside the tooltip updates).
                     set_hexpand: true,
+                    set_halign: gtk::Align::Start,
                     add_css_class: "flat",
+                    add_css_class: "sidebar-collapse-btn",
                     connect_clicked => SidebarInput::ToggleCollapsed,
                 },
             },
@@ -293,6 +299,7 @@ impl Component for Sidebar {
         let widgets = view_output!();
         if init.collapsed {
             widgets.collapse_btn.set_tooltip_text(Some("Expand sidebar"));
+            widgets.collapse_btn.set_halign(gtk::Align::Center);
         }
 
         ComponentParts { model, widgets }
@@ -512,6 +519,11 @@ impl Component for Sidebar {
                 // persisted preference.
                 if self.collapsed != collapsed {
                     self.collapsed = collapsed;
+                    widgets.collapse_btn.set_halign(if self.collapsed {
+                        gtk::Align::Center
+                    } else {
+                        gtk::Align::Start
+                    });
                     widgets.collapse_btn.set_tooltip_text(Some(if self.collapsed {
                         "Expand sidebar"
                     } else {
@@ -524,6 +536,11 @@ impl Component for Sidebar {
 
             SidebarInput::ToggleCollapsed => {
                 self.collapsed = !self.collapsed;
+                widgets.collapse_btn.set_halign(if self.collapsed {
+                    gtk::Align::Center
+                } else {
+                    gtk::Align::Start
+                });
                 widgets.collapse_btn.set_tooltip_text(Some(if self.collapsed {
                     "Expand sidebar"
                 } else {

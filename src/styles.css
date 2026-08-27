@@ -820,8 +820,17 @@ headerbar.rail-header {
 /* ---- Sidebar footer / reorder ---- */
 
 .sidebar-footer {
-  padding: 4px 8px;
+  padding: 4px 8px 4px 6px;
   border-top: 1px solid alpha(currentColor, 0.08);
+}
+
+/* The footer's expand/collapse toggle: a standard icon button whose icon sits
+   in the folder icons' column — the footer's 6px start padding matches the
+   rows' side margin, and this padding matches the rows' own 8px, so the
+   glyphs line up. Centred by halign instead when the sidebar is a rail. */
+.sidebar-collapse-btn {
+  padding: 6px 8px;
+  min-width: 0;
 }
 
 .reorder-row {
