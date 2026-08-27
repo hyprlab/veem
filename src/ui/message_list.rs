@@ -66,12 +66,16 @@ pub struct RowInit {
 /// the list and read live when a drag starts.
 pub type DragKeys = std::rc::Rc<std::cell::RefCell<Vec<(u32, u32, u32, u32)>>>;
 
-/// The message-list pane's floor: room for a row's full Actions Palette.
-const LIST_MIN_WIDTH: i32 = 350;
-/// How far a conversation's child rows indent (22px margin + 2px accent edge —
-/// see `.thread-child` in the stylesheet). While any child row is on screen the
-/// pane's floor grows by this much, so the indent never clips the right edge.
-const THREAD_INDENT: i32 = 24;
+/// The message-list pane's floor: room for a row's full Actions Palette, plus
+/// slack for the head row's trailing count chip and expand chevron — at the
+/// exact palette width those were the first casualties of the right-edge clip.
+const LIST_MIN_WIDTH: i32 = 380;
+/// Extra width a conversation's child rows consume as inset cards: the 18px
+/// rail margin plus the card's 12px + 10px side margins, less the 4px the
+/// card's tighter padding gives back (see `.thread-child` in the stylesheet).
+/// While any child row is on screen the pane's floor grows by this much, so
+/// the cards' right edge is never clipped.
+const THREAD_INDENT: i32 = 40;
 
 /// A background face lookup's answer, correlated by sender address (a recycled
 /// row compares before using it). The tiers are personal-first: the contact's
@@ -274,6 +278,18 @@ impl FactoryComponent for MessageRow {
                     }
                     Some(gtk::gdk::ContentProvider::for_value(&payload.to_value()))
                 },
+            },
+
+            #[wrap(Some)]
+            set_child = &gtk::Overlay {
+            // The node dot where this member meets the group's dotted rail
+            // (thread children only): overlaid at the row's left edge and
+            // pulled onto the rail itself by .thread-node's negative margin.
+            add_overlay = &gtk::Box {
+                add_css_class: "thread-node",
+                set_halign: gtk::Align::Start,
+                set_valign: gtk::Align::Center,
+                set_visible: self.is_thread_child,
             },
 
             #[wrap(Some)]
@@ -502,6 +518,7 @@ impl FactoryComponent for MessageRow {
                     },
 
                 },
+            },
             },
         }
         }

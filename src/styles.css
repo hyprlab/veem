@@ -462,6 +462,17 @@ headerbar.rail-header {
   padding: 8px 12px;
 }
 
+/* Node dot where each member meets the rail: an 8px circle whose negative
+   margin pulls it out of the row's content box to sit centred on the
+   border-drawn rail line. */
+.thread-node {
+  min-width: 8px;
+  min-height: 8px;
+  border-radius: 4px;
+  margin-left: -5px;
+  background-color: alpha(currentColor, 0.5);
+}
+
 .message-listbox > row.thread-child:hover:not(:selected) .message-row {
   background-color: alpha(currentColor, 0.05);
 }
