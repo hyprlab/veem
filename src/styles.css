@@ -327,6 +327,10 @@ headerbar.rail-header {
 .message-listbox > row {
   padding: 0;
   border-bottom: 1px solid alpha(currentColor, 0.07);
+  /* The same side inset the highlight pills use, so the separators float
+     detached from the list edges instead of running wall to wall. The pills
+     drop their own horizontal margin in exchange — net geometry unchanged. */
+  margin: 0 6px;
 }
 
 /* Every state tint lives on the inner .message-row as an inset rounded pill
@@ -386,7 +390,7 @@ headerbar.rail-header {
   /* The pill: inset from the list edges, rounded like the thread cards. The
      padding is trimmed by exactly the margin so the content sits where it
      always did — only the highlight's shape changed. */
-  margin: 2px 6px;
+  margin: 2px 0;
   border-radius: 12px;
   padding: 8px 6px 8px 10px;
 }
