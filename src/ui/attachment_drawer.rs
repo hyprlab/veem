@@ -29,6 +29,7 @@ use relm4::prelude::*;
 
 use crate::config::{self, DrawerState};
 use crate::models::{is_image_name, Attachment};
+use crate::ui::context_menu::{show_context_menu, MenuEntry};
 use crate::ui::attachments_gallery::{
     icon_color_class, icon_for, is_pdf_name, open_bytes, spawn_thumbnail_render, texture_from,
     thumbnail_texture, Thumbnail,
@@ -91,8 +92,6 @@ pub struct AttachmentDrawer {
     collapsed: bool,
     /// The wrapping thumbnail grid (rebuilt on item/size changes).
     flow: gtk::FlowBox,
-    /// Reusable right-click context menu, parented to the grid.
-    menu: gtk::Popover,
     /// Vertical split: reader body on top, drawer body below. The divider is the
     /// resize grip — native drag, and the reader shrinks rather than the window
     /// growing.
@@ -330,9 +329,6 @@ impl SimpleComponent for AttachmentDrawer {
     ) -> ComponentParts<Self> {
         let flow = gtk::FlowBox::default();
         let scroller = gtk::ScrolledWindow::default();
-        let menu = gtk::Popover::new();
-        menu.set_has_arrow(false);
-        menu.set_position(gtk::PositionType::Bottom);
 
         let model = AttachmentDrawer {
             items: Vec::new(),
@@ -343,7 +339,6 @@ impl SimpleComponent for AttachmentDrawer {
             height: init.state.height.max(MIN_HEIGHT),
             collapsed: init.state.collapsed,
             flow: flow.clone(),
-            menu: menu.clone(),
             // The root of this component IS the Paned.
             paned: root.clone(),
             adjusting: Rc::new(Cell::new(false)),
@@ -353,7 +348,6 @@ impl SimpleComponent for AttachmentDrawer {
         let widgets = view_output!();
         // Dock the reader as the top pane (the drawer body is the bottom pane).
         root.set_start_child(Some(&init.reader));
-        model.menu.set_parent(&model.flow);
         ComponentParts { model, widgets }
     }
 
@@ -498,10 +492,10 @@ impl AttachmentDrawer {
 
     /// Rebuild the thumbnail grid from the current items and thumbnail size.
     fn rebuild(&mut self, sender: &ComponentSender<Self>) {
-        // Remove existing cells only. The context-menu popover is also parented
-        // to the flow, so skip anything that isn't a FlowBoxChild — and walk
-        // siblings captured before removal so this can never loop (removing a
-        // non-child is a no-op, which would spin `first_child()` forever).
+        // Remove existing cells only, skipping anything that isn't a
+        // FlowBoxChild — and walk siblings captured before removal so this can
+        // never loop (removing a non-child is a no-op, which would spin
+        // `first_child()` forever).
         let mut child = self.flow.first_child();
         while let Some(c) = child {
             let next = c.next_sibling();
@@ -576,43 +570,22 @@ impl AttachmentDrawer {
 
     /// Right-click menu: Open / Download, matching the gallery's actions.
     fn show_context_menu(&self, index: usize, x: f64, y: f64, sender: &ComponentSender<Self>) {
-        let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        list.set_width_request(160);
-        let item = |icon: &str, label: &str| {
-            let b = gtk::Button::new();
-            b.add_css_class("flat");
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            row.append(&gtk::Image::from_icon_name(icon));
-            let l = gtk::Label::new(Some(label));
-            l.set_halign(gtk::Align::Start);
-            l.set_hexpand(true);
-            row.append(&l);
-            b.set_child(Some(&row));
-            b
-        };
-
-        let open = item("co.hyprlab.Vireo-document-open-symbolic", "Open");
         let s = sender.clone();
-        let menu = self.menu.clone();
-        open.connect_clicked(move |_| {
-            menu.popdown();
-            s.input(AttachmentDrawerInput::Open(index));
-        });
-        list.append(&open);
-
-        let download = item("co.hyprlab.Vireo-folder-download-symbolic", "Download…");
+        let open = MenuEntry::new("Open", move || s.input(AttachmentDrawerInput::Open(index)))
+            .icon("co.hyprlab.Vireo-document-open-symbolic");
         let s = sender.clone();
-        let menu = self.menu.clone();
-        download.connect_clicked(move |_| {
-            menu.popdown();
-            s.input(AttachmentDrawerInput::Download(index));
-        });
-        list.append(&download);
+        let download =
+            MenuEntry::new("Download…", move || s.input(AttachmentDrawerInput::Download(index)))
+                .icon("co.hyprlab.Vireo-folder-download-symbolic");
 
-        self.menu.set_child(Some(&list));
-        self.menu
-            .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-        self.menu.popup();
+        // Anchor on the clicked cell itself so the click point (already
+        // relative to it) needs no coordinate translation.
+        let parent: gtk::Widget = self
+            .flow
+            .child_at_index(index as i32)
+            .map(|c| c.upcast())
+            .unwrap_or_else(|| self.flow.clone().upcast());
+        show_context_menu(&parent, x, y, vec![vec![open, download]]);
     }
 
     /// Ask the app to show its full-window lightbox over the message's

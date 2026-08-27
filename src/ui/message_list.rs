@@ -6,6 +6,7 @@ use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
 
 use crate::models::Message;
+use crate::ui::context_menu::{show_context_menu, show_context_menu_with_header, MenuEntry};
 
 /// Max rows rendered at once. GtkListBox isn't virtualized, so the full folder
 /// index is kept in memory for search but only this many rows are built.
@@ -994,8 +995,6 @@ pub struct MessageList {
     account_colors: std::collections::HashMap<u32, String>,
     /// Display-wide provider with each account's pale row-tint rule.
     color_provider: gtk::CssProvider,
-    /// Reusable popover for the per-message right-click menu.
-    context_popover: gtk::Popover,
     /// Actions Palette collapse delay (seconds), shared with every row.
     palette_collapse_secs: std::rc::Rc<std::cell::Cell<u64>>,
     /// The message currently being viewed, kept selected across list rebuilds.
@@ -1505,11 +1504,6 @@ impl SimpleComponent for MessageList {
             );
         }
 
-        let context_popover = gtk::Popover::new();
-        context_popover.set_has_arrow(false);
-        context_popover.set_position(gtk::PositionType::Bottom);
-        context_popover.add_css_class("menu");
-
         let mut model = MessageList {
             rows,
             all: Vec::new(),
@@ -1529,7 +1523,6 @@ impl SimpleComponent for MessageList {
             colorize: false,
             account_colors: std::collections::HashMap::new(),
             color_provider,
-            context_popover,
             palette_collapse_secs: std::rc::Rc::new(std::cell::Cell::new(5)),
             thread_links: Vec::new(),
             drag_keys: DragKeys::default(),
@@ -1552,7 +1545,6 @@ impl SimpleComponent for MessageList {
         };
 
         let row_box = model.rows.widget();
-        model.context_popover.set_parent(row_box);
 
         // Right-click (or long-press) a row to open its context menu.
         let click = gtk::GestureClick::new();
@@ -2182,97 +2174,76 @@ impl MessageList {
         y: f64,
         sender: &ComponentSender<Self>,
     ) {
-        let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        menu.add_css_class("context-menu");
-        let pop = self.context_popover.clone();
-        let item = |label: &str, action: RowAction| -> gtk::Button {
-            let btn = gtk::Button::with_label(label);
-            btn.add_css_class("flat");
-            btn.set_halign(gtk::Align::Fill);
-            if let Some(lbl) = btn.child().and_downcast::<gtk::Label>() {
-                lbl.set_xalign(0.0);
-            }
+        // Each entry carries the same icon as the reader-toolbar button (or
+        // row-palette button) for that action, tying the two together.
+        let item = |action: RowAction, label: &str, icon: &str| -> MenuEntry {
             let s = sender.clone();
-            let p = pop.clone();
             let m = msg.clone();
-            btn.connect_clicked(move |_| {
+            MenuEntry::new(label, move || {
                 let _ = s.output(MessageListOutput::Action {
                     action,
                     message: Box::new(m.clone()),
                 });
-                p.popdown();
-            });
-            btn
+            })
+            .icon(icon)
         };
 
-        menu.append(&item("Reply", RowAction::Reply));
-        menu.append(&item("Reply All", RowAction::ReplyAll));
-        menu.append(&item("Forward", RowAction::Forward));
-        menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        menu.append(&item(
-            if msg.starred { "Remove Star" } else { "Star" },
-            RowAction::ToggleStar,
-        ));
-        menu.append(&item(
-            if msg.unread { "Mark as Read" } else { "Mark as Unread" },
-            RowAction::ToggleRead,
-        ));
-        menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        menu.append(&item("Mark as Spam", RowAction::Spam));
-        menu.append(&item("Archive", RowAction::Archive));
-        menu.append(&item("Delete", RowAction::Delete));
-        menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        menu.append(&item("View Source", RowAction::ViewSource));
+        let sections = vec![
+            vec![
+                item(RowAction::Reply, "Reply", "co.hyprlab.Vireo-mail-reply-sender-symbolic"),
+                item(RowAction::ReplyAll, "Reply All", "co.hyprlab.Vireo-mail-reply-all-symbolic"),
+                item(RowAction::Forward, "Forward", "co.hyprlab.Vireo-mail-forward-symbolic"),
+            ],
+            vec![
+                if msg.starred {
+                    item(RowAction::ToggleStar, "Remove Star", "co.hyprlab.Vireo-non-starred-symbolic")
+                } else {
+                    item(RowAction::ToggleStar, "Star", "co.hyprlab.Vireo-starred-symbolic")
+                },
+                if msg.unread {
+                    item(RowAction::ToggleRead, "Mark as Read", "co.hyprlab.Vireo-mail-read-symbolic")
+                } else {
+                    item(RowAction::ToggleRead, "Mark as Unread", "co.hyprlab.Vireo-mail-unread-symbolic")
+                },
+            ],
+            vec![
+                item(RowAction::Spam, "Mark as Spam", "co.hyprlab.Vireo-mail-mark-junk-symbolic"),
+                item(RowAction::Archive, "Archive", "co.hyprlab.Vireo-mail-archive-symbolic"),
+                item(RowAction::Delete, "Delete", "co.hyprlab.Vireo-user-trash-symbolic"),
+            ],
+            vec![item(RowAction::ViewSource, "View Source", "co.hyprlab.Vireo-code-symbolic")],
+        ];
 
-        self.context_popover.set_child(Some(&menu));
-        self.context_popover
-            .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-        self.context_popover.popup();
+        show_context_menu(self.rows.widget(), x, y, sections);
     }
 
     /// Build and pop up the bulk-action menu for the current multi-selection.
     fn show_bulk_menu(&self, x: f64, y: f64, sender: &ComponentSender<Self>) {
-        let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        menu.add_css_class("context-menu");
-        let pop = self.context_popover.clone();
-        let count = self.selection_count;
-        let item = |label: &str, action: BulkAction| -> gtk::Button {
-            let btn = gtk::Button::with_label(label);
-            btn.add_css_class("flat");
-            btn.set_halign(gtk::Align::Fill);
-            if let Some(lbl) = btn.child().and_downcast::<gtk::Label>() {
-                lbl.set_xalign(0.0);
-            }
+        let item = |action: BulkAction, label: &str, icon: &str| -> MenuEntry {
             let s = sender.clone();
-            let p = pop.clone();
-            btn.connect_clicked(move |_| {
-                s.input(MessageListInput::Bulk(action));
-                p.popdown();
-            });
-            btn
+            MenuEntry::new(label, move || s.input(MessageListInput::Bulk(action))).icon(icon)
         };
 
-        let header = gtk::Label::new(Some(&format!("{count} selected")));
-        header.set_xalign(0.0);
-        header.add_css_class("dim-label");
-        header.add_css_class("caption");
-        header.set_margin_start(8);
-        header.set_margin_top(4);
-        header.set_margin_bottom(2);
-        menu.append(&header);
+        let sections = vec![
+            vec![
+                item(BulkAction::MarkRead, "Mark as Read", "co.hyprlab.Vireo-mail-read-symbolic"),
+                item(BulkAction::MarkUnread, "Mark as Unread", "co.hyprlab.Vireo-mail-unread-symbolic"),
+                item(BulkAction::Flag, "Flag", "co.hyprlab.Vireo-starred-symbolic"),
+            ],
+            vec![
+                item(BulkAction::Spam, "Mark as Spam", "co.hyprlab.Vireo-mail-mark-junk-symbolic"),
+                item(BulkAction::Archive, "Archive", "co.hyprlab.Vireo-mail-archive-symbolic"),
+                item(BulkAction::Delete, "Delete", "co.hyprlab.Vireo-user-trash-symbolic"),
+            ],
+        ];
 
-        menu.append(&item("Mark as Read", BulkAction::MarkRead));
-        menu.append(&item("Mark as Unread", BulkAction::MarkUnread));
-        menu.append(&item("Flag", BulkAction::Flag));
-        menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        menu.append(&item("Mark as Spam", BulkAction::Spam));
-        menu.append(&item("Archive", BulkAction::Archive));
-        menu.append(&item("Delete", BulkAction::Delete));
-
-        self.context_popover.set_child(Some(&menu));
-        self.context_popover
-            .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-        self.context_popover.popup();
+        show_context_menu_with_header(
+            self.rows.widget(),
+            x,
+            y,
+            Some(&format!("{} selected", self.selection_count)),
+            sections,
+        );
     }
 
     /// Toolbar count: total matches, noting when more exist than are shown.

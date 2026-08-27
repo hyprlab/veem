@@ -12,6 +12,7 @@ use gtk::prelude::*;
 use relm4::prelude::*;
 
 use crate::models::{is_image_name, GalleryItem};
+use crate::ui::context_menu::{show_context_menu, MenuEntry};
 
 /// Width of the table's trailing quick-actions column (three icon buttons);
 /// the header carries a spacer of the same width so the columns line up.
@@ -43,8 +44,8 @@ pub struct AttachmentsGallery {
     flow: gtk::FlowBox,
     /// The table view's rows (the grid's sibling stack page).
     table: gtk::ListBox,
-    /// Reusable right-click context menu, parented to the gallery root.
-    menu: gtk::Popover,
+    /// The component's root widget, used to anchor the right-click context menu.
+    root: gtk::Widget,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -554,10 +555,6 @@ impl Component for AttachmentsGallery {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let menu = gtk::Popover::new();
-        menu.set_has_arrow(false);
-        menu.set_position(gtk::PositionType::Bottom);
-        menu.add_css_class("menu");
         let (view_table, thumb_width, sort_index) = crate::config::load_gallery_view();
         let model = AttachmentsGallery {
             all_items: Vec::new(),
@@ -573,14 +570,11 @@ impl Component for AttachmentsGallery {
             resize_timer: None,
             flow: gtk::FlowBox::new(),
             table: gtk::ListBox::new(),
-            menu,
+            root: root.clone().upcast(),
         };
         let flow = &model.flow;
         let table = &model.table;
         let widgets = view_output!();
-        // Parent the context menu to the gallery root (not the FlowBox, whose
-        // children must be FlowBoxChild and which we clear on every rebuild).
-        model.menu.set_parent(&root);
 
         // Double-clicking the preview opens the document in its external app.
         let dbl = gtk::GestureClick::new();
@@ -929,59 +923,27 @@ impl AttachmentsGallery {
         let Some(item) = self.item_at(index) else { return };
         let has_data = item.data.is_some();
 
-        let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let item_btn = |label: &str, enabled: bool| {
-            let b = gtk::Button::with_label(label);
-            b.add_css_class("flat");
-            b.set_sensitive(enabled);
-            let child = b.child().and_downcast::<gtk::Label>();
-            if let Some(l) = child {
-                l.set_xalign(0.0);
-                l.set_halign(gtk::Align::Start);
-            }
-            b
-        };
+        let s = sender.clone();
+        let open = MenuEntry::new("Open", move || s.input(GalleryInput::OpenItem(index)))
+            .icon("co.hyprlab.Vireo-document-open-symbolic")
+            .enabled(has_data);
+        let s = sender.clone();
+        let download = MenuEntry::new("Download…", move || s.input(GalleryInput::DownloadItem(index)))
+            .icon("co.hyprlab.Vireo-folder-download-symbolic")
+            .enabled(has_data);
+        let s = sender.clone();
+        let goto = MenuEntry::new("Go to Message", move || s.input(GalleryInput::GoToItem(index)))
+            .icon("co.hyprlab.Vireo-mail-unread-symbolic");
+        let sections = vec![vec![open, download, goto]];
 
-        let download = item_btn("Download…", has_data);
-        let open = item_btn("Open", has_data);
-        let goto = item_btn("Go to Message", true);
-        for b in [&download, &open, &goto] {
-            menu.append(b);
-        }
-        let s = sender.clone();
-        download.connect_clicked(move |_| s.input(GalleryInput::DownloadItem(index)));
-        let s = sender.clone();
-        open.connect_clicked(move |_| s.input(GalleryInput::OpenItem(index)));
-        let s = sender.clone();
-        goto.connect_clicked(move |_| s.input(GalleryInput::GoToItem(index)));
-        // Close the popover on any choice.
-        let pop = self.menu.clone();
-        for b in [&download, &open, &goto] {
-            let p = pop.clone();
-            b.connect_clicked(move |_| p.popdown());
-        }
-
-        self.menu.set_child(Some(&menu));
-        // Point at the click position, translated from the clicked cell/row
-        // into the menu parent's coordinate space, so it opens under the
-        // pointer whichever view is showing.
+        // Anchor on the clicked cell/row itself so the click point (already
+        // relative to it) needs no coordinate translation.
         let source: Option<gtk::Widget> = if self.view_table {
             self.table.row_at_index(index as i32).map(|r| r.upcast())
         } else {
             self.flow.child_at_index(index as i32).map(|c| c.upcast())
         };
-        if let (Some(child), Some(parent)) = (source, self.menu.parent()) {
-            let point = gtk::graphene::Point::new(x as f32, y as f32);
-            if let Some(p) = child.compute_point(&parent, &point) {
-                self.menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
-                    p.x() as i32,
-                    p.y() as i32,
-                    1,
-                    1,
-                )));
-            }
-        }
-        self.menu.popup();
+        show_context_menu(source.as_ref().unwrap_or(&self.root), x, y, sections);
     }
 }
 
