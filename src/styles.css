@@ -813,20 +813,7 @@ headerbar.rail-header {
   background: transparent;
 }
 
-/* ---- Sidebar footer / reorder ---- */
-
-.sidebar-footer {
-  padding: 4px 6px;
-  border-top: 1px solid alpha(currentColor, 0.08);
-}
-
-/* The footer's expand/collapse toggle: a standard icon button, right-aligned
-   in the footer when the sidebar is expanded and centred (by halign) when it
-   is a rail. */
-.sidebar-collapse-btn {
-  padding: 6px 8px;
-  min-width: 0;
-}
+/* ---- Sidebar reorder ---- */
 
 .reorder-row {
   padding: 10px 8px;

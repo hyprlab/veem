@@ -411,6 +411,11 @@ pub enum AppMsg {
     FolderNodeCollapsed { account_id: u32, path: String, collapsed: bool },
     ToggleCustomFolders(u32),
     SidebarCollapsed(bool),
+    /// The message-pane header's sidebar button: flip the sidebar between the
+    /// expanded pane and the icon rail. Routed through the sidebar component so
+    /// its CollapsedChanged output drives the same peek/pin/persist logic as
+    /// ever (see `SidebarCollapsed`).
+    ToggleSidebar,
     /// The narrow-window breakpoint applied/unapplied — collapse the sidebar to
     /// its icon rail (and restore it) without touching the user's preference.
     AutoRail(bool),
@@ -808,16 +813,55 @@ impl SimpleComponent for AppModel {
                                     set_ellipsize: gtk::pango::EllipsizeMode::End,
                                     add_css_class: "pane-title",
                                 },
-                                // Compose leads this header: it is the window's
-                                // primary action and sits directly above the list
-                                // of messages it adds to.
+                                // Leftmost, mirroring the pane it acts on: the
+                                // sidebar expand/collapse toggle (moved here from
+                                // the sidebar's own footer).
                                 pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-sidebar-show-symbolic",
+                                    #[watch]
+                                    set_tooltip_text: Some(if model.rail_active {
+                                        "Expand sidebar"
+                                    } else {
+                                        "Collapse sidebar"
+                                    }),
+                                    add_css_class: "flat",
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleSidebar),
+                                },
+                                // The action cluster sits at the far end, in
+                                // fixed order: Status, Refresh, Contacts, Compose
+                                // (pack_end packs right-to-left, so Compose —
+                                // the window's primary action — goes first and
+                                // lands rightmost).
+                                pack_end = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-mail-message-new-symbolic",
                                     set_tooltip_text: Some("Compose"),
                                     add_css_class: "suggested-action",
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Compose),
                                 },
-                                pack_start = &gtk::Button {
+                                pack_end = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
+                                    set_tooltip_text: Some("Open Contacts"),
+                                    add_css_class: "flat",
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::OpenContacts),
+                                },
+                                pack_end = &gtk::Button {
+                                    set_tooltip_text: Some("Refresh"),
+                                    add_css_class: "flat",
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::Refresh),
+                                    gtk::Stack {
+                                        set_transition_type: gtk::StackTransitionType::Crossfade,
+                                        add_named[Some("icon")] = &gtk::Image {
+                                            set_icon_name: Some("co.hyprlab.Vireo-view-refresh-symbolic"),
+                                        },
+                                        add_named[Some("spinner")] = &gtk::Spinner {
+                                            #[watch]
+                                            set_spinning: !model.busy.is_empty(),
+                                        },
+                                        #[watch]
+                                        set_visible_child_name: if model.busy.is_empty() { "icon" } else { "spinner" },
+                                    },
+                                },
+                                pack_end = &gtk::Button {
                                     set_tooltip_text: Some("Status Bar"),
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleNotifications),
@@ -844,29 +888,6 @@ impl SimpleComponent for AppModel {
                                             set_label: &model.notify_count.to_string(),
                                             add_css_class: "needs-attention",
                                         },
-                                    },
-                                },
-                                pack_start = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
-                                    set_tooltip_text: Some("Open Contacts"),
-                                    add_css_class: "flat",
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::OpenContacts),
-                                },
-                                pack_end = &gtk::Button {
-                                    set_tooltip_text: Some("Refresh"),
-                                    add_css_class: "flat",
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::Refresh),
-                                    gtk::Stack {
-                                        set_transition_type: gtk::StackTransitionType::Crossfade,
-                                        add_named[Some("icon")] = &gtk::Image {
-                                            set_icon_name: Some("co.hyprlab.Vireo-view-refresh-symbolic"),
-                                        },
-                                        add_named[Some("spinner")] = &gtk::Spinner {
-                                            #[watch]
-                                            set_spinning: !model.busy.is_empty(),
-                                        },
-                                        #[watch]
-                                        set_visible_child_name: if model.busy.is_empty() { "icon" } else { "spinner" },
                                     },
                                 },
                             },
@@ -2279,6 +2300,10 @@ impl SimpleComponent for AppModel {
                     self.animate_sidebar(want);
                     self.compact_sidebar_header(want);
                 }
+            }
+
+            AppMsg::ToggleSidebar => {
+                self.sidebar.emit(SidebarInput::ToggleCollapsed);
             }
 
             AppMsg::SidebarPeekDismissed => {
@@ -4602,7 +4627,6 @@ impl AppModel {
         self.sidebar_peek = false;
         self.sidebar_collapsed = false;
         self.rail_active = false;
-        self.sidebar.emit(SidebarInput::SetPeeking(false));
         self.sidebar.emit(SidebarInput::SetCollapsed(false));
         self.peek_transition.set(true);
         split.set_collapsed(false);
@@ -4686,9 +4710,6 @@ impl AppModel {
             if sync_rows {
                 self.sidebar.emit(SidebarInput::SetCollapsed(false));
             }
-            // The footer toggle holds the rail's spot while floating, like
-            // the hamburger above it.
-            self.sidebar.emit(SidebarInput::SetPeeking(true));
             self.peek_sidebar_header();
             split.set_min_sidebar_width(280.0);
             split.set_max_sidebar_width(280.0);
@@ -4723,7 +4744,6 @@ impl AppModel {
                 let ghost = self.peek_rail_ghost.clone();
                 move || {
                     close_timer.borrow_mut().take();
-                    let _ = sidebar_sender.send(SidebarInput::SetPeeking(false));
                     if sync_rows {
                         let _ = sidebar_sender.send(SidebarInput::SetCollapsed(true));
                     }
