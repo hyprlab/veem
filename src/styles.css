@@ -700,7 +700,8 @@ headerbar.rail-header {
 }
 
 .remote-alert image {
-  /* Fixed amber in both schemes, by choice — the one splash of colour. */
+  /* Amber, deepened to orange on light mode by the scheme-dependent provider
+     (`install_scheme_css`) — amber alone washes out on a light ground. */
   color: #ffca28;
   /* A step up from the 16px default, matching the taller bar. */
   -gtk-icon-size: 18px;

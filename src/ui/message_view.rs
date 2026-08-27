@@ -785,6 +785,10 @@ impl MessageView {
     /// Outline the selected cards in the document already on screen. Rendering
     /// it again would reload every frame and lose the reader's place.
     fn apply_card_selection(&self) {
+        // A lone card never wears the outline (see `conversation_document`).
+        if self.thread.len() <= 1 {
+            return;
+        }
         let keys: Vec<String> = self
             .selected_cards
             .iter()
@@ -913,6 +917,9 @@ impl MessageView {
         // Every message renders as a conversation card — a thread of one uses
         // the same chrome, so single messages and conversations read alike.
         let conversation = !thread.is_empty();
+        // Card selection only means something between cards: a lone message is
+        // already the selection, so it never wears the accent outline.
+        let mark_selection = thread.len() > 1;
         let mut sections = String::new();
         for m in thread {
             let body = if m.body.trim().is_empty() {
@@ -944,7 +951,11 @@ impl MessageView {
                        </header>{body}{seen_mark}</section>",
                     aid = m.account_id,
                     id = m.id,
-                    sel = if selected.contains(&(m.account_id, m.id)) { " selected" } else { "" },
+                    sel = if mark_selection && selected.contains(&(m.account_id, m.id)) {
+                        " selected"
+                    } else {
+                        ""
+                    },
                     // `escape_text`, not `attr_escape`: these land in element
                     // text content, where `<` and `>` are structural. A `From:`
                     // display name is attacker-controlled (and RFC 2047-decoded,

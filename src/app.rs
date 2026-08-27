@@ -1303,6 +1303,7 @@ impl SimpleComponent for AppModel {
     ) -> ComponentParts<Self> {
         relm4::set_global_css(include_str!("styles.css"));
         register_icons();
+        install_scheme_css();
 
         let mut sidebar_state = config::load_sidebar_state();
         let icon_only = sidebar_state.icon_only;
@@ -7750,6 +7751,42 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
             AppMsg::Error { account_id, text, connectivity }
         }
     }
+}
+
+/// Styles that branch on the colour scheme, which static CSS cannot do: a
+/// dedicated provider (above the static stylesheet's priority) carries the
+/// scheme-dependent values and reloads whenever the scheme flips.
+///
+/// - The message list's selection pill: the alpha that reads right on dark is
+///   heavy on a light ground, so light mode runs 25% lighter.
+/// - The remote-content banner's shield: amber on dark, a deeper orange on
+///   light where amber washes out.
+fn install_scheme_css() {
+    let provider = gtk::CssProvider::new();
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+        );
+    }
+    let apply = move |provider: &gtk::CssProvider, dark: bool| {
+        // Dark keeps the stylesheet's 0.3 / 0.5; light runs well lighter.
+        let (sel, focus) = if dark { (0.3, 0.5) } else { (0.17, 0.29) };
+        let shield = if dark { "#ffca28" } else { "#ff7800" };
+        provider.load_from_string(&format!(
+            ".message-listbox > row:selected .message-row {{ \
+               background-color: alpha(@accent_bg_color, {sel}); }}\
+             .message-listbox:focus-within > row:selected .message-row, \
+             .message-listbox > row.activatable:selected:hover .message-row, \
+             .message-listbox > row.activatable:selected:active .message-row {{ \
+               background-color: alpha(@accent_bg_color, {focus}); }}\
+             .remote-alert image {{ color: {shield}; }}"
+        ));
+    };
+    let style = adw::StyleManager::default();
+    apply(&provider, style.is_dark());
+    style.connect_dark_notify(move |sm| apply(&provider, sm.is_dark()));
 }
 
 fn reply_prefill(m: &Message) -> ComposePrefill {
