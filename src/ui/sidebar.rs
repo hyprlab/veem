@@ -239,12 +239,12 @@ impl Component for Sidebar {
                 gtk::Button {
                     set_icon_name: "co.hyprlab.Vireo-sidebar-show-symbolic",
                     set_tooltip_text: Some("Collapse sidebar"),
-                    // A standard icon button, not a full-width strip: its icon
-                    // lines up with the folder icons' column when expanded and
-                    // centres like the rail icons when collapsed (see the
-                    // halign switches alongside the tooltip updates).
+                    // A standard icon button, not a full-width strip:
+                    // right-aligned in the footer when expanded, centred like
+                    // the rail icons when collapsed (see the halign switches
+                    // alongside the tooltip updates).
                     set_hexpand: true,
-                    set_halign: gtk::Align::Start,
+                    set_halign: gtk::Align::End,
                     add_css_class: "flat",
                     add_css_class: "sidebar-collapse-btn",
                     connect_clicked => SidebarInput::ToggleCollapsed,
@@ -522,7 +522,7 @@ impl Component for Sidebar {
                     widgets.collapse_btn.set_halign(if self.collapsed {
                         gtk::Align::Center
                     } else {
-                        gtk::Align::Start
+                        gtk::Align::End
                     });
                     widgets.collapse_btn.set_tooltip_text(Some(if self.collapsed {
                         "Expand sidebar"
@@ -539,7 +539,7 @@ impl Component for Sidebar {
                 widgets.collapse_btn.set_halign(if self.collapsed {
                     gtk::Align::Center
                 } else {
-                    gtk::Align::Start
+                    gtk::Align::End
                 });
                 widgets.collapse_btn.set_tooltip_text(Some(if self.collapsed {
                     "Expand sidebar"
