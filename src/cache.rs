@@ -111,7 +111,10 @@ CREATE TABLE IF NOT EXISTS attachments_checked (
 /// v11: sender authentication is computed from the raw message at the same
 /// moment the body is rendered, so dropping `bodies` re-fetches both together
 /// and every cached message gains a verdict.
-const SCHEMA_VERSION: i64 = 11;
+/// v12: plain-text bodies no longer bake `padding:16px` into the cached
+/// document — the reader injects the default inset at render time — so cached
+/// bodies carrying the old baked padding must be dropped and re-rendered.
+const SCHEMA_VERSION: i64 = 12;
 
 /// Most Message-IDs one cross-folder conversation lookup matches against. A
 /// thread's ancestry is short in practice, and the references half of that query

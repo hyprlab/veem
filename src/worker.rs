@@ -5525,25 +5525,27 @@ fn consume_url(text: &str, start: usize) -> usize {
     start + trimmed.len()
 }
 
-/// Wrap plain text in a minimal, readable HTML document. Colours are left to the
-/// `color-scheme` the reader injects, so the message follows the light/dark theme.
+/// Wrap plain text in a minimal, readable HTML document. Colours are left to
+/// the `color-scheme` the reader injects, so the message follows the
+/// light/dark theme — and no padding is baked in: the reader injects the
+/// default inset at render time, so it stays tunable without invalidating
+/// every cached body (bodies are stored rendered; see cache SCHEMA_VERSION).
 fn wrap_plain(text: &str) -> String {
     let escaped = linkify(text);
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><style>\
-         body{{margin:0;padding:16px;box-sizing:border-box;\
-         font:14px/1.5 system-ui,sans-serif;\
+         body{{margin:0;font:14px/1.5 system-ui,sans-serif;\
          white-space:pre-wrap;word-wrap:break-word}}\
          </style></head><body>{escaped}</body></html>"
     )
 }
 
 /// Wrap composed body fragments (text blocks and inline images) in a document.
+/// Padding is the reader's injected default, as in [`wrap_plain`].
 fn wrap_fragment(inner: &str) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><style>\
-         body{{margin:0;padding:16px;box-sizing:border-box;\
-         font:14px/1.5 system-ui,sans-serif}}\
+         body{{margin:0;font:14px/1.5 system-ui,sans-serif}}\
          .vireo-plain{{white-space:pre-wrap;word-wrap:break-word}}\
          .vireo-inline{{display:block;max-width:100%;height:auto;\
          margin:12px 0;border-radius:6px}}\

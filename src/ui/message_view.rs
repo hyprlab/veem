@@ -2387,10 +2387,10 @@ fn inject_csp(html: &str, allow_remote: bool, dark: bool) -> String {
     };
     let lower = html.to_ascii_lowercase();
     // Every message gets a comfortable default inset: the UA's 8px body margin
-    // is reset so content sits at exactly 32px of breathing room. Injected
+    // is reset so content sits at exactly 20px of breathing room. Injected
     // ahead of the email's own CSS, so a message that styles its body (a
     // full-bleed design, say) still wins.
-    let body_pad = "body{margin:0;padding:32px;box-sizing:border-box;}";
+    let body_pad = "body{margin:0;padding:20px;box-sizing:border-box;}";
     // `color-scheme` makes the browser's default colours (for content that sets
     // none of its own) follow the app's light/dark setting; styled emails keep
     // their own colours untouched.
@@ -2859,7 +2859,7 @@ fn body_html(body: &str) -> String {
     } else {
         format!(
             "<!doctype html><html><head><meta charset=\"utf-8\"><style>\
-             body{{margin:0;padding:32px;font:14px/1.5 system-ui,sans-serif;\
+             body{{margin:0;padding:20px;font:14px/1.5 system-ui,sans-serif;\
              white-space:pre-wrap;word-wrap:break-word}}\
              </style></head><body>{}</body></html>",
             body.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
