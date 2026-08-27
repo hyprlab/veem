@@ -222,6 +222,8 @@ pub struct AppModel {
     /// While narrow: the sidebar is temporarily expanded as an overlay floating
     /// above the panes (so the list and reader keep their widths).
     sidebar_peek: bool,
+    /// Preference: hovering the narrow-window rail opens the peek by itself.
+    sidebar_hover_expand: bool,
     /// Held so the in-flight collapse/expand width animation isn't dropped.
     sidebar_anim: Option<adw::TimedAnimation>,
     current: Option<Message>,
@@ -503,6 +505,11 @@ pub enum AppMsg {
     SetNotifications(bool),
     SetNotificationContent(bool),
     SetShowAttachments(bool),
+    /// Preference: hovering the narrow-window rail floats the sidebar out.
+    SetSidebarHoverExpand(bool),
+    /// The cursor entered the sidebar pane — open the hover peek (rail +
+    /// preference permitting).
+    SidebarHoverEnter,
     SetPreviewLines(u32),
     SetSingleKey(bool),
     SetRunInBackground(bool),
@@ -1426,6 +1433,7 @@ impl SimpleComponent for AppModel {
             auto_rail: false,
             rail_active: icon_only,
             sidebar_peek: false,
+            sidebar_hover_expand: config::load_sidebar_hover_expand(),
             current: None,
             allowed_senders: config::load_allowed_senders(),
             auto_remote_content: config::load_auto_remote_content(),
@@ -1652,6 +1660,48 @@ impl SimpleComponent for AppModel {
                     s.input(AppMsg::SidebarPeekDismissed);
                 }
             });
+        }
+        // Pointer tracking on the sidebar pane drives the floating peek: with
+        // the hover-expand preference on, entering the rail opens it; and once
+        // the cursor has been out of the pane for a second, an open peek folds
+        // back to the rail on its own (however it was opened). The handlers
+        // fire in every mode — the guards in the AppMsg handlers keep them
+        // meaningless outside the narrow-window rail.
+        if let Some(pane) = widgets.sidebar_split.sidebar() {
+            let pending: std::rc::Rc<std::cell::RefCell<Option<gtk::glib::SourceId>>> =
+                std::rc::Rc::new(std::cell::RefCell::new(None));
+            let motion = gtk::EventControllerMotion::new();
+            {
+                let s = sender.input_sender().clone();
+                let pending = pending.clone();
+                motion.connect_enter(move |_, _, _| {
+                    if let Some(prev) = pending.borrow_mut().take() {
+                        prev.remove();
+                    }
+                    let _ = s.send(AppMsg::SidebarHoverEnter);
+                });
+            }
+            {
+                let s = sender.input_sender().clone();
+                let pending = pending.clone();
+                motion.connect_leave(move |_| {
+                    let timer = gtk::glib::timeout_add_local_once(
+                        std::time::Duration::from_secs(1),
+                        {
+                            let s = s.clone();
+                            let pending = pending.clone();
+                            move || {
+                                pending.borrow_mut().take();
+                                let _ = s.send(AppMsg::SidebarPeekDismissed);
+                            }
+                        },
+                    );
+                    if let Some(prev) = pending.borrow_mut().replace(timer) {
+                        prev.remove();
+                    }
+                });
+            }
+            pane.add_controller(motion);
         }
         model.sidebar_split = Some(widgets.sidebar_split.clone());
         model.app_title = Some(widgets.app_title.clone());
@@ -2123,6 +2173,24 @@ impl SimpleComponent for AppModel {
                 if self.auto_rail && self.sidebar_peek {
                     self.rail_active = true;
                     self.set_sidebar_peek(false, true);
+                }
+            }
+
+            AppMsg::SidebarHoverEnter => {
+                // Hover-expand (preference): the rail floats the full sidebar
+                // out without a click. Only while the narrow-window rail is up
+                // — the same peek the expand button opens, dismissed the same
+                // ways (navigation, scrim, or the cursor leaving).
+                if self.sidebar_hover_expand && self.auto_rail && !self.sidebar_peek {
+                    self.rail_active = false;
+                    self.set_sidebar_peek(true, true);
+                }
+            }
+
+            AppMsg::SetSidebarHoverExpand(on) => {
+                if self.sidebar_hover_expand != on {
+                    self.sidebar_hover_expand = on;
+                    self.save_settings();
                 }
             }
 
@@ -3298,6 +3366,7 @@ impl SimpleComponent for AppModel {
                     notifications: self.notifications_enabled,
                     notification_content: self.notification_content,
                     show_attachments: self.show_attachments,
+                    sidebar_hover_expand: self.sidebar_hover_expand,
                     preview_lines: self.preview_lines,
                     single_key_shortcuts: self.single_key.get(),
                     run_in_background: self.run_in_background.get(),
@@ -3327,6 +3396,9 @@ impl SimpleComponent for AppModel {
                             AppMsg::SetNotificationContent(on)
                         }
                         PrefOutput::SetShowAttachments(on) => AppMsg::SetShowAttachments(on),
+                        PrefOutput::SetSidebarHoverExpand(on) => {
+                            AppMsg::SetSidebarHoverExpand(on)
+                        }
                         PrefOutput::SetPreviewLines(n) => AppMsg::SetPreviewLines(n),
                         PrefOutput::SetSingleKey(on) => AppMsg::SetSingleKey(on),
                         PrefOutput::SetRunInBackground(on) => AppMsg::SetRunInBackground(on),
@@ -3866,6 +3938,7 @@ impl AppModel {
             self.run_in_background.get(),
             self.autostart,
             self.show_remote_banner,
+            self.sidebar_hover_expand,
         );
     }
 

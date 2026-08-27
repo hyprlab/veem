@@ -29,6 +29,7 @@ pub struct PrefInit {
     pub notifications: bool,
     pub notification_content: bool,
     pub show_attachments: bool,
+    pub sidebar_hover_expand: bool,
     pub preview_lines: u32,
     pub single_key_shortcuts: bool,
     pub run_in_background: bool,
@@ -137,6 +138,7 @@ pub enum PrefInput {
     ToggleNotifications(bool),
     ToggleNotificationContent(bool),
     ToggleShowAttachments(bool),
+    ToggleSidebarHoverExpand(bool),
     ChangePreviewLines(u32),
     ToggleSingleKey(bool),
     ToggleRunInBackground(bool),
@@ -165,6 +167,7 @@ pub enum PrefOutput {
     SetNotifications(bool),
     SetNotificationContent(bool),
     SetShowAttachments(bool),
+    SetSidebarHoverExpand(bool),
     SetPreviewLines(u32),
     SetSingleKey(bool),
     SetRunInBackground(bool),
@@ -245,6 +248,17 @@ impl Component for Preferences {
                             set_subtitle: "Show a shortcut for browsing every account's attachments.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleShowAttachments(row.is_active()));
+                            },
+                        },
+
+                        #[name = "sidebar_hover_expand_row"]
+                        adw::SwitchRow {
+                            set_title: "Expand the sidebar on hover",
+                            set_subtitle: "In a narrow window, hovering the icon rail floats the \
+                                           full sidebar out over the panes; it folds back a \
+                                           moment after the pointer leaves.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleSidebarHoverExpand(row.is_active()));
                             },
                         },
                     },
@@ -571,6 +585,7 @@ impl Component for Preferences {
         widgets.notifications_row.set_active(init.notifications);
         widgets.notification_content_row.set_active(init.notification_content);
         widgets.show_attachments_row.set_active(init.show_attachments);
+        widgets.sidebar_hover_expand_row.set_active(init.sidebar_hover_expand);
         let preview_labels = ["Off", "1 line", "2 lines", "3 lines"];
         widgets
             .preview_lines_row
@@ -681,6 +696,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleShowAttachments(on) => {
                 let _ = sender.output(PrefOutput::SetShowAttachments(on));
+            }
+            PrefInput::ToggleSidebarHoverExpand(on) => {
+                let _ = sender.output(PrefOutput::SetSidebarHoverExpand(on));
             }
             PrefInput::ToggleSingleKey(on) => {
                 let _ = sender.output(PrefOutput::SetSingleKey(on));

@@ -457,6 +457,10 @@ struct PrivacyFile {
     /// account's attachments).
     #[serde(default = "default_show_attachments")]
     show_attachments: bool,
+    /// Narrow-window rail: hovering the rail floats the full sidebar out over
+    /// the panes without needing the expand button.
+    #[serde(default)]
+    sidebar_hover_expand: bool,
     /// Lines of message text shown under the subject in the list: 0 turns the
     /// preview off entirely, and stops it being fetched.
     #[serde(default = "default_preview_lines")]
@@ -539,6 +543,7 @@ impl Default for PrivacyFile {
             notifications: default_notifications(),
             notification_content: default_notification_content(),
             show_attachments: default_show_attachments(),
+            sidebar_hover_expand: false,
             preview_lines: default_preview_lines(),
             single_key_shortcuts: false,
             run_in_background: false,
@@ -646,6 +651,10 @@ pub fn load_show_attachments() -> bool {
     load_privacy().show_attachments
 }
 
+pub fn load_sidebar_hover_expand() -> bool {
+    load_privacy().sidebar_hover_expand
+}
+
 /// Lines of message text shown under the subject in the list; 0 means previews
 /// are off. Clamped in case the file was edited by hand.
 pub fn load_preview_lines() -> u32 {
@@ -693,6 +702,7 @@ pub fn save_privacy(
     run_in_background: bool,
     autostart: bool,
     show_remote_banner: bool,
+    sidebar_hover_expand: bool,
 ) {
     let Some(path) = privacy_path() else {
         return;
@@ -723,6 +733,7 @@ pub fn save_privacy(
         run_in_background,
         autostart,
         show_remote_banner,
+        sidebar_hover_expand,
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {
