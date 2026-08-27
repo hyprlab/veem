@@ -4931,7 +4931,7 @@ fn classify_with_source(path: &str, attrs: &[NameAttribute]) -> (FolderKind, boo
     (kind, false)
 }
 
-fn folder_order(kind: FolderKind) -> u8 {
+pub(crate) fn folder_order(kind: FolderKind) -> u8 {
     match kind {
         FolderKind::Inbox => 0,
         FolderKind::Starred => 1,

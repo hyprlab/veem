@@ -3548,8 +3548,25 @@ impl SimpleComponent for AppModel {
                 for f in &folders {
                     self.folder_unread.insert((account_id, f.id), f.unread);
                 }
+                // An identical list — above all the refresh confirming an
+                // optimistic folder move, whose local reshape mirrors the
+                // worker exactly — changes nothing on screen: skip the rebuild
+                // so the sidebar's rows don't vanish and reappear for it.
+                let unchanged = self.folders.get(&account_id).is_some_and(|old| {
+                    old.len() == folders.len()
+                        && old.iter().zip(&folders).all(|(a, b)| {
+                            a.id == b.id
+                                && a.path == b.path
+                                && a.kind == b.kind
+                                && a.name == b.name
+                        })
+                });
                 self.folders.insert(account_id, folders);
-                self.rebuild_sidebar();
+                if unchanged {
+                    self.push_unread_counts();
+                } else {
+                    self.rebuild_sidebar();
+                }
             }
 
             AppMsg::FolderUnread { account_id, folder_id, unread } => {
@@ -5958,6 +5975,64 @@ impl AppModel {
             self.show_message(None, false);
             self.message_list.emit(MessageListInput::SetLoading { title: String::new() });
         }
+
+        // Optimistic: reshape the local tree NOW so the sidebar shows the move
+        // instantly; the server rename confirms in the background. The reshape
+        // mirrors the worker exactly — same subtree rewrite the server does,
+        // same sort, same index-assigned ids — so the confirming refresh is an
+        // identical list and SetFolders repaints nothing.
+        let old_prefix = format!("{path}{delim}");
+        let new_prefix = format!("{new_path}{delim}");
+        if let Some(folders) = self.folders.get_mut(&account_id) {
+            for f in folders.iter_mut() {
+                // Pin the freshest unread onto the folder so it survives re-id.
+                if let Some(u) = self.folder_unread.get(&(account_id, f.id)) {
+                    f.unread = *u;
+                }
+                if f.path == path {
+                    f.path = new_path.clone();
+                } else if let Some(rest) = f.path.strip_prefix(&old_prefix) {
+                    f.path = format!("{new_prefix}{rest}");
+                }
+            }
+            folders.sort_by(|a, b| {
+                crate::worker::folder_order(a.kind)
+                    .cmp(&crate::worker::folder_order(b.kind))
+                    .then_with(|| a.path.to_lowercase().cmp(&b.path.to_lowercase()))
+            });
+            for (i, f) in folders.iter_mut().enumerate() {
+                f.id = i as u32 + 1;
+            }
+            // Re-key everything that referenced folders by id or old path.
+            self.folder_unread.retain(|(a, _), _| *a != account_id);
+            for f in folders.iter() {
+                self.folder_unread.insert((account_id, f.id), f.unread);
+            }
+            if let Some(sel) = self.selected.as_mut() {
+                if sel.account_id == account_id {
+                    if let Some(f) = folders.iter().find(|f| f.path == sel.path) {
+                        sel.folder_id = f.id;
+                    }
+                }
+            }
+        }
+        // Collapsed tree nodes follow the moved subtree to its new home.
+        if let Some(email) =
+            self.accounts.iter().find(|a| a.id == account_id).map(|a| a.email.clone())
+        {
+            let key_prefix = format!("{email}\t");
+            for k in self.tree_collapsed.iter_mut() {
+                if let Some(rest) = k.strip_prefix(&key_prefix) {
+                    if rest == path {
+                        *k = format!("{key_prefix}{new_path}");
+                    } else if let Some(r) = rest.strip_prefix(&old_prefix) {
+                        *k = format!("{key_prefix}{new_prefix}{r}");
+                    }
+                }
+            }
+            self.save_sidebar_state();
+        }
+        self.rebuild_sidebar();
         self.send_to(account_id, MailRequest::RenameFolder { old_path: path, new_path });
     }
 
