@@ -927,22 +927,13 @@ headerbar.rail-header {
 .attachment-drawer {
   background: alpha(currentColor, 0.03);
 }
-/* The drawer's drag strip: GTK's wide handle draws a band bordered on both
-   edges, which read as a double line. Keep the wide grab area, but draw it
-   ourselves — one hairline on top and a centred grip pill. */
+/* The drawer's divider is invisible — no line, no grip. The slim strip is
+   still there to grab: dragging resizes the drawer while it is expanded;
+   while collapsed a drag just snaps back (see PositionChanged). */
 .drawer-split > separator {
   border: none;
-  border-top: 1px solid alpha(currentColor, 0.08);
-  background:
-    linear-gradient(alpha(currentColor, 0.28), alpha(currentColor, 0.28))
-    no-repeat center / 36px 3px;
-  background-color: transparent;
-}
-.drawer-split > separator:hover {
-  background:
-    linear-gradient(@accent_color, @accent_color)
-    no-repeat center / 44px 3px;
-  background-color: transparent;
+  background: none;
+  min-height: 6px;
 }
 .attachment-drawer-header {
   padding: 4px 8px;

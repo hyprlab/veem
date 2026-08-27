@@ -1042,6 +1042,9 @@ struct StateFile {
     /// In-message attachment drawer: collapsed (showing only its header).
     #[serde(default)]
     drawer_collapsed: bool,
+    /// Expanded attachment-drawer height in px (the dragged split).
+    #[serde(default = "default_drawer_height")]
+    drawer_height: i32,
     /// Attachment drawer shows an alphabetical list instead of the thumbnail grid.
     #[serde(default)]
     drawer_list_view: bool,
@@ -1064,6 +1067,10 @@ struct StateFile {
 
 fn default_list_pane_width() -> i32 {
     350
+}
+
+fn default_drawer_height() -> i32 {
+    160
 }
 
 fn default_gallery_thumb_width() -> i32 {
@@ -1126,15 +1133,16 @@ impl Default for DrawerState {
     }
 }
 
-/// Load the attachment drawer's remembered state. The collapsed flag and view
-/// settings are persisted; height and thumbnail size always start at their
-/// defaults.
+/// Load the attachment drawer's remembered state. The collapsed flag, view
+/// settings and dragged height are persisted; thumbnail size always starts at
+/// its default.
 pub fn load_drawer_state() -> DrawerState {
     let s = load_state();
     DrawerState {
         collapsed: s.drawer_collapsed,
         list_view: s.drawer_list_view,
         sort_desc: s.drawer_sort_desc,
+        height: s.drawer_height.clamp(96, 4000),
         ..DrawerState::default()
     }
 }
@@ -1143,6 +1151,13 @@ pub fn load_drawer_state() -> DrawerState {
 pub fn save_drawer_collapsed(collapsed: bool) {
     let mut s = load_state();
     s.drawer_collapsed = collapsed;
+    save_state(&s);
+}
+
+/// Persist the attachment drawer's expanded (dragged) height.
+pub fn save_drawer_height(height: i32) {
+    let mut s = load_state();
+    s.drawer_height = height.clamp(96, 4000);
     save_state(&s);
 }
 

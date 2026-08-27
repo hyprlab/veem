@@ -15,10 +15,13 @@
 //!
 //! Sizing: the drawer *owns* a vertical `GtkPaned` whose top pane is the reader
 //! body (passed in via [`DrawerInit`]) and whose bottom pane is the drawer. The
-//! divider is the drag grip — native and smooth, and because the reader pane is
-//! allowed to shrink, resizing the drawer never grows the window. The size slider
-//! in the header scales the thumbnails only; the chevron collapses the grid to
-//! just the header. Height, collapsed state, and thumbnail size are persisted.
+//! divider is an invisible grabbable strip — native drag, and because the
+//! reader pane is allowed to shrink, resizing the drawer never grows the
+//! window; while the drawer is collapsed a drag snaps back, so only the
+//! expanded drawer resizes. The size slider in the header scales the
+//! thumbnails only; the chevron collapses the grid to just the header. The
+//! dragged height, collapsed state and view settings are persisted; thumbnail
+//! size is per-session.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -101,6 +104,9 @@ pub struct AttachmentDrawer {
     adjusting: Rc<Cell<bool>>,
     /// Set once the initial split has been applied (needs a realized Paned).
     positioned: Rc<Cell<bool>>,
+    /// Debounces persisting the dragged height: position-notify fires for
+    /// every pixel of a drag, and each save is a config write.
+    height_save: Rc<std::cell::RefCell<Option<glib::SourceId>>>,
 }
 
 /// What the drawer asks the app to do.
@@ -149,9 +155,9 @@ impl SimpleComponent for AttachmentDrawer {
         gtk::Paned {
             set_orientation: gtk::Orientation::Vertical,
             set_wide_handle: true,
-            // The wide handle stays for grabbability, but its stock look — a
-            // band bordered on both edges, reading as a double line — is
-            // restyled to a single hairline + grip (see `.drawer-split`).
+            // The handle is styled invisible (see `.drawer-split`): a slim
+            // grabbable strip, no line and no grip. Dragging works while the
+            // drawer is expanded; collapsed drags snap back (PositionChanged).
             add_css_class: "drawer-split",
             // The reader (start child) shrinks to make room; the drawer keeps its
             // set size. This is what prevents the window from growing.
@@ -211,7 +217,8 @@ impl SimpleComponent for AttachmentDrawer {
                     gtk::Box { set_hexpand: true },
                     gtk::Button {
                         set_label: "Save All…",
-                        add_css_class: "flat",
+                        // A standing button, not a flat hover-reveal: saving
+                        // everything is the header's one real action.
                         set_valign: gtk::Align::Center,
                         set_tooltip_text: Some("Save every attachment to a folder"),
                         connect_clicked[sender] => move |_| {
@@ -347,6 +354,7 @@ impl SimpleComponent for AttachmentDrawer {
             paned: root.clone(),
             adjusting: Rc::new(Cell::new(false)),
             positioned: Rc::new(Cell::new(false)),
+            height_save: Rc::new(std::cell::RefCell::new(None)),
         };
 
         let widgets = view_output!();
@@ -376,14 +384,20 @@ impl SimpleComponent for AttachmentDrawer {
                 }
             }
             AttachmentDrawerInput::PositionChanged => {
-                // Track the dragged height for this session (so expanding after a
-                // collapse restores it), but don't persist it across launches.
-                if self.adjusting.get() || !self.positioned.get() || self.collapsed {
+                if self.adjusting.get() || !self.positioned.get() {
+                    return;
+                }
+                // Collapsed = not resizable: a drag on the (invisible) divider
+                // snaps straight back to the header-only split. Expanding via
+                // the chevron is what re-enables resizing.
+                if self.collapsed {
+                    self.apply_position();
                     return;
                 }
                 let drawer_h = self.paned.height() - self.paned.position();
                 if drawer_h >= MIN_HEIGHT {
                     self.height = drawer_h;
+                    self.schedule_height_save();
                 }
             }
             AttachmentDrawerInput::ToggleCollapsed => {
@@ -468,6 +482,23 @@ impl AttachmentDrawer {
         self.adjusting.set(true);
         self.paned.set_position((total - drawer_h).max(0));
         self.adjusting.set(false);
+    }
+
+    /// Persist the dragged height, debounced past the end of the drag.
+    fn schedule_height_save(&self) {
+        let height = self.height;
+        let slot = self.height_save.clone();
+        if let Some(prev) = slot.borrow_mut().take() {
+            prev.remove();
+        }
+        let id = glib::timeout_add_local_once(std::time::Duration::from_millis(400), {
+            let slot = slot.clone();
+            move || {
+                slot.borrow_mut().take();
+                config::save_drawer_height(height);
+            }
+        });
+        *slot.borrow_mut() = Some(id);
     }
 
     /// Apply the remembered split once the Paned has been allocated. The drawer
