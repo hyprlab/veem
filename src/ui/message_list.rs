@@ -818,11 +818,6 @@ impl MessageRow {
         if self.is_thread_child {
             v.push("thread-child");
         }
-        // An expanded head hands its full-width separator over to the group:
-        // the member cards below connect to it via the dotted rail instead.
-        if self.thread_count > 1 && self.thread_expanded {
-            v.push("thread-head-open");
-        }
         v
     }
 

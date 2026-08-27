@@ -326,10 +326,9 @@ headerbar.rail-header {
 
 .message-listbox > row {
   padding: 0;
-  border-bottom: 1px solid alpha(currentColor, 0.07);
-  /* The same side inset the highlight pills use, so the separators float
-     detached from the list edges instead of running wall to wall. The pills
-     drop their own horizontal margin in exchange — net geometry unchanged. */
+  /* No separator hairlines between rows — the inset highlight pills carry the
+     visual rhythm on their own. The side margin matches the inset the pills
+     use (they drop their own horizontal margin in exchange). */
   margin: 0 6px;
 }
 
@@ -459,14 +458,6 @@ headerbar.rail-header {
 .message-listbox > row.thread-child {
   margin-left: 10px;
   border-left: 2px dotted alpha(currentColor, 0.3);
-  /* Cards separate themselves; no hairline between members. */
-  border-bottom: none;
-}
-
-/* The expanded head joins its group: no full-width hairline between it and
-   the first member card. */
-.message-listbox > row.thread-head-open {
-  border-bottom: none;
 }
 
 /* Every row-level tint off — the card below carries the state instead. */
@@ -738,6 +729,8 @@ headerbar.rail-header {
   background-color: #3a3a3a;
   color: rgba(255, 255, 255, 0.88);
   padding: 3px 10px 3px 14px;
+  /* 42px content + 3px padding top and bottom = a 48px bar. */
+  min-height: 42px;
   font-size: 0.9em;
 }
 
