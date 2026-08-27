@@ -149,6 +149,10 @@ impl SimpleComponent for AttachmentDrawer {
         gtk::Paned {
             set_orientation: gtk::Orientation::Vertical,
             set_wide_handle: true,
+            // The wide handle stays for grabbability, but its stock look — a
+            // band bordered on both edges, reading as a double line — is
+            // restyled to a single hairline + grip (see `.drawer-split`).
+            add_css_class: "drawer-split",
             // The reader (start child) shrinks to make room; the drawer keeps its
             // set size. This is what prevents the window from growing.
             set_resize_start_child: true,

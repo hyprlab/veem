@@ -927,17 +927,22 @@ headerbar.rail-header {
 .attachment-drawer {
   background: alpha(currentColor, 0.03);
 }
-/* Top drag grip: a slim strip with a centred handle, resizes the drawer. */
-.drawer-resize-handle {
+/* The drawer's drag strip: GTK's wide handle draws a band bordered on both
+   edges, which read as a double line. Keep the wide grab area, but draw it
+   ourselves — one hairline on top and a centred grip pill. */
+.drawer-split > separator {
+  border: none;
   border-top: 1px solid alpha(currentColor, 0.08);
   background:
     linear-gradient(alpha(currentColor, 0.28), alpha(currentColor, 0.28))
     no-repeat center / 36px 3px;
+  background-color: transparent;
 }
-.drawer-resize-handle:hover {
+.drawer-split > separator:hover {
   background:
     linear-gradient(@accent_color, @accent_color)
     no-repeat center / 44px 3px;
+  background-color: transparent;
 }
 .attachment-drawer-header {
   padding: 4px 8px;
