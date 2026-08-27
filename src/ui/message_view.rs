@@ -258,7 +258,7 @@ impl Component for MessageView {
 
                         gtk::Image { set_icon_name: Some("co.hyprlab.Vireo-security-high-symbolic") },
                         gtk::Label {
-                            set_label: "Remote content (images, trackers) was blocked to protect your privacy.",
+                            set_label: "Remote content (images, trackers) is blocked to protect your privacy.",
                             set_hexpand: true,
                             set_halign: gtk::Align::Start,
                             set_wrap: true,
