@@ -466,8 +466,9 @@ pub enum AppMsg {
     LightboxPrev,
     LightboxNext,
     LightboxClose,
-    /// Click on the document: toggle zoom 1x ↔ 3x.
-    LightboxZoomCycle,
+    /// Click on the document: toggle zoom 1x ↔ 3x, anchored at the clicked
+    /// point (picture coordinates at the fitted size).
+    LightboxZoomCycle { x: f64, y: f64 },
     /// Escape: unwind zoom first; close only from normal view.
     LightboxEscape,
     /// Open the shown lightbox item in its default application.
@@ -1811,9 +1812,9 @@ impl SimpleComponent for AppModel {
             let click = gtk::GestureClick::new();
             click.set_button(gtk::gdk::BUTTON_PRIMARY);
             let s = sender.clone();
-            click.connect_released(move |_, n, _, _| {
+            click.connect_released(move |_, n, x, y| {
                 if n == 1 && moved.get() < 8.0 {
-                    s.input(AppMsg::LightboxZoomCycle);
+                    s.input(AppMsg::LightboxZoomCycle { x, y });
                 }
             });
             widgets.lightbox_picture.add_controller(click);
@@ -2818,9 +2819,12 @@ impl SimpleComponent for AppModel {
                 self.lightbox_open.set(false);
                 self.lightbox_set_zoom(1);
             }
-            AppMsg::LightboxZoomCycle => {
-                let next = if self.lightbox_zoom == 1 { 3 } else { 1 };
-                self.lightbox_set_zoom(next);
+            AppMsg::LightboxZoomCycle { x, y } => {
+                if self.lightbox_zoom == 1 {
+                    self.lightbox_zoom_to_point(x, y);
+                } else {
+                    self.lightbox_set_zoom(1);
+                }
             }
             AppMsg::LightboxEscape => {
                 // Zoomed in, Escape returns to the fitted view; from there it
@@ -4560,8 +4564,43 @@ impl AppModel {
         self.lightbox_refresh(sender);
     }
 
+    /// Zoom to 3x anchored at `(x, y)` — the clicked point in the fitted
+    /// picture's coordinates. The whole box scales uniformly by 3, so the
+    /// clicked content sits at exactly (3x, 3y) afterwards; once the resize
+    /// has been laid out (the scroller's range exists), the adjustments put
+    /// that point at the viewport's centre. Without this the view stayed at
+    /// the top-left of the grown, mostly-letterboxed box — content apparently
+    /// shoved off-screen.
+    fn lightbox_zoom_to_point(&mut self, x: f64, y: f64) {
+        self.lightbox_set_zoom(3);
+        let (Some(picture), Some(scroller)) =
+            (&self.lightbox_picture, &self.lightbox_scroller)
+        else {
+            return;
+        };
+        let hadj = scroller.hadjustment();
+        let vadj = scroller.vadjustment();
+        let target_x = x * 3.0 - f64::from(scroller.width()) / 2.0;
+        let target_y = y * 3.0 - f64::from(scroller.height()) / 2.0;
+        let tries = std::cell::Cell::new(0u8);
+        picture.add_tick_callback(move |_, _| {
+            let laid_out = hadj.upper() > hadj.page_size() + 1.0
+                || vadj.upper() > vadj.page_size() + 1.0;
+            if laid_out {
+                hadj.set_value(target_x);
+                vadj.set_value(target_y);
+                return gtk::glib::ControlFlow::Break;
+            }
+            tries.set(tries.get() + 1);
+            if tries.get() > 30 {
+                return gtk::glib::ControlFlow::Break;
+            }
+            gtk::glib::ControlFlow::Continue
+        });
+    }
+
     /// Apply a lightbox zoom level. At 1x the picture fits its scroller; at
-    /// 2x/4x its box grows to that multiple of the viewport (Contain keeps the
+    /// 3x its box grows to that multiple of the viewport (Contain keeps the
     /// aspect) and the scroller pans the overflow.
     fn lightbox_set_zoom(&mut self, zoom: i32) {
         self.lightbox_zoom = zoom;
