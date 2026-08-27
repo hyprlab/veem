@@ -1429,11 +1429,29 @@ impl Sidebar {
         }
         self.color_provider.load_from_data(&css);
 
-        // Restore the scroll offset once the fresh rows have been allocated.
+        // Restore the scroll offset before anything paints: an idle-time
+        // restore let one frame render at the top first — a visible flash on
+        // every rebuild. The adjustment's `changed` signal fires while the
+        // fresh rows are being measured (same layout pass), so pinning the
+        // value there means no frame ever shows the wrong offset; the idle
+        // only finalises and disconnects.
         if let (Some(pos), Some(scroller)) = (saved_scroll, scroller) {
             if pos > 0.0 {
                 let adj = scroller.vadjustment();
-                gtk::glib::idle_add_local_once(move || adj.set_value(pos));
+                adj.set_value(pos);
+                let handler: std::rc::Rc<std::cell::RefCell<Option<gtk::glib::SignalHandlerId>>> =
+                    std::rc::Rc::new(std::cell::RefCell::new(None));
+                *handler.borrow_mut() = Some(adj.connect_changed(move |adj| {
+                    adj.set_value(pos);
+                }));
+                let adj = scroller.vadjustment();
+                let handler = handler.clone();
+                gtk::glib::idle_add_local_once(move || {
+                    adj.set_value(pos);
+                    if let Some(id) = handler.borrow_mut().take() {
+                        adj.disconnect(id);
+                    }
+                });
             }
         }
     }
