@@ -41,13 +41,19 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
 // The message list's opening width now comes from config (the remembered pane
 // width, #28); its 350px floor lives with the pane in message_list.rs.
 
-/// The narrowest the reader pane may be squeezed. Its header's own row of
-/// actions (~490px) is the real floor — this request sits just under it so the
-/// header, not an arbitrary figure, decides. Kept modest on purpose: the
-/// window's total minimum width must stay under half of a 1920px screen, or
-/// GNOME refuses to tile the window to the left/right screen edge (it only
-/// offers the top-edge maximize).
-const READER_MIN_WIDTH: i32 = 480;
+/// The narrowest the reader pane may be squeezed. The header's actions
+/// collapse into the overflow menu below READER_ACTIONS_BREAKPOINT, so the
+/// floor only needs a usable body width. Kept modest on purpose: the window's
+/// total minimum width must stay under half of a 1920px screen, or GNOME
+/// refuses to tile the window to the left/right screen edge (it only offers
+/// the top-edge maximize).
+const READER_MIN_WIDTH: i32 = 400;
+
+/// Below this reader-pane width the header's action buttons collapse into a
+/// single overflow menu. The full row of actions plus the window controls
+/// needs ~540px; with slack under that, squeezing the pane can never push
+/// the close button off the window's right edge.
+const READER_ACTIONS_BREAKPOINT: f64 = 560.0;
 
 const SIDEBAR_RAIL_WIDTH: f64 = 80.0;
 
@@ -150,6 +156,11 @@ pub struct AppModel {
     attachments: Vec<Attachment>,
     /// True while the current message's attachments are downloading.
     attachments_loading: bool,
+    /// The reader header's actions are collapsed into the overflow menu
+    /// (pane squeezed under READER_ACTIONS_BREAKPOINT).
+    reader_actions_collapsed: bool,
+    /// The collapsed header's ⋯ button — the anchor its menu pops from.
+    reader_overflow_btn: gtk::Button,
     /// Cache of fetched attachments, keyed by (account_id, message_id), so
     /// revisiting a message doesn't re-download them.
     attachment_cache: HashMap<(u32, u32), Vec<Attachment>>,
@@ -454,6 +465,11 @@ pub enum AppMsg {
     MarkSpam,
     SetAutoRemoteContent(bool),
     SetShowRemoteBanner(bool),
+    /// The reader pane crossed the actions breakpoint (true = collapse the
+    /// header's buttons into the overflow menu).
+    SetReaderActionsCollapsed(bool),
+    /// The collapsed header's ⋯ button was clicked — pop its menu.
+    ReaderOverflowMenu,
     SetGravatar(bool),
     /// Show the full-window attachment lightbox (from the drawer or the
     /// toolbar popover's Preview) over these previewable items.
@@ -804,11 +820,22 @@ impl SimpleComponent for AppModel {
                         },
 
                         #[wrap(Some)]
-                        set_end_child = &adw::ToolbarView {
-                            // The narrowest the reader may become: enough for every
-                            // action in its header at once.
-                            set_size_request: (READER_MIN_WIDTH, -1),
+                        #[name = "reader_bin"]
+                        set_end_child = &adw::BreakpointBin {
+                            // The narrowest the reader may become. The header's
+                            // actions collapse into the overflow menu before this
+                            // matters (see the breakpoint added in init). The
+                            // height floor exists because AdwBreakpointBin insists
+                            // on an explicit one; the window's own minimum is what
+                            // really binds vertically.
+                            set_size_request: (READER_MIN_WIDTH, 200),
+                            #[wrap(Some)]
+                            set_child = &adw::ToolbarView {
                             add_top_bar = &adw::HeaderBar {
+                                // Rightmost of the packed items, beside the window
+                                // controls: the overflow ⋯ that stands in for the
+                                // action buttons while collapsed.
+                                pack_end: &model.reader_overflow_btn,
                                 add_css_class: "flat",
                                 // Empty title so the window's "Vireo" title isn't
                                 // shown here; the app title lives above the sidebar.
@@ -825,7 +852,7 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Edit this message"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: model.showing_outbox,
+                                    set_visible: model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::EditCurrentOutbox),
@@ -835,7 +862,7 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Try to send this message now"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: model.showing_outbox,
+                                    set_visible: model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::SendCurrentOutbox),
@@ -844,7 +871,7 @@ impl SimpleComponent for AppModel {
                                     set_label: "Send all",
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: model.showing_outbox,
+                                    set_visible: model.showing_outbox && !model.reader_actions_collapsed,
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::RetryAllOutbox),
                                 },
                                 pack_start = &gtk::Button {
@@ -852,7 +879,7 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Reply"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     // A conversation is on screen: which message
                                     // would this reply to? Each card carries its
                                     // own Reply/Reply all/Forward instead.
@@ -865,7 +892,7 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Reply All"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     // A conversation is on screen: which message
                                     // would this reply to? Each card carries its
                                     // own Reply/Reply all/Forward instead.
@@ -878,7 +905,7 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Forward"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     // A conversation is on screen: which message
                                     // would this reply to? Each card carries its
                                     // own Reply/Reply all/Forward instead.
@@ -891,7 +918,7 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Add sender to Contacts"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::AddToContacts),
@@ -900,7 +927,7 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Flag"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
                                     set_icon_name: if model.current.as_ref().is_some_and(|m| m.starred) {
                                         "co.hyprlab.Vireo-starred-symbolic"
@@ -986,7 +1013,7 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Print Preview (Ctrl+Shift+P)"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     // The preview, not the print dialog: the button
@@ -999,6 +1026,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("View Source"),
                                     add_css_class: "flat",
                                     #[watch]
+                                    set_visible: !model.reader_actions_collapsed,
+                                    #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ViewSource),
                                 },
@@ -1007,7 +1036,7 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Mark as Spam"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::MarkSpam),
@@ -1018,6 +1047,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some(&model.delete_tooltip()),
                                     add_css_class: "flat",
                                     #[watch]
+                                    set_visible: !model.reader_actions_collapsed,
+                                    #[watch]
                                     set_sensitive: model.current.is_some() || model.list_selection.len() > 1,
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Delete),
                                 },
@@ -1026,7 +1057,7 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Archive"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Archive),
@@ -1050,6 +1081,7 @@ impl SimpleComponent for AppModel {
                             set_content = &gtk::Box {
                                 set_orientation: gtk::Orientation::Vertical,
                                 append: model.attachment_drawer.widget(),
+                            },
                             },
                         },
                     },
@@ -1358,6 +1390,16 @@ impl SimpleComponent for AppModel {
             lightbox_picture: None,
             lightbox_scroller: None,
             attachments_loading: false,
+            reader_actions_collapsed: false,
+            reader_overflow_btn: {
+                let b = gtk::Button::from_icon_name(
+                    "co.hyprlab.Vireo-view-more-horizontal-symbolic",
+                );
+                b.set_tooltip_text(Some("Actions"));
+                b.add_css_class("flat");
+                b.set_visible(false);
+                b
+            },
             attachment_cache: HashMap::new(),
             unified: false,
             unified_by_account: HashMap::new(),
@@ -1499,6 +1541,29 @@ impl SimpleComponent for AppModel {
         model.arm_auto_fetch(&sender);
 
         let widgets = view_output!();
+        // Collapse the reader header's actions into the overflow menu when the
+        // pane can no longer fit the full row — squeezing it further must never
+        // push the window controls off the right edge.
+        {
+            let bp = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+                adw::BreakpointConditionLengthType::MaxWidth,
+                READER_ACTIONS_BREAKPOINT,
+                adw::LengthUnit::Px,
+            ));
+            let s = sender.input_sender().clone();
+            bp.connect_apply(move |_| {
+                let _ = s.send(AppMsg::SetReaderActionsCollapsed(true));
+            });
+            let s = sender.input_sender().clone();
+            bp.connect_unapply(move |_| {
+                let _ = s.send(AppMsg::SetReaderActionsCollapsed(false));
+            });
+            widgets.reader_bin.add_breakpoint(bp);
+            let s = sender.input_sender().clone();
+            model.reader_overflow_btn.connect_clicked(move |_| {
+                let _ = s.send(AppMsg::ReaderOverflowMenu);
+            });
+        }
         // The inline reply/forward pane sits above the reader body (top of the
         // content box), sliding down over it when revealed.
         widgets
@@ -2718,6 +2783,13 @@ impl SimpleComponent for AppModel {
                     }
                 }
             }
+
+            AppMsg::SetReaderActionsCollapsed(on) => {
+                self.reader_actions_collapsed = on;
+                self.reader_overflow_btn.set_visible(on);
+            }
+
+            AppMsg::ReaderOverflowMenu => self.show_reader_overflow_menu(&sender),
 
             AppMsg::SetShowRemoteBanner(on) => {
                 if self.show_remote_banner != on {
@@ -4460,6 +4532,77 @@ impl AppModel {
         gallery::lightbox_pdf_texture(&att.data, move |_| {
             s.input(AppMsg::LightboxRendered(key));
         });
+    }
+
+    /// The collapsed reader header's overflow menu: every action the full row
+    /// of buttons offers, same icons, enabled under the same conditions.
+    fn show_reader_overflow_menu(&self, sender: &ComponentSender<Self>) {
+        use crate::ui::context_menu::{show_context_menu, MenuEntry};
+
+        // One entry per action, each with its own clone of the input sender.
+        macro_rules! entry {
+            ($label:expr, $icon:expr, $msg:expr, $enabled:expr) => {{
+                let s = sender.input_sender().clone();
+                MenuEntry::new($label, move || {
+                    let _ = s.send($msg);
+                })
+                .icon(concat!("co.hyprlab.Vireo-", $icon, "-symbolic"))
+                .enabled($enabled)
+            }};
+        }
+
+        let has_current = self.current.is_some();
+        let sections = if self.showing_outbox {
+            vec![
+                vec![
+                    entry!("Edit", "document-edit", AppMsg::EditCurrentOutbox, has_current),
+                    entry!("Send Now", "mail-send", AppMsg::SendCurrentOutbox, has_current),
+                    entry!("Send All", "mail-send", AppMsg::RetryAllOutbox, true),
+                ],
+                vec![
+                    entry!("View Source", "code", AppMsg::ViewSource, has_current),
+                    entry!("Delete", "user-trash", AppMsg::Delete, has_current),
+                ],
+            ]
+        } else {
+            // A conversation is on screen: which message would a reply go to?
+            // Each card carries its own Reply/Reply all/Forward instead —
+            // mirroring the toolbar buttons' sensitivity.
+            let can_reply = has_current && self.current_thread.len() <= 1;
+            let starred = self.current.as_ref().is_some_and(|m| m.starred);
+            vec![
+                vec![
+                    entry!("Reply", "mail-reply-sender", AppMsg::Reply, can_reply),
+                    entry!("Reply All", "mail-reply-all", AppMsg::ReplyAll, can_reply),
+                    entry!("Forward", "mail-forward", AppMsg::Forward, can_reply),
+                ],
+                vec![
+                    entry!("Add to Contacts", "contact-new", AppMsg::AddToContacts, has_current),
+                    if starred {
+                        entry!("Remove Flag", "non-starred", AppMsg::ToggleStar, has_current)
+                    } else {
+                        entry!("Flag", "starred", AppMsg::ToggleStar, has_current)
+                    },
+                ],
+                vec![
+                    entry!("Print Preview", "printer", AppMsg::PrintPreview, has_current),
+                    entry!("View Source", "code", AppMsg::ViewSource, has_current),
+                ],
+                vec![
+                    entry!("Mark as Spam", "mail-mark-junk", AppMsg::MarkSpam, has_current),
+                    entry!("Archive", "mail-archive", AppMsg::Archive, has_current),
+                    entry!(
+                        "Delete",
+                        "user-trash",
+                        AppMsg::Delete,
+                        has_current || self.list_selection.len() > 1
+                    ),
+                ],
+            ]
+        };
+
+        let btn = &self.reader_overflow_btn;
+        show_context_menu(btn, (btn.width() / 2) as f64, btn.height() as f64, sections);
     }
 
     fn sync_attachment_drawer(&self) {
