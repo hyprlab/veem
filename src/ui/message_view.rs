@@ -318,7 +318,13 @@ impl Component for MessageView {
 
                 },
 
-                gtk::Separator {},
+                gtk::Separator {
+                    // The rule under the subject belongs with the carded
+                    // conversation look; a full-bleed single message flows
+                    // straight from the subject into its header instead.
+                    #[watch]
+                    set_visible: model.thread.len() > 1,
+                },
 
                 #[name = "body_stack"]
                 gtk::Stack {
@@ -1065,9 +1071,13 @@ impl MessageView {
         // there's no white flash before each message's content renders. The live
         // theme's grounds when the reader set them (issue #62); the stock GNOME
         // values otherwise (tests).
-        let (bg, deep) = LIVE_GROUNDS.with(|g| g.borrow().clone()).unwrap_or_else(|| {
-            let (g, p) = if dark { (GROUND.1, PAGE.1) } else { (GROUND.0, PAGE.0) };
-            (g.to_string(), p.to_string())
+        let (bg, deep, chrome) = LIVE_GROUNDS.with(|g| g.borrow().clone()).unwrap_or_else(|| {
+            let (g, p, c) = if dark {
+                (GROUND.1, PAGE.1, CHROME.1)
+            } else {
+                (GROUND.0, PAGE.0, CHROME.0)
+            };
+            (g.to_string(), p.to_string(), c.to_string())
         });
         // Each message card only reads as a card against a slightly deeper
         // ground than its own; a full-bleed single message sits on its own
@@ -1121,6 +1131,7 @@ impl MessageView {
                .vireo-msg-hdr{{cursor:pointer;}}\
                .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;border-bottom:1px solid rgba(128,128,128,0.2);\
                  position:sticky;top:0;z-index:1;background-color:{bg};}}\
+               body:not(.vireo-conv) .vireo-msg-hdr{{background-color:{chrome};}}\
                .vireo-ava{{width:26px;height:26px;border-radius:50%;flex:none;align-self:center;\
                  display:flex;align-items:center;justify-content:center;color:#fff;\
                  font-size:0.8em;font-weight:700;}}\
@@ -1223,9 +1234,10 @@ impl MessageView {
     /// forcing a scheme the app isn't currently in, the theme can't answer for
     /// that mode, so the stock GNOME values stand in.
     #[allow(deprecated)] // lookup_color: named theme colours have no successor yet
-    fn theme_grounds(&self, dark: bool) -> (String, String) {
+    fn theme_grounds(&self, dark: bool) -> (String, String, String) {
+        let style = self.webview.style_context();
         if dark == adw::StyleManager::default().is_dark() {
-            if let Some(c) = self.webview.style_context().lookup_color("view_bg_color") {
+            if let Some(c) = style.lookup_color("view_bg_color") {
                 let hex = |r: f32, g: f32, b: f32| {
                     format!(
                         "#{:02x}{:02x}{:02x}",
@@ -1238,11 +1250,25 @@ impl MessageView {
                 let f = if dark { 0.667 } else { 0.945 };
                 let ground = hex(c.red(), c.green(), c.blue());
                 let page = hex(c.red() * f, c.green() * f, c.blue() * f);
-                return (ground, page);
+                // The window's own ground — what the GTK reader header (the
+                // subject block) sits on. A full-bleed single message paints
+                // its in-document header this colour so subject and header
+                // read as one surface.
+                let chrome = style
+                    .lookup_color("window_bg_color")
+                    .map(|w| hex(w.red(), w.green(), w.blue()))
+                    .unwrap_or_else(|| {
+                        (if dark { CHROME.1 } else { CHROME.0 }).to_string()
+                    });
+                return (ground, page, chrome);
             }
         }
-        let (g, p) = if dark { (GROUND.1, PAGE.1) } else { (GROUND.0, PAGE.0) };
-        (g.to_string(), p.to_string())
+        let (g, p, c) = if dark {
+            (GROUND.1, PAGE.1, CHROME.1)
+        } else {
+            (GROUND.0, PAGE.0, CHROME.0)
+        };
+        (g.to_string(), p.to_string(), c.to_string())
     }
 
     /// Paint the WebView canvas in the theme colour so unstyled bodies (and the
@@ -1252,7 +1278,7 @@ impl MessageView {
         // deeper page ground, a full-bleed single message on the plain ground.
         // The cover matches it so the spinner gives way to the document without
         // a change of colour.
-        let (ground, page) = self.theme_grounds(dark);
+        let (ground, page, _chrome) = self.theme_grounds(dark);
         let ground = if self.thread.len() > 1 { page } else { ground };
         self.webview.set_background_color(&ground_rgba(&ground));
         let bg = ground;
@@ -2409,6 +2435,10 @@ fn inject_csp(html: &str, allow_remote: bool, dark: bool) -> String {
 /// handing over to the document changes nothing on screen.
 const GROUND: (&str, &str) = ("#ffffff", "#1e1e1e");
 const PAGE: (&str, &str) = ("#f1f1f1", "#141414");
+/// The window chrome's ground (stock GNOME `window_bg_color`): what the GTK
+/// reader header — the subject block — sits on. A full-bleed single message
+/// paints its in-document header this colour so the two read as one surface.
+const CHROME: (&str, &str) = ("#fafafa", "#242424");
 
 thread_local! {
     /// The grounds as resolved from the live libadwaita theme, refreshed by
@@ -2416,7 +2446,7 @@ thread_local! {
     /// builder is a static fn so tests can exercise it without a display —
     /// this hands it the theme without widening that signature. `None` (as in
     /// tests) falls back to the stock GNOME values above.
-    static LIVE_GROUNDS: std::cell::RefCell<Option<(String, String)>> =
+    static LIVE_GROUNDS: std::cell::RefCell<Option<(String, String, String)>> =
         const { std::cell::RefCell::new(None) };
 }
 
