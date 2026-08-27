@@ -162,7 +162,7 @@ pub struct AppModel {
     /// Mirror of "the lightbox is open", readable synchronously by the
     /// window's key controller (closures only get a sender, not the model).
     lightbox_open: std::rc::Rc<std::cell::Cell<bool>>,
-    /// Current lightbox zoom (1, 2 or 3) — a click on the document cycles it,
+    /// Current lightbox zoom (1 or 3) — a click on the document toggles it,
     /// Escape unwinds it before closing.
     lightbox_zoom: i32,
     /// The lightbox picture + its scroller, for applying zoom sizes.
@@ -466,7 +466,7 @@ pub enum AppMsg {
     LightboxPrev,
     LightboxNext,
     LightboxClose,
-    /// Click on the document: cycle zoom 1x → 2x → 3x → 1x.
+    /// Click on the document: toggle zoom 1x ↔ 3x.
     LightboxZoomCycle,
     /// Escape: unwind zoom first; close only from normal view.
     LightboxEscape,
@@ -2819,11 +2819,7 @@ impl SimpleComponent for AppModel {
                 self.lightbox_set_zoom(1);
             }
             AppMsg::LightboxZoomCycle => {
-                let next = match self.lightbox_zoom {
-                    1 => 2,
-                    2 => 3,
-                    _ => 1,
-                };
+                let next = if self.lightbox_zoom == 1 { 3 } else { 1 };
                 self.lightbox_set_zoom(next);
             }
             AppMsg::LightboxEscape => {
