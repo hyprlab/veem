@@ -87,6 +87,9 @@ pub struct Sidebar {
     selected: Sel,
     /// Icon-only mode: hide all text, show just icons and account pills.
     collapsed: bool,
+    /// The floating hover-peek is on screen (rows expanded, toggle held at
+    /// the rail's spot).
+    peeking: bool,
     /// Whether the "Attachments" row is shown.
     show_attachments: bool,
     /// How many messages are waiting in the Outbox across all accounts. The row
@@ -139,6 +142,11 @@ pub enum SidebarInput {
     /// unlike ToggleCollapsed this never reports CollapsedChanged, so it can't
     /// overwrite the user's own persisted choice.
     SetCollapsed(bool),
+    /// The floating hover-peek is on screen: rows are expanded, but the
+    /// expand/collapse toggle holds the rail's spot (like the hamburger in
+    /// the header) so it doesn't jump under an approaching cursor. Cleared
+    /// when the peek closes or is pinned into the normal expanded pane.
+    SetPeeking(bool),
     /// Toggle the collapsible "Folders" (custom folders) section for an account.
     ToggleCustomFoldersLocal(u32),
     ToggleCollapsed,
@@ -282,6 +290,7 @@ impl Component for Sidebar {
             color_provider,
             selected: Sel::None,
             collapsed: init.collapsed,
+            peeking: false,
             show_attachments: init.show_attachments,
             outbox_count: 0,
             unified_unread: 0,
@@ -299,7 +308,7 @@ impl Component for Sidebar {
         let widgets = view_output!();
         if init.collapsed {
             widgets.collapse_btn.set_tooltip_text(Some("Expand sidebar"));
-            widgets.collapse_btn.set_halign(gtk::Align::Center);
+            align_collapse_btn(&widgets.collapse_btn, true, false);
         }
 
         ComponentParts { model, widgets }
@@ -519,11 +528,7 @@ impl Component for Sidebar {
                 // persisted preference.
                 if self.collapsed != collapsed {
                     self.collapsed = collapsed;
-                    widgets.collapse_btn.set_halign(if self.collapsed {
-                        gtk::Align::Center
-                    } else {
-                        gtk::Align::End
-                    });
+                    align_collapse_btn(&widgets.collapse_btn, self.collapsed, self.peeking);
                     widgets.collapse_btn.set_tooltip_text(Some(if self.collapsed {
                         "Expand sidebar"
                     } else {
@@ -534,13 +539,14 @@ impl Component for Sidebar {
                 }
             }
 
+            SidebarInput::SetPeeking(on) => {
+                self.peeking = on;
+                align_collapse_btn(&widgets.collapse_btn, self.collapsed, self.peeking);
+            }
+
             SidebarInput::ToggleCollapsed => {
                 self.collapsed = !self.collapsed;
-                widgets.collapse_btn.set_halign(if self.collapsed {
-                    gtk::Align::Center
-                } else {
-                    gtk::Align::End
-                });
+                align_collapse_btn(&widgets.collapse_btn, self.collapsed, self.peeking);
                 widgets.collapse_btn.set_tooltip_text(Some(if self.collapsed {
                     "Expand sidebar"
                 } else {
@@ -1512,6 +1518,23 @@ fn account_initials(name: &str, email: &str) -> String {
             .next()
             .map(|c| c.to_uppercase().to_string())
             .unwrap_or_else(|| "?".to_string()),
+    }
+}
+
+/// Place the footer's expand/collapse toggle: right-aligned in the expanded
+/// sidebar, centred on the rail, and — while the floating hover-peek is up —
+/// held at the rail's spot (left, centred over the rail's 80px strip, less
+/// the footer's 6px padding) so it doesn't jump under an approaching cursor,
+/// matching the header's hamburger. Right alignment returns only when the
+/// sidebar is pinned into the real expanded pane.
+fn align_collapse_btn(btn: &gtk::Button, collapsed: bool, peeking: bool) {
+    if peeking {
+        btn.set_halign(gtk::Align::Start);
+        let w = btn.width().max(32);
+        btn.set_margin_start((((80 - w) / 2) - 6).max(0));
+    } else {
+        btn.set_margin_start(0);
+        btn.set_halign(if collapsed { gtk::Align::Center } else { gtk::Align::End });
     }
 }
 

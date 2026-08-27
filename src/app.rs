@@ -4424,6 +4424,7 @@ impl AppModel {
         self.sidebar_peek = false;
         self.sidebar_collapsed = false;
         self.rail_active = false;
+        self.sidebar.emit(SidebarInput::SetPeeking(false));
         self.sidebar.emit(SidebarInput::SetCollapsed(false));
         self.peek_transition.set(true);
         split.set_collapsed(false);
@@ -4507,6 +4508,9 @@ impl AppModel {
             if sync_rows {
                 self.sidebar.emit(SidebarInput::SetCollapsed(false));
             }
+            // The footer toggle holds the rail's spot while floating, like
+            // the hamburger above it.
+            self.sidebar.emit(SidebarInput::SetPeeking(true));
             self.peek_sidebar_header();
             split.set_min_sidebar_width(280.0);
             split.set_max_sidebar_width(280.0);
@@ -4541,6 +4545,7 @@ impl AppModel {
                 let ghost = self.peek_rail_ghost.clone();
                 move || {
                     close_timer.borrow_mut().take();
+                    let _ = sidebar_sender.send(SidebarInput::SetPeeking(false));
                     if sync_rows {
                         let _ = sidebar_sender.send(SidebarInput::SetCollapsed(true));
                     }
