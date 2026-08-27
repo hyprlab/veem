@@ -16,11 +16,6 @@ use crate::ui::message_view::{MessageView, MessageViewInput, MessageViewOutput};
 #[derive(Debug)]
 pub struct MessageWindowInit {
     pub message: Message,
-    pub gravatar: bool,
-    /// Whether the sender circle is drawn (#29).
-    pub avatars: bool,
-    /// Whether a sender's site icon may fill it (#30).
-    pub sender_logos: bool,
     pub account_name: Option<String>,
     pub account_color: Option<String>,
     pub allow_remote: bool,
@@ -37,7 +32,6 @@ pub struct MessageWindowInit {
 pub struct MessageWindow {
     msg: Message,
     view: Controller<MessageView>,
-    gravatar: bool,
     account_name: Option<String>,
     account_color: Option<String>,
     allow_remote: bool,
@@ -50,10 +44,6 @@ pub struct MessageWindow {
 
 #[derive(Debug)]
 pub enum MessageWindowInput {
-    /// Show or hide the sender circle.
-    SetAvatars(bool),
-    /// Turn sender logos on or off.
-    SetSenderLogos(bool),
     /// Print this message (Ctrl+P), the same as in the main window.
     Print,
     /// Preview it as a PDF (Ctrl+Shift+P).
@@ -87,7 +77,8 @@ pub enum MessageWindowInput {
     SaveAllAttachments,
     // ---- from the embedded reader ----
     AllowSender(String),
-    ComposeTo(String),
+    /// The message card's own Reply/Reply all/Forward button.
+    CardAction(RowAction),
 }
 
 #[derive(Debug)]
@@ -104,8 +95,6 @@ pub enum MessageWindowOutput {
     SaveAllAttachments(Vec<Attachment>),
     /// Persist a remote-content allowlist entry.
     AllowSender(String),
-    /// Compose to an address.
-    ComposeTo(String),
     /// The window was closed.
     Closed,
 }
@@ -248,25 +237,23 @@ impl Component for MessageWindow {
             .launch(())
             .forward(sender.input_sender(), |out| match out {
                 MessageViewOutput::AllowSender(addr) => MessageWindowInput::AllowSender(addr),
-                MessageViewOutput::ComposeTo(addr) => MessageWindowInput::ComposeTo(addr),
-                // A popout shows a single message (no conversation headers), so
-                // neither of these fires; map them to a no-op to keep the match
-                // total. The window's own toolbar carries Reply and Forward.
+                // A popout is already its own window; opening another from its
+                // single card is a no-op that keeps the match total.
                 MessageViewOutput::OpenWindow(_) => MessageWindowInput::Ignore,
-                MessageViewOutput::CardAction { .. } => MessageWindowInput::Ignore,
+                // The card's Reply/Reply all/Forward act on this window's one
+                // message, exactly like the toolbar's buttons.
+                MessageViewOutput::CardAction { action, .. } => {
+                    MessageWindowInput::CardAction(action)
+                }
                 MessageViewOutput::MarkSeen { .. } => MessageWindowInput::Ignore,
                 MessageViewOutput::SelectCards(_) => MessageWindowInput::Ignore,
             });
         // Apply the message-content theme before the first render.
         view.emit(MessageViewInput::SetContentTheme(init.content_dark));
 
-        view.emit(MessageViewInput::SetAvatars(init.avatars));
-        view.emit(MessageViewInput::SetSenderLogos(init.sender_logos));
-
         let model = MessageWindow {
             msg: init.message,
             view,
-            gravatar: init.gravatar,
             account_name: init.account_name,
             account_color: init.account_color,
             allow_remote: init.allow_remote,
@@ -311,12 +298,6 @@ impl Component for MessageWindow {
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>, root: &Self::Root) {
         match msg {
             MessageWindowInput::Ignore => {}
-            MessageWindowInput::SetAvatars(on) => {
-                self.view.emit(MessageViewInput::SetAvatars(on));
-            }
-            MessageWindowInput::SetSenderLogos(on) => {
-                self.view.emit(MessageViewInput::SetSenderLogos(on));
-            }
             MessageWindowInput::SetContentTheme(o) => {
                 self.view.emit(MessageViewInput::SetContentTheme(o));
             }
@@ -385,8 +366,8 @@ impl Component for MessageWindow {
             MessageWindowInput::AllowSender(addr) => {
                 let _ = sender.output(MessageWindowOutput::AllowSender(addr));
             }
-            MessageWindowInput::ComposeTo(addr) => {
-                let _ = sender.output(MessageWindowOutput::ComposeTo(addr));
+            MessageWindowInput::CardAction(action) => {
+                self.emit_action(action, &sender);
             }
         }
     }
@@ -404,7 +385,6 @@ impl MessageWindow {
         self.view.emit(MessageViewInput::Show {
             thread: vec![self.msg.clone()],
             allow_remote: self.allow_remote,
-            gravatar: self.gravatar,
             account_name: self.account_name.clone(),
             account_color: self.account_color.clone(),
             primary: None,

@@ -1391,7 +1391,6 @@ impl SimpleComponent for AppModel {
                 .launch(())
                 .forward(sender.input_sender(), |out| match out {
                     MessageViewOutput::AllowSender(addr) => AppMsg::AllowSender(addr),
-                    MessageViewOutput::ComposeTo(addr) => AppMsg::ComposeTo(addr),
                     MessageViewOutput::OpenWindow(m) => AppMsg::OpenMessageWindow(*m),
                     // A card's own Reply/Reply all/Forward: the same action the
                     // list's row menu performs, aimed at that message.
@@ -1612,9 +1611,6 @@ impl SimpleComponent for AppModel {
         model
             .message_list
             .emit(MessageListInput::SetSenderLogos(model.sender_logos));
-        model
-            .message_view
-            .emit(MessageViewInput::SetSenderLogos(model.sender_logos));
         crate::datefmt::set_style(model.date_style, model.clock_style);
         model
             .message_list
@@ -3007,10 +3003,6 @@ impl SimpleComponent for AppModel {
                     self.avatars = on;
                     self.save_settings();
                     self.message_list.emit(MessageListInput::SetAvatars(on));
-                    self.message_view.emit(MessageViewInput::SetAvatars(on));
-                    for p in self.popouts.values() {
-                        p.controller.emit(MessageWindowInput::SetAvatars(on));
-                    }
                 }
             }
 
@@ -3019,10 +3011,6 @@ impl SimpleComponent for AppModel {
                     self.sender_logos = on;
                     self.save_settings();
                     self.message_list.emit(MessageListInput::SetSenderLogos(on));
-                    self.message_view.emit(MessageViewInput::SetSenderLogos(on));
-                    for p in self.popouts.values() {
-                        p.controller.emit(MessageWindowInput::SetSenderLogos(on));
-                    }
                 }
             }
 
@@ -3150,9 +3138,9 @@ impl SimpleComponent for AppModel {
                 }
             }
             AppMsg::ContactPhotosChanged => {
-                // Both components skip the work when sender circles are off.
+                // The list skips the work when sender circles are off; the
+                // reader's cards draw initials only, so it has nothing to do.
                 self.message_list.emit(MessageListInput::ContactPhotosChanged);
-                self.message_view.emit(MessageViewInput::ContactPhotosChanged);
             }
 
             AppMsg::SetFetchInterval(secs) => {
@@ -5215,7 +5203,6 @@ impl AppModel {
         self.message_view.emit(MessageViewInput::Show {
             thread: message.into_iter().collect(),
             allow_remote,
-            gravatar: self.gravatar,
             account_name,
             account_color,
             loading,
@@ -5279,7 +5266,6 @@ impl AppModel {
         self.message_view.emit(MessageViewInput::Show {
             thread: self.current_thread.clone(),
             allow_remote,
-            gravatar: self.gravatar,
             account_name: Some(self.account_name(account_id)),
             account_color: Some(self.account_color(account_id)),
             loading,
@@ -5379,9 +5365,6 @@ impl AppModel {
         let allow_remote = self.remote_allowed(&display);
         let init = MessageWindowInit {
             message: display,
-            gravatar: self.gravatar,
-            avatars: self.avatars,
-            sender_logos: self.sender_logos,
             account_name: Some(self.account_name(account_id)),
             account_color: Some(self.account_color(account_id)),
             allow_remote,
@@ -5405,7 +5388,6 @@ impl AppModel {
                 MessageWindowOutput::OpenAttachment(att) => AppMsg::OpenAttachmentItem(att),
                 MessageWindowOutput::SaveAllAttachments(items) => AppMsg::SaveAttachmentItems(items),
                 MessageWindowOutput::AllowSender(addr) => AppMsg::AllowSender(addr),
-                MessageWindowOutput::ComposeTo(addr) => AppMsg::ComposeTo(addr),
                 MessageWindowOutput::Closed => AppMsg::PopoutClosed(key),
             });
 

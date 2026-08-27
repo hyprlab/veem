@@ -40,14 +40,6 @@ pub struct MessageView {
     /// Stripping and the CSP key off *this*, so a detector miss costs a banner
     /// rather than the protection itself.
     remote_allowed: bool,
-    /// Whether Gravatar loading is enabled.
-    gravatar: bool,
-    /// Whether the sender circle is drawn at all (#29).
-    avatars: bool,
-    /// Whether the sender's own site icon may fill it (#30).
-    sender_logos: bool,
-    /// Decoded Gravatar for the current sender, if any.
-    avatar_texture: Option<gtk::gdk::Texture>,
     /// Owning account's display name (header chip).
     account_name: Option<String>,
     /// Provider holding the header chip's per-account colours.
@@ -101,13 +93,6 @@ impl MessageView {
 
 #[derive(Debug)]
 pub enum MessageViewInput {
-    /// Show or hide the sender circle (#29).
-    SetAvatars(bool),
-    /// Fill it with the sender's own site icon, or stop (#30).
-    SetSenderLogos(bool),
-    /// The GNOME Contacts photo index changed — look the current sender's
-    /// photo up again.
-    ContactPhotosChanged,
     /// Whether the blocked-remote-content banner is shown. It doesn't change
     /// what is blocked — only what the reader says about it.
     SetBannerShown(bool),
@@ -117,8 +102,6 @@ pub enum MessageViewInput {
         thread: Vec<Message>,
         /// The sender is trusted, so remote content may auto-load.
         allow_remote: bool,
-        /// Whether Gravatar loading is enabled.
-        gravatar: bool,
         /// Owning account's display name and colour, for the header chip.
         account_name: Option<String>,
         account_color: Option<String>,
@@ -142,8 +125,6 @@ pub enum MessageViewInput {
     },
     LoadRemoteOnce,
     AllowSenderAlways,
-    /// The sender email link in the header was clicked.
-    ComposeSender,
     /// The system/app light-dark preference changed; re-render to match.
     ThemeChanged,
     /// Print the message on screen (issue #16).
@@ -204,8 +185,6 @@ pub enum SelectMode {
 pub enum MessageViewOutput {
     /// Add this sender address to the remote-content allowlist.
     AllowSender(String),
-    /// Compose a new message to this address.
-    ComposeTo(String),
     /// Open a conversation message in its own window (header double-clicked).
     OpenWindow(Box<Message>),
     /// The reader's selection changed. It owns this: a conversation can hold
@@ -227,9 +206,7 @@ impl Component for MessageView {
     type Init = ();
     type Input = MessageViewInput;
     type Output = MessageViewOutput;
-    /// A background face lookup's answer; correlated by sender address in
-    /// `update_cmd`, which guards against stale results.
-    type CommandOutput = crate::ui::message_list::FaceCmd;
+    type CommandOutput = ();
 
     view! {
         gtk::Stack {
@@ -339,87 +316,6 @@ impl Component for MessageView {
                         add_css_class: "reader-subject",
                     },
 
-                    gtk::Box {
-                        set_spacing: 12,
-                        // For a conversation each message carries its own header in
-                        // the scrollable body, so hide this single-message header.
-                        #[watch]
-                        set_visible: model.thread.len() <= 1,
-
-                        adw::Avatar {
-                            set_size: 44,
-                            set_valign: gtk::Align::Center,
-                            set_show_initials: true,
-                            #[watch]
-                            set_visible: model.avatars,
-                            #[watch]
-                            set_text: model.current.as_ref().map(|m| m.from_name.as_str()),
-                            #[watch]
-                            set_custom_image: model.avatar_texture.as_ref(),
-                        },
-
-                        gtk::Box {
-                            set_orientation: gtk::Orientation::Vertical,
-                            set_valign: gtk::Align::Center,
-                            set_hexpand: true,
-
-                            gtk::Label {
-                                #[watch]
-                                set_label: model.current.as_ref().map(|m| m.from_name.as_str()).unwrap_or_default(),
-                                set_halign: gtk::Align::Start,
-                                set_selectable: true,
-                                add_css_class: "reader-from-name",
-                            },
-                            gtk::Label {
-                                #[watch]
-                                set_markup: &email_link_markup(model.current.as_ref()),
-                                set_halign: gtk::Align::Start,
-                                set_selectable: true,
-                                set_tooltip_text: Some("Send a new message to this address"),
-                                add_css_class: "reader-from-addr",
-                                connect_activate_link[sender] => move |_, _uri| {
-                                    sender.input(MessageViewInput::ComposeSender);
-                                    gtk::glib::Propagation::Stop
-                                },
-                            },
-                        },
-
-                        gtk::Label {
-                            #[watch]
-                            set_label: &model.current.as_ref().map(|m| m.datetime_full()).unwrap_or_default(),
-                            set_valign: gtk::Align::Start,
-                            set_selectable: true,
-                            add_css_class: "reader-date",
-                        },
-                    },
-
-                    gtk::Label {
-                        #[watch]
-                        set_label: &to_line(model.current.as_ref()),
-                        #[watch]
-                        set_visible: model.thread.len() <= 1
-                            && model.current.as_ref().is_some_and(|m| !m.to.trim().is_empty()),
-                        set_halign: gtk::Align::Start,
-                        set_wrap: true,
-                        set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                        set_xalign: 0.0,
-                        set_selectable: true,
-                        add_css_class: "reader-to",
-                    },
-
-                    gtk::Label {
-                        #[watch]
-                        set_label: &cc_line(model.current.as_ref()),
-                        #[watch]
-                        set_visible: model.thread.len() <= 1
-                            && model.current.as_ref().is_some_and(|m| !m.cc.trim().is_empty()),
-                        set_halign: gtk::Align::Start,
-                        set_wrap: true,
-                        set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                        set_xalign: 0.0,
-                        set_selectable: true,
-                        add_css_class: "reader-cc",
-                    },
                 },
 
                 gtk::Separator {},
@@ -520,10 +416,6 @@ impl Component for MessageView {
             no_autoread: std::collections::HashSet::new(),
             show_banner: crate::config::load_show_remote_banner(),
             remote_allowed: false,
-            gravatar: false,
-            avatars: true,
-            sender_logos: false,
-            avatar_texture: None,
             account_name: None,
             chip_provider,
             cover_provider,
@@ -644,7 +536,6 @@ impl Component for MessageView {
             MessageViewInput::Show {
                 thread,
                 allow_remote,
-                gravatar,
                 account_name,
                 account_color,
                 loading,
@@ -670,7 +561,6 @@ impl Component for MessageView {
                 }
                 self.thread = thread;
                 self.folder_labels = folder_labels;
-                self.gravatar = gravatar;
                 self.account_name = account_name;
                 self.loading = loading;
                 self.instant = instant;
@@ -688,7 +578,6 @@ impl Component for MessageView {
                     .iter()
                     .any(|m| has_remote_resources(&m.body));
                 self.blocked = has_remote && !allow_remote;
-                self.load_avatar(&sender);
                 // Repaint the cover for what is arriving, even when the spinner
                 // is about to be shown instead of a document: the whole point is
                 // that the spinner already sits on the right colour.
@@ -711,13 +600,6 @@ impl Component for MessageView {
                 self.remote_allowed = true;
                 self.blocked = false;
                 self.render();
-            }
-            MessageViewInput::ComposeSender => {
-                if let Some(m) = &self.current {
-                    if !m.from_addr.is_empty() {
-                        let _ = sender.output(MessageViewOutput::ComposeTo(m.from_addr.clone()));
-                    }
-                }
             }
             MessageViewInput::Print => {
                 crate::ui::print_preview::print_html(
@@ -755,18 +637,8 @@ impl Component for MessageView {
                     self.render();
                 }
             }
-            MessageViewInput::SetAvatars(on) => {
-                self.avatars = on;
-            }
             MessageViewInput::SetBannerShown(show) => {
                 self.show_banner = show;
-            }
-            MessageViewInput::SetSenderLogos(on) => {
-                self.sender_logos = on;
-                self.load_avatar(&sender);
-            }
-            MessageViewInput::ContactPhotosChanged => {
-                self.load_avatar(&sender);
             }
             MessageViewInput::SetContentTheme(o) => {
                 if self.content_dark != o {
@@ -895,120 +767,9 @@ impl Component for MessageView {
         }
     }
 
-    fn update_cmd(
-        &mut self,
-        cmd: Self::CommandOutput,
-        sender: ComponentSender<Self>,
-        _root: &Self::Root,
-    ) {
-        use crate::ui::message_list::FaceCmd;
-        // Results are correlated by sender address, not message id: an IMAP uid
-        // is only unique within its mailbox, and the same sender's face is
-        // right whichever of their messages is now shown.
-        let current_addr = self.current.as_ref().map(|m| m.from_addr.clone());
-        match cmd {
-            FaceCmd::Avatar { email, generation, mode, outcome, logo } => {
-                let retry_stale = crate::avatar::cache_result(&email, generation, mode, outcome);
-                match logo {
-                    Some(Some(bytes)) => {
-                        crate::logo::decode_and_cache(&email, &bytes);
-                    }
-                    Some(None) => crate::logo::remember_missing(&email),
-                    None => {}
-                }
-                let still_current =
-                    current_addr.is_some_and(|a| a.eq_ignore_ascii_case(&email));
-                if !still_current {
-                    return;
-                }
-                match crate::avatar::lookup(&email, self.gravatar) {
-                    crate::avatar::CacheLookup::Texture(texture) => {
-                        self.avatar_texture = Some(texture);
-                    }
-                    crate::avatar::CacheLookup::Missing => self.load_logo(&email, &sender),
-                    crate::avatar::CacheLookup::Fetch { generation, mode } => {
-                        self.avatar_texture = None;
-                        // Only chase a result the EDS generation invalidated; a
-                        // transient Gravatar failure waits for a later render.
-                        if retry_stale {
-                            let want_logo =
-                                self.sender_logos && !crate::logo::known_missing(&email);
-                            sender.oneshot_command(crate::ui::message_list::find_face(
-                                email, generation, mode, want_logo,
-                            ));
-                        }
-                    }
-                }
-            }
-            FaceCmd::Logo { email, bytes } => {
-                let texture = match bytes {
-                    Some(bytes) => crate::logo::decode_and_cache(&email, &bytes),
-                    None => {
-                        crate::logo::remember_missing(&email);
-                        None
-                    }
-                };
-                let still_current =
-                    current_addr.is_some_and(|a| a.eq_ignore_ascii_case(&email));
-                if still_current && self.sender_logos {
-                    self.avatar_texture = texture;
-                }
-            }
-        }
-    }
 }
 
 impl MessageView {
-    /// Set the sender's face: a cached one if known, otherwise a background
-    /// look — the chain is contact photo → Gravatar → domain icon (#30) →
-    /// initials, each tier consulted only while its switch is on.
-    fn load_avatar(&mut self, sender: &ComponentSender<Self>) {
-        self.avatar_texture = None;
-        // Nothing to fetch when the circle isn't drawn (#29).
-        if !self.avatars {
-            return;
-        }
-        let Some(m) = self.current.as_ref() else {
-            return;
-        };
-        let email = m.from_addr.clone();
-        if email.is_empty() {
-            return;
-        }
-        match crate::avatar::lookup(&email, self.gravatar) {
-            crate::avatar::CacheLookup::Texture(texture) => {
-                self.avatar_texture = Some(texture);
-            }
-            crate::avatar::CacheLookup::Missing => self.load_logo(&email, sender),
-            crate::avatar::CacheLookup::Fetch { generation, mode } => {
-                let want_logo = self.sender_logos && !crate::logo::known_missing(&email);
-                sender.oneshot_command(crate::ui::message_list::find_face(
-                    email, generation, mode, want_logo,
-                ));
-            }
-        }
-    }
-
-    /// The logo tier: only consulted when enabled, so switching "sender logos"
-    /// off hides already-cached logos immediately.
-    fn load_logo(&mut self, email: &str, sender: &ComponentSender<Self>) {
-        if !self.sender_logos {
-            self.avatar_texture = None;
-            return;
-        }
-        if let Some(tex) = crate::logo::cached(email) {
-            self.avatar_texture = Some(tex);
-            return;
-        }
-        self.avatar_texture = None;
-        if crate::logo::known_missing(email) {
-            return;
-        }
-        sender.oneshot_command(crate::ui::message_list::find_logo(email.to_string()));
-    }
-
-    /// Whether message content should render dark: the user's forced choice, or
-    /// the system UI theme when following it.
     /// The desktop accent colour, as the document can use it. Read from the
     /// widget's style so it follows the user's choice; GNOME's own blue is the
     /// fallback when the theme doesn't define it.
@@ -1149,7 +910,9 @@ impl MessageView {
         restrict: bool,
         dark: bool,
     ) -> String {
-        let conversation = thread.len() > 1;
+        // Every message renders as a conversation card — a thread of one uses
+        // the same chrome, so single messages and conversations read alike.
+        let conversation = !thread.is_empty();
         let mut sections = String::new();
         for m in thread {
             let body = if m.body.trim().is_empty() {
@@ -1270,10 +1033,8 @@ impl MessageView {
             let (g, p) = if dark { (GROUND.1, PAGE.1) } else { (GROUND.0, PAGE.0) };
             (g.to_string(), p.to_string())
         });
-        // In a conversation each message is a card, which only reads as one
-        // against a slightly different ground. A single message keeps the plain
-        // full-bleed page — a lone card floating in a margin is just wasted
-        // width.
+        // Each message card only reads as a card against a slightly deeper
+        // ground than its own.
         let page = if conversation { deep } else { bg.clone() };
         let body_class = if conversation { " class=\"vireo-conv\"" } else { "" };
         // Defence in depth for the wrapper: the only script allowed to run is the
@@ -1315,10 +1076,9 @@ impl MessageView {
                iframe.vireo-frame.anim{{transition:height 240ms cubic-bezier(0.4,0,0.2,1);}}\
                @media (prefers-reduced-motion:reduce){{iframe.vireo-frame.anim{{transition:none;}}}}\
                .vireo-msg{{background:{bg};border:1px solid rgba(128,128,128,0.28);\
-                 border-radius:12px;overflow:hidden;margin:0 auto 14px;max-width:1000px;}}\
+                 border-radius:12px;overflow:hidden;margin:0 0 14px;}}\
                .vireo-msg:last-child{{margin-bottom:0;}}\
                .vireo-msg{{user-select:none;}}\
-               body:not(.vireo-conv) iframe.vireo-frame{{max-width:1000px;margin:0 auto;}}\
                .vireo-msg.selected{{border-color:{accent};box-shadow:0 0 0 2px {accent};}}\
                .vireo-msg.selected .vireo-msg-hdr{{background-image:linear-gradient({accent}26,{accent}26);\
                  border-bottom-color:{accent}59;}}\
@@ -1453,11 +1213,11 @@ impl MessageView {
     /// Paint the WebView canvas in the theme colour so unstyled bodies (and the
     /// gap before a load) match light/dark mode instead of flashing white.
     fn apply_webview_bg(&self, dark: bool) {
-        // Whatever is about to be shown: a conversation's cards sit on the deeper
-        // page, a lone message on the plain ground. The cover matches it so the
-        // spinner gives way to the document without a change of colour.
+        // Whatever is about to be shown: message cards sit on the deeper page
+        // ground. The cover matches it so the spinner gives way to the document
+        // without a change of colour.
         let (ground, page) = self.theme_grounds(dark);
-        let ground = if self.thread.len() > 1 { page } else { ground };
+        let ground = if self.thread.is_empty() { ground } else { page };
         self.webview.set_background_color(&ground_rgba(&ground));
         let bg = ground;
         // The spinner and the cover stand in for the message, so they answer to
@@ -1724,18 +1484,6 @@ fn default_image_name(mime: &str) -> String {
     format!("image.{ext}")
 }
 
-/// Markup for the sender address as a clickable mailto link.
-fn email_link_markup(m: Option<&Message>) -> String {
-    match m {
-        Some(m) if !m.from_addr.is_empty() => {
-            let esc = gtk::glib::markup_escape_text(&m.from_addr);
-            format!("<a href=\"mailto:{esc}\">{esc}</a>")
-        }
-        _ => String::new(),
-    }
-}
-
-/// "Cc: a@b, c@d" for the header, or empty when there are no Cc recipients.
 /// How many addresses a message's To + Cc headers name.
 fn recipient_count(m: &Message) -> usize {
     [m.to.as_str(), m.cc.as_str()]
@@ -1759,24 +1507,6 @@ fn recipients_html(m: &Message) -> String {
         return String::new();
     }
     format!("<div class=\"vireo-rcpt\" hidden>{lines}</div>")
-}
-
-/// "To: a@b, c@d" for the header, or empty when there's no To recipient.
-/// Shows at a glance who a Sent/replied message went to — or, for a message
-/// auto-forwarded from one of several addresses, which one it landed on.
-fn to_line(m: Option<&Message>) -> String {
-    match m {
-        Some(m) if !m.to.trim().is_empty() => format!("To: {}", m.to.trim()),
-        _ => String::new(),
-    }
-}
-
-/// "Cc: a@b, c@d" for the header, or empty when there are no Cc recipients.
-fn cc_line(m: Option<&Message>) -> String {
-    match m {
-        Some(m) if !m.cc.trim().is_empty() => format!("Cc: {}", m.cc.trim()),
-        _ => String::new(),
-    }
 }
 
 /// Every URL in `html` that would cause a fetch from a remote host, as byte
@@ -3322,8 +3052,6 @@ mod tests {
         );
     }
 
-    /// A single message is not a conversation: no card chrome, no margin — it
-    /// keeps the full width of the reader.
     /// Each card carries its own Reply/Reply all/Forward, keyed to that message
     /// — the toolbar's buttons are disabled in a conversation precisely because
     /// they could not say which message they meant.
@@ -3452,8 +3180,10 @@ mod tests {
         assert!(doc.contains("border-color:#ff8800"), "outlined in the accent: {doc}");
     }
 
+    /// A lone message gets the same card chrome a conversation does — one
+    /// standard presentation, whatever the thread's size.
     #[test]
-    fn a_single_message_is_not_drawn_as_a_card() {
+    fn a_single_message_is_drawn_as_a_card_too() {
         let doc = MessageView::conversation_document(
             &[msg_for_print()],
             &std::collections::HashMap::new(),
@@ -3464,8 +3194,9 @@ mod tests {
             true,
             false,
         );
-        assert!(!doc.contains("<section class=\"vireo-msg\""), "no card: {doc}");
-        assert!(!doc.contains("<body class=\"vireo-conv\">"), "no conversation padding");
+        assert!(doc.contains("<section class=\"vireo-msg\""), "card chrome: {doc}");
+        assert!(doc.contains("<body class=\"vireo-conv\">"), "conversation padding");
+        assert!(doc.contains("data-act=\"reply\""), "card actions present: {doc}");
     }
 
     #[test]
