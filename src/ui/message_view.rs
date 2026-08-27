@@ -1131,7 +1131,7 @@ impl MessageView {
                .vireo-msg-hdr{{cursor:pointer;}}\
                .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;border-bottom:1px solid rgba(128,128,128,0.2);\
                  position:sticky;top:0;z-index:1;background-color:{bg};}}\
-               body:not(.vireo-conv) .vireo-msg-hdr{{background-color:{chrome};}}\
+               body:not(.vireo-conv) .vireo-msg-hdr{{background-color:{chrome};border-bottom:none;}}\
                .vireo-ava{{width:26px;height:26px;border-radius:50%;flex:none;align-self:center;\
                  display:flex;align-items:center;justify-content:center;color:#fff;\
                  font-size:0.8em;font-weight:700;}}\
