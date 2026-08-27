@@ -13,7 +13,6 @@ use crate::config::{ClockStyle, DateStyle, MessageTheme};
 pub struct PrefInit {
     pub allowed_senders: Vec<String>,
     pub auto_remote_content: bool,
-    pub dim_remote_banner: bool,
     pub show_remote_banner: bool,
     pub gravatar: bool,
     pub avatars: bool,
@@ -122,7 +121,6 @@ pub struct Preferences {
 pub enum PrefInput {
     AddSenderText(String),
     RemoveSenderRow(String),
-    ToggleDimRemoteBanner(bool),
     ToggleShowRemoteBanner(bool),
     AddBlacklistText(String),
     RemoveBlacklistRow(String),
@@ -154,7 +152,6 @@ pub enum PrefOutput {
     AddBlacklist(String),
     RemoveBlacklist(String),
     SetAutoRemoteContent(bool),
-    SetDimRemoteBanner(bool),
     SetShowRemoteBanner(bool),
     SetGravatar(bool),
     SetAvatars(bool),
@@ -407,18 +404,6 @@ impl Component for Preferences {
                             },
                         },
 
-                        #[name = "dim_remote_banner_row"]
-                        adw::SwitchRow {
-                            set_title: "Quieter blocked-content banner",
-                            set_subtitle: "Draws the warning in grey with outlined buttons \
-                                           instead of a full amber bar.",
-                            #[watch]
-                            set_sensitive: show_remote_banner_row.is_active(),
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleDimRemoteBanner(row.is_active()));
-                            },
-                        },
-
                         #[name = "gravatar_row"]
                         adw::SwitchRow {
                             set_title: "Use Gravatar when a contact has no photo",
@@ -569,7 +554,6 @@ impl Component for Preferences {
         let blacklist_box = model.blacklist.widget();
         let widgets = view_output!();
         widgets.auto_remote_content_row.set_active(init.auto_remote_content);
-        widgets.dim_remote_banner_row.set_active(init.dim_remote_banner);
         widgets.show_remote_banner_row.set_active(init.show_remote_banner);
         widgets.gravatar_row.set_active(init.gravatar);
         widgets.avatars_row.set_active(init.avatars);
@@ -739,9 +723,6 @@ impl Component for Preferences {
                 }
             }
 
-            PrefInput::ToggleDimRemoteBanner(on) => {
-                let _ = sender.output(PrefOutput::SetDimRemoteBanner(on));
-            }
             PrefInput::ToggleShowRemoteBanner(on) => {
                 let _ = sender.output(PrefOutput::SetShowRemoteBanner(on));
             }

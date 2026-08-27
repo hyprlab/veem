@@ -218,9 +218,7 @@ pub struct AppModel {
     allowed_senders: Vec<String>,
     /// Whether remote content is auto-loaded for every new message.
     auto_remote_content: bool,
-    /// Draw the blocked-remote-content banner in its quiet grey style.
-    dim_remote_banner: bool,
-    /// Whether that banner is shown at all. Hiding it changes nothing about what
+    /// Whether the blocked-remote-content banner is shown at all. Hiding it changes nothing about what
     /// is blocked — only whether the reader says so.
     show_remote_banner: bool,
     /// Addresses/domains whose incoming inbox mail is auto-deleted (lowercased).
@@ -455,7 +453,6 @@ pub enum AppMsg {
     RemoveBlacklist(String),
     MarkSpam,
     SetAutoRemoteContent(bool),
-    SetDimRemoteBanner(bool),
     SetShowRemoteBanner(bool),
     SetGravatar(bool),
     /// Show the full-window attachment lightbox (from the drawer or the
@@ -1390,7 +1387,6 @@ impl SimpleComponent for AppModel {
             current: None,
             allowed_senders: config::load_allowed_senders(),
             auto_remote_content: config::load_auto_remote_content(),
-            dim_remote_banner: config::load_dim_remote_banner(),
             show_remote_banner: config::load_show_remote_banner(),
             blacklist: config::load_blacklist(),
             palette_collapse_secs: config::load_palette_collapse(),
@@ -2723,25 +2719,11 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::SetDimRemoteBanner(on) => {
-                if self.dim_remote_banner != on {
-                    self.dim_remote_banner = on;
-                    self.save_settings();
-                    self.message_view.emit(MessageViewInput::SetBannerStyle {
-                        dim: on,
-                        show: self.show_remote_banner,
-                    });
-                }
-            }
-
             AppMsg::SetShowRemoteBanner(on) => {
                 if self.show_remote_banner != on {
                     self.show_remote_banner = on;
                     self.save_settings();
-                    self.message_view.emit(MessageViewInput::SetBannerStyle {
-                        dim: self.dim_remote_banner,
-                        show: on,
-                    });
+                    self.message_view.emit(MessageViewInput::SetBannerShown(on));
                 }
             }
 
@@ -3228,7 +3210,6 @@ impl SimpleComponent for AppModel {
                 let init = PrefInit {
                     allowed_senders: self.allowed_senders.clone(),
                     auto_remote_content: self.auto_remote_content,
-                    dim_remote_banner: self.dim_remote_banner,
                     show_remote_banner: self.show_remote_banner,
                     gravatar: self.gravatar,
                     avatars: self.avatars,
@@ -3259,7 +3240,6 @@ impl SimpleComponent for AppModel {
                         PrefOutput::AddBlacklist(addr) => AppMsg::AddBlacklist(addr),
                         PrefOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
                         PrefOutput::SetAutoRemoteContent(on) => AppMsg::SetAutoRemoteContent(on),
-                        PrefOutput::SetDimRemoteBanner(on) => AppMsg::SetDimRemoteBanner(on),
                         PrefOutput::SetShowRemoteBanner(on) => AppMsg::SetShowRemoteBanner(on),
                         PrefOutput::SetGravatar(on) => AppMsg::SetGravatar(on),
                         PrefOutput::SetAvatars(on) => AppMsg::SetAvatars(on),
@@ -3813,7 +3793,6 @@ impl AppModel {
             self.single_key.get(),
             self.run_in_background.get(),
             self.autostart,
-            self.dim_remote_banner,
             self.show_remote_banner,
         );
     }

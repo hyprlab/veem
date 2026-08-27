@@ -472,10 +472,6 @@ struct PrivacyFile {
     /// Start at login (only meaningful with `run_in_background`).
     #[serde(default)]
     autostart: bool,
-    /// Draw the blocked-remote-content banner in its quiet style — grey, with
-    /// outlined buttons — rather than the full amber bar.
-    #[serde(default)]
-    dim_remote_banner: bool,
     /// Whether to say anything at all when remote content is blocked. Off hides
     /// the banner; it never changes what is blocked, only whether you're told.
     #[serde(default = "default_show_remote_banner")]
@@ -527,7 +523,6 @@ impl Default for PrivacyFile {
         Self {
             allowed_senders: Vec::new(),
             auto_remote_content: false,
-            dim_remote_banner: false,
             show_remote_banner: default_show_remote_banner(),
             gravatar: false,
             avatars: default_avatars(),
@@ -574,10 +569,6 @@ pub fn load_allowed_senders() -> Vec<String> {
 /// Whether remote content is auto-loaded for every new message.
 pub fn load_auto_remote_content() -> bool {
     load_privacy().auto_remote_content
-}
-
-pub fn load_dim_remote_banner() -> bool {
-    load_privacy().dim_remote_banner
 }
 
 pub fn load_show_remote_banner() -> bool {
@@ -701,7 +692,6 @@ pub fn save_privacy(
     single_key_shortcuts: bool,
     run_in_background: bool,
     autostart: bool,
-    dim_remote_banner: bool,
     show_remote_banner: bool,
 ) {
     let Some(path) = privacy_path() else {
@@ -732,7 +722,6 @@ pub fn save_privacy(
         single_key_shortcuts,
         run_in_background,
         autostart,
-        dim_remote_banner,
         show_remote_banner,
     };
     match toml::to_string_pretty(&file) {
