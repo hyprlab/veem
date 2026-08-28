@@ -215,7 +215,7 @@ fn document(content: &str, dark: bool) -> String {
          <style>\
            :root{{color-scheme:{scheme};}}\
            html,body{{height:100%;box-sizing:border-box;}}\
-           body{{margin:0;padding:12px;font:14px/1.55 system-ui,sans-serif;outline:none;}}\
+           body{{margin:0;padding:20px;font:14px/1.55 system-ui,sans-serif;outline:none;}}\
            blockquote{{margin:0 0 0 8px;padding-left:10px;\
              border-left:3px solid rgba(128,128,128,0.4);}}\
            .vireo-quote-attr{{opacity:0.7;margin:10px 0 4px;}}\

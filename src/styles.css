@@ -818,8 +818,7 @@ headerbar.rail-header {
 /* ---- Compose ---- */
 
 .compose-pane {
-  /* Matches the reader's 20px message inset. */
-  padding: 20px;
+  padding: 16px;
 }
 
 /* The body editor sits borderless on the compose surface — the editing area
