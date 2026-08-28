@@ -52,6 +52,10 @@ pub struct MessageView {
     /// message that renders to the same document skips the load entirely —
     /// every load blanks the view for an instant, however briefly.
     shown_fingerprint: Option<u64>,
+    /// Conversation card actions hide until the card is hovered (expanded via
+    /// their ⋯ toggle); off = always shown. A preference, applied by stamping
+    /// the document (see `document_html`).
+    card_actions_hover: bool,
     /// The open conversation has already auto-scrolled to its first unread
     /// message: later renders of the same thread (bodies streaming in, a theme
     /// flip) carry a no-scroll stamp so the reader's place is kept.
@@ -178,6 +182,8 @@ pub enum MessageViewInput {
     },
     /// The card's "Add sender to Contacts" button.
     CardContact { account_id: u32, id: u32 },
+    /// Preferences: hide card actions until hovered (vs always shown).
+    SetCardActionsHover(bool),
     /// A conversation message was read: clear its card's unread dot in place,
     /// without reloading the document.
     ClearDot { account_id: u32, id: u32 },
@@ -434,6 +440,7 @@ impl Component for MessageView {
             blocked: false,
             no_autoread: std::collections::HashSet::new(),
             show_banner: crate::config::load_show_remote_banner(),
+            card_actions_hover: crate::config::load_card_actions_hover(),
             remote_allowed: false,
             account_name: None,
             chip_provider,
@@ -835,6 +842,14 @@ impl Component for MessageView {
                     });
                 }
             }
+            MessageViewInput::SetCardActionsHover(on) => {
+                if self.card_actions_hover != on {
+                    self.card_actions_hover = on;
+                    if self.current.is_some() && !self.loading {
+                        self.render();
+                    }
+                }
+            }
             MessageViewInput::ClearDot { account_id, id } => {
                 for m in self.thread.iter_mut() {
                     if m.account_id == account_id && m.id == id {
@@ -939,18 +954,22 @@ impl MessageView {
         // Only a conversation's first document may auto-scroll to the unread
         // mark; every later render of the same thread (bodies streaming in, a
         // theme change) is stamped no-scroll so the reader's place is kept.
-        let html = if self.did_autoscroll {
+        let noscroll = if self.did_autoscroll {
             let anchor = self
                 .saved_anchor
                 .map(|(a, i, o)| format!(" data-vireo-anchor=\"{a}:{i}:{o}\""))
                 .unwrap_or_default();
-            html.replacen(
-                "<body",
-                &format!("<body data-vireo-noscroll=\"1\"{anchor}"),
-                1,
-            )
+            format!(" data-vireo-noscroll=\"1\"{anchor}")
         } else {
+            String::new()
+        };
+        // Card actions hidden-until-hover is a body stamp too, so the static
+        // document builder (and its tests) need no extra parameter.
+        let hover = if self.card_actions_hover { " data-vireo-actshover=\"1\"" } else { "" };
+        let html = if noscroll.is_empty() && hover.is_empty() {
             html
+        } else {
+            html.replacen("<body", &format!("<body{noscroll}{hover}"), 1)
         };
         self.did_autoscroll = true;
         let n = self.seq.get().wrapping_add(1);
@@ -985,6 +1004,7 @@ impl MessageView {
         // different GTK theme variant, say) — the document must follow.
         self.theme_grounds(dark).hash(&mut h);
         self.remote_allowed.hash(&mut h);
+        self.card_actions_hover.hash(&mut h);
         self.thread.len().hash(&mut h);
         for m in &self.thread {
             let key = (m.account_id, m.id);
@@ -1066,10 +1086,23 @@ impl MessageView {
                          title=\"Double-click to open in a new window\">\
                          {ava}{dot}<span class=\"vireo-from\">{from}</span>{addr}{folder}{rcpt_toggle}\
                          <span class=\"vireo-date\">{date}</span>\
-                         {acts}{rcpt}\
+                         {acts_toggle}{acts}{rcpt}\
                        </header>{body}</section>",
                     aid = m.account_id,
                     id = m.id,
+                    // The ⋯ toggle that expands/collapses the action row when
+                    // the hidden-until-hover preference is on; CSS keeps it
+                    // display:none otherwise, so it costs nothing when off.
+                    acts_toggle = if thread.len() > 1 {
+                        format!(
+                            "<button type=\"button\" class=\"vireo-acts-toggle\" \
+                             title=\"Actions\" data-key=\"{aid}:{id}\">\u{22ef}</button>",
+                            aid = m.account_id,
+                            id = m.id,
+                        )
+                    } else {
+                        String::new()
+                    },
                     // Per-card actions, only where they earn their keep: a
                     // real conversation, where the toolbar can't say which
                     // message it means — the toolbar's icons grey out there
@@ -1288,6 +1321,17 @@ impl MessageView {
                .vireo-act:hover{{opacity:1;background:rgba(128,128,128,0.18);}}\
                .vireo-act:active{{background:rgba(128,128,128,0.3);}}\
                .vireo-act svg{{width:14px;height:14px;display:block;fill:currentColor;}}\
+               .vireo-acts-toggle{{display:none;}}\
+               body[data-vireo-actshover] .vireo-acts{{display:none;}}\
+               body[data-vireo-actshover] .vireo-acts.open{{display:flex;}}\
+               body[data-vireo-actshover] .vireo-acts-toggle{{display:block;\
+                 color:inherit;background:none;border:none;border-radius:6px;\
+                 padding:0 8px;margin-left:4px;cursor:pointer;font:inherit;\
+                 line-height:1;opacity:0;transition:opacity 120ms ease,background 120ms ease;}}\
+               body[data-vireo-actshover] .vireo-msg:hover .vireo-acts-toggle{{opacity:0.65;}}\
+               body[data-vireo-actshover] .vireo-acts-toggle:hover{{opacity:1;\
+                 background:rgba(128,128,128,0.18);}}\
+               body[data-vireo-actshover] .vireo-acts-toggle.open{{opacity:1;}}\
                .vireo-folder{{margin-left:0.5em;padding:0.05em 0.45em;border-radius:0.7em;\
                  font-size:0.78em;opacity:0.75;border:1px solid currentColor;}}\
                .vireo-rcpt-toggle{{font:inherit;font-size:0.78em;color:inherit;background:none;\
@@ -2736,6 +2780,19 @@ try{window.webkit.messageHandlers.vireo.postMessage('desel:0:0');}catch(_){}});\
 var ms=document.querySelectorAll('.vireo-msg');\
 for(var q=0;q<ms.length;q++){ms[q].addEventListener('click',function(e){\
 var k=this.dataset.key;if(k)pick(k,e);});}\
+var ts=document.querySelectorAll('.vireo-acts-toggle');\
+for(var t=0;t<ts.length;t++){ts[t].addEventListener('click',function(e){\
+e.stopPropagation();e.preventDefault();\
+var h=this.closest('.vireo-msg-hdr');var ac=h?h.querySelector('.vireo-acts'):null;if(!ac)return;\
+var on=!ac.classList.contains('open');\
+ac.classList.toggle('open',on);this.classList.toggle('open',on);});\
+ts[t].addEventListener('dblclick',function(e){e.stopPropagation();});}\
+for(var q2=0;q2<ms.length;q2++){(function(card){var timer=null;\
+card.addEventListener('mouseleave',function(){\
+var ac=card.querySelector('.vireo-acts.open');if(!ac)return;\
+timer=setTimeout(function(){ac.classList.remove('open');\
+var tg=card.querySelector('.vireo-acts-toggle');if(tg)tg.classList.remove('open');},1200);});\
+card.addEventListener('mouseenter',function(){if(timer){clearTimeout(timer);timer=null;}});})(ms[q2]);}\
 var as=document.querySelectorAll('.vireo-act');\
 for(var k=0;k<as.length;k++){as[k].addEventListener('click',function(e){\
 e.stopPropagation();e.preventDefault();reportPos();\

@@ -326,6 +326,8 @@ pub struct AppModel {
     thread_key: Option<(u32, u32)>,
     /// Whether conversation threads start expanded in the message list.
     threads_expanded: bool,
+    /// Conversation card actions hide until hovered (preference).
+    card_actions_hover: bool,
     /// How email content is themed (message content only, not the app UI).
     message_theme: config::MessageTheme,
     /// The repeating auto-fetch timer, if armed.
@@ -543,6 +545,7 @@ pub enum AppMsg {
     SetClockStyle(crate::config::ClockStyle),
     SetThreading(bool),
     SetThreadsExpanded(bool),
+    SetCardActionsHover(bool),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -952,7 +955,7 @@ impl SimpleComponent for AppModel {
                                     // highlighted they grey out — no way to say
                                     // which message they'd mean.
                                     #[watch]
-                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Reply),
                                 },
                                 pack_start = &gtk::Button {
@@ -962,7 +965,7 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
-                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ReplyAll),
                                 },
                                 pack_start = &gtk::Button {
@@ -972,7 +975,7 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
-                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Forward),
                                 },
                                 pack_start = &gtk::Button {
@@ -980,19 +983,19 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
-                                    set_icon_name: if model.current.as_ref().is_some_and(|m| m.unread) {
+                                    set_icon_name: if model.reply_target().is_some_and(|m| m.unread) {
                                         "co.hyprlab.Vireo-mail-read-symbolic"
                                     } else {
                                         "co.hyprlab.Vireo-mail-unread-symbolic"
                                     },
                                     #[watch]
-                                    set_tooltip_text: Some(if model.current.as_ref().is_some_and(|m| m.unread) {
+                                    set_tooltip_text: Some(if model.reply_target().is_some_and(|m| m.unread) {
                                         "Mark as Read"
                                     } else {
                                         "Mark as Unread"
                                     }),
                                     #[watch]
-                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleReadCurrent),
                                 },
                                 pack_start = &gtk::Button {
@@ -1001,13 +1004,13 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
-                                    set_icon_name: if model.current.as_ref().is_some_and(|m| m.starred) {
+                                    set_icon_name: if model.reply_target().is_some_and(|m| m.starred) {
                                         "co.hyprlab.Vireo-starred-symbolic"
                                     } else {
                                         "co.hyprlab.Vireo-non-starred-symbolic"
                                     },
                                     #[watch]
-                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleStar),
                                 },
                                 pack_start = &gtk::Button {
@@ -1017,7 +1020,7 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
-                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::AddToContacts),
                                 },
                                 // Open Contacts (the app-wide address book) —
@@ -1122,7 +1125,7 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
-                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::MarkSpam),
                                 },
                                 pack_end = &gtk::Button {
@@ -1133,8 +1136,8 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: !model.reader_actions_collapsed,
                                     #[watch]
-                                    set_sensitive: (model.current.is_some() || model.list_selection.len() > 1)
-                                        && model.current_thread.len() <= 1,
+                                    set_sensitive: model.reply_target().is_some()
+                                        || model.list_selection.len() > 1,
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Delete),
                                 },
                                 pack_end = &gtk::Button {
@@ -1144,7 +1147,7 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
                                     #[watch]
-                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Archive),
                                 },
                                 pack_end = &gtk::Spinner {
@@ -1566,6 +1569,7 @@ impl SimpleComponent for AppModel {
             thread_cache_order: Vec::new(),
             thread_key: None,
             threads_expanded: config::load_threads_expanded(),
+            card_actions_hover: config::load_card_actions_hover(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
             notifications,
@@ -2711,13 +2715,13 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ToggleStar => {
-                if let Some(m) = self.current.clone() {
+                if let Some(m) = self.reply_target() {
                     self.set_star(&m, !m.starred);
                 }
             }
 
             AppMsg::Archive => {
-                if let Some(m) = self.current.clone() {
+                if let Some(m) = self.reply_target() {
                     self.move_to(m, FolderKind::Archive);
                 }
             }
@@ -2728,7 +2732,7 @@ impl SimpleComponent for AppModel {
                     self.message_list.emit(MessageListInput::Bulk(BulkAction::Delete));
                     return;
                 }
-                if let Some(m) = self.current.clone() {
+                if let Some(m) = self.reply_target() {
                     // In the Outbox, deleting means giving up on sending it —
                     // there is no server-side copy to move to Trash.
                     if self.outbox_item(m.account_id, m.id).is_some() {
@@ -2807,7 +2811,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ToggleReadCurrent => {
-                if let Some(m) = self.current.clone() {
+                if let Some(m) = self.reply_target() {
                     self.set_read(&m, m.unread);
                 }
             }
@@ -2985,7 +2989,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::AddToContacts => {
-                if let Some(m) = self.current.clone() {
+                if let Some(m) = self.reply_target() {
                     self.show_add_contact_dialog(&m.from_name, &m.from_addr, &sender);
                 }
             }
@@ -3049,7 +3053,11 @@ impl SimpleComponent for AppModel {
                 self.save_settings();
             }
 
-            AppMsg::MarkSpam => self.mark_spam(),
+            AppMsg::MarkSpam => {
+                if let Some(m) = self.reply_target() {
+                    self.mark_spam_msg(m);
+                }
+            }
 
             AppMsg::SetAvatars(on) => {
                 if self.avatars != on {
@@ -3303,6 +3311,14 @@ impl SimpleComponent for AppModel {
                     self.threading = on;
                     self.save_settings();
                     self.message_list.emit(MessageListInput::SetThreading(on));
+                }
+            }
+
+            AppMsg::SetCardActionsHover(on) => {
+                if self.card_actions_hover != on {
+                    self.card_actions_hover = on;
+                    self.save_settings();
+                    self.message_view.emit(MessageViewInput::SetCardActionsHover(on));
                 }
             }
 
@@ -3616,6 +3632,7 @@ impl SimpleComponent for AppModel {
                     notification_content: self.notification_content,
                     show_attachments: self.show_attachments,
                     sidebar_hover_expand: self.sidebar_hover_expand,
+                    card_actions_hover: self.card_actions_hover,
                     app_theme: self.app_theme,
                     preview_lines: self.preview_lines,
                     single_key_shortcuts: self.single_key.get(),
@@ -3639,6 +3656,7 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetClockStyle(style) => AppMsg::SetClockStyle(style),
                         PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
                         PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
+                        PrefOutput::SetCardActionsHover(on) => AppMsg::SetCardActionsHover(on),
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                         PrefOutput::SetPush(on) => AppMsg::SetPush(on),
                         PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
@@ -4252,6 +4270,7 @@ impl AppModel {
             self.notifications_enabled,
             self.notification_content,
             self.show_attachments,
+            self.card_actions_hover,
             self.preview_lines,
             self.single_key.get(),
             self.run_in_background.get(),
@@ -4626,11 +4645,11 @@ impl AppModel {
             .unwrap_or_default()
     }
 
-    /// The message the toolbar's Reply/Reply all/Forward act on: the open
-    /// message itself, or — in a conversation — the one highlighted card,
-    /// when exactly one is highlighted. `None` greys the buttons out: with no
-    /// card (or several) selected there is no way to say which message an
-    /// action would mean.
+    /// The message the toolbar's per-message actions act on: the open message
+    /// itself, or — in a conversation — the one highlighted card, when exactly
+    /// one is highlighted. `None` greys the buttons out: with no card (or
+    /// several) selected there is no way to say which message an action would
+    /// mean.
     fn reply_target(&self) -> Option<Message> {
         if self.current_thread.len() <= 1 {
             return self.current.clone();
@@ -5106,12 +5125,13 @@ impl AppModel {
                 ],
             ]
         } else {
-            // A conversation is on screen: every per-message action greys out
-            // here, exactly like the toolbar — each card carries the full set
-            // of icons instead.
-            let single = self.current_thread.len() <= 1;
-            let acts = has_current && single;
-            let starred = self.current.as_ref().is_some_and(|m| m.starred);
+            // Per-message actions act on the reply target: the open message,
+            // or — in a conversation — the one highlighted card. With none
+            // (or several) highlighted they grey out.
+            let target = self.reply_target();
+            let acts = target.is_some();
+            let starred = target.as_ref().is_some_and(|m| m.starred);
+            let target_unread = target.as_ref().is_some_and(|m| m.unread);
             vec![
                 vec![
                     entry!("Reply", "mail-reply-sender", AppMsg::Reply, acts),
@@ -5119,7 +5139,7 @@ impl AppModel {
                     entry!("Forward", "mail-forward", AppMsg::Forward, acts),
                 ],
                 vec![
-                    if self.current.as_ref().is_some_and(|m| m.unread) {
+                    if target_unread {
                         entry!("Mark as Read", "mail-read", AppMsg::ToggleReadCurrent, acts)
                     } else {
                         entry!("Mark as Unread", "mail-unread", AppMsg::ToggleReadCurrent, acts)
@@ -5143,7 +5163,7 @@ impl AppModel {
                         "Delete",
                         "user-trash",
                         AppMsg::Delete,
-                        (has_current || self.list_selection.len() > 1) && single
+                        acts || self.list_selection.len() > 1
                     ),
                 ],
             ]
@@ -6559,12 +6579,6 @@ impl AppModel {
         };
         self.send_to(m.account_id, MailRequest::MarkSpam { path: src, uid: m.uid, dest });
         self.discard_message(&m);
-    }
-
-    fn mark_spam(&mut self) {
-        if let Some(m) = self.current.clone() {
-            self.mark_spam_msg(m);
-        }
     }
 
     /// Mark every message in a folder as read: update server, caches, badges,

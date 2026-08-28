@@ -600,6 +600,10 @@ struct PrivacyFile {
     /// account's attachments).
     #[serde(default = "default_show_attachments")]
     show_attachments: bool,
+    /// Whether a conversation card's action icons stay hidden until the card
+    /// is hovered (expanded via their ⋯ toggle). Off = always shown.
+    #[serde(default = "default_card_actions_hover")]
+    card_actions_hover: bool,
     /// Hovering the icon rail (narrow-window or user-collapsed) floats the
     /// full sidebar out over the panes without needing the expand button.
     #[serde(default)]
@@ -660,6 +664,10 @@ fn default_show_attachments() -> bool {
     true
 }
 
+fn default_card_actions_hover() -> bool {
+    true
+}
+
 fn default_preview_lines() -> u32 {
     1
 }
@@ -689,6 +697,7 @@ impl Default for PrivacyFile {
             notifications: default_notifications(),
             notification_content: default_notification_content(),
             show_attachments: default_show_attachments(),
+            card_actions_hover: default_card_actions_hover(),
             sidebar_hover_expand: false,
             app_theme: AppTheme::default(),
             preview_lines: default_preview_lines(),
@@ -798,6 +807,11 @@ pub fn load_show_attachments() -> bool {
     load_privacy().show_attachments
 }
 
+/// Whether conversation card actions hide until hovered.
+pub fn load_card_actions_hover() -> bool {
+    load_privacy().card_actions_hover
+}
+
 pub fn load_sidebar_hover_expand() -> bool {
     load_privacy().sidebar_hover_expand
 }
@@ -848,6 +862,7 @@ pub fn save_privacy(
     notifications: bool,
     notification_content: bool,
     show_attachments: bool,
+    card_actions_hover: bool,
     preview_lines: u32,
     single_key_shortcuts: bool,
     run_in_background: bool,
@@ -880,6 +895,7 @@ pub fn save_privacy(
         notifications,
         notification_content,
         show_attachments,
+        card_actions_hover,
         preview_lines,
         single_key_shortcuts,
         run_in_background,

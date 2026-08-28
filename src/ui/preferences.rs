@@ -25,6 +25,8 @@ pub struct PrefInit {
     pub palette_collapse_secs: u64,
     pub threading: bool,
     pub threads_expanded: bool,
+    /// Conversation card actions hide until the card is hovered.
+    pub card_actions_hover: bool,
     pub message_theme: MessageTheme,
     pub app_theme: AppTheme,
     pub notifications: bool,
@@ -141,6 +143,7 @@ pub enum PrefInput {
     ChangeClockStyle(u32),
     ToggleThreading(bool),
     ToggleThreadsExpanded(bool),
+    ToggleCardActionsHover(bool),
     ChangeFetchInterval(u32),
     TogglePush(bool),
     ToggleNotifications(bool),
@@ -171,6 +174,7 @@ pub enum PrefOutput {
     SetClockStyle(ClockStyle),
     SetThreading(bool),
     SetThreadsExpanded(bool),
+    SetCardActionsHover(bool),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -349,6 +353,17 @@ impl Component for Preferences {
                                            newest message.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleThreadsExpanded(row.is_active()));
+                            },
+                        },
+
+                        #[name = "card_actions_hover_row"]
+                        adw::SwitchRow {
+                            set_title: "Hide message card actions until hovered",
+                            set_subtitle: "In conversations, each card's action icons stay \
+                                           tucked behind a \u{22ef} toggle that appears on \
+                                           hover. Off = the icons are always shown.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleCardActionsHover(row.is_active()));
                             },
                         },
 
@@ -633,6 +648,7 @@ impl Component for Preferences {
         widgets.single_key_row.set_active(init.single_key_shortcuts);
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
+        widgets.card_actions_hover_row.set_active(init.card_actions_hover);
 
         // Date and clock combos.
         let date_labels: Vec<&str> = DATE_STYLES.iter().map(|(l, _)| *l).collect();
@@ -714,6 +730,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleThreadsExpanded(on) => {
                 let _ = sender.output(PrefOutput::SetThreadsExpanded(on));
+            }
+            PrefInput::ToggleCardActionsHover(on) => {
+                let _ = sender.output(PrefOutput::SetCardActionsHover(on));
             }
             PrefInput::ChangeFetchInterval(index) => {
                 let secs = FETCH_INTERVALS
