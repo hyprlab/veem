@@ -2615,8 +2615,8 @@ fn ground_rgba(hex: &str) -> gtk::gdk::RGBA {
 const SIZE_SCRIPT: &str = "\
 function s(f){if(f._s)return;f._s=1;try{var d=f.contentDocument;if(!d)return;\
 var b=d.body,e=d.documentElement;\
-var sy=window.scrollY;var above=f.getBoundingClientRect().bottom<=0;\
-var old=parseFloat(f.style.height)||0;\
+var sy=window.scrollY;var _r=f.getBoundingClientRect();\
+var above=_r.bottom<=0;var old=_r.height||0;\
 var prev=f.style.height;f.style.height='0px';void f.offsetHeight;\
 var h=Math.max(b?b.scrollHeight:0,e?e.scrollHeight:0,b?b.offsetHeight:0);\
 if(h>0){f.style.height=h+'px';\
@@ -2680,7 +2680,8 @@ if(bd.vireoNoscroll){var a=(bd.vireoAnchor||'').split(':');\
 if(a.length===3){var el=document.querySelector('.vireo-msg[data-key=\"'+a[0]+':'+a[1]+'\"]');\
 if(el)setTimeout(function(){try{var r=el.getBoundingClientRect();\
 window.scrollTo(0,window.scrollY+r.top+parseInt(a[2],10));}catch(_){}},0);}return;}\
-var d=document.querySelector('.vireo-msg .vireo-dot');\
+var ds=document.querySelectorAll('.vireo-msg .vireo-dot');\
+var d=ds.length?ds[ds.length-1]:null;\
 if(d){var m=d.closest('.vireo-msg');\
 if(m)setTimeout(function(){try{m.scrollIntoView({block:'start'});}catch(_){}},0);}}\
 if(!pend)ready();\
