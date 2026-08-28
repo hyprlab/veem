@@ -26,10 +26,18 @@ fn sig_html(sig: &str) -> String {
 /// Size the pane for its host. Both hosts impose a definite height now — the
 /// reader-covering overlay inline (it fills the whole pane), the window itself
 /// popped out — so the editor always expands to fill whatever it is given.
-fn size_for_host(root: &adw::ToolbarView, editor_holder: &gtk::Box, _windowed: bool) {
+/// Inline, the compose header also stands in for the reader's (which it
+/// covers), so it takes over the GNOME window decorations.
+fn size_for_host(
+    root: &adw::ToolbarView,
+    header: &adw::HeaderBar,
+    editor_holder: &gtk::Box,
+    windowed: bool,
+) {
     root.set_vexpand(true);
     editor_holder.set_vexpand(true);
     editor_holder.set_height_request(-1);
+    header.set_show_end_title_buttons(!windowed);
 }
 
 /// Set the inline/window toggle button's icon + tooltip for the current host.
@@ -205,9 +213,15 @@ impl Component for Compose {
         // or set as the content of an app-owned window. Hosting/close is the app's
         // job (see ComposeOutput::ToggleWindow / Close).
         adw::ToolbarView {
+                #[name = "header"]
                 add_top_bar = &adw::HeaderBar {
                     set_show_start_title_buttons: false,
                     set_show_end_title_buttons: false,
+                    // No "Vireo" branding on the compose bar.
+                    #[wrap(Some)]
+                    set_title_widget = &gtk::Label {
+                        set_label: "",
+                    },
 
                     pack_start = &gtk::Button {
                         set_label: "Cancel",
@@ -373,7 +387,7 @@ impl Component for Compose {
         // "collapse back inline").
         widgets.toggle_btn.set_visible(model.can_toggle);
         set_toggle_icon(&widgets.toggle_btn, model.windowed);
-        size_for_host(&root, &widgets.editor_holder, model.windowed);
+        size_for_host(&root, &widgets.header, &widgets.editor_holder, model.windowed);
 
         // Per-row visibility (#25): To always; Cc/Bcc only when prefilled (a
         // reply-all carries Cc); Subject stays up for a new message or draft,
@@ -536,7 +550,7 @@ impl Component for Compose {
             ComposeInput::SetWindowed(windowed) => {
                 self.windowed = windowed;
                 set_toggle_icon(&widgets.toggle_btn, windowed);
-                size_for_host(root, &widgets.editor_holder, windowed);
+                size_for_host(root, &widgets.header, &widgets.editor_holder, windowed);
             }
 
             ComposeInput::FocusEditor => self.editor.grab_focus(),

@@ -1192,16 +1192,10 @@ impl SimpleComponent for AppModel {
                             // prepended in `init`. The drawer's widget is a Paned
                             // that holds the reader body + attachment footer.
                             #[wrap(Some)]
-                            // An overlay, so the inline composer can slide
-                            // down OVER the reader and cover the whole pane
-                            // (the box beneath holds the actual reader).
                             #[name = "reader_content_box"]
-                            set_content = &gtk::Overlay {
-                                #[wrap(Some)]
-                                set_child = &gtk::Box {
-                                    set_orientation: gtk::Orientation::Vertical,
-                                    append: model.attachment_drawer.widget(),
-                                },
+                            set_content = &gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                append: model.attachment_drawer.widget(),
                             },
                             },
                         },
@@ -1709,14 +1703,21 @@ impl SimpleComponent for AppModel {
                 let _ = s.send(AppMsg::ReaderOverflowMenu);
             });
         }
-        // The inline compose/reply pane is an overlay over the reader body:
-        // revealed, it slides down from the top and covers the whole pane
-        // (the reader disappears beneath it). While closed it must not eat
-        // the reader's clicks.
+        // The inline compose/reply pane is an overlay over the WHOLE reader
+        // pane — its header bar included: revealed, it slides down from the
+        // top and covers everything (the composer's own header carries the
+        // window decorations meanwhile). While closed it must not eat the
+        // reader's clicks. Wrapping happens here because the view macro's
+        // deep nesting makes an in-place Overlay unwieldy.
         model.reader_compose_revealer.set_can_target(false);
-        widgets
-            .reader_content_box
-            .add_overlay(&model.reader_compose_revealer);
+        {
+            let pane = widgets.reader_bin.child().expect("reader pane");
+            widgets.reader_bin.set_child(None::<&gtk::Widget>);
+            let overlay = gtk::Overlay::new();
+            overlay.set_child(Some(&pane));
+            overlay.add_overlay(&model.reader_compose_revealer);
+            widgets.reader_bin.set_child(Some(&overlay));
+        }
         // The attachments gallery is the content stack's second page. Wrap it in a
         // ToolbarView + HeaderBar so it keeps the window controls (close/minimize)
         // that otherwise live only on the reader pane's header.
