@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.17.1" date="2026-08-28" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.17.1</url>
+      <description>
+        <p>Microsoft 365 accounts from GNOME Online Accounts work now, speaking the Graph API with GNOME's own sign-in; GOA accounts can be un-imported and removed properly and their editors slim down; Contacts and Refresh move into the sidebar beside a New Message button; and the message list reclaims a row by moving its count and sort menu into the header bar.</p>
+      </description>
+    </release>
     <release version="1.17.0" date="2026-08-28" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.17.0</url>
       <description>
