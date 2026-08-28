@@ -1101,9 +1101,11 @@ impl MessageView {
                     acts_toggle = if thread.len() > 1 {
                         format!(
                             "<button type=\"button\" class=\"vireo-acts-toggle\" \
-                             title=\"Actions\" data-key=\"{aid}:{id}\">\u{22ef}</button>",
+                             title=\"Actions\" data-key=\"{aid}:{id}\">{svg}</button>",
                             aid = m.account_id,
                             id = m.id,
+                            // The same ⋯ the list's Actions Palette toggle uses.
+                            svg = inline_icon_svg("view-more-horizontal-symbolic"),
                         )
                     } else {
                         String::new()
@@ -1332,8 +1334,9 @@ impl MessageView {
                body[data-vireo-actshover] .vireo-acts.open{{display:flex;}}\
                body[data-vireo-actshover] .vireo-acts-toggle{{display:block;\
                  color:inherit;background:none;border:none;border-radius:6px;\
-                 padding:0 8px;margin-left:4px;cursor:pointer;font:inherit;\
-                 line-height:1;opacity:0;transition:opacity 120ms ease,background 120ms ease;}}\
+                 padding:4px 8px;margin-left:4px;cursor:pointer;align-self:center;\
+                 opacity:0;transition:opacity 120ms ease,background 120ms ease;}}\
+               .vireo-acts-toggle svg{{width:14px;height:14px;display:block;fill:currentColor;}}\
                body[data-vireo-actshover] .vireo-msg:hover .vireo-acts-toggle{{opacity:0.65;}}\
                body[data-vireo-actshover] .vireo-acts-toggle:hover{{opacity:1;\
                  background:rgba(128,128,128,0.18);}}\
@@ -1742,9 +1745,22 @@ fn default_image_name(mime: &str) -> String {
 /// so the document's `fill:currentColor` recolours it); when the resource
 /// bundle isn't registered (tests), the button simply has no glyph.
 fn card_action_button(key: (u32, u32), act: &str, icon: &str, title: &str) -> String {
+    let svg = inline_icon_svg(icon);
+    format!(
+        "<button type=\"button\" class=\"vireo-act\" data-act=\"{act}\" \
+         data-key=\"{aid}:{id}\" title=\"{title}\">{svg}</button>",
+        aid = key.0,
+        id = key.1,
+    )
+}
+
+/// An embedded symbolic icon's SVG, inlined for the wrapper document (its
+/// paths carry no fill, so the document's `fill:currentColor` recolours it);
+/// empty when the resource bundle isn't registered (tests).
+fn inline_icon_svg(icon: &str) -> String {
     let path =
         format!("/co/hyprlab/Vireo/icons/scalable/actions/co.hyprlab.Vireo-{icon}.svg");
-    let svg = gtk::gio::resources_lookup_data(&path, gtk::gio::ResourceLookupFlags::NONE)
+    gtk::gio::resources_lookup_data(&path, gtk::gio::ResourceLookupFlags::NONE)
         .ok()
         .and_then(|b| String::from_utf8(b.to_vec()).ok())
         .map(|s| {
@@ -1752,13 +1768,7 @@ fn card_action_button(key: (u32, u32), act: &str, icon: &str, title: &str) -> St
                 .trim()
                 .to_string()
         })
-        .unwrap_or_default();
-    format!(
-        "<button type=\"button\" class=\"vireo-act\" data-act=\"{act}\" \
-         data-key=\"{aid}:{id}\" title=\"{title}\">{svg}</button>",
-        aid = key.0,
-        id = key.1,
-    )
+        .unwrap_or_default()
 }
 
 /// Whether a message body paints a background of its own. The colon/equals
