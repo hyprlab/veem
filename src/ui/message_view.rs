@@ -52,6 +52,14 @@ pub struct MessageView {
     /// message that renders to the same document skips the load entirely —
     /// every load blanks the view for an instant, however briefly.
     shown_fingerprint: Option<u64>,
+    /// The open conversation has already auto-scrolled to its first unread
+    /// message: later renders of the same thread (bodies streaming in, a theme
+    /// flip) carry a no-scroll stamp so the reader's place is kept.
+    did_autoscroll: bool,
+    /// The wrapper document's last reported scroll offset. A re-render replaces
+    /// the whole document (scroll resets to 0), so stamped documents carry this
+    /// and restore it — the reader's place survives the reload.
+    saved_scroll: u32,
     /// What each message's frame measured last time it was shown, so reopening a
     /// conversation lays out right away instead of settling into place.
     frame_heights: std::collections::HashMap<(u32, u32), u32>,
@@ -169,6 +177,9 @@ pub enum MessageViewInput {
     },
     /// The card's "Add sender to Contacts" button.
     CardContact { account_id: u32, id: u32 },
+    /// The wrapper document reported its scroll offset (throttled) — kept so a
+    /// re-render can put the reader back where they were.
+    ScrollChanged(u32),
 }
 
 /// How a click on a conversation card changes the selection, mirroring what the
@@ -423,6 +434,8 @@ impl Component for MessageView {
             chip_provider,
             cover_provider,
             shown_fingerprint: None,
+            did_autoscroll: false,
+            saved_scroll: 0,
             frame_heights: std::collections::HashMap::new(),
             instant: false,
             selected_cards: Vec::new(),
@@ -539,6 +552,8 @@ impl Component for MessageView {
                     "contact" => {
                         open_sender.input(MessageViewInput::CardContact { account_id, id })
                     }
+                    // "scroll:0:<y>" — the y rides in the id slot.
+                    "scroll" => open_sender.input(MessageViewInput::ScrollChanged(id)),
                     _ => {}
                 }
             });
@@ -586,9 +601,12 @@ impl Component for MessageView {
                 self.link_preview.set_visible(false);
                 self.current = shown;
                 // A fresh open: anything the user marked unread earlier can be
-                // read by scrolling again.
+                // read by scrolling again — and the first render may auto-scroll
+                // to the unread mark again.
                 if !same_message {
                     self.no_autoread.clear();
+                    self.did_autoscroll = false;
+                    self.saved_scroll = 0;
                 }
                 self.thread = thread;
                 self.folder_labels = folder_labels;
@@ -794,6 +812,9 @@ impl Component for MessageView {
                     });
                 }
             }
+            MessageViewInput::ScrollChanged(y) => {
+                self.saved_scroll = y;
+            }
             MessageViewInput::CardContact { account_id, id } => {
                 if let Some(m) = self
                     .thread
@@ -880,6 +901,22 @@ impl MessageView {
             self.webview_ready = false;
         }
         let html = self.document_html(dark);
+        // Only a conversation's first document may auto-scroll to the unread
+        // mark; every later render of the same thread (bodies streaming in, a
+        // theme change) is stamped no-scroll so the reader's place is kept.
+        let html = if self.did_autoscroll {
+            html.replacen(
+                "<body",
+                &format!(
+                    "<body data-vireo-noscroll=\"1\" data-vireo-scroll=\"{}\"",
+                    self.saved_scroll
+                ),
+                1,
+            )
+        } else {
+            html
+        };
+        self.did_autoscroll = true;
         let n = self.seq.get().wrapping_add(1);
         self.seq.set(n);
         self.webview
@@ -2573,12 +2610,16 @@ fn ground_rgba(hex: &str) -> gtk::gdk::RGBA {
 const SIZE_SCRIPT: &str = "\
 function s(f){if(f._s)return;f._s=1;try{var d=f.contentDocument;if(!d)return;\
 var b=d.body,e=d.documentElement;\
+var sy=window.scrollY;var above=f.getBoundingClientRect().bottom<=0;\
+var old=parseFloat(f.style.height)||0;\
 var prev=f.style.height;f.style.height='0px';void f.offsetHeight;\
 var h=Math.max(b?b.scrollHeight:0,e?e.scrollHeight:0,b?b.offsetHeight:0);\
 if(h>0){f.style.height=h+'px';\
 if(f.dataset.key&&f._h!==h){f._h=h;\
 try{window.webkit.messageHandlers.vireo.postMessage('size:'+f.dataset.key+':'+h);}catch(_){}}}\
-else{f.style.height=prev;}}catch(_){}finally{f._s=0;}}\
+else{f.style.height=prev;h=old;}\
+if(sy>0)window.scrollTo(0,above?sy+(h-old):sy);\
+}catch(_){}finally{f._s=0;}}\
 function pick(k,e){var mo=e.shiftKey?'r':((e.ctrlKey||e.metaKey)?'t':'p');\
 if(mo!=='p'){try{e.preventDefault();\
 var g=(e.view&&e.view.getSelection)?e.view.getSelection():null;if(g)g.removeAllRanges();}catch(_){}}\
@@ -2629,6 +2670,9 @@ document.addEventListener('DOMContentLoaded',function(){\
 var fs=all();var pend=fs.length,rdy=false;\
 function ready(){if(rdy)return;rdy=true;\
 try{window.webkit.messageHandlers.vireo.postMessage('ready:0:0');}catch(_){}\
+var bd=document.body.dataset;\
+if(bd.vireoNoscroll){var y=parseInt(bd.vireoScroll||'0',10);\
+if(y>0)setTimeout(function(){try{window.scrollTo(0,y);}catch(_){}},0);return;}\
 var d=document.querySelector('.vireo-msg .vireo-dot');\
 if(d){var m=d.closest('.vireo-msg');\
 if(m)setTimeout(function(){try{m.scrollIntoView({block:'start'});}catch(_){}},0);}}\
@@ -2670,6 +2714,9 @@ var d=document.querySelector('.vireo-dot[data-key=\"'+k+'\"]');if(d)d.remove();\
 try{window.webkit.messageHandlers.vireo.postMessage('seen:'+k);}catch(_){}}});\
 for(var m=0;m<es.length;m++)io.observe(es[m]);}});\
 window.addEventListener('resize',function(){var fs=all();for(var i=0;i<fs.length;i++)s(fs[i]);});\
+var _st;window.addEventListener('scroll',function(){clearTimeout(_st);\
+_st=setTimeout(function(){\
+try{window.webkit.messageHandlers.vireo.postMessage('scroll:0:'+Math.max(0,Math.round(window.scrollY)));}catch(_){}},120);},{passive:true});\
 window.addEventListener('blur',function(){setTimeout(function(){\
 var a=document.activeElement;\
 if(a&&a.tagName==='IFRAME'&&a.classList&&a.classList.contains('vireo-frame')&&a.dataset.key){\
