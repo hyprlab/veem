@@ -2082,6 +2082,32 @@ impl SimpleComponent for AppModel {
             widgets.lightbox_picture.add_controller(click);
         }
 
+        // Screenshot showcase (VIREO_DEMO + VIREO_SHOWCASE=/path.png): stage
+        // the demo the way the marketing shots want it — first row (the demo
+        // conversation, expanded via the threads_expanded preference) selected,
+        // one mid-thread card highlighted — then render the window to a PNG.
+        // Timers leave room for the WebViews to load and settle between steps.
+        if demo_mode() {
+            if let Some(shot) = std::env::var("VIREO_SHOWCASE").ok() {
+                let list = model.message_list.sender().clone();
+                gtk::glib::timeout_add_seconds_local_once(3, move || {
+                    let _ = list.send(MessageListInput::MoveSelection(1));
+                });
+                let view = model.message_view.sender().clone();
+                gtk::glib::timeout_add_seconds_local_once(6, move || {
+                    let _ = view.send(crate::ui::message_view::MessageViewInput::CardClicked {
+                        account_id: 1,
+                        id: 2,
+                        mode: crate::ui::message_view::SelectMode::Plain,
+                    });
+                });
+                let win = root.clone();
+                gtk::glib::timeout_add_seconds_local_once(9, move || {
+                    showcase_capture(win.upcast_ref::<gtk::Widget>(), &shot);
+                });
+            }
+        }
+
         // The list header's sort menu (moved out of the message list's own
         // toolbar): a stateful radio action feeding the list's SetSort.
         {
@@ -5176,7 +5202,10 @@ impl AppModel {
         // single-account — its default selection then landed on that account's
         // inbox (possibly inside a collapsed section, so nothing visibly
         // highlighted) instead of the "All Inboxes" the app should open with.
-        let show_unified = self.config.iter().filter(|c| c.enabled).count() > 1;
+        let show_unified = self.config.iter().filter(|c| c.enabled).count() > 1
+            // The demo has no config-file accounts, but its two mock accounts
+            // deserve the same All Inboxes opening as a real multi-account setup.
+            || (demo_mode() && self.accounts.len() > 1);
         let unified_unread = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
         self.sidebar.emit(SidebarInput::SetContents {
             sections,
@@ -7933,6 +7962,35 @@ fn focus_matches(window: &adw::ApplicationWindow, include_web_view: bool) -> boo
 /// `VIREO_DEMO` is set, so removing all real accounts leaves the app blank.
 fn demo_mode() -> bool {
     std::env::var_os("VIREO_DEMO").is_some()
+}
+
+/// Render the window's widget tree to a PNG at 2x (crisp text for marketing
+/// shots). Content only — the compositor's shadow/frame is not part of the
+/// tree, which is exactly what the site and store screenshots want.
+fn showcase_capture(win: &gtk::Widget, path: &str) {
+    let (w, h) = (win.width(), win.height());
+    if w == 0 || h == 0 {
+        tracing::error!("showcase: window not realized");
+        return;
+    }
+    let paintable = gtk::WidgetPaintable::new(Some(win));
+    let snapshot = gtk::Snapshot::new();
+    snapshot.scale(2.0, 2.0);
+    gtk::prelude::PaintableExt::snapshot(&paintable, &snapshot, w as f64, h as f64);
+    let Some(node) = snapshot.to_node() else {
+        tracing::error!("showcase: nothing to render");
+        return;
+    };
+    let Some(renderer) = win.native().and_then(|n| n.renderer()) else {
+        tracing::error!("showcase: no renderer");
+        return;
+    };
+    let rect = gtk::graphene::Rect::new(0.0, 0.0, (w * 2) as f32, (h * 2) as f32);
+    let texture = renderer.render_texture(&node, Some(&rect));
+    match texture.save_to_png(path) {
+        Ok(()) => tracing::info!("showcase: saved {path}"),
+        Err(e) => tracing::error!("showcase: could not save {path}: {e}"),
+    }
 }
 
 /// What [`reconcile_goa`] changed: accounts dropped outright (their GOA account
