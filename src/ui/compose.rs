@@ -23,19 +23,13 @@ fn sig_html(sig: &str) -> String {
     format!("<div class=\"vireo-sig\"><br>-- <br>{body}</div>")
 }
 
-/// Fixed height (px) of the editor area when the pane is shown inline in the
-/// reader. Inline the body scrolls internally at this height; windowed, the
-/// editor fills the window instead.
-const INLINE_EDITOR_HEIGHT: i32 = 300;
-
-/// Size the pane for its host: inline it must NOT vexpand (nothing imposes a
-/// definite height in the reader's drop-down, so an expanding editor would grab
-/// the whole window), so pin the editor to a fixed height and let it scroll.
-/// Windowed, restore vexpand so the editor fills the window.
-fn size_for_host(root: &adw::ToolbarView, editor_holder: &gtk::Box, windowed: bool) {
-    root.set_vexpand(windowed);
-    editor_holder.set_vexpand(windowed);
-    editor_holder.set_height_request(if windowed { -1 } else { INLINE_EDITOR_HEIGHT });
+/// Size the pane for its host. Both hosts impose a definite height now — the
+/// reader-covering overlay inline (it fills the whole pane), the window itself
+/// popped out — so the editor always expands to fill whatever it is given.
+fn size_for_host(root: &adw::ToolbarView, editor_holder: &gtk::Box, _windowed: bool) {
+    root.set_vexpand(true);
+    editor_holder.set_vexpand(true);
+    editor_holder.set_height_request(-1);
 }
 
 /// Set the inline/window toggle button's icon + tooltip for the current host.

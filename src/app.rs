@@ -930,7 +930,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Edit this message"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::EditCurrentOutbox),
@@ -940,7 +941,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Try to send this message now"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::SendCurrentOutbox),
@@ -949,7 +951,8 @@ impl SimpleComponent for AppModel {
                                     set_label: "Send all",
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::RetryAllOutbox),
                                 },
                                 pack_start = &gtk::Button {
@@ -957,7 +960,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Reply"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     // In a conversation these act on the one
                                     // highlighted card; with none (or several)
                                     // highlighted they grey out — no way to say
@@ -971,7 +975,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Reply All"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     #[watch]
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ReplyAll),
@@ -981,7 +986,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Forward"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     #[watch]
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Forward),
@@ -989,7 +995,8 @@ impl SimpleComponent for AppModel {
                                 pack_start = &gtk::Button {
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     #[watch]
                                     set_icon_name: if model.reply_target().is_some_and(|m| m.unread) {
                                         "co.hyprlab.Vireo-mail-read-symbolic"
@@ -1010,7 +1017,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Flag"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     #[watch]
                                     set_icon_name: if model.reply_target().is_some_and(|m| m.starred) {
                                         "co.hyprlab.Vireo-starred-symbolic"
@@ -1026,7 +1034,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Add sender to Contacts"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     #[watch]
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::AddToContacts),
@@ -1039,7 +1048,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Open Contacts"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::OpenContacts),
                                 },
                                 // pack_end fills right-to-left, so these are declared
@@ -1050,6 +1060,10 @@ impl SimpleComponent for AppModel {
                                     set_icon_name: "co.hyprlab.Vireo-verified-checkmark-symbolic",
                                     add_css_class: "flat",
                                     add_css_class: "image-button",
+                                    // Composing clears the whole toolbar — only
+                                    // the window decorations stay.
+                                    #[watch]
+                                    set_visible: model.reader_compose.is_none(),
                                     // Always on screen so the toolbar's icons never
                                     // shift; greyed out like its neighbours until a
                                     // verdict for the open message has arrived.
@@ -1118,7 +1132,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Print Preview (Ctrl+Shift+P)"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     // The preview, not the print dialog: the button
@@ -1131,7 +1146,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Mark as Spam"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     #[watch]
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::MarkSpam),
@@ -1142,7 +1158,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some(&model.delete_tooltip()),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.reader_actions_collapsed,
+                                    set_visible: !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     #[watch]
                                     set_sensitive: model.reply_target().is_some()
                                         || model.list_selection.len() > 1,
@@ -1153,7 +1170,8 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Archive"),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
+                                        && model.reader_compose.is_none(),
                                     #[watch]
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Archive),
@@ -1164,7 +1182,8 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_spinning: model.attachments_loading,
                                     #[watch]
-                                    set_visible: model.attachments_loading,
+                                    set_visible: model.attachments_loading
+                                        && model.reader_compose.is_none(),
                                 },
                             },
                             // Reader content: the inline reply/forward pane drops
@@ -5901,6 +5920,9 @@ impl AppModel {
         let (id, init) = self.build_compose_init(account_id, prefill, false, true);
         let controller = self.spawn_compose(init, sender);
         let widget = controller.widget();
+        // Composing clears the reader toolbar too (decorations excepted); the
+        // ⋯ overflow is managed by hand, so hide it by hand.
+        self.reader_overflow_btn.set_visible(false);
         // Fill the pane and paint an opaque surface: the composer covers the
         // reader completely, rather than dropping down as a partial panel.
         widget.set_vexpand(true);
@@ -5928,6 +5950,7 @@ impl AppModel {
                 self.reader_compose_revealer.set_reveal_child(false);
                 self.reader_compose_revealer.set_can_target(false);
                 self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
+                self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 r.controller.emit(ComposeInput::SaveDraftIfDirty);
                 self.draining_composers.push((r.id, r.controller));
             }
@@ -5951,6 +5974,7 @@ impl AppModel {
                 self.reader_compose_revealer.set_reveal_child(false);
                 self.reader_compose_revealer.set_can_target(false);
                 self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
+                self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 let window = self.compose_window_host(&widget, id, sender);
                 r.window = Some(window);
                 r.controller.emit(ComposeInput::SetWindowed(true));
@@ -5962,6 +5986,7 @@ impl AppModel {
                 widget.set_vexpand(true);
                 widget.set_hexpand(true);
                 widget.add_css_class("inline-compose-surface");
+                self.reader_overflow_btn.set_visible(false);
                 self.reader_compose_revealer.set_child(Some(&widget));
                 self.reader_compose_revealer.set_can_target(true);
                 self.reader_compose_revealer.set_reveal_child(true);
