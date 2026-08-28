@@ -7769,12 +7769,16 @@ fn install_scheme_css() {
         );
     }
     let apply = move |provider: &gtk::CssProvider, dark: bool| {
-        // Dark keeps the stylesheet's 0.3 / 0.5; light runs well lighter.
-        let (sel, focus) = if dark { (0.3, 0.5) } else { (0.17, 0.29) };
+        // The selection is the GNOME accent itself, with high-contrast white
+        // text so it stands out boldly on light mode; dark mode runs the
+        // accent at half strength (its text is already light). The unfocused
+        // state is a step dimmer in both, so the highlight still recedes —
+        // never vanishes — when focus moves to the reader.
+        let (sel, focus) = if dark { (0.35, 0.5) } else { (0.75, 1.0) };
         let shield = if dark { "#ffca28" } else { "#ff7800" };
         provider.load_from_string(&format!(
             ".message-listbox > row:selected .message-row {{ \
-               background-color: alpha(@accent_bg_color, {sel}); }}\
+               background-color: alpha(@accent_bg_color, {sel}); color: white; }}\
              .message-listbox:focus-within > row:selected .message-row, \
              .message-listbox > row.activatable:selected:hover .message-row, \
              .message-listbox > row.activatable:selected:active .message-row {{ \
