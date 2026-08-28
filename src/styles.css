@@ -560,9 +560,9 @@ headerbar.rail-header {
 }
 
 .unread-dot {
-  min-width: 8px;
-  min-height: 8px;
-  border-radius: 4px;
+  min-width: 10px;
+  min-height: 10px;
+  border-radius: 5px;
   background: @accent_bg_color;
   margin-top: 6px;
 }

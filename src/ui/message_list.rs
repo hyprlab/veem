@@ -50,6 +50,9 @@ pub struct RowInit {
     pub thread_expanded: bool,
     /// The conversation key, set on a thread head so its chevron can toggle it.
     pub thread_key: Option<(u32, String)>,
+    /// The newest member's display time (thread heads only): shown in place of
+    /// the head's own — the row says when the conversation last moved.
+    pub thread_date: Option<String>,
     /// Any message in this conversation is unread (thread heads only) — keeps
     /// the head marked unread while unread replies are hidden beneath it.
     pub thread_unread: bool,
@@ -159,6 +162,8 @@ pub struct MessageRow {
     show_recipient: bool,
     /// Conversation key for the head's expand/collapse toggle.
     thread_key: Option<(u32, String)>,
+    /// Newest member's display time (thread heads only), shown as the row date.
+    thread_date: Option<String>,
     /// Any message in this conversation is unread (heads only).
     thread_unread: bool,
     /// Shared row keys, so a drag from this row can carry the whole selection.
@@ -360,7 +365,7 @@ impl FactoryComponent for MessageRow {
                         add_css_class: "star-icon",
                     },
                     gtk::Label {
-                        set_label: &self.msg.datetime_list(),
+                        set_label: self.thread_date.as_deref().unwrap_or(&self.msg.datetime_list()),
                         set_halign: gtk::Align::End,
                         // Ellipsized so it stops being the row's floor: it is the
                         // one item on this line with no give, and it held the list
@@ -540,6 +545,7 @@ impl FactoryComponent for MessageRow {
             is_thread_child,
             thread_expanded,
             thread_key,
+            thread_date,
             thread_unread,
             drag_keys,
             show_recipient,
@@ -561,6 +567,7 @@ impl FactoryComponent for MessageRow {
             is_thread_child,
             thread_expanded,
             thread_key,
+            thread_date,
             thread_unread,
             drag_keys,
         };
@@ -2432,6 +2439,9 @@ impl MessageList {
             expanded: bool,
             key: Option<(u32, String)>,
             unread: bool,
+            /// The newest member's display time (thread heads only): the head
+            /// row says when the conversation last moved, not when it began.
+            latest: Option<String>,
         }
         let mut shown: Vec<Message> = Vec::new();
         let mut metas: Vec<RowMeta> = Vec::new();
@@ -2458,6 +2468,12 @@ impl MessageList {
                 }
                 self.thread_members.insert(key.clone(), members);
             }
+            // The head is the thread's *oldest* message (see the sort above),
+            // but its row should say when the conversation last moved — so the
+            // newest member's time is carried alongside for display.
+            let latest = (count > 1)
+                .then(|| msgs.last().map(|m| m.datetime_list()))
+                .flatten();
             let mut it = msgs.into_iter();
             let head = it.next().unwrap();
             shown.push(head);
@@ -2467,6 +2483,7 @@ impl MessageList {
                 expanded,
                 key: if count > 1 { Some(key.clone()) } else { None },
                 unread: any_unread,
+                latest,
             });
             if expanded {
                 for child in it {
@@ -2477,6 +2494,7 @@ impl MessageList {
                         expanded: false,
                         key: None,
                         unread: false,
+                        latest: None,
                     });
                 }
             }
@@ -2517,6 +2535,7 @@ impl MessageList {
                     is_thread_child: meta.is_child,
                     thread_expanded: meta.expanded,
                     thread_key: meta.key,
+                    thread_date: meta.latest,
                     thread_unread: meta.unread,
                     drag_keys: self.drag_keys.clone(),
                     show_recipient: self.show_recipient,
