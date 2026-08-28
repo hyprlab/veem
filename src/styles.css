@@ -927,13 +927,14 @@ headerbar.rail-header {
 .attachment-drawer {
   background: alpha(currentColor, 0.03);
 }
-/* The drawer's divider is invisible — no line, no grip. opacity:0 rather
-   than clearing individual properties: whatever the theme draws inside the
-   separator node, none of it renders, while the slim strip stays grabbable.
-   Dragging resizes the drawer while it is expanded; while collapsed the
-   separator is untargetable (set_divider_draggable). */
+/* The drawer's divider draws no line or grip of its own: it wears the
+   drawer's exact tint, so the grabbable strip reads as the drawer's own top
+   edge rather than a band of window ground showing through. Dragging resizes
+   the drawer while it is expanded; while collapsed the separator is
+   untargetable (set_divider_draggable). */
 .drawer-split > separator {
-  opacity: 0;
+  border: none;
+  background: alpha(currentColor, 0.03);
   min-height: 6px;
 }
 .attachment-drawer-header {
