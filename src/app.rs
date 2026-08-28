@@ -491,6 +491,8 @@ pub enum AppMsg {
     CardAction { action: RowAction, message: Box<Message> },
     /// A card's "Add sender to Contacts" button.
     CardContact(Box<Message>),
+    /// The reader toolbar's Mark as Read/Unread toggle for the open message.
+    ToggleReadCurrent,
     /// A bulk action applied to every selected message.
     Bulk { action: BulkAction, messages: Vec<Message> },
     /// Apply the deferred large bulk action (runs after its spinner has painted).
@@ -972,6 +974,26 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Forward),
+                                },
+                                pack_start = &gtk::Button {
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    #[watch]
+                                    set_icon_name: if model.current.as_ref().is_some_and(|m| m.unread) {
+                                        "co.hyprlab.Vireo-mail-read-symbolic"
+                                    } else {
+                                        "co.hyprlab.Vireo-mail-unread-symbolic"
+                                    },
+                                    #[watch]
+                                    set_tooltip_text: Some(if model.current.as_ref().is_some_and(|m| m.unread) {
+                                        "Mark as Read"
+                                    } else {
+                                        "Mark as Unread"
+                                    }),
+                                    #[watch]
+                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleReadCurrent),
                                 },
                                 pack_start = &gtk::Button {
                                     set_tooltip_text: Some("Flag"),
@@ -2781,6 +2803,12 @@ impl SimpleComponent for AppModel {
                         action: other,
                         message: Box::new(m),
                     }),
+                }
+            }
+
+            AppMsg::ToggleReadCurrent => {
+                if let Some(m) = self.current.clone() {
+                    self.set_read(&m, m.unread);
                 }
             }
 
@@ -5076,6 +5104,11 @@ impl AppModel {
                     entry!("Forward", "mail-forward", AppMsg::Forward, acts),
                 ],
                 vec![
+                    if self.current.as_ref().is_some_and(|m| m.unread) {
+                        entry!("Mark as Read", "mail-read", AppMsg::ToggleReadCurrent, acts)
+                    } else {
+                        entry!("Mark as Unread", "mail-unread", AppMsg::ToggleReadCurrent, acts)
+                    },
                     entry!("Add to Contacts", "contact-new", AppMsg::AddToContacts, acts),
                     entry!("Open Contacts", "x-office-address-book", AppMsg::OpenContacts, true),
                     if starred {

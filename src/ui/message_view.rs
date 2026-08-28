@@ -531,6 +531,11 @@ impl Component for MessageView {
                         account_id,
                         id,
                     }),
+                    "toggleread" => open_sender.input(MessageViewInput::CardAction {
+                        action: RowAction::ToggleRead,
+                        account_id,
+                        id,
+                    }),
                     "contact" => {
                         open_sender.input(MessageViewInput::CardContact { account_id, id })
                     }
@@ -1000,10 +1005,15 @@ impl MessageView {
                     acts = if thread.len() > 1 {
                         let key = (m.account_id, m.id);
                         format!(
-                            "<span class=\"vireo-acts\">{}{}{}{}{}{}{}{}</span>",
+                            "<span class=\"vireo-acts\">{}{}{}{}{}{}{}{}{}</span>",
                             card_action_button(key, "reply", "mail-reply-sender-symbolic", "Reply to this message"),
                             card_action_button(key, "replyall", "mail-reply-all-symbolic", "Reply to everyone on this message"),
                             card_action_button(key, "forward", "mail-forward-symbolic", "Forward this message"),
+                            if m.unread {
+                                card_action_button(key, "toggleread", "mail-read-symbolic", "Mark as Read")
+                            } else {
+                                card_action_button(key, "toggleread", "mail-unread-symbolic", "Mark as Unread")
+                            },
                             card_action_button(key, "contact", "contact-new-symbolic", "Add sender to Contacts"),
                             card_action_button(key, "star", "non-starred-symbolic", "Flag this message"),
                             card_action_button(key, "spam", "mail-mark-junk-symbolic", "Mark as Spam"),
