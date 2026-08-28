@@ -150,6 +150,10 @@ pub enum MailRequest {
     PurgeMessages { path: String, uids: Vec<u32> },
     /// Create a new mailbox (folder) at `path`.
     CreateFolder { path: String },
+    /// Undo a move: find the messages (by Message-ID header — their UIDs
+    /// changed in transit) in `path`, where a move just put them, and move
+    /// them back to `dest`, then reload that folder so they reappear.
+    UndoMove { path: String, dest: String, dest_folder_id: u32, message_ids: Vec<String> },
     /// Move/rename a mailbox (drag-and-drop in the sidebar, #51). The server
     /// renames any child hierarchy along with it (RFC 3501 §6.3.5).
     RenameFolder { old_path: String, new_path: String },
@@ -1118,6 +1122,71 @@ async fn run_imap(
                 }
                 // Always signal completion so the UI's bulk spinner clears.
                 emit(WorkerEvent::BulkComplete);
+            }
+
+            MailRequest::UndoMove { path, dest, dest_folder_id, message_ids } => {
+                // Find the moved messages where the move landed them. UIDs
+                // changed in transit; Message-IDs did not.
+                let mut uids: Vec<u32> = Vec::new();
+                let mut failed: Option<String> = None;
+                {
+                    let sess = session.as_mut().unwrap();
+                    if let Err(e) = sess.select(&path).await {
+                        failed = Some(e.to_string());
+                    } else {
+                        for id in &message_ids {
+                            match sess.uid_search(format!("HEADER Message-ID \"{id}\"")).await {
+                                Ok(set) => uids.extend(set),
+                                Err(e) => {
+                                    failed = Some(e.to_string());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    uids.sort_unstable();
+                    uids.dedup();
+                    if failed.is_none() && !uids.is_empty() {
+                        if let Err(e) = move_messages(sess, &path, &uids, &dest).await {
+                            failed = Some(e.to_string());
+                        } else if let Some(c) = cache.as_ref() {
+                            for uid in &uids {
+                                c.delete_message(account_id, &path, *uid);
+                            }
+                        }
+                    }
+                }
+                if let Some(e) = failed {
+                    emit(WorkerEvent::Error {
+                        text: format!("Undo failed: {e}"),
+                        connectivity: false,
+                    });
+                } else if uids.is_empty() {
+                    emit(WorkerEvent::Error {
+                        text: "Undo: the messages are no longer where that move put them."
+                            .to_string(),
+                        connectivity: false,
+                    });
+                } else {
+                    // Reload the restored folder so the messages reappear in
+                    // the list (the app can't restore them optimistically —
+                    // it never learns their new UIDs).
+                    if let Ok(messages) = load_messages_retry(
+                        account_id, &mut session, &account, dest_folder_id, &dest,
+                        &mut use_envelope, cache.as_ref(),
+                    )
+                    .await
+                    {
+                        if let Some(c) = cache.as_ref() {
+                            c.upsert_messages(account_id, &dest, &messages);
+                        }
+                        emit(WorkerEvent::Messages { folder_id: dest_folder_id, messages });
+                    }
+                    emit(WorkerEvent::Notice(match uids.len() {
+                        1 => "Move undone — message restored".to_string(),
+                        n => format!("Move undone — {n} messages restored"),
+                    }));
+                }
             }
 
             MailRequest::PurgeMessages { path, uids } => {
@@ -4780,6 +4849,7 @@ async fn run_pop3(
             // POP3 has no folders beyond the inbox.
             MailRequest::CreateFolder { .. }
             | MailRequest::RenameFolder { .. }
+            | MailRequest::UndoMove { .. }
             | MailRequest::DeleteFolder { .. }
             | MailRequest::SaveDraft { .. } => {
                 emit(WorkerEvent::Error {
@@ -4997,6 +5067,7 @@ async fn run_mock(
             | MailRequest::MarkAllRead { .. }
             | MailRequest::MarkSpam { .. }
             | MailRequest::MoveMessage { .. }
+            | MailRequest::UndoMove { .. }
             | MailRequest::CreateFolder { .. }
             | MailRequest::RenameFolder { .. }
             | MailRequest::DeleteFolder { .. }

@@ -118,6 +118,17 @@ struct ComposeHost {
 /// The reader's inline reply/forward composer. `window` is `Some` only while the
 /// pane has been promoted to a floating window (else it lives in the reader's
 /// drop-down revealer).
+/// One undoable move: where the messages went, and where to put them back.
+struct UndoEntry {
+    account_id: u32,
+    /// Where the move landed them (searched for the Message-IDs).
+    moved_to: String,
+    /// The folder they came from — where undo restores them.
+    restore_to: String,
+    restore_folder_id: u32,
+    message_ids: Vec<String>,
+}
+
 struct ReaderCompose {
     id: u32,
     controller: Controller<Compose>,
@@ -364,6 +375,10 @@ pub struct AppModel {
     /// Every message currently selected (list rows or reader cards), newest
     /// report wins. Lets the toolbar's Delete act on the whole multi-selection.
     list_selection: Vec<(u32, u32)>,
+    /// Undoable moves (delete/archive/spam/drag), newest last. Unlimited:
+    /// entries are a few strings each. Ctrl+Z pops one and asks the worker to
+    /// bring the messages back (found by Message-ID where the move put them).
+    undo_stack: Vec<UndoEntry>,
     /// A draft awaiting its body before opening in the compose editor.
     pending_draft: Option<Message>,
     /// Outstanding bulk MoveMessages requests awaiting a worker `BulkComplete`.
@@ -554,6 +569,8 @@ pub enum AppMsg {
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
     SetListPaletteHover(bool),
     SetComposeInline(bool),
+    /// Ctrl+Z: undo the most recent move/delete.
+    Undo,
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -1541,6 +1558,7 @@ impl SimpleComponent for AppModel {
             popouts: HashMap::new(),
             current_thread: Vec::new(),
             list_selection: Vec::new(),
+            undo_stack: Vec::new(),
             bulk_pending: 0,
             pending_bulk: None,
             pending_purge: None,
@@ -1900,6 +1918,15 @@ impl SimpleComponent for AppModel {
             });
             app.add_action(&quit);
             gtk::prelude::GtkApplicationExt::set_accels_for_action(&app, "app.quit", &["<Ctrl>q"]);
+            // Ctrl+W closes the window only (issue #64): with "run in the
+            // background" on, mail keeps arriving — unlike Ctrl+Q, which
+            // quits outright. GTK's built-in window.close action does
+            // exactly the same as the titlebar's close button.
+            gtk::prelude::GtkApplicationExt::set_accels_for_action(
+                &app,
+                "window.close",
+                &["<Ctrl>w"],
+            );
 
             // Activating the app again — its icon, a notification, or the
             // autostart entry — brings the hidden window back rather than doing
@@ -1979,6 +2006,15 @@ impl SimpleComponent for AppModel {
                 // themselves are switched on.
                 if ctrl && matches!(keyval, gtk::gdk::Key::question | gtk::gdk::Key::slash) {
                     s.input(AppMsg::ShowShortcuts);
+                    return gtk::glib::Propagation::Stop;
+                }
+                // Ctrl+Z: undo the last move/delete. Text fields and the
+                // composer keep it for their own text undo.
+                if ctrl && !shift && keyval == gtk::gdk::Key::z {
+                    if focus_is_text(&window) || focus_in_compose(&window) {
+                        return gtk::glib::Propagation::Proceed;
+                    }
+                    s.input(AppMsg::Undo);
                     return gtk::glib::Propagation::Stop;
                 }
                 if ctrl || state.contains(gtk::gdk::ModifierType::ALT_MASK) {
@@ -3398,6 +3434,23 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::Undo => {
+                let Some(e) = self.undo_stack.pop() else {
+                    self.notifications.emit(NotifyInput::Push {
+                        text: "Nothing to undo".to_string(),
+                        error: false,
+                        connectivity: false,
+                    });
+                    return;
+                };
+                self.send_to(e.account_id, MailRequest::UndoMove {
+                    path: e.moved_to,
+                    dest: e.restore_to,
+                    dest_folder_id: e.restore_folder_id,
+                    message_ids: e.message_ids,
+                });
+            }
+
             AppMsg::SetComposeInline(on) => {
                 if self.compose_inline != on {
                     self.compose_inline = on;
@@ -4720,6 +4773,37 @@ impl AppModel {
             .find(|a| a.id == account_id)
             .map(|a| a.label.clone())
             .unwrap_or_default()
+    }
+
+    /// Record a just-issued move so Ctrl+Z can bring it back. Skips silently
+    /// when nothing identifies the messages (no Message-ID) or the source
+    /// folder can't be named — an unrecordable move simply isn't undoable.
+    fn push_undo(
+        &mut self,
+        account_id: u32,
+        moved_to: &str,
+        restore_to: &str,
+        message_ids: Vec<String>,
+    ) {
+        let ids: Vec<String> = message_ids.into_iter().filter(|i| !i.is_empty()).collect();
+        if ids.is_empty() {
+            return;
+        }
+        let Some(folder_id) = self
+            .folders
+            .get(&account_id)
+            .and_then(|fs| fs.iter().find(|f| f.path == restore_to))
+            .map(|f| f.id)
+        else {
+            return;
+        };
+        self.undo_stack.push(UndoEntry {
+            account_id,
+            moved_to: moved_to.to_string(),
+            restore_to: restore_to.to_string(),
+            restore_folder_id: folder_id,
+            message_ids: ids,
+        });
     }
 
     /// Tell the reader how card actions should show (⋯ toggle / auto on
@@ -6187,6 +6271,7 @@ impl AppModel {
         if src == dest {
             return; // already in that folder
         }
+        self.push_undo(m.account_id, &dest, &src, vec![m.message_id.clone()]);
         self.send_to(m.account_id, MailRequest::MoveMessage { path: src, uid: m.uid, dest });
         self.discard_message(&m);
     }
@@ -6198,7 +6283,7 @@ impl AppModel {
     /// when the drag started in the unified inbox — stays put and is reported
     /// rather than silently dropped.
     fn drop_move(&mut self, dest_account: u32, dest: String, items: Vec<(u32, u32, u32, u32)>) {
-        let mut groups: HashMap<String, Vec<u32>> = HashMap::new();
+        let mut groups: HashMap<String, (Vec<u32>, Vec<String>)> = HashMap::new();
         let mut removed_ids: Vec<u32> = Vec::new();
         let mut foreign = 0usize;
         for (aid, fid, uid, id) in items {
@@ -6222,10 +6307,13 @@ impl AppModel {
             if src == dest {
                 continue; // already in that folder
             }
+            let message_id = cached.as_ref().map(|m| m.message_id.clone()).unwrap_or_default();
             if let Some(m) = &cached {
                 self.discard_message_local(m);
             }
-            groups.entry(src).or_default().push(uid);
+            let slot = groups.entry(src).or_default();
+            slot.0.push(uid);
+            slot.1.push(message_id);
             removed_ids.push(id);
         }
         if foreign > 0 {
@@ -6243,7 +6331,8 @@ impl AppModel {
             return;
         }
         self.bulk_pending += groups.len();
-        for (src, uids) in groups {
+        for (src, (uids, message_ids)) in groups {
+            self.push_undo(dest_account, &dest, &src, message_ids);
             self.send_to(
                 dest_account,
                 MailRequest::MoveMessages { path: src, uids, dest: dest.clone() },
@@ -6681,6 +6770,7 @@ impl AppModel {
             });
             return;
         };
+        self.push_undo(m.account_id, &dest, &src, vec![m.message_id.clone()]);
         self.send_to(m.account_id, MailRequest::MarkSpam { path: src, uid: m.uid, dest });
         self.discard_message(&m);
     }
@@ -7270,8 +7360,10 @@ impl AppModel {
             // Non-removing actions never reach here (handled inline).
             BulkAction::MarkRead | BulkAction::MarkUnread | BulkAction::Flag => return,
         };
-        // (account, source path) → (dest path, uids). dest is per-account.
-        let mut groups: HashMap<(u32, String), (String, Vec<u32>)> = HashMap::new();
+        // (account, source path) → (dest path, uids, Message-IDs for undo).
+        // dest is per-account.
+        let mut groups: HashMap<(u32, String), (String, Vec<u32>, Vec<String>)> =
+            HashMap::new();
         let mut removed_ids = Vec::with_capacity(messages.len());
         let mut missing_dest = false;
         for m in &messages {
@@ -7283,11 +7375,11 @@ impl AppModel {
             if src == dest {
                 continue;
             }
-            groups
+            let slot = groups
                 .entry((m.account_id, src))
-                .or_insert_with(|| (dest, Vec::new()))
-                .1
-                .push(m.uid);
+                .or_insert_with(|| (dest, Vec::new(), Vec::new()));
+            slot.1.push(m.uid);
+            slot.2.push(m.message_id.clone());
             self.discard_message_local(m);
             removed_ids.push(m.id);
         }
@@ -7299,7 +7391,8 @@ impl AppModel {
             });
         }
         self.bulk_pending += groups.len();
-        for ((account_id, src), (dest, uids)) in groups {
+        for ((account_id, src), (dest, uids, message_ids)) in groups {
+            self.push_undo(account_id, &dest, &src, message_ids);
             self.send_to(account_id, MailRequest::MoveMessages { path: src, uids, dest });
         }
         self.message_list.emit(MessageListInput::RemoveMany(removed_ids));
@@ -7734,8 +7827,11 @@ const SHORTCUT_HELP: &[(&str, &[(&str, &str)])] = &[
         &[
             ("c", "Compose"),
             ("Esc", "Back out of a reply and return to the list"),
+            ("Ctrl+Z", "Undo the last move or delete"),
             ("Ctrl+P", "Print the message you are reading"),
             ("Ctrl+Shift+P", "Preview it as a PDF first"),
+            ("Ctrl+W", "Close the window (background sync keeps running)"),
+            ("Ctrl+Q", "Quit Vireo entirely"),
             ("?", "This list"),
         ],
     ),
@@ -7753,6 +7849,19 @@ fn focus_takes_keys(window: &adw::ApplicationWindow) -> bool {
 /// a search field it means "clear the search", which is the field's business.
 fn focus_is_text(window: &adw::ApplicationWindow) -> bool {
     focus_matches(window, false)
+}
+
+/// Whether keyboard focus sits inside a composer — whose editor must keep
+/// Ctrl+Z for its own text undo.
+fn focus_in_compose(window: &adw::ApplicationWindow) -> bool {
+    let mut w = gtk::prelude::GtkWindowExt::focus(window);
+    while let Some(cur) = w {
+        if cur.has_css_class("compose-pane") || cur.has_css_class("inline-compose-surface") {
+            return true;
+        }
+        w = cur.parent();
+    }
+    false
 }
 
 fn focus_matches(window: &adw::ApplicationWindow, include_web_view: bool) -> bool {
