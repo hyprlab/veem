@@ -6936,7 +6936,7 @@ impl AppModel {
         page.append(&links);
 
         // Contributors — people outside Hyprlab whose patches are in the app.
-        let thanks_title = gtk::Label::new(Some("Thanks"));
+        let thanks_title = gtk::Label::new(Some("Special thanks to these contributors"));
         thanks_title.add_css_class("heading");
         thanks_title.set_halign(gtk::Align::Start);
         thanks_title.set_margin_top(20);
