@@ -34,8 +34,7 @@
 
 /* Icon-only rail: tighten the sidebar header's padding so it stops forcing the
    rail wider than SIDEBAR_RAIL_WIDTH. The menu button keeps its normal size —
-   Compose used to share this header and the two together needed shrinking to
-   fit; alone, the button has room to spare in the 80px rail. */
+   alone, it has room to spare in the 80px rail. */
 headerbar.rail-header {
   padding-left: 2px;
   padding-right: 2px;
@@ -233,6 +232,19 @@ headerbar.rail-header {
 
 .folder-icon {
   opacity: 0.75;
+}
+
+/* The sidebar's Compose row: an accent-coloured pill button, inset from the
+   row edges and narrower than the rows below it, so it stands out as an
+   action rather than reading as another entry in the folder list. */
+.compose-row-btn {
+  margin: 6px 14px;
+  padding: 8px 12px;
+  border-radius: 9px;
+}
+
+.compose-row-btn label {
+  font-weight: 600;
 }
 
 /* Subtle "+ Add Folder" button under each account's folder list, aligned with
@@ -840,20 +852,7 @@ headerbar.rail-header {
   background: transparent;
 }
 
-/* ---- Sidebar footer / reorder ---- */
-
-.sidebar-footer {
-  padding: 4px 6px;
-  border-top: 1px solid alpha(currentColor, 0.08);
-}
-
-/* The footer's expand/collapse toggle: a standard icon button, right-aligned
-   in the footer when the sidebar is expanded and centred (by halign) when it
-   is a rail. */
-.sidebar-collapse-btn {
-  padding: 6px 8px;
-  min-width: 0;
-}
+/* ---- Sidebar reorder ---- */
 
 .reorder-row {
   padding: 10px 8px;

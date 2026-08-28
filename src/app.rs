@@ -411,6 +411,8 @@ pub enum AppMsg {
     FolderNodeCollapsed { account_id: u32, path: String, collapsed: bool },
     ToggleCustomFolders(u32),
     SidebarCollapsed(bool),
+    /// The header's collapse/expand toggle (beside the hamburger) was clicked.
+    ToggleSidebarCollapse,
     /// The narrow-window breakpoint applied/unapplied — collapse the sidebar to
     /// its icon rail (and restore it) without touching the user's preference.
     AutoRail(bool),
@@ -808,14 +810,17 @@ impl SimpleComponent for AppModel {
                                     set_ellipsize: gtk::pango::EllipsizeMode::End,
                                     add_css_class: "pane-title",
                                 },
-                                // Compose leads this header: it is the window's
-                                // primary action and sits directly above the list
-                                // of messages it adds to.
+                                #[name = "sidebar_collapse_btn"]
                                 pack_start = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-mail-message-new-symbolic",
-                                    set_tooltip_text: Some("Compose"),
-                                    add_css_class: "suggested-action",
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::Compose),
+                                    set_icon_name: "co.hyprlab.Vireo-sidebar-show-symbolic",
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_tooltip_text: Some(if model.rail_active {
+                                        "Expand sidebar"
+                                    } else {
+                                        "Collapse sidebar"
+                                    }),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleSidebarCollapse),
                                 },
                                 pack_start = &gtk::Button {
                                     set_tooltip_text: Some("Status Bar"),
@@ -845,12 +850,6 @@ impl SimpleComponent for AppModel {
                                             add_css_class: "needs-attention",
                                         },
                                     },
-                                },
-                                pack_start = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
-                                    set_tooltip_text: Some("Open Contacts"),
-                                    add_css_class: "flat",
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::OpenContacts),
                                 },
                                 pack_end = &gtk::Button {
                                     set_tooltip_text: Some("Refresh"),
@@ -977,6 +976,14 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_sensitive: model.current.is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::AddToContacts),
+                                },
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
+                                    set_tooltip_text: Some("Open Contacts"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::OpenContacts),
                                 },
                                 pack_start = &gtk::Button {
                                     set_tooltip_text: Some("Flag"),
@@ -1323,6 +1330,7 @@ impl SimpleComponent for AppModel {
             .launch(SidebarInit { collapsed: icon_only, show_attachments })
             .forward(sender.input_sender(), |out| match out {
                 SidebarOutput::UnifiedSelected => AppMsg::UnifiedSelected,
+                SidebarOutput::ComposeClicked => AppMsg::Compose,
                 SidebarOutput::AttachmentsSelected => AppMsg::ShowAttachments,
                 SidebarOutput::OutboxSelected => AppMsg::ShowOutbox,
                 SidebarOutput::FolderSelected { account_id, folder_id, name, path } => {
@@ -1330,7 +1338,6 @@ impl SimpleComponent for AppModel {
                 }
                 SidebarOutput::ToggleCollapse(id) => AppMsg::ToggleCollapse(id),
                 SidebarOutput::ToggleCustomFolders(id) => AppMsg::ToggleCustomFolders(id),
-                SidebarOutput::CollapsedChanged(collapsed) => AppMsg::SidebarCollapsed(collapsed),
                 SidebarOutput::FolderNodeCollapsed { account_id, path, collapsed } => {
                     AppMsg::FolderNodeCollapsed { account_id, path, collapsed }
                 }
@@ -2251,6 +2258,12 @@ impl SimpleComponent for AppModel {
                     self.compact_sidebar_header(collapsed);
                     self.save_sidebar_state();
                 }
+            }
+
+            AppMsg::ToggleSidebarCollapse => {
+                let collapsed = !self.rail_active;
+                self.sidebar.emit(SidebarInput::SetCollapsed(collapsed));
+                sender.input(AppMsg::SidebarCollapsed(collapsed));
             }
 
             AppMsg::AutoRail(on) => {
@@ -4562,7 +4575,6 @@ impl AppModel {
         self.sidebar_peek = false;
         self.sidebar_collapsed = false;
         self.rail_active = false;
-        self.sidebar.emit(SidebarInput::SetPeeking(false));
         self.sidebar.emit(SidebarInput::SetCollapsed(false));
         self.peek_transition.set(true);
         split.set_collapsed(false);
@@ -4612,7 +4624,7 @@ impl AppModel {
     /// Open or close the narrow-window sidebar *peek*: the expanded sidebar
     /// floating above the panes as an overlay (the split view's collapsed
     /// mode), so neither the message list nor the reader is resized. `sync_rows`
-    /// also switches the sidebar component's rows — the sidebar's own toggle
+    /// also switches the sidebar component's rows — the header's own toggle
     /// button has already done that itself, an outside dismissal has not.
     fn set_sidebar_peek(&mut self, open: bool, sync_rows: bool, animate: bool) {
         let Some(split) = self.sidebar_split.clone() else { return };
@@ -4646,9 +4658,6 @@ impl AppModel {
             if sync_rows {
                 self.sidebar.emit(SidebarInput::SetCollapsed(false));
             }
-            // The footer toggle holds the rail's spot while floating, like
-            // the hamburger above it.
-            self.sidebar.emit(SidebarInput::SetPeeking(true));
             self.peek_sidebar_header();
             split.set_min_sidebar_width(280.0);
             split.set_max_sidebar_width(280.0);
@@ -4683,7 +4692,6 @@ impl AppModel {
                 let ghost = self.peek_rail_ghost.clone();
                 move || {
                     close_timer.borrow_mut().take();
-                    let _ = sidebar_sender.send(SidebarInput::SetPeeking(false));
                     if sync_rows {
                         let _ = sidebar_sender.send(SidebarInput::SetCollapsed(true));
                     }
@@ -4982,6 +4990,7 @@ impl AppModel {
                 ],
                 vec![
                     entry!("Add to Contacts", "contact-new", AppMsg::AddToContacts, has_current),
+                    entry!("Open Contacts", "x-office-address-book", AppMsg::OpenContacts, true),
                     if starred {
                         entry!("Remove Flag", "non-starred", AppMsg::ToggleStar, has_current)
                     } else {

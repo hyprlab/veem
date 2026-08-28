@@ -102,9 +102,6 @@ pub struct Sidebar {
     selected: Sel,
     /// Icon-only mode: hide all text, show just icons and account pills.
     collapsed: bool,
-    /// The floating hover-peek is on screen (rows expanded, toggle held at
-    /// the rail's spot).
-    peeking: bool,
     /// Whether the "Attachments" row is shown.
     show_attachments: bool,
     /// How many messages are waiting in the Outbox across all accounts. The row
@@ -153,15 +150,9 @@ pub enum SidebarInput {
     /// Toggle the "All Inboxes" per-account inbox sub-list.
     ToggleUnifiedExpand,
     ToggleCollapseLocal(u32),
-    /// Set icon-only mode outright (the app's narrow-window breakpoint) —
-    /// unlike ToggleCollapsed this never reports CollapsedChanged, so it can't
-    /// overwrite the user's own persisted choice.
+    /// Set icon-only mode (the user's own toggle or the app's narrow-window
+    /// breakpoint both drive this — the app owns the persisted preference).
     SetCollapsed(bool),
-    /// The floating hover-peek is on screen: rows are expanded, but the
-    /// expand/collapse toggle holds the rail's spot (like the hamburger in
-    /// the header) so it doesn't jump under an approaching cursor. Cleared
-    /// when the peek closes or is pinned into the normal expanded pane.
-    SetPeeking(bool),
     /// Toggle the collapsible "Folders" (custom folders) section for an account.
     ToggleCustomFoldersLocal(u32),
     /// Collapse/expand one folder-tree node (a parent folder's chevron, #51).
@@ -169,7 +160,6 @@ pub enum SidebarInput {
     /// A custom-folder row was clicked (fires every click, selected or not):
     /// parents toggle their sub-tree without needing the caret.
     FolderRowActivated { account_id: u32, index: i32 },
-    ToggleCollapsed,
     /// Show or hide the "Attachments" row.
     SetShowAttachments(bool),
     /// How many messages are waiting to be sent; 0 hides the Outbox row.
@@ -194,6 +184,8 @@ pub enum SidebarOutput {
     /// A folder was dropped onto a new parent ("" = the account's top level).
     MoveFolder { account_id: u32, path: String, dest: String },
     UnifiedSelected,
+    /// The "Compose" row was clicked.
+    ComposeClicked,
     /// The attachments gallery was selected.
     AttachmentsSelected,
     OutboxSelected,
@@ -206,8 +198,6 @@ pub enum SidebarOutput {
     ToggleCollapse(u32),
     /// The user toggled the collapsible custom-folders section for an account.
     ToggleCustomFolders(u32),
-    /// The user toggled icon-only mode; `true` means collapsed.
-    CollapsedChanged(bool),
     /// The empty-state "Add first account" button was clicked.
     AddAccount,
     /// A right-click context-menu action from a sidebar item.
@@ -280,25 +270,6 @@ impl Component for Sidebar {
                 },
             },
 
-            gtk::Box {
-                add_css_class: "sidebar-footer",
-                set_orientation: gtk::Orientation::Horizontal,
-
-                #[name = "collapse_btn"]
-                gtk::Button {
-                    set_icon_name: "co.hyprlab.Vireo-sidebar-show-symbolic",
-                    set_tooltip_text: Some("Collapse sidebar"),
-                    // A standard icon button, not a full-width strip:
-                    // right-aligned in the footer when expanded, centred like
-                    // the rail icons when collapsed (see the halign switches
-                    // alongside the tooltip updates).
-                    set_hexpand: true,
-                    set_halign: gtk::Align::End,
-                    add_css_class: "flat",
-                    add_css_class: "sidebar-collapse-btn",
-                    connect_clicked => SidebarInput::ToggleCollapsed,
-                },
-            },
         }
     }
 
@@ -337,7 +308,6 @@ impl Component for Sidebar {
             color_provider,
             selected: Sel::None,
             collapsed: init.collapsed,
-            peeking: false,
             show_attachments: init.show_attachments,
             outbox_count: 0,
             unified_unread: 0,
@@ -364,11 +334,6 @@ impl Component for Sidebar {
         {
             viewport.set_scroll_to_focus(false);
         }
-        if init.collapsed {
-            widgets.collapse_btn.set_tooltip_text(Some("Expand sidebar"));
-            align_collapse_btn(&widgets.collapse_btn, true, false);
-        }
-
         ComponentParts { model, widgets }
     }
 
@@ -588,39 +553,14 @@ impl Component for Sidebar {
             }
 
             SidebarInput::SetCollapsed(collapsed) => {
-                // Driven by the app's narrow-window breakpoint: same visual
-                // change as the user's own toggle, but no CollapsedChanged
-                // output — automatic switches must not overwrite the user's
-                // persisted preference.
+                // Driven by the app: either the header's collapse toggle or
+                // the narrow-window breakpoint — the app owns the persisted
+                // preference either way, so there is nothing to report back.
                 if self.collapsed != collapsed {
                     self.collapsed = collapsed;
-                    align_collapse_btn(&widgets.collapse_btn, self.collapsed, self.peeking);
-                    widgets.collapse_btn.set_tooltip_text(Some(if self.collapsed {
-                        "Expand sidebar"
-                    } else {
-                        "Collapse sidebar"
-                    }));
                     self.rebuild_normal(&widgets.normal_box, &sender);
                     self.restore_selection();
                 }
-            }
-
-            SidebarInput::SetPeeking(on) => {
-                self.peeking = on;
-                align_collapse_btn(&widgets.collapse_btn, self.collapsed, self.peeking);
-            }
-
-            SidebarInput::ToggleCollapsed => {
-                self.collapsed = !self.collapsed;
-                align_collapse_btn(&widgets.collapse_btn, self.collapsed, self.peeking);
-                widgets.collapse_btn.set_tooltip_text(Some(if self.collapsed {
-                    "Expand sidebar"
-                } else {
-                    "Collapse sidebar"
-                }));
-                self.rebuild_normal(&widgets.normal_box, &sender);
-                self.restore_selection();
-                let _ = sender.output(SidebarOutput::CollapsedChanged(self.collapsed));
             }
 
             SidebarInput::ToggleCollapseLocal(id) => {
@@ -1095,6 +1035,34 @@ impl Sidebar {
                 self.unified_revealer = Some(revealer);
                 self.unified_inbox_list = Some(sub);
             }
+        }
+
+        // "Compose" row — the window's primary action. An action button, not a
+        // navigation destination, so it is a plain Button (not a ListBox row):
+        // clicking it opens a compose window without changing what is selected.
+        // Accent-coloured and inset from the row edges (see `.compose-row-btn`
+        // in the stylesheet) so it reads as a button, not another folder row.
+        {
+            let compose_btn = gtk::Button::new();
+            compose_btn.add_css_class("suggested-action");
+            compose_btn.add_css_class("compose-row-btn");
+            let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            hbox.set_halign(gtk::Align::Center);
+            let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-message-new-symbolic");
+            if self.collapsed {
+                compose_btn.set_tooltip_text(Some("Compose"));
+                hbox.append(&img);
+            } else {
+                hbox.append(&img);
+                let label = gtk::Label::new(Some("Compose"));
+                hbox.append(&label);
+            }
+            compose_btn.set_child(Some(&hbox));
+            let cs = sender.clone();
+            compose_btn.connect_clicked(move |_| {
+                let _ = cs.output(SidebarOutput::ComposeClicked);
+            });
+            container.append(&compose_btn);
         }
 
         // "Attachments" row — a gallery of every inbox attachment. Sits under the
@@ -1901,22 +1869,6 @@ fn hidden_by_collapse(
     collapsed.iter().any(|p| path_is_under(path, p))
 }
 
-/// Place the footer's expand/collapse toggle: right-aligned in the expanded
-/// sidebar, centred on the rail, and — while the floating hover-peek is up —
-/// held at the rail's spot (left, centred over the rail's 80px strip, less
-/// the footer's 6px padding) so it doesn't jump under an approaching cursor,
-/// matching the header's hamburger. Right alignment returns only when the
-/// sidebar is pinned into the real expanded pane.
-fn align_collapse_btn(btn: &gtk::Button, collapsed: bool, peeking: bool) {
-    if peeking {
-        btn.set_halign(gtk::Align::Start);
-        let w = btn.width().max(32);
-        btn.set_margin_start((((80 - w) / 2) - 6).max(0));
-    } else {
-        btn.set_margin_start(0);
-        btn.set_halign(if collapsed { gtk::Align::Center } else { gtk::Align::End });
-    }
-}
 
 /// Pop up a right-click context menu of `items` anchored at (x, y) in
 /// `parent`, styled to GNOME HIG (sized to content, no scrollbar).
