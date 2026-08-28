@@ -178,6 +178,9 @@ pub enum MessageViewInput {
     },
     /// The card's "Add sender to Contacts" button.
     CardContact { account_id: u32, id: u32 },
+    /// A conversation message was read: clear its card's unread dot in place,
+    /// without reloading the document.
+    ClearDot { account_id: u32, id: u32 },
     /// The wrapper document reported its scroll anchor (throttled): the card at
     /// the viewport top and the offset into it — kept so a re-render can put
     /// the reader back where they were.
@@ -821,6 +824,18 @@ impl Component for MessageView {
                         message: Box::new(m.clone()),
                     });
                 }
+            }
+            MessageViewInput::ClearDot { account_id, id } => {
+                for m in self.thread.iter_mut() {
+                    if m.account_id == account_id && m.id == id {
+                        m.unread = false;
+                    }
+                }
+                let js = format!(
+                    "(function(){{var d=document.querySelector('.vireo-dot[data-key=\"{account_id}:{id}\"]');if(d)d.remove();}})()"
+                );
+                self.webview
+                    .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |_| {});
             }
             MessageViewInput::ScrollAnchor { account_id, id, offset } => {
                 self.saved_anchor = Some((account_id, id, offset));
@@ -2624,8 +2639,10 @@ if(f.dataset.key&&f._h!==h){f._h=h;\
 try{window.webkit.messageHandlers.vireo.postMessage('size:'+f.dataset.key+':'+h);}catch(_){}}}\
 else{f.style.height=prev;h=old;}\
 if(sy>0)window.scrollTo(0,above?sy+(h-old):sy);\
+chase();pin();\
 }catch(_){}finally{f._s=0;}}\
-function pick(k,e){var mo=e.shiftKey?'r':((e.ctrlKey||e.metaKey)?'t':'p');\
+function pick(k,e){reportPos();\
+var mo=e.shiftKey?'r':((e.ctrlKey||e.metaKey)?'t':'p');\
 if(mo!=='p'){try{e.preventDefault();\
 var g=(e.view&&e.view.getSelection)?e.view.getSelection():null;if(g)g.removeAllRanges();}catch(_){}}\
 else{try{var t=(e.view&&e.view.getSelection)?e.view.getSelection():null;\
@@ -2678,12 +2695,13 @@ try{window.webkit.messageHandlers.vireo.postMessage('ready:0:0');}catch(_){}\
 var bd=document.body.dataset;\
 if(bd.vireoNoscroll){var a=(bd.vireoAnchor||'').split(':');\
 if(a.length===3){var el=document.querySelector('.vireo-msg[data-key=\"'+a[0]+':'+a[1]+'\"]');\
-if(el)setTimeout(function(){try{var r=el.getBoundingClientRect();\
-window.scrollTo(0,window.scrollY+r.top+parseInt(a[2],10));}catch(_){}},0);}return;}\
+if(el){hold={el:el,off:parseInt(a[2],10)||0};\
+if(el.querySelector('.vireo-dot'))follow=el;\
+setTimeout(pin,0);}}return;}\
 var ds=document.querySelectorAll('.vireo-msg .vireo-dot');\
 var d=ds.length?ds[ds.length-1]:null;\
 if(d){var m=d.closest('.vireo-msg');\
-if(m)setTimeout(function(){try{m.scrollIntoView({block:'start'});}catch(_){}},0);}}\
+if(m)setTimeout(function(){try{follow=m;m.scrollIntoView({block:'start'});}catch(_){}},0);}}\
 if(!pend)ready();\
 for(var i=0;i<fs.length;i++){(function(f){var counted=false;\
 function tick(){if(counted)return;counted=true;if(--pend<=0)ready();}\
@@ -2710,7 +2728,7 @@ for(var q=0;q<ms.length;q++){ms[q].addEventListener('click',function(e){\
 var k=this.dataset.key;if(k)pick(k,e);});}\
 var as=document.querySelectorAll('.vireo-act');\
 for(var k=0;k<as.length;k++){as[k].addEventListener('click',function(e){\
-e.stopPropagation();e.preventDefault();\
+e.stopPropagation();e.preventDefault();reportPos();\
 try{window.webkit.messageHandlers.vireo.postMessage(this.dataset.act+':'+this.dataset.key);}catch(_){}});\
 as[k].addEventListener('dblclick',function(e){e.stopPropagation();});}\
 });\
@@ -2723,9 +2741,16 @@ if(best&&best.dataset.key){try{window.webkit.messageHandlers.vireo.postMessage(\
 'scrollat:'+best.dataset.key+':'+Math.round(off));}catch(_){}}}\
 window.addEventListener('scroll',function(){clearTimeout(_st);\
 _st=setTimeout(reportPos,120);},{passive:true});\
+var follow=null,hold=null;\
+function chase(){if(!follow)return;try{follow.scrollIntoView({block:'start'});}catch(_){}}\
+function pin(){if(follow||!hold)return;try{var r=hold.el.getBoundingClientRect();\
+var d=Math.round(r.top+hold.off);if(d)window.scrollBy(0,d);}catch(_){}}\
+['wheel','touchstart','mousedown','keydown'].forEach(function(ev){\
+window.addEventListener(ev,function(){follow=null;hold=null;},{passive:true,capture:true});});\
 window.addEventListener('blur',function(){setTimeout(function(){\
 var a=document.activeElement;\
 if(a&&a.tagName==='IFRAME'&&a.classList&&a.classList.contains('vireo-frame')&&a.dataset.key){\
+reportPos();\
 try{window.webkit.messageHandlers.vireo.postMessage('sel:'+a.dataset.key+':p');}catch(_){}\
 try{a.blur();window.focus();}catch(_){}}},0);});";
 

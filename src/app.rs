@@ -7104,7 +7104,13 @@ impl AppModel {
         }
         if in_thread && self.current_thread.len() > 1 {
             if read {
-                self.show_thread();
+                // Reading clears the card's dot — the only visible change, so
+                // it is dropped in place via JS. Reloading the whole document
+                // here made the cards visibly resettle on every click.
+                self.message_view.emit(MessageViewInput::ClearDot {
+                    account_id: m.account_id,
+                    id: m.id,
+                });
             } else {
                 // Marked unread deliberately: the reader keeps the mark until
                 // this conversation is opened afresh, so a message sitting in
