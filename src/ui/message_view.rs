@@ -2618,7 +2618,10 @@ function all(){return document.querySelectorAll('iframe.vireo-frame');}\
 document.addEventListener('DOMContentLoaded',function(){\
 var fs=all();var pend=fs.length,rdy=false;\
 function ready(){if(rdy)return;rdy=true;\
-try{window.webkit.messageHandlers.vireo.postMessage('ready:0:0');}catch(_){}}\
+try{window.webkit.messageHandlers.vireo.postMessage('ready:0:0');}catch(_){}\
+var d=document.querySelector('.vireo-msg .vireo-dot');\
+if(d){var m=d.closest('.vireo-msg');\
+if(m)setTimeout(function(){try{m.scrollIntoView({block:'start'});}catch(_){}},0);}}\
 if(!pend)ready();\
 for(var i=0;i<fs.length;i++){(function(f){var counted=false;\
 function tick(){if(counted)return;counted=true;if(--pend<=0)ready();}\
