@@ -56,10 +56,11 @@ pub struct MessageView {
     /// message: later renders of the same thread (bodies streaming in, a theme
     /// flip) carry a no-scroll stamp so the reader's place is kept.
     did_autoscroll: bool,
-    /// The wrapper document's last reported scroll offset. A re-render replaces
-    /// the whole document (scroll resets to 0), so stamped documents carry this
-    /// and restore it — the reader's place survives the reload.
-    saved_scroll: u32,
+    /// The wrapper document's last reported scroll anchor: the topmost card at
+    /// the viewport top and the offset into it. A re-render replaces the whole
+    /// document (scroll resets to 0) and can reflow everything above — an
+    /// element anchor survives that where a raw pixel offset lands short.
+    saved_anchor: Option<(u32, u32, u32)>,
     /// What each message's frame measured last time it was shown, so reopening a
     /// conversation lays out right away instead of settling into place.
     frame_heights: std::collections::HashMap<(u32, u32), u32>,
@@ -177,9 +178,10 @@ pub enum MessageViewInput {
     },
     /// The card's "Add sender to Contacts" button.
     CardContact { account_id: u32, id: u32 },
-    /// The wrapper document reported its scroll offset (throttled) — kept so a
-    /// re-render can put the reader back where they were.
-    ScrollChanged(u32),
+    /// The wrapper document reported its scroll anchor (throttled): the card at
+    /// the viewport top and the offset into it — kept so a re-render can put
+    /// the reader back where they were.
+    ScrollAnchor { account_id: u32, id: u32, offset: u32 },
 }
 
 /// How a click on a conversation card changes the selection, mirroring what the
@@ -435,7 +437,7 @@ impl Component for MessageView {
             cover_provider,
             shown_fingerprint: None,
             did_autoscroll: false,
-            saved_scroll: 0,
+            saved_anchor: None,
             frame_heights: std::collections::HashMap::new(),
             instant: false,
             selected_cards: Vec::new(),
@@ -552,8 +554,16 @@ impl Component for MessageView {
                     "contact" => {
                         open_sender.input(MessageViewInput::CardContact { account_id, id })
                     }
-                    // "scroll:0:<y>" — the y rides in the id slot.
-                    "scroll" => open_sender.input(MessageViewInput::ScrollChanged(id)),
+                    // "scrollat:<aid>:<id>:<offset>" — the topmost visible card.
+                    "scrollat" => {
+                        if let Some(Ok(offset)) = extra.map(|o| o.parse::<u32>()) {
+                            open_sender.input(MessageViewInput::ScrollAnchor {
+                                account_id,
+                                id,
+                                offset,
+                            });
+                        }
+                    }
                     _ => {}
                 }
             });
@@ -606,7 +616,7 @@ impl Component for MessageView {
                 if !same_message {
                     self.no_autoread.clear();
                     self.did_autoscroll = false;
-                    self.saved_scroll = 0;
+                    self.saved_anchor = None;
                 }
                 self.thread = thread;
                 self.folder_labels = folder_labels;
@@ -812,8 +822,8 @@ impl Component for MessageView {
                     });
                 }
             }
-            MessageViewInput::ScrollChanged(y) => {
-                self.saved_scroll = y;
+            MessageViewInput::ScrollAnchor { account_id, id, offset } => {
+                self.saved_anchor = Some((account_id, id, offset));
             }
             MessageViewInput::CardContact { account_id, id } => {
                 if let Some(m) = self
@@ -905,12 +915,13 @@ impl MessageView {
         // mark; every later render of the same thread (bodies streaming in, a
         // theme change) is stamped no-scroll so the reader's place is kept.
         let html = if self.did_autoscroll {
+            let anchor = self
+                .saved_anchor
+                .map(|(a, i, o)| format!(" data-vireo-anchor=\"{a}:{i}:{o}\""))
+                .unwrap_or_default();
             html.replacen(
                 "<body",
-                &format!(
-                    "<body data-vireo-noscroll=\"1\" data-vireo-scroll=\"{}\"",
-                    self.saved_scroll
-                ),
+                &format!("<body data-vireo-noscroll=\"1\"{anchor}"),
                 1,
             )
         } else {
@@ -993,7 +1004,7 @@ impl MessageView {
     fn conversation_document(
         thread: &[Message],
         folder_labels: &std::collections::HashMap<(u32, u32), String>,
-        no_autoread: &std::collections::HashSet<(u32, u32)>,
+        _no_autoread: &std::collections::HashSet<(u32, u32)>,
         heights: &std::collections::HashMap<(u32, u32), u32>,
         selected: &[(u32, u32)],
         accent: &str,
@@ -1031,7 +1042,7 @@ impl MessageView {
                          {ava}{dot}<span class=\"vireo-from\">{from}</span>{addr}{folder}{rcpt_toggle}\
                          <span class=\"vireo-date\">{date}</span>\
                          {acts}{rcpt}\
-                       </header>{body}{seen_mark}</section>",
+                       </header>{body}</section>",
                     aid = m.account_id,
                     id = m.id,
                     // Per-card actions, only where they earn their keep: a
@@ -1125,17 +1136,11 @@ impl MessageView {
                         None => String::new(),
                     },
                     body = body,
-                    // Unread messages in a conversation are marked, and the mark
-                    // is cleared by reading them: the sentinel below the body
-                    // reports when this message has been scrolled all the way
-                    // through, which is the moment it has actually been read.
+                    // Unread messages in a conversation are marked; the mark
+                    // clears when the user clicks the card to read it —
+                    // scrolling past no longer counts as reading.
                     dot = if m.unread {
                         format!("<span class=\"vireo-dot\" data-key=\"{}:{}\"></span>", m.account_id, m.id)
-                    } else {
-                        String::new()
-                    },
-                    seen_mark = if m.unread && !no_autoread.contains(&(m.account_id, m.id)) {
-                        format!("<div class=\"vireo-end\" data-key=\"{}:{}\"></div>", m.account_id, m.id)
                     } else {
                         String::new()
                     },
@@ -2671,8 +2676,10 @@ var fs=all();var pend=fs.length,rdy=false;\
 function ready(){if(rdy)return;rdy=true;\
 try{window.webkit.messageHandlers.vireo.postMessage('ready:0:0');}catch(_){}\
 var bd=document.body.dataset;\
-if(bd.vireoNoscroll){var y=parseInt(bd.vireoScroll||'0',10);\
-if(y>0)setTimeout(function(){try{window.scrollTo(0,y);}catch(_){}},0);return;}\
+if(bd.vireoNoscroll){var a=(bd.vireoAnchor||'').split(':');\
+if(a.length===3){var el=document.querySelector('.vireo-msg[data-key=\"'+a[0]+':'+a[1]+'\"]');\
+if(el)setTimeout(function(){try{var r=el.getBoundingClientRect();\
+window.scrollTo(0,window.scrollY+r.top+parseInt(a[2],10));}catch(_){}},0);}return;}\
 var d=document.querySelector('.vireo-msg .vireo-dot');\
 if(d){var m=d.closest('.vireo-msg');\
 if(m)setTimeout(function(){try{m.scrollIntoView({block:'start'});}catch(_){}},0);}}\
@@ -2705,18 +2712,16 @@ for(var k=0;k<as.length;k++){as[k].addEventListener('click',function(e){\
 e.stopPropagation();e.preventDefault();\
 try{window.webkit.messageHandlers.vireo.postMessage(this.dataset.act+':'+this.dataset.key);}catch(_){}});\
 as[k].addEventListener('dblclick',function(e){e.stopPropagation();});}\
-var es=document.querySelectorAll('.vireo-end');\
-if(es.length&&window.IntersectionObserver){\
-var io=new IntersectionObserver(function(en,ob){\
-for(var n=0;n<en.length;n++){if(!en[n].isIntersecting)continue;\
-var t=en[n].target,k=t.dataset.key;ob.unobserve(t);\
-var d=document.querySelector('.vireo-dot[data-key=\"'+k+'\"]');if(d)d.remove();\
-try{window.webkit.messageHandlers.vireo.postMessage('seen:'+k);}catch(_){}}});\
-for(var m=0;m<es.length;m++)io.observe(es[m]);}});\
+});\
 window.addEventListener('resize',function(){var fs=all();for(var i=0;i<fs.length;i++)s(fs[i]);});\
-var _st;window.addEventListener('scroll',function(){clearTimeout(_st);\
-_st=setTimeout(function(){\
-try{window.webkit.messageHandlers.vireo.postMessage('scroll:0:'+Math.max(0,Math.round(window.scrollY)));}catch(_){}},120);},{passive:true});\
+var _st;function reportPos(){var ms=document.querySelectorAll('.vireo-msg');\
+var best=null,off=0;\
+for(var i=0;i<ms.length;i++){var r=ms[i].getBoundingClientRect();\
+if(r.top<=1){best=ms[i];off=Math.max(0,-r.top);}else break;}\
+if(best&&best.dataset.key){try{window.webkit.messageHandlers.vireo.postMessage(\
+'scrollat:'+best.dataset.key+':'+Math.round(off));}catch(_){}}}\
+window.addEventListener('scroll',function(){clearTimeout(_st);\
+_st=setTimeout(reportPos,120);},{passive:true});\
 window.addEventListener('blur',function(){setTimeout(function(){\
 var a=document.activeElement;\
 if(a&&a.tagName==='IFRAME'&&a.classList&&a.classList.contains('vireo-frame')&&a.dataset.key){\
@@ -3310,9 +3315,8 @@ mod tests {
         assert!(doc.contains("data-act=\"reply\" data-key=\"1:2\""), "{doc}");
     }
 
-    /// An unread message in a conversation is marked, and carries the sentinel
-    /// that reports when it has been scrolled through. A message already read
-    /// carries neither — otherwise every re-render would re-mark it.
+    /// An unread message in a conversation is marked with its dot; reading is
+    /// click-driven now, so no scroll sentinel exists for any message.
     #[test]
     fn only_unread_conversation_messages_are_marked() {
         let read = msg_for_print();
@@ -3331,10 +3335,9 @@ mod tests {
             false,
         );
         assert_eq!(doc.matches("class=\"vireo-dot\"").count(), 1, "one dot: {doc}");
-        assert_eq!(doc.matches("class=\"vireo-end\"").count(), 1, "one sentinel: {doc}");
-        // Both keyed to the unread message, so reading it can't clear the other's.
+        assert_eq!(doc.matches("class=\"vireo-end\"").count(), 0, "no sentinel: {doc}");
+        // Keyed to the unread message, so reading it can't clear another's.
         assert!(doc.contains("class=\"vireo-dot\" data-key=\"1:2\""), "{doc}");
-        assert!(doc.contains("class=\"vireo-end\" data-key=\"1:2\""), "{doc}");
     }
 
     /// Marking a message unread while its conversation is open must survive the

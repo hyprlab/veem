@@ -3972,6 +3972,21 @@ impl SimpleComponent for AppModel {
 
             AppMsg::SelectCards(keys) => {
                 self.list_selection = keys.clone();
+                // Reading is click-driven: scrolling past a conversation
+                // message no longer marks it, so an arriving reply stays
+                // unread until the user actually clicks its card. A single
+                // deliberate selection is that click.
+                if let [(aid, id)] = keys.as_slice() {
+                    if let Some(m) = self
+                        .current_thread
+                        .iter()
+                        .find(|m| m.account_id == *aid && m.id == *id)
+                        .filter(|m| m.unread)
+                        .cloned()
+                    {
+                        self.set_read(&m, true);
+                    }
+                }
                 self.message_list.emit(MessageListInput::SelectFromReader { keys });
             }
 
