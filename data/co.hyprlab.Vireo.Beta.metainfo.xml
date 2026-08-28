@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 Hyprlab -->
+<component type="desktop-application">
+  <id>co.hyprlab.Vireo.Beta</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+
+  <name>Vireo (beta)</name>
+  <summary>Private, GNOME-native email client — beta channel</summary>
+
+  <description>
+    <p>
+      The beta channel of Vireo, a desktop email client for Wayland that feels
+      at home in GNOME. Beta builds carry upcoming changes before they reach the
+      stable release: expect bugs and instability, and please report anything
+      broken on GitHub.
+    </p>
+    <p>
+      The beta installs alongside stable Vireo and shares its accounts,
+      settings and mail cache, so trying it needs no second setup — but a beta
+      bug can affect that shared data. If you'd rather not risk it, stick with
+      the stable release.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Multiple IMAP and POP3 accounts, with a unified All Inboxes view</li>
+      <li>Google, Microsoft and custom OAuth 2.0 sign-in, plus GNOME Online Accounts import</li>
+      <li>Whole-mailbox sync and search with infinite scroll</li>
+      <li>Deletions and moves made on other devices sync back automatically</li>
+      <li>Conversation threading, compose, reply, forward, and editable drafts</li>
+      <li>Remote content blocked by default; per-message light or dark reading</li>
+      <li>Passwords and OAuth tokens kept in the system keyring</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">co.hyprlab.Vireo.Beta.desktop</launchable>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#99c1f1</color>
+    <color type="primary" scheme_preference="dark">#1a5fb4</color>
+  </branding>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/hyprlab/vireo/main/docs/screenshot.png</image>
+      <caption>The unified inbox in light mode</caption>
+    </screenshot>
+  </screenshots>
+
+  <url type="homepage">https://vireo.hyprlab.co</url>
+  <url type="bugtracker">https://github.com/hyprlab/vireo/issues</url>
+  <url type="vcs-browser">https://github.com/hyprlab/vireo</url>
+
+  <developer id="co.hyprlab">
+    <name>Hyprlab</name>
+  </developer>
+  <update_contact>hyprlab@proton.me</update_contact>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="1.17.1b" date="2026-08-28" type="development">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.17.1b</url>
+      <description>
+        <p>The first beta-channel release, based on Vireo 1.17.0. Installs alongside the stable app and shares its accounts, settings and mail cache.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -1,0 +1,99 @@
+# Flatpak manifest for the Vireo BETA channel — same self-hosted repo as stable
+# (vireo.hyprlab.co/flatpak), published under the ostree branch "beta" with app
+# ID co.hyprlab.Vireo.Beta so it installs alongside the stable app. Built with
+# the `beta` cargo feature: "Vireo (beta)" branding, a b-suffixed version, and
+# XDG dirs redirected into the stable app's ~/.var/app tree so both installs
+# share accounts, settings and the mail cache. x86_64 only — no ARM beta.
+#
+# Ship it with (see the beta ship workflow):
+#   flatpak-builder --user --force-clean --disable-rofiles-fuse \
+#     --repo=dist/repo --default-branch=beta \
+#     --gpg-sign=$(cat dist/keyid.txt) --gpg-homedir=dist/gpg-home \
+#     --mirror-screenshots-url=https://dl.flathub.org/media \
+#     dist/build-dir-beta co.hyprlab.Vireo.Beta.yml
+id: co.hyprlab.Vireo.Beta
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: vireo
+
+finish-args:
+  - --share=ipc
+  - --share=network                              # IMAP/SMTP, OAuth loopback, Gravatar
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri                                 # WebKit rendering
+  - --talk-name=org.freedesktop.secrets          # keyring: passwords + OAuth tokens
+  - --talk-name=org.gnome.OnlineAccounts          # import GNOME Online Accounts
+  - --talk-name=org.gnome.Settings                 # "Open Online Accounts" button
+  - --talk-name=org.gnome.evolution.dataserver.*  # GNOME Contacts (Evolution Data Server)
+  - --talk-name=org.gnome.Contacts                 # "Open GNOME Contacts" button (D-Bus activation)
+  # Deliberately NOT --talk-name=org.freedesktop.Flatpak — see the stable
+  # manifest for why (it would permit arbitrary host command execution).
+  # Read the host's Evolution Data Server address books.
+  - --filesystem=xdg-data/evolution:ro
+  - --filesystem=xdg-cache/evolution:ro
+  - --filesystem=xdg-config/evolution:ro
+  # THE beta twist: read-write access to the stable app's sandbox tree. The
+  # beta binary redirects its config/cache/data base dirs there (see
+  # `shared_base` in src/config.rs), so beta testers keep their accounts,
+  # settings and cached mail without a second setup.
+  - --filesystem=~/.var/app/co.hyprlab.Vireo
+  # Read the old Veem app's data so first-run migration matches stable's.
+  - --filesystem=~/.var/app/com.getveem.Veem:ro
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/vireo/cargo
+
+modules:
+  # PDF attachment thumbnails render via poppler-glib — same modules as the
+  # stable manifest; keep the two in sync.
+  - name: popplerdata
+    no-autogen: true
+    make-install-args:
+      - prefix=/app
+    sources:
+      - type: archive
+        url: https://poppler.freedesktop.org/poppler-data-0.4.12.tar.gz
+        sha256: c835b640a40ce357e1b83666aabd95edffa24ddddd49b8daff63adb851cdab74
+  - name: poppler
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_INSTALL_LIBDIR=/app/lib
+      - -DCMAKE_INSTALL_INCLUDEDIR=/app/include
+      - -DBUILD_GTK_TESTS=OFF
+      - -DBUILD_CPP_TESTS=OFF
+      - -DENABLE_CPP=OFF
+      - -DENABLE_BOOST=OFF
+      - -DENABLE_GOBJECT_INTROSPECTION=OFF
+      - -DENABLE_LIBOPENJPEG=OFF
+      - -DENABLE_QT5=OFF
+      - -DENABLE_QT6=OFF
+    cleanup:
+      - /bin
+    sources:
+      - type: archive
+        url: https://poppler.freedesktop.org/poppler-26.07.0.tar.xz
+        sha256: 304832f48f8a47fdca90c6b6d1f684e68f37c10c9a0726f345f4ca9df4ca01e2
+  - name: vireo
+    buildsystem: simple
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo --offline build --release --features beta --verbose
+      - install -Dm755 target/release/vireo /app/bin/vireo
+      - install -Dm644 data/co.hyprlab.Vireo.Beta.desktop /app/share/applications/co.hyprlab.Vireo.Beta.desktop
+      - install -Dm644 data/icons/hicolor/256x256/apps/co.hyprlab.Vireo.Beta.png /app/share/icons/hicolor/256x256/apps/co.hyprlab.Vireo.Beta.png
+      - install -Dm644 data/icons/hicolor/512x512/apps/co.hyprlab.Vireo.Beta.png /app/share/icons/hicolor/512x512/apps/co.hyprlab.Vireo.Beta.png
+      - install -Dm644 data/co.hyprlab.Vireo.Beta.metainfo.xml /app/share/metainfo/co.hyprlab.Vireo.Beta.metainfo.xml
+    sources:
+      - type: git
+        url: https://github.com/hyprlab/vireo.git
+        tag: v1.17.1b
+        commit: TBD
+      # Vendored crate sources for the offline Flatpak build. Generate with:
+      #   flatpak-cargo-generator.py Cargo.lock -o cargo-sources.json
+      - cargo-sources.json

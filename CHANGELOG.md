@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.17.1b — 2026-08-28
+
+- **The beta channel exists.** First release of Vireo's beta track: app ID
+  `co.hyprlab.Vireo.Beta`, ostree branch `beta` in the same signed repo,
+  x86_64 only, versioned as the stable version plus a `b` suffix. The beta
+  installs alongside stable with its own icon, shows "Vireo (beta)" in the
+  sidebar and About window (with a disclaimer), and shares the stable
+  install's accounts, settings, mail cache and keyring by redirecting its
+  XDG base dirs into `~/.var/app/co.hyprlab.Vireo`.
+
 ## 1.17.0 — 2026-08-28
 
 - **Inline compose.** The reader pane is wrapped in an overlay at init; New
