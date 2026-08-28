@@ -934,6 +934,10 @@ headerbar.rail-header {
    untargetable (set_divider_draggable). */
 .drawer-split > separator {
   border: none;
+  /* The theme's hairline on paned separators survives the background and
+     border resets — it is drawn as a shadow. */
+  box-shadow: none;
+  outline: none;
   background: alpha(currentColor, 0.03);
   min-height: 6px;
 }
