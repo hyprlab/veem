@@ -1098,7 +1098,7 @@ impl MessageView {
                     // The ⋯ toggle that expands/collapses the action row when
                     // the hidden-until-hover preference is on; CSS keeps it
                     // display:none otherwise, so it costs nothing when off.
-                    acts_toggle = if thread.len() > 1 {
+                    acts_toggle = if !thread.is_empty() {
                         format!(
                             "<button type=\"button\" class=\"vireo-acts-toggle\" \
                              title=\"Actions\" data-key=\"{aid}:{id}\">{svg}</button>",
@@ -1110,12 +1110,11 @@ impl MessageView {
                     } else {
                         String::new()
                     },
-                    // Per-card actions, only where they earn their keep: a
-                    // real conversation, where the toolbar can't say which
-                    // message it means — the toolbar's icons grey out there
-                    // and these take their place, one full set per card. A
-                    // single message answers to the toolbar alone.
-                    acts = if thread.len() > 1 {
+                    // Per-card actions, on every message — single messages
+                    // included: the reader toolbar carries no per-message
+                    // icons any more, so the card's own row (and the overflow
+                    // menu) is where a message is acted on.
+                    acts = if !thread.is_empty() {
                         let key = (m.account_id, m.id);
                         format!(
                             "<span class=\"vireo-acts\">{}{}{}{}{}{}{}{}{}{}</span>",
@@ -3521,8 +3520,9 @@ mod tests {
     }
 
     /// A lone message gets the same in-document header a conversation card
-    /// does, but goes full-bleed: no card gutter (the vireo-conv padding), and
-    /// no per-card action pills — it reads as a message, not a card.
+    /// does — its own action icons included, since the toolbar carries no
+    /// per-message actions — but goes full-bleed: no card gutter, so it reads
+    /// as a message, not a card.
     #[test]
     fn a_single_message_keeps_the_header_but_goes_full_bleed() {
         let doc = MessageView::conversation_document(
@@ -3538,7 +3538,7 @@ mod tests {
         assert!(doc.contains("<section class=\"vireo-msg\""), "message chrome: {doc}");
         assert!(doc.contains("class=\"vireo-msg-hdr\""), "in-document header: {doc}");
         assert!(!doc.contains("<body class=\"vireo-conv\">"), "no card gutter: {doc}");
-        assert!(!doc.contains("data-act=\"reply\""), "no card actions: {doc}");
+        assert!(doc.contains("data-act=\"reply\""), "card actions present: {doc}");
         // Full-bleed also means the plain ground, not the cards' deeper page.
         assert!(doc.contains(&format!("background:{}", GROUND.0)), "plain ground: {doc}");
     }
