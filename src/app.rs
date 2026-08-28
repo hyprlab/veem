@@ -2089,20 +2089,30 @@ impl SimpleComponent for AppModel {
         // Timers leave room for the WebViews to load and settle between steps.
         if demo_mode() {
             if let Some(shot) = std::env::var("VIREO_SHOWCASE").ok() {
-                let list = model.message_list.sender().clone();
-                gtk::glib::timeout_add_seconds_local_once(3, move || {
-                    let _ = list.send(MessageListInput::MoveSelection(1));
-                });
-                let view = model.message_view.sender().clone();
-                gtk::glib::timeout_add_seconds_local_once(6, move || {
-                    let _ = view.send(crate::ui::message_view::MessageViewInput::CardClicked {
-                        account_id: 1,
-                        id: 2,
-                        mode: crate::ui::message_view::SelectMode::Plain,
+                // VIREO_SHOWCASE_STAGE=0 skips the staging (capture-only, for
+                // testing arbitrary states); VIREO_SHOWCASE_DELAY overrides the
+                // capture time (seconds, default 9).
+                let stage = std::env::var("VIREO_SHOWCASE_STAGE").as_deref() != Ok("0");
+                let delay: u32 = std::env::var("VIREO_SHOWCASE_DELAY")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(9);
+                if stage {
+                    let list = model.message_list.sender().clone();
+                    gtk::glib::timeout_add_seconds_local_once(3, move || {
+                        let _ = list.send(MessageListInput::MoveSelection(1));
                     });
-                });
+                    let view = model.message_view.sender().clone();
+                    gtk::glib::timeout_add_seconds_local_once(6, move || {
+                        let _ = view.send(crate::ui::message_view::MessageViewInput::CardClicked {
+                            account_id: 1,
+                            id: 2,
+                            mode: crate::ui::message_view::SelectMode::Plain,
+                        });
+                    });
+                }
                 let win = root.clone();
-                gtk::glib::timeout_add_seconds_local_once(9, move || {
+                gtk::glib::timeout_add_seconds_local_once(delay, move || {
                     showcase_capture(win.upcast_ref::<gtk::Widget>(), &shot);
                 });
             }
