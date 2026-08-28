@@ -1073,11 +1073,11 @@ struct StateFile {
 }
 
 fn default_aux_height() -> i32 {
-    820
+    720
 }
 
 fn default_about_height() -> i32 {
-    840
+    740
 }
 
 fn default_list_pane_width() -> i32 {
