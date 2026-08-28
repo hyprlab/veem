@@ -77,6 +77,11 @@ pub enum Protocol {
     #[default]
     Imap,
     Pop3,
+    /// Microsoft Graph (REST) — Microsoft 365 accounts imported from GNOME
+    /// Online Accounts, whose token is Graph-scoped and can't speak IMAP
+    /// (issue #36). No servers to configure; everything runs over
+    /// graph.microsoft.com with the GOA token.
+    Graph,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -297,7 +302,20 @@ pub fn load() -> Option<Vec<AccountConfig>> {
     let path = path()?;
     let text = std::fs::read_to_string(&path).ok()?;
     match toml::from_str::<ConfigFile>(&text) {
-        Ok(cfg) if !cfg.accounts.is_empty() => {
+        Ok(mut cfg) if !cfg.accounts.is_empty() => {
+            // Heal pre-#36 Microsoft 365 imports: a GOA OAuth account with no
+            // incoming server could never connect over IMAP (GNOME's ms_graph
+            // provider serves none) — it is a Graph account.
+            for a in &mut cfg.accounts {
+                if a.protocol == Protocol::Imap
+                    && a.oauth
+                    && a.goa_id.is_some()
+                    && a.imap_host.trim().is_empty()
+                {
+                    tracing::info!("{}: empty-host GOA OAuth account — using Microsoft Graph", a.email);
+                    a.protocol = Protocol::Graph;
+                }
+            }
             tracing::info!("loaded {} account(s) from {}", cfg.accounts.len(), path.display());
             Some(cfg.accounts)
         }

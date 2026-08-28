@@ -3649,6 +3649,24 @@ impl SimpleComponent for AppModel {
                 let email = account.email.clone();
                 if let Some(slot) = self.config.iter_mut().find(|c| c.email == email) {
                     slot.enabled = true;
+                    // Re-importing refreshes the GOA-owned connection details in
+                    // place — e.g. a broken pre-#36 Microsoft 365 import (empty
+                    // hosts, IMAP) repairs into a Graph account — keeping the
+                    // slot (account ids are config indices) and the cosmetics.
+                    if account.goa_id.is_some() {
+                        slot.protocol = account.protocol;
+                        slot.imap_host = account.imap_host.clone();
+                        slot.imap_port = account.imap_port;
+                        slot.smtp_host = account.smtp_host.clone();
+                        slot.smtp_port = account.smtp_port;
+                        slot.username = account.username.clone();
+                        slot.smtp_separate = account.smtp_separate;
+                        slot.smtp_username = account.smtp_username.clone();
+                        slot.oauth = account.oauth;
+                        slot.oauth_settings = account.oauth_settings.clone();
+                        slot.oauth_refresh = account.oauth_refresh.clone();
+                        slot.goa_id = account.goa_id.clone();
+                    }
                 } else {
                     self.config.push(*account);
                 }

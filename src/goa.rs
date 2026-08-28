@@ -40,6 +40,10 @@ pub struct GoaMailAccount {
     /// Whether the provider uses OAuth2 — imported accounts authenticate with a
     /// GOA-issued token (XOAUTH2) fetched fresh at connect time.
     pub oauth2: bool,
+    /// GOA's `ProviderType` ("google", "ms_graph", "imap_smtp", …). The
+    /// Microsoft 365 (`ms_graph`) provider serves no IMAP — its token is scoped
+    /// to the Graph API only, so mail runs over Graph (issue #36).
+    pub provider_type: String,
 }
 
 impl GoaMailAccount {
@@ -54,7 +58,13 @@ impl GoaMailAccount {
                 self.name.clone()
             },
             email: self.email.clone(),
-            protocol: Protocol::Imap,
+            // Microsoft 365 (`ms_graph`) has no IMAP — mail goes over the Graph
+            // API with the GOA token (issue #36).
+            protocol: if self.provider_type == "ms_graph" {
+                Protocol::Graph
+            } else {
+                Protocol::Imap
+            },
             imap_host: self.imap_host.clone(),
             imap_port: self.imap_port,
             smtp_host: self.smtp_host.clone(),
@@ -203,6 +213,7 @@ fn try_list() -> Result<Vec<GoaMailAccount>, String> {
             smtp_separate: !smtp_user.is_empty() && smtp_user != imap_user,
             password_based: ifaces.contains_key(IFACE_PASSWORD),
             oauth2: ifaces.contains_key(IFACE_OAUTH2),
+            provider_type: get_str(account, "ProviderType"),
         });
     }
     Ok(out)

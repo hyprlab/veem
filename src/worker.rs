@@ -333,6 +333,9 @@ async fn run(
         Some(account) if account.protocol == crate::config::Protocol::Pop3 => {
             run_pop3(account_id, account, rx, emit).await
         }
+        Some(account) if account.protocol == crate::config::Protocol::Graph => {
+            run_graph(account_id, account, rx, emit).await
+        }
         Some(account) => run_imap(account_id, account, rx, emit).await,
         None => run_mock(account_id, rx, emit).await,
     }
@@ -2368,9 +2371,18 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
             bracketed(&msg.in_reply_to),
         ));
     }
-    if !msg.references.trim().is_empty() {
+    // Graph accounts thread by a synthetic "graph-conv:<id>" token (there is no
+    // cheap way to read the real References header over the API) — that token is
+    // internal glue and must never reach a wire header.
+    let wire_references = msg
+        .references
+        .split_whitespace()
+        .filter(|t| !t.starts_with("graph-conv:"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !wire_references.trim().is_empty() {
         builder = builder.header(lettre::message::header::References::from(
-            bracketed(&msg.references),
+            bracketed(&wire_references),
         ));
     }
 
@@ -5622,6 +5634,1220 @@ fn wrap_fragment(inner: &str) -> String {
          margin:12px 0;border-radius:6px}}\
          </style></head><body>{inner}</body></html>"
     )
+}
+
+// ---------------------------------------------------------------------------
+// Microsoft Graph path (issue #36)
+// ---------------------------------------------------------------------------
+//
+// Microsoft 365 accounts imported from GNOME Online Accounts authenticate with
+// a GOA token scoped to the Graph API — it cannot log in to IMAP or SMTP at
+// all. So these accounts speak Graph (REST) end to end: folders, summaries,
+// raw MIME bodies (`/$value`, which feeds the exact same parsing pipeline as
+// IMAP), flags, moves, drafts, and `sendMail`. Message uids are the same
+// stable string-hash the POP3 path uses (Graph ids are strings); the
+// uid → Graph-id map is rebuilt from every folder listing. Threading uses a
+// synthetic `graph-conv:<conversationId>` reference token (stripped before any
+// wire header in `build_email`) because the real References header isn't
+// available from list queries.
+
+const GRAPH_BASE: &str = "https://graph.microsoft.com/v1.0";
+/// Summaries listed per folder (matches the POP3 path's indexing appetite).
+const GRAPH_INDEX_CAP: usize = 300;
+
+/// One Graph mail folder, flattened out of the tree.
+struct GraphFolder {
+    graph_id: String,
+    folder: Folder,
+}
+
+fn graph_auth(token: &str) -> String {
+    format!("Bearer {token}")
+}
+
+/// Read a ureq error into something a user can act on (status + body snippet).
+fn graph_err(e: ureq::Error) -> String {
+    match e {
+        ureq::Error::Status(code, resp) => {
+            let body = resp.into_string().unwrap_or_default();
+            // Graph errors are JSON with a nested message; surface just that.
+            let msg = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+                .unwrap_or_else(|| body.chars().take(200).collect());
+            format!("Microsoft Graph returned {code}: {msg}")
+        }
+        other => other.to_string(),
+    }
+}
+
+fn graph_get_json(token: &str, url: &str) -> Result<serde_json::Value, String> {
+    ureq::get(url)
+        .set("Authorization", &graph_auth(token))
+        .call()
+        .map_err(graph_err)?
+        .into_json()
+        .map_err(|e| e.to_string())
+}
+
+fn graph_get_bytes(token: &str, url: &str) -> Result<Vec<u8>, String> {
+    let resp = ureq::get(url)
+        .set("Authorization", &graph_auth(token))
+        .call()
+        .map_err(graph_err)?;
+    let mut out = Vec::new();
+    use std::io::Read;
+    // Raw MIME can be large; cap well above any sane message (64 MB).
+    resp.into_reader()
+        .take(64 * 1024 * 1024)
+        .read_to_end(&mut out)
+        .map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+/// POST/PATCH a JSON body; an empty 2xx response comes back as `Null`.
+fn graph_send_json(
+    token: &str,
+    method: &str,
+    url: &str,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let resp = ureq::request(method, url)
+        .set("Authorization", &graph_auth(token))
+        .send_json(body.clone())
+        .map_err(graph_err)?;
+    let text = resp.into_string().map_err(|e| e.to_string())?;
+    if text.trim().is_empty() {
+        return Ok(serde_json::Value::Null);
+    }
+    Ok(serde_json::from_str(&text).unwrap_or(serde_json::Value::Null))
+}
+
+/// POST raw MIME (base64, `text/plain` content type — Graph's MIME format) to
+/// `sendMail` or a create-message endpoint.
+fn graph_post_mime(token: &str, url: &str, raw: &[u8]) -> Result<serde_json::Value, String> {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(raw);
+    let resp = ureq::post(url)
+        .set("Authorization", &graph_auth(token))
+        .set("Content-Type", "text/plain")
+        .send_string(&b64)
+        .map_err(graph_err)?;
+    let text = resp.into_string().map_err(|e| e.to_string())?;
+    if text.trim().is_empty() {
+        return Ok(serde_json::Value::Null);
+    }
+    Ok(serde_json::from_str(&text).unwrap_or(serde_json::Value::Null))
+}
+
+fn graph_delete_req(token: &str, url: &str) -> Result<(), String> {
+    ureq::delete(url)
+        .set("Authorization", &graph_auth(token))
+        .call()
+        .map_err(graph_err)?;
+    Ok(())
+}
+
+/// Follow `@odata.nextLink` pagination, collecting `value` arrays up to `cap`.
+fn graph_paged(token: &str, first_url: &str, cap: usize) -> Result<Vec<serde_json::Value>, String> {
+    let mut out = Vec::new();
+    let mut url = first_url.to_string();
+    loop {
+        let page = graph_get_json(token, &url)?;
+        if let Some(items) = page["value"].as_array() {
+            out.extend(items.iter().cloned());
+        }
+        if out.len() >= cap {
+            out.truncate(cap);
+            return Ok(out);
+        }
+        match page["@odata.nextLink"].as_str() {
+            Some(next) => url = next.to_string(),
+            None => return Ok(out),
+        }
+    }
+}
+
+/// List the account's mail folders (tree flattened, well-known roles mapped),
+/// sorted and id-numbered exactly like the IMAP path's folder list.
+fn graph_list_folders(token: &str, account_id: u32) -> Result<Vec<GraphFolder>, String> {
+    // Well-known folders name the roles; everything else is Custom. A role
+    // folder some account type lacks (e.g. archive) just 404s — skip it.
+    let mut roles: std::collections::HashMap<String, FolderKind> = Default::default();
+    for (wk, kind) in [
+        ("inbox", FolderKind::Inbox),
+        ("sentitems", FolderKind::Sent),
+        ("drafts", FolderKind::Drafts),
+        ("deleteditems", FolderKind::Trash),
+        ("junkemail", FolderKind::Junk),
+        ("archive", FolderKind::Archive),
+    ] {
+        if let Ok(v) = graph_get_json(token, &format!("{GRAPH_BASE}/me/mailFolders/{wk}?$select=id"))
+        {
+            if let Some(id) = v["id"].as_str() {
+                roles.insert(id.to_string(), kind);
+            }
+        }
+    }
+
+    const SELECT: &str = "$select=id,displayName,childFolderCount,unreadItemCount";
+    let roots = graph_paged(
+        token,
+        &format!("{GRAPH_BASE}/me/mailFolders?$top=100&{SELECT}"),
+        200,
+    )?;
+
+    // Flatten the tree breadth-first; paths join with '/' like the sidebar's
+    // hierarchy expects. Depth and total are capped defensively.
+    let mut out: Vec<GraphFolder> = Vec::new();
+    let mut queue: Vec<(serde_json::Value, String, u8)> =
+        roots.into_iter().map(|v| (v, String::new(), 0u8)).collect();
+    while let Some((v, prefix, depth)) = queue.pop() {
+        let Some(gid) = v["id"].as_str() else { continue };
+        let name = v["displayName"].as_str().unwrap_or("?").to_string();
+        let path = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+        let kind = roles.get(gid).copied().unwrap_or(FolderKind::Custom);
+        if v["childFolderCount"].as_i64().unwrap_or(0) > 0 && depth < 4 && out.len() < 400 {
+            if let Ok(children) = graph_paged(
+                token,
+                &format!("{GRAPH_BASE}/me/mailFolders/{gid}/childFolders?$top=100&{SELECT}"),
+                200,
+            ) {
+                queue.extend(children.into_iter().map(|c| (c, path.clone(), depth + 1)));
+            }
+        }
+        out.push(GraphFolder {
+            graph_id: gid.to_string(),
+            folder: Folder {
+                id: 0, // assigned by order below
+                account_id,
+                name,
+                path,
+                kind,
+                unread: v["unreadItemCount"].as_i64().unwrap_or(0).max(0) as u32,
+            },
+        });
+    }
+
+    out.sort_by(|a, b| {
+        folder_order(a.folder.kind)
+            .cmp(&folder_order(b.folder.kind))
+            .then_with(|| a.folder.path.to_lowercase().cmp(&b.folder.path.to_lowercase()))
+    });
+    for (i, f) in out.iter_mut().enumerate() {
+        f.folder.id = i as u32 + 1;
+    }
+    Ok(out)
+}
+
+/// The comma-separated addresses of a Graph recipient array.
+fn graph_addrs(v: &serde_json::Value) -> String {
+    v.as_array()
+        .map(|list| {
+            list.iter()
+                .filter_map(|r| r["emailAddress"]["address"].as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default()
+}
+
+/// Map one Graph message summary to a [`Message`]. Returns the Graph id too so
+/// the caller can index it.
+fn graph_message(v: &serde_json::Value, account_id: u32, folder_id: u32) -> Option<(Message, String)> {
+    let gid = v["id"].as_str()?.to_string();
+    let uid = hash_uid(&gid);
+    let ts = v["receivedDateTime"]
+        .as_str()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp())
+        .unwrap_or(0);
+    let preview: String = v["bodyPreview"]
+        .as_str()
+        .unwrap_or("")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(200)
+        .collect();
+    let msg = Message {
+        id: uid,
+        account_id,
+        folder_id,
+        uid,
+        from_name: v["from"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
+        from_addr: v["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
+        to: graph_addrs(&v["toRecipients"]),
+        cc: graph_addrs(&v["ccRecipients"]),
+        subject: v["subject"].as_str().unwrap_or("").to_string(),
+        preview,
+        body: String::new(),
+        date: if ts > 0 { label_from_timestamp(ts) } else { String::new() },
+        timestamp: ts,
+        unread: !v["isRead"].as_bool().unwrap_or(true),
+        starred: v["flag"]["flagStatus"].as_str() == Some("flagged"),
+        has_attachment: v["hasAttachments"].as_bool().unwrap_or(false),
+        message_id: normalize_msgid(v["internetMessageId"].as_str().unwrap_or("").as_bytes()),
+        references: v["conversationId"]
+            .as_str()
+            .map(|c| format!("graph-conv:{}", c.to_ascii_lowercase()))
+            .unwrap_or_default(),
+    };
+    Some((msg, gid))
+}
+
+const GRAPH_MSG_SELECT: &str = "$select=id,internetMessageId,conversationId,subject,bodyPreview,\
+                                from,toRecipients,ccRecipients,receivedDateTime,isRead,flag,\
+                                hasAttachments";
+
+/// List a folder's newest summaries (newest first).
+fn graph_list_messages(
+    token: &str,
+    folder_graph_id: &str,
+    account_id: u32,
+    folder_id: u32,
+) -> Result<Vec<(Message, String)>, String> {
+    let url = format!(
+        "{GRAPH_BASE}/me/mailFolders/{folder_graph_id}/messages\
+         ?$top=100&$orderby=receivedDateTime%20desc&{GRAPH_MSG_SELECT}"
+    );
+    let items = graph_paged(token, &url, GRAPH_INDEX_CAP)?;
+    Ok(items.iter().filter_map(|v| graph_message(v, account_id, folder_id)).collect())
+}
+
+/// Per-account state the Graph loop threads through its handlers.
+struct GraphState {
+    /// Vireo folder path → (folder id, Graph folder id), from the last listing.
+    folders: std::collections::HashMap<String, (u32, String)>,
+    /// Message uid (hashed Graph id) → Graph message id.
+    uids: std::collections::HashMap<u32, String>,
+    /// The Drafts folder's (folder id, path), for draft reloads after a send.
+    drafts: Option<(u32, String)>,
+}
+
+impl GraphState {
+    fn adopt_folders(&mut self, list: &[GraphFolder]) {
+        self.folders = list
+            .iter()
+            .map(|f| (f.folder.path.clone(), (f.folder.id, f.graph_id.clone())))
+            .collect();
+        self.drafts = list
+            .iter()
+            .find(|f| f.folder.kind == FolderKind::Drafts)
+            .map(|f| (f.folder.id, f.folder.path.clone()));
+    }
+}
+
+async fn run_graph(
+    account_id: u32,
+    account: AccountConfig,
+    mut rx: mpsc::UnboundedReceiver<MailRequest>,
+    emit: impl Fn(WorkerEvent),
+) {
+    let cache = Cache::open().map_err(|e| tracing::warn!("cache unavailable: {e}")).ok();
+
+    emit(WorkerEvent::Account(Account {
+        id: account_id,
+        name: account.name.clone(),
+        email: account.email.clone(),
+        label: account.display_label(),
+        accent: accent_for(account_id).into(),
+    }));
+
+    // Cached folders immediately, then the live list.
+    let cached_folders = cache.as_ref().map(|c| c.load_folders(account_id)).unwrap_or_default();
+    if !cached_folders.is_empty() {
+        emit(WorkerEvent::Folders(cached_folders));
+    }
+
+    let mut state = GraphState {
+        folders: Default::default(),
+        uids: Default::default(),
+        drafts: None,
+    };
+
+    // Fetch a token and the folder list. A GOA token failure here is the one
+    // users actually hit (signed out in GNOME Settings), so say that.
+    if let Some(token) = graph_token(&account, &emit).await {
+        refresh_graph_folders(&token, account_id, cache.as_ref(), &mut state, &emit).await;
+    }
+
+    while let Some(req) = rx.recv().await {
+        match req {
+            MailRequest::LoadGallery => {
+                if let Some(c) = cache.as_ref() {
+                    let items = c.gallery_items(account_id, GALLERY_DATA_CAP, GALLERY_LIMIT);
+                    emit(WorkerEvent::Gallery { items });
+                }
+            }
+
+            // Cache-only, exactly like the IMAP path: assemble the conversation
+            // from every folder's cached summaries.
+            MailRequest::LoadRelated { message_id, ids } => {
+                let messages = cache
+                    .as_ref()
+                    .map(|c| {
+                        let folders = c.load_folders(account_id);
+                        c.messages_by_thread_ids(account_id, &ids)
+                            .into_iter()
+                            .filter_map(|(path, mut m)| {
+                                let f = folders.iter().find(|f| f.path == path)?;
+                                if matches!(f.kind, FolderKind::Trash | FolderKind::Junk) {
+                                    return None;
+                                }
+                                m.folder_id = f.id;
+                                Some(m)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                emit(WorkerEvent::Related { message_id, messages });
+            }
+
+            MailRequest::LoadMessages { folder_id, path } => {
+                if let Some(c) = cache.as_ref() {
+                    let cached = c.load_messages(account_id, &path, folder_id);
+                    if !cached.is_empty() {
+                        emit(WorkerEvent::Messages { folder_id, messages: cached });
+                    }
+                }
+                emit(WorkerEvent::Status("Syncing…".into()));
+                let Some(token) = graph_token(&account, &emit).await else {
+                    emit(WorkerEvent::Status(String::new()));
+                    continue;
+                };
+                match graph_load_folder(
+                    &token, account_id, folder_id, &path, cache.as_ref(), &mut state,
+                )
+                .await
+                {
+                    Ok(messages) => {
+                        let unread = messages.iter().filter(|m| m.unread).count() as u32;
+                        emit(WorkerEvent::Messages { folder_id, messages });
+                        emit(WorkerEvent::FolderUnread { folder_id, unread });
+                    }
+                    Err(e) => emit(WorkerEvent::Error {
+                        text: format!("Could not fetch mail: {e}"),
+                        connectivity: true,
+                    }),
+                }
+                emit(WorkerEvent::Status(String::new()));
+            }
+
+            MailRequest::LoadBody { message_id, path, uid } => {
+                if let Some(body) = cache.as_ref().and_then(|c| c.load_body(account_id, &path, uid))
+                {
+                    emit(WorkerEvent::Body { message_id, path, body });
+                    continue;
+                }
+                match graph_fetch_raw(&account, &mut state, &path, uid, &emit).await {
+                    Ok(raw) => {
+                        let body = extract_body(&raw);
+                        if let Some(c) = cache.as_ref() {
+                            c.save_body(account_id, &path, uid, &body);
+                        }
+                        emit(WorkerEvent::Body { message_id, path, body });
+                    }
+                    Err(e) => emit(WorkerEvent::Error {
+                        text: format!("Could not load message: {e}"),
+                        connectivity: true,
+                    }),
+                }
+            }
+
+            MailRequest::LoadBodies { items, path } => {
+                for (message_id, uid) in items {
+                    if let Some(body) =
+                        cache.as_ref().and_then(|c| c.load_body(account_id, &path, uid))
+                    {
+                        emit(WorkerEvent::Body { message_id, path: path.clone(), body });
+                        continue;
+                    }
+                    match graph_fetch_raw(&account, &mut state, &path, uid, &emit).await {
+                        Ok(raw) => {
+                            let body = extract_body(&raw);
+                            if let Some(c) = cache.as_ref() {
+                                c.save_body(account_id, &path, uid, &body);
+                            }
+                            emit(WorkerEvent::Body { message_id, path: path.clone(), body });
+                        }
+                        Err(e) => emit(WorkerEvent::Error {
+                            text: format!("Could not load message: {e}"),
+                            connectivity: true,
+                        }),
+                    }
+                }
+            }
+
+            MailRequest::LoadSource { message_id: _, path, uid } => {
+                match graph_fetch_raw(&account, &mut state, &path, uid, &emit).await {
+                    Ok(raw) => emit(WorkerEvent::Source {
+                        text: String::from_utf8_lossy(&raw).into_owned(),
+                    }),
+                    Err(e) => emit(WorkerEvent::Error {
+                        text: format!("Could not load source: {e}"),
+                        connectivity: true,
+                    }),
+                }
+            }
+
+            MailRequest::LoadAttachments { message_id, path, uid, download } => {
+                if let Some(c) = cache.as_ref() {
+                    let items = c.load_attachments(account_id, &path, uid);
+                    if !items.is_empty() {
+                        emit(WorkerEvent::Attachments { message_id, items });
+                        continue;
+                    }
+                }
+                if !download {
+                    emit(WorkerEvent::AttachmentsPending { message_id });
+                    continue;
+                }
+                match graph_fetch_raw(&account, &mut state, &path, uid, &emit).await {
+                    Ok(raw) => {
+                        let items = extract_attachments(&raw);
+                        if let Some(c) = cache.as_ref() {
+                            c.save_attachments(account_id, &path, uid, &items);
+                        }
+                        emit(WorkerEvent::Attachments { message_id, items });
+                    }
+                    Err(e) => emit(WorkerEvent::Error {
+                        text: format!("Could not load attachments: {e}"),
+                        connectivity: true,
+                    }),
+                }
+            }
+
+            MailRequest::SetSeen { path, uid, seen } => {
+                if let Some(c) = cache.as_ref() {
+                    c.set_unread(account_id, &path, uid, !seen);
+                }
+                graph_patch_message(
+                    &account,
+                    &mut state,
+                    &path,
+                    uid,
+                    serde_json::json!({ "isRead": seen }),
+                    &emit,
+                )
+                .await;
+            }
+
+            MailRequest::SetFlagged { path, uid, flagged } => {
+                if let Some(c) = cache.as_ref() {
+                    c.set_starred(account_id, &path, uid, flagged);
+                }
+                let status = if flagged { "flagged" } else { "notFlagged" };
+                graph_patch_message(
+                    &account,
+                    &mut state,
+                    &path,
+                    uid,
+                    serde_json::json!({ "flag": { "flagStatus": status } }),
+                    &emit,
+                )
+                .await;
+            }
+
+            MailRequest::MarkAllRead { folder_id, path } => {
+                // The server side is one PATCH per message; run it over the
+                // cached unread rows (the listing window), then settle the cache.
+                let unread_uids: Vec<u32> = cache
+                    .as_ref()
+                    .map(|c| {
+                        c.load_messages(account_id, &path, folder_id)
+                            .into_iter()
+                            .filter(|m| m.unread)
+                            .map(|m| m.uid)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for uid in unread_uids {
+                    graph_patch_message(
+                        &account,
+                        &mut state,
+                        &path,
+                        uid,
+                        serde_json::json!({ "isRead": true }),
+                        &emit,
+                    )
+                    .await;
+                }
+                if let Some(c) = cache.as_ref() {
+                    c.mark_folder_read(account_id, &path);
+                }
+                emit(WorkerEvent::FolderUnread { folder_id, unread: 0 });
+            }
+
+            MailRequest::MoveMessage { path, uid, dest } => {
+                if let Err(e) =
+                    graph_move_uids(&account, account_id, &mut state, &path, &[uid], &dest, cache.as_ref())
+                        .await
+                {
+                    emit(WorkerEvent::Error {
+                        text: format!("Could not move message: {e}"),
+                        connectivity: false,
+                    });
+                }
+            }
+
+            MailRequest::MarkSpam { path, uid, dest } => {
+                if let Err(e) =
+                    graph_move_uids(&account, account_id, &mut state, &path, &[uid], &dest, cache.as_ref())
+                        .await
+                {
+                    emit(WorkerEvent::Error {
+                        text: format!("Could not mark as spam: {e}"),
+                        connectivity: false,
+                    });
+                }
+            }
+
+            MailRequest::MoveMessages { path, uids, dest } => {
+                if let Err(e) =
+                    graph_move_uids(&account, account_id, &mut state, &path, &uids, &dest, cache.as_ref())
+                        .await
+                {
+                    emit(WorkerEvent::Error {
+                        text: format!("Could not move messages: {e}"),
+                        connectivity: false,
+                    });
+                }
+                emit(WorkerEvent::BulkComplete);
+            }
+
+            MailRequest::PurgeMessages { path, uids } => {
+                for uid in uids {
+                    let deleted = match graph_resolve(&account, &mut state, &path, uid, &emit).await
+                    {
+                        Some((token, gid)) => {
+                            let url = format!("{GRAPH_BASE}/me/messages/{gid}");
+                            tokio::task::spawn_blocking(move || graph_delete_req(&token, &url))
+                                .await
+                                .unwrap_or_else(|_| Err("task failed".into()))
+                                .is_ok()
+                        }
+                        None => false,
+                    };
+                    if deleted {
+                        state.uids.remove(&uid);
+                        if let Some(c) = cache.as_ref() {
+                            c.delete_message(account_id, &path, uid);
+                        }
+                    }
+                }
+                emit(WorkerEvent::BulkComplete);
+            }
+
+            MailRequest::UndoMove { path, dest, dest_folder_id, message_ids } => {
+                match graph_undo_move(&account, account_id, &mut state, &path, &dest, &message_ids, cache.as_ref())
+                    .await
+                {
+                    Ok(0) => emit(WorkerEvent::Error {
+                        text: "Undo: the messages are no longer where that move put them."
+                            .to_string(),
+                        connectivity: false,
+                    }),
+                    Ok(n) => {
+                        // Reload the restored folder so the messages reappear.
+                        if let Some(token) = graph_token(&account, &emit).await {
+                            if let Ok(messages) = graph_load_folder(
+                                &token,
+                                account_id,
+                                dest_folder_id,
+                                &dest,
+                                cache.as_ref(),
+                                &mut state,
+                            )
+                            .await
+                            {
+                                let unread = messages.iter().filter(|m| m.unread).count() as u32;
+                                emit(WorkerEvent::Messages {
+                                    folder_id: dest_folder_id,
+                                    messages,
+                                });
+                                emit(WorkerEvent::FolderUnread {
+                                    folder_id: dest_folder_id,
+                                    unread,
+                                });
+                            }
+                        }
+                        emit(WorkerEvent::Notice(match n {
+                            1 => "Move undone — 1 message restored".to_string(),
+                            n => format!("Move undone — {n} messages restored"),
+                        }));
+                    }
+                    Err(e) => emit(WorkerEvent::Error {
+                        text: format!("Undo failed: {e}"),
+                        connectivity: false,
+                    }),
+                }
+            }
+
+            MailRequest::CreateFolder { path } => {
+                let Some(token) = graph_token(&account, &emit).await else { continue };
+                // "A/B" nests under A (resolved from the last listing);
+                // otherwise a top-level folder.
+                let (url, name) = match path.rsplit_once('/') {
+                    Some((parent, leaf)) => match state.folders.get(parent) {
+                        Some((_, pgid)) => (
+                            format!("{GRAPH_BASE}/me/mailFolders/{pgid}/childFolders"),
+                            leaf.to_string(),
+                        ),
+                        None => (format!("{GRAPH_BASE}/me/mailFolders"), path.clone()),
+                    },
+                    None => (format!("{GRAPH_BASE}/me/mailFolders"), path.clone()),
+                };
+                let t = token.clone();
+                let body = serde_json::json!({ "displayName": name });
+                let r = tokio::task::spawn_blocking(move || graph_send_json(&t, "POST", &url, &body))
+                    .await
+                    .unwrap_or_else(|_| Err("task failed".into()));
+                match r {
+                    Ok(_) => {
+                        refresh_graph_folders(&token, account_id, cache.as_ref(), &mut state, &emit)
+                            .await;
+                    }
+                    Err(e) => emit(WorkerEvent::Error {
+                        text: format!("Could not create folder: {e}"),
+                        connectivity: false,
+                    }),
+                }
+            }
+
+            MailRequest::RenameFolder { old_path, new_path } => {
+                let Some(token) = graph_token(&account, &emit).await else { continue };
+                let Some((_, gid)) = state.folders.get(&old_path).cloned() else {
+                    emit(WorkerEvent::Error {
+                        text: "Could not rename folder: unknown folder".into(),
+                        connectivity: false,
+                    });
+                    continue;
+                };
+                // Graph renames by displayName; moving between parents would be
+                // a different call — the sidebar only renames leaves here.
+                let leaf = new_path.rsplit('/').next().unwrap_or(&new_path).to_string();
+                let t = token.clone();
+                let url = format!("{GRAPH_BASE}/me/mailFolders/{gid}");
+                let body = serde_json::json!({ "displayName": leaf });
+                let r =
+                    tokio::task::spawn_blocking(move || graph_send_json(&t, "PATCH", &url, &body))
+                        .await
+                        .unwrap_or_else(|_| Err("task failed".into()));
+                match r {
+                    Ok(_) => {
+                        refresh_graph_folders(&token, account_id, cache.as_ref(), &mut state, &emit)
+                            .await;
+                    }
+                    Err(e) => emit(WorkerEvent::Error {
+                        text: format!("Could not rename folder: {e}"),
+                        connectivity: false,
+                    }),
+                }
+            }
+
+            MailRequest::DeleteFolder { path, trash: _ } => {
+                // Graph's folder delete moves the folder (contents included) to
+                // Deleted Items itself; no separate content move needed.
+                let Some(token) = graph_token(&account, &emit).await else { continue };
+                let Some((_, gid)) = state.folders.get(&path).cloned() else {
+                    emit(WorkerEvent::Error {
+                        text: "Could not delete folder: unknown folder".into(),
+                        connectivity: false,
+                    });
+                    continue;
+                };
+                let t = token.clone();
+                let url = format!("{GRAPH_BASE}/me/mailFolders/{gid}");
+                let r = tokio::task::spawn_blocking(move || graph_delete_req(&t, &url))
+                    .await
+                    .unwrap_or_else(|_| Err("task failed".into()));
+                match r {
+                    Ok(()) => {
+                        refresh_graph_folders(&token, account_id, cache.as_ref(), &mut state, &emit)
+                            .await;
+                    }
+                    Err(e) => emit(WorkerEvent::Error {
+                        text: format!("Could not delete folder: {e}"),
+                        connectivity: false,
+                    }),
+                }
+            }
+
+            MailRequest::SaveDraft { message, folder_id, path } => {
+                emit(WorkerEvent::Status("Saving draft…".into()));
+                let saved = match build_email(&account, &message) {
+                    Ok(email) => {
+                        let raw = email.formatted();
+                        match graph_token(&account, &emit).await {
+                            Some(token) => {
+                                let t = token.clone();
+                                let url = format!("{GRAPH_BASE}/me/messages");
+                                let r = tokio::task::spawn_blocking(move || {
+                                    graph_post_mime(&t, &url, &raw)
+                                })
+                                .await
+                                .unwrap_or_else(|_| Err("task failed".into()));
+                                match r {
+                                    Ok(_) => {
+                                        // Replace the previous version of this draft.
+                                        if let Some(o) = &message.draft_origin {
+                                            if o.account_id == account_id {
+                                                if let Some((tok, gid)) = graph_resolve(
+                                                    &account, &mut state, &o.path, o.uid, &emit,
+                                                )
+                                                .await
+                                                {
+                                                    let url =
+                                                        format!("{GRAPH_BASE}/me/messages/{gid}");
+                                                    let _ = tokio::task::spawn_blocking(move || {
+                                                        graph_delete_req(&tok, &url)
+                                                    })
+                                                    .await;
+                                                }
+                                                if let Some(c) = cache.as_ref() {
+                                                    c.delete_message(account_id, &o.path, o.uid);
+                                                }
+                                            }
+                                        }
+                                        if let Ok(messages) = graph_load_folder(
+                                            &token,
+                                            account_id,
+                                            folder_id,
+                                            &path,
+                                            cache.as_ref(),
+                                            &mut state,
+                                        )
+                                        .await
+                                        {
+                                            emit(WorkerEvent::Messages { folder_id, messages });
+                                        }
+                                        true
+                                    }
+                                    Err(e) => {
+                                        emit(WorkerEvent::Error {
+                                            text: format!("Could not save draft: {e}"),
+                                            connectivity: false,
+                                        });
+                                        false
+                                    }
+                                }
+                            }
+                            None => false,
+                        }
+                    }
+                    Err(e) => {
+                        emit(WorkerEvent::Error {
+                            text: format!("Could not save draft: {e}"),
+                            connectivity: false,
+                        });
+                        false
+                    }
+                };
+                emit(WorkerEvent::Status(String::new()));
+                if saved {
+                    emit(WorkerEvent::DraftSaved);
+                }
+            }
+
+            // `sent_path` is unused: Graph's sendMail files the Sent copy itself.
+            MailRequest::Send { message, sent_path: _ } => {
+                emit(WorkerEvent::Status("Sending…".into()));
+                match graph_send_message(&account, &message, &emit).await {
+                    Ok(()) => {
+                        emit(WorkerEvent::Status(String::new()));
+                        record_sent_addresses(cache.as_ref(), &message);
+                        // If sending an edited draft, remove the obsolete draft.
+                        if let Some(o) = message.draft_origin.clone() {
+                            if o.account_id == account_id {
+                                if let Some((tok, gid)) =
+                                    graph_resolve(&account, &mut state, &o.path, o.uid, &emit).await
+                                {
+                                    let url = format!("{GRAPH_BASE}/me/messages/{gid}");
+                                    let _ = tokio::task::spawn_blocking(move || {
+                                        graph_delete_req(&tok, &url)
+                                    })
+                                    .await;
+                                }
+                                if let Some(c) = cache.as_ref() {
+                                    c.delete_message(account_id, &o.path, o.uid);
+                                }
+                                if let Some(token) = graph_token(&account, &emit).await {
+                                    if let Ok(messages) = graph_load_folder(
+                                        &token,
+                                        account_id,
+                                        o.folder_id,
+                                        &o.path,
+                                        cache.as_ref(),
+                                        &mut state,
+                                    )
+                                    .await
+                                    {
+                                        emit(WorkerEvent::Messages {
+                                            folder_id: o.folder_id,
+                                            messages,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        if let (Some(queued), Some(c)) = (message.outbox_origin, cache.as_ref()) {
+                            c.delete_outbox(queued);
+                            emit_outbox(cache.as_ref(), account_id, &emit);
+                        }
+                        emit(WorkerEvent::Sent);
+                    }
+                    Err(e) => {
+                        emit(WorkerEvent::Status(String::new()));
+                        let queued = queue_failed_send(
+                            cache.as_ref(),
+                            account_id,
+                            &account,
+                            &message,
+                            None,
+                            &e,
+                        );
+                        if let (true, Some(old), Some(c)) =
+                            (queued, message.outbox_origin, cache.as_ref())
+                        {
+                            c.delete_outbox(old);
+                        }
+                        emit(WorkerEvent::Error {
+                            text: if queued {
+                                format!("Send failed: {e}. The message is in the Outbox and will be sent when the connection is back.")
+                            } else {
+                                format!("Send failed: {e}")
+                            },
+                            connectivity: false,
+                        });
+                        emit_outbox(cache.as_ref(), account_id, &emit);
+                    }
+                }
+            }
+
+            MailRequest::LoadOutbox => emit_outbox(cache.as_ref(), account_id, &emit),
+
+            MailRequest::DeleteOutbox { id } => {
+                if let Some(c) = cache.as_ref() {
+                    c.delete_outbox(id);
+                }
+                emit_outbox(cache.as_ref(), account_id, &emit);
+            }
+
+            MailRequest::FlushOutbox { id } => {
+                graph_flush_outbox(cache.as_ref(), account_id, &account, id, &emit).await;
+            }
+
+            MailRequest::Reconnect => {
+                if let Some(token) = graph_token(&account, &emit).await {
+                    refresh_graph_folders(&token, account_id, cache.as_ref(), &mut state, &emit)
+                        .await;
+                }
+            }
+        }
+    }
+}
+
+/// A fresh GOA token, or a user-actionable error.
+async fn graph_token(account: &AccountConfig, emit: &impl Fn(WorkerEvent)) -> Option<String> {
+    match fetch_oauth_token(account).await {
+        Some(t) => Some(t),
+        None => {
+            emit(WorkerEvent::Error {
+                text: format!(
+                    "GNOME Online Accounts could not provide a sign-in token for {}. Open \
+                     Settings → Online Accounts and sign in again.",
+                    account.email
+                ),
+                connectivity: true,
+            });
+            None
+        }
+    }
+}
+
+/// Re-list the folders, emit them, remember the path → Graph-id map.
+async fn refresh_graph_folders(
+    token: &str,
+    account_id: u32,
+    cache: Option<&Cache>,
+    state: &mut GraphState,
+    emit: &impl Fn(WorkerEvent),
+) {
+    let t = token.to_string();
+    let r = tokio::task::spawn_blocking(move || graph_list_folders(&t, account_id))
+        .await
+        .unwrap_or_else(|_| Err("task failed".into()));
+    match r {
+        Ok(list) => {
+            state.adopt_folders(&list);
+            let folders: Vec<Folder> = list.into_iter().map(|f| f.folder).collect();
+            if let Some(c) = cache {
+                c.save_folders(account_id, &folders);
+            }
+            emit(WorkerEvent::Folders(folders));
+        }
+        Err(e) => emit(WorkerEvent::Error {
+            text: format!("Could not list folders: {e}"),
+            connectivity: true,
+        }),
+    }
+}
+
+/// List a folder's summaries, refresh the uid map and the cache.
+async fn graph_load_folder(
+    token: &str,
+    account_id: u32,
+    folder_id: u32,
+    path: &str,
+    cache: Option<&Cache>,
+    state: &mut GraphState,
+) -> Result<Vec<Message>, String> {
+    // An unknown path usually means the folder list hasn't been fetched yet
+    // (or the folder is new) — refresh it once before giving up.
+    if !state.folders.contains_key(path) {
+        let t = token.to_string();
+        if let Ok(list) =
+            tokio::task::spawn_blocking(move || graph_list_folders(&t, account_id))
+                .await
+                .unwrap_or_else(|_| Err("task failed".into()))
+        {
+            state.adopt_folders(&list);
+        }
+    }
+    let (_, gid) = state
+        .folders
+        .get(path)
+        .cloned()
+        .ok_or_else(|| format!("unknown folder {path}"))?;
+
+    let t = token.to_string();
+    let listed = tokio::task::spawn_blocking(move || {
+        graph_list_messages(&t, &gid, account_id, folder_id)
+    })
+    .await
+    .unwrap_or_else(|_| Err("task failed".into()))?;
+
+    let mut messages = Vec::with_capacity(listed.len());
+    for (m, gid) in listed {
+        state.uids.insert(m.uid, gid);
+        messages.push(m);
+    }
+    if let Some(c) = cache {
+        c.save_messages(account_id, path, &messages);
+    }
+    Ok(messages)
+}
+
+/// Resolve a message uid to (token, Graph id), re-listing the folder once if
+/// the uid isn't in the map (fresh start from cache, or a moved message).
+async fn graph_resolve(
+    account: &AccountConfig,
+    state: &mut GraphState,
+    path: &str,
+    uid: u32,
+    emit: &impl Fn(WorkerEvent),
+) -> Option<(String, String)> {
+    let token = graph_token(account, emit).await?;
+    if let Some(gid) = state.uids.get(&uid) {
+        return Some((token, gid.clone()));
+    }
+    // Not indexed yet: list the folder (fills the uid map) and try again. The
+    // account/folder ids only label the discarded summaries, so zeros are fine.
+    let _ = graph_load_folder(&token, 0, 0, path, None, state).await;
+    state.uids.get(&uid).map(|gid| (token, gid.clone()))
+}
+
+/// Fetch a message's raw RFC 822 bytes.
+async fn graph_fetch_raw(
+    account: &AccountConfig,
+    state: &mut GraphState,
+    path: &str,
+    uid: u32,
+    emit: &impl Fn(WorkerEvent),
+) -> Result<Vec<u8>, String> {
+    let (token, gid) = graph_resolve(account, state, path, uid, emit)
+        .await
+        .ok_or_else(|| "message not found".to_string())?;
+    let url = format!("{GRAPH_BASE}/me/messages/{gid}/$value");
+    tokio::task::spawn_blocking(move || graph_get_bytes(&token, &url))
+        .await
+        .unwrap_or_else(|_| Err("task failed".into()))
+}
+
+/// PATCH one message (read state, flag). Errors are logged, not surfaced — the
+/// optimistic UI state already changed and a stale flag is not worth a dialog.
+async fn graph_patch_message(
+    account: &AccountConfig,
+    state: &mut GraphState,
+    path: &str,
+    uid: u32,
+    body: serde_json::Value,
+    emit: &impl Fn(WorkerEvent),
+) {
+    let Some((token, gid)) = graph_resolve(account, state, path, uid, emit).await else {
+        return;
+    };
+    let url = format!("{GRAPH_BASE}/me/messages/{gid}");
+    let r = tokio::task::spawn_blocking(move || graph_send_json(&token, "PATCH", &url, &body))
+        .await
+        .unwrap_or_else(|_| Err("task failed".into()));
+    if let Err(e) = r {
+        tracing::warn!("graph: could not update message flags: {e}");
+    }
+}
+
+/// Move messages to another folder. The Graph id changes in transit; the moved
+/// entries leave the uid map and the destination re-indexes on its next load.
+async fn graph_move_uids(
+    account: &AccountConfig,
+    account_id: u32,
+    state: &mut GraphState,
+    path: &str,
+    uids: &[u32],
+    dest: &str,
+    cache: Option<&Cache>,
+) -> Result<(), String> {
+    let quiet = |_e: WorkerEvent| {};
+    let token = graph_token(account, &quiet)
+        .await
+        .ok_or_else(|| "no sign-in token from GNOME Online Accounts".to_string())?;
+    let dest_gid = match state.folders.get(dest) {
+        Some((_, gid)) => gid.clone(),
+        None => return Err(format!("unknown folder {dest}")),
+    };
+    for &uid in uids {
+        let Some(gid) = state.uids.get(&uid).cloned() else { continue };
+        let t = token.clone();
+        let url = format!("{GRAPH_BASE}/me/messages/{gid}/move");
+        let body = serde_json::json!({ "destinationId": dest_gid });
+        tokio::task::spawn_blocking(move || graph_send_json(&t, "POST", &url, &body))
+            .await
+            .unwrap_or_else(|_| Err("task failed".into()))?;
+        state.uids.remove(&uid);
+        if let Some(c) = cache {
+            c.delete_message(account_id, path, uid);
+        }
+    }
+    Ok(())
+}
+
+/// Undo a move: the messages are in `path` (where the move put them) with new
+/// Graph ids — find them by Internet Message-ID and move them back to `dest`.
+async fn graph_undo_move(
+    account: &AccountConfig,
+    account_id: u32,
+    state: &mut GraphState,
+    path: &str,
+    dest: &str,
+    message_ids: &[String],
+    cache: Option<&Cache>,
+) -> Result<usize, String> {
+    let quiet = |_e: WorkerEvent| {};
+    let token = graph_token(account, &quiet)
+        .await
+        .ok_or_else(|| "no sign-in token from GNOME Online Accounts".to_string())?;
+    let (folder_id, gid) = state
+        .folders
+        .get(path)
+        .cloned()
+        .ok_or_else(|| format!("unknown folder {path}"))?;
+    let wanted: std::collections::HashSet<&str> =
+        message_ids.iter().map(|s| s.as_str()).collect();
+
+    let t = token.clone();
+    let listed = tokio::task::spawn_blocking(move || {
+        graph_list_messages(&t, &gid, account_id, folder_id)
+    })
+    .await
+    .unwrap_or_else(|_| Err("task failed".into()))?;
+
+    let mut uids = Vec::new();
+    for (m, mgid) in listed {
+        if wanted.contains(m.message_id.as_str()) {
+            state.uids.insert(m.uid, mgid);
+            uids.push(m.uid);
+        }
+    }
+    if uids.is_empty() {
+        return Ok(0);
+    }
+    let n = uids.len();
+    graph_move_uids(account, account_id, state, path, &uids, dest, cache).await?;
+    Ok(n)
+}
+
+/// Send over Graph: `sendMail` takes the same raw MIME `build_email` produces
+/// and files the Sent copy itself.
+async fn graph_send_message(
+    account: &AccountConfig,
+    message: &OutgoingMessage,
+    emit: &impl Fn(WorkerEvent),
+) -> Result<(), String> {
+    let email = build_email(account, message).map_err(|e| e.to_string())?;
+    let raw = email.formatted();
+    let token = graph_token(account, emit)
+        .await
+        .ok_or_else(|| "no sign-in token from GNOME Online Accounts".to_string())?;
+    let url = format!("{GRAPH_BASE}/me/sendMail");
+    tokio::task::spawn_blocking(move || graph_post_mime(&token, &url, &raw))
+        .await
+        .unwrap_or_else(|_| Err("task failed".into()))?;
+    Ok(())
+}
+
+/// The Outbox retry loop for Graph accounts: same queue and bookkeeping as
+/// [`flush_outbox`], with `sendMail` as the transport (Sent copy automatic).
+async fn graph_flush_outbox(
+    cache: Option<&Cache>,
+    account_id: u32,
+    account: &AccountConfig,
+    id: Option<u32>,
+    emit: &impl Fn(WorkerEvent),
+) {
+    let Some(cache) = cache else { return };
+    let items: Vec<crate::models::OutboxItem> = cache
+        .outbox_items(account_id)
+        .into_iter()
+        .filter(|item| id.is_none_or(|wanted| wanted == item.id))
+        .collect();
+    if items.is_empty() {
+        return;
+    }
+    emit(WorkerEvent::Status("Sending…".into()));
+    let Some(token) = graph_token(account, emit).await else {
+        emit(WorkerEvent::Status(String::new()));
+        return;
+    };
+    let mut sent_any = false;
+    for item in items {
+        let t = token.clone();
+        let raw = item.raw.clone();
+        let url = format!("{GRAPH_BASE}/me/sendMail");
+        let r = tokio::task::spawn_blocking(move || graph_post_mime(&t, &url, &raw))
+            .await
+            .unwrap_or_else(|_| Err("task failed".into()));
+        match r {
+            Ok(_) => {
+                sent_any = true;
+                cache.delete_outbox(item.id);
+            }
+            Err(e) => {
+                cache.record_outbox_failure(item.id, &e);
+                emit(WorkerEvent::Error {
+                    text: format!("Still could not send \u{201c}{}\u{201d}: {e}", item.subject),
+                    connectivity: false,
+                });
+                break;
+            }
+        }
+    }
+    emit(WorkerEvent::Status(String::new()));
+    if sent_any {
+        emit(WorkerEvent::Sent);
+    }
+    emit_outbox(Some(cache), account_id, emit);
 }
 
 #[cfg(test)]

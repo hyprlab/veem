@@ -40,7 +40,10 @@ const GOOGLE_CLIENT_SECRET: &str = match option_env!("VIREO_GOOGLE_CLIENT_SECRET
     Some(v) => v,
     None => "",
 };
-const MICROSOFT_CLIENT_ID: &str = "47579d63-4785-4131-98bb-7f2a2a1a2c59";
+// Microsoft: no built-in client. The old embedded (Thunderbird) client is gone —
+// Microsoft accounts authenticate through GNOME Online Accounts and the Graph
+// API (issue #36); a user-supplied client via env/oauth.toml still works.
+const MICROSOFT_CLIENT_ID: &str = "";
 const MICROSOFT_CLIENT_SECRET: &str = "";
 
 /// The Vireo app icon, embedded so the success page needs no external resources.
