@@ -2110,6 +2110,14 @@ fn watch_changed_folders(
     changed: &[(FolderKind, String)],
     emit: &(impl Fn(WorkerEvent) + Clone + 'static),
 ) {
+    // A sweep claiming more folders moved than the pool could ever hold says
+    // nothing about which are hot — that shape is a bulk event (a client
+    // reorganizing, a suspect baseline), and admitting them would churn every
+    // standing watcher out for nothing. Let the next sweep pick the real ones.
+    if changed.iter().filter(|(k, _)| watchable(*k)).count() > WATCHER_LIMIT {
+        tracing::info!("sweep: bulk change ({} folders), not adjusting watchers", changed.len());
+        return;
+    }
     let mut stagger = 0;
     for (kind, path) in changed {
         if watchable(*kind) && watch_active_folder(watchers, account, path, stagger, emit) {
@@ -3668,7 +3676,10 @@ async fn refresh_unread_counts(
         emit(WorkerEvent::FolderUnread { folder_id: f.id, unread });
         let now = (unread, mb.uid_next);
         match baseline.insert(f.path.clone(), now) {
-            Some(prev) if prev != now => changed.push((f.kind, f.path.clone())),
+            Some(prev) if prev != now => {
+                tracing::debug!("sweep: {} moved {:?} -> {:?}", f.path, prev, now);
+                changed.push((f.kind, f.path.clone()));
+            }
             _ => {}
         }
     }

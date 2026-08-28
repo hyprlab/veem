@@ -1788,6 +1788,10 @@ impl SimpleComponent for AppModel {
             let s = sender.clone();
             let guard = model.peek_transition.clone();
             widgets.sidebar_split.connect_show_sidebar_notify(move |split| {
+                tracing::info!(
+                    "peek: show-sidebar notify shown={} collapsed={} guarded={}",
+                    split.shows_sidebar(), split.is_collapsed(), guard.get()
+                );
                 // Only a *user* dismissal (scrim click / swipe) counts — our
                 // own open/close transitions notify too, and collapsing the
                 // split auto-hides the sidebar mid-open.
@@ -2388,6 +2392,10 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::SidebarCollapsed(collapsed) => {
+                tracing::info!(
+                    "peek: sidebar reports collapsed={collapsed} (peek={} auto_rail={} rail_active={})",
+                    self.sidebar_peek, self.auto_rail, self.rail_active
+                );
                 // The sidebar component has already switched its own rows; this
                 // is the app-side reaction (split widths, header, persistence).
                 // At a width that can host the full sidebar, the arrow inside a
@@ -2415,6 +2423,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::AutoRail(on) => {
+                tracing::info!("peek: auto-rail {on} (peek={})", self.sidebar_peek);
                 self.auto_rail = on;
                 if !on && self.sidebar_peek {
                     // Widened with the overlay open: fold it back before the
@@ -2437,10 +2446,15 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ToggleSidebar => {
+                tracing::info!(
+                    "peek: toggle button (peek={} auto_rail={} rail_active={})",
+                    self.sidebar_peek, self.auto_rail, self.rail_active
+                );
                 self.sidebar.emit(SidebarInput::ToggleCollapsed);
             }
 
             AppMsg::SidebarPeekDismissed => {
+                tracing::info!("peek: dismissed (peek={})", self.sidebar_peek);
                 if self.sidebar_peek {
                     self.rail_active = true;
                     self.set_sidebar_peek(false, true, true);
@@ -4980,6 +4994,7 @@ impl AppModel {
     /// sidebar, persists the expanded state. The sidebar just railed its rows
     /// on that click — expand them back, drop the overlay, and save.
     fn pin_sidebar_from_peek(&mut self) {
+        tracing::info!("peek: pinned to side-by-side");
         let Some(split) = self.sidebar_split.clone() else { return };
         if let Some(timer) = self.peek_close_timer.borrow_mut().take() {
             timer.remove();
@@ -5040,6 +5055,10 @@ impl AppModel {
     /// button has already done that itself, an outside dismissal has not.
     fn set_sidebar_peek(&mut self, open: bool, sync_rows: bool, animate: bool) {
         let Some(split) = self.sidebar_split.clone() else { return };
+        tracing::info!(
+            "peek: set open={open} sync_rows={sync_rows} animate={animate} (was peek={}, split collapsed={} shown={})",
+            self.sidebar_peek, split.is_collapsed(), split.shows_sidebar()
+        );
         // A reopen or re-close supersedes any pending end-of-close restore.
         if let Some(timer) = self.peek_close_timer.borrow_mut().take() {
             timer.remove();
@@ -5103,6 +5122,7 @@ impl AppModel {
                 let close_timer = self.peek_close_timer.clone();
                 let ghost = self.peek_rail_ghost.clone();
                 move || {
+                    tracing::info!("peek: restore (rail back, sync_rows={sync_rows})");
                     close_timer.borrow_mut().take();
                     if sync_rows {
                         let _ = sidebar_sender.send(SidebarInput::SetCollapsed(true));
