@@ -830,7 +830,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleSidebar),
                                 },
                                 // The action cluster sits at the far end, in
-                                // fixed order: Status, Refresh, Contacts, Compose
+                                // fixed order: Status, Refresh, Compose
                                 // (pack_end packs right-to-left, so Compose —
                                 // the window's primary action — goes first and
                                 // lands rightmost).
@@ -839,12 +839,6 @@ impl SimpleComponent for AppModel {
                                     set_tooltip_text: Some("Compose"),
                                     add_css_class: "suggested-action",
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Compose),
-                                },
-                                pack_end = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
-                                    set_tooltip_text: Some("Open Contacts"),
-                                    add_css_class: "flat",
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::OpenContacts),
                                 },
                                 pack_end = &gtk::Button {
                                     set_tooltip_text: Some("Refresh"),
@@ -987,16 +981,6 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Forward),
                                 },
                                 pack_start = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-contact-new-symbolic",
-                                    set_tooltip_text: Some("Add sender to Contacts"),
-                                    add_css_class: "flat",
-                                    #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
-                                    #[watch]
-                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::AddToContacts),
-                                },
-                                pack_start = &gtk::Button {
                                     set_tooltip_text: Some("Flag"),
                                     add_css_class: "flat",
                                     #[watch]
@@ -1010,6 +994,27 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleStar),
+                                },
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-contact-new-symbolic",
+                                    set_tooltip_text: Some("Add sender to Contacts"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    #[watch]
+                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::AddToContacts),
+                                },
+                                // Open Contacts (the app-wide address book) —
+                                // moved here from the message list's header to
+                                // sit beside the per-sender contact action.
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
+                                    set_tooltip_text: Some("Open Contacts"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::OpenContacts),
                                 },
                                 // pack_end fills right-to-left, so these are declared
                                 // in reverse of their visual order. Left to right:
@@ -5078,6 +5083,7 @@ impl AppModel {
                 ],
                 vec![
                     entry!("Add to Contacts", "contact-new", AppMsg::AddToContacts, acts),
+                    entry!("Open Contacts", "x-office-address-book", AppMsg::OpenContacts, true),
                     if starred {
                         entry!("Remove Flag", "non-starred", AppMsg::ToggleStar, acts)
                     } else {
