@@ -8004,12 +8004,16 @@ fn install_scheme_css() {
         // high-contrast white text — and it stays full whether or not the
         // list holds focus, so clicking into the reader never dims it.
         let shield = if dark { "#ffca28" } else { "#ff7800" };
+        // The compose surface sits on the reader's deeper page ground — the
+        // same shade the threaded cards float on.
+        let page = if dark { "#141414" } else { "#f1f1f1" };
         provider.load_from_string(&format!(
             ".message-listbox > row:selected .message-row, \
              .message-listbox > row.activatable:selected:hover .message-row, \
              .message-listbox > row.activatable:selected:active .message-row {{ \
                background-color: @accent_bg_color; color: white; }}\
-             .remote-alert image {{ color: {shield}; }}"
+             .remote-alert image {{ color: {shield}; }}\
+             .inline-compose-surface, .compose-pane {{ background-color: {page}; }}"
         ));
     };
     let style = adw::StyleManager::default();

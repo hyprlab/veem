@@ -818,7 +818,15 @@ headerbar.rail-header {
 /* ---- Compose ---- */
 
 .compose-pane {
-  padding: 16px;
+  /* Matches the reader's 20px message inset. */
+  padding: 20px;
+}
+
+/* The body editor sits borderless on the compose surface — the editing area
+   reads as a card on the deeper ground (see install_scheme_css), like the
+   threaded reader's cards, not a framed inset. */
+.compose-pane frame {
+  border: none;
 }
 
 /* Compact recipient fields (From/To/Cc/Bcc/Subject) so the body editor, which
