@@ -1063,3 +1063,12 @@ headerbar.rail-header {
 .tree-expander-icon.open {
   -gtk-icon-transform: rotate(90deg);
 }
+
+/* The thread chip's caret spins between closed (pointing end) and open
+   (pointing down), same as the folder-tree expander above. */
+.thread-toggle-icon {
+  transition: -gtk-icon-transform 200ms ease;
+}
+.thread-toggle-icon.open {
+  -gtk-icon-transform: rotate(90deg);
+}

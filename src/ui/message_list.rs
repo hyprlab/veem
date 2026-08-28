@@ -418,12 +418,17 @@ impl FactoryComponent for MessageRow {
                             gtk::Label {
                                 set_label: &self.thread_count.to_string(),
                             },
+                            // One right-pointing caret; the "open" class rotates it
+                            // 90° via a CSS transition (mirrors the sidebar's
+                            // folder-tree expander), instead of swapping glyphs.
                             gtk::Image {
-                                set_icon_name: Some(if self.thread_expanded {
-                                    "co.hyprlab.Vireo-pan-down-symbolic"
+                                set_icon_name: Some("co.hyprlab.Vireo-pan-end-symbolic"),
+                                #[watch]
+                                set_css_classes: if self.thread_expanded {
+                                    &["thread-toggle-icon", "open"]
                                 } else {
-                                    "co.hyprlab.Vireo-pan-end-symbolic"
-                                }),
+                                    &["thread-toggle-icon"]
+                                },
                             },
                         },
                     },
