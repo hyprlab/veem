@@ -7769,20 +7769,15 @@ fn install_scheme_css() {
         );
     }
     let apply = move |provider: &gtk::CssProvider, dark: bool| {
-        // The selection is the GNOME accent itself, with high-contrast white
-        // text so it stands out boldly on light mode; dark mode runs the
-        // accent at half strength (its text is already light). The unfocused
-        // state is a step dimmer in both, so the highlight still recedes —
-        // never vanishes — when focus moves to the reader.
-        let (sel, focus) = if dark { (0.35, 0.5) } else { (0.75, 1.0) };
+        // The selection is the GNOME accent itself at full saturation, with
+        // high-contrast white text — and it stays full whether or not the
+        // list holds focus, so clicking into the reader never dims it.
         let shield = if dark { "#ffca28" } else { "#ff7800" };
         provider.load_from_string(&format!(
-            ".message-listbox > row:selected .message-row {{ \
-               background-color: alpha(@accent_bg_color, {sel}); color: white; }}\
-             .message-listbox:focus-within > row:selected .message-row, \
+            ".message-listbox > row:selected .message-row, \
              .message-listbox > row.activatable:selected:hover .message-row, \
              .message-listbox > row.activatable:selected:active .message-row {{ \
-               background-color: alpha(@accent_bg_color, {focus}); }}\
+               background-color: @accent_bg_color; color: white; }}\
              .remote-alert image {{ color: {shield}; }}"
         ));
     };

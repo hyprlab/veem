@@ -370,6 +370,26 @@ headerbar.rail-header {
   padding: 8px 6px 8px 10px;
 }
 
+/* Selected rows: every text element fully white at full strength, in both
+   schemes — the accent ground (see install_scheme_css) carries the
+   contrast, so nothing on it is dimmed. */
+.message-listbox > row:selected .message-row label {
+  color: white;
+  opacity: 1;
+}
+
+/* The thread chip inverts on the accent ground: white pill, accent text
+   and caret — a grey chip would sink into the highlight. */
+.message-listbox > row:selected .message-row .thread-chip {
+  background: white;
+  opacity: 1;
+}
+
+.message-listbox > row:selected .message-row .thread-chip label,
+.message-listbox > row:selected .message-row .thread-chip image {
+  color: @accent_bg_color;
+}
+
 /* Sender circles off (#29): the unread dot leads the row, so it gets the same
    gap on each side — 12px to the list's edge (6px margin + 6px padding), and
    8px of box spacing plus this margin to the sender's name. */
@@ -917,6 +937,8 @@ headerbar.rail-header {
 /* In-message attachment drawer (footer beneath the reader body). */
 .attachment-drawer {
   background: alpha(currentColor, 0.03);
+  /* Matches the 6px grab strip above, so the drawer reads evenly spaced. */
+  padding-bottom: 6px;
 }
 /* The drawer's divider draws no line or grip of its own: it wears the
    drawer's exact tint, so the grabbable strip reads as the drawer's own top
