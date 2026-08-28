@@ -473,7 +473,9 @@ headerbar.rail-header {
   min-height: 8px;
   border-radius: 4px;
   margin-left: -5px;
-  background-color: alpha(currentColor, 0.5);
+  /* Opaque: the same 50% grey, but mixed over the window ground instead of
+     alpha — a translucent dot let the rail line strike through it. */
+  background-color: mix(@window_bg_color, currentColor, 0.5);
   box-shadow: 0 0 0 2px @window_bg_color;
 }
 
