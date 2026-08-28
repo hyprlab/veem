@@ -2450,6 +2450,41 @@ impl SimpleComponent for AppModel {
                     "peek: toggle button (peek={} auto_rail={} rail_active={})",
                     self.sidebar_peek, self.auto_rail, self.rail_active
                 );
+                // Self-healing: with no peek open, the split should always be
+                // un-collapsed and showing (rail or side-by-side). If it ended
+                // hidden — a lost race in the peek machinery left users with no
+                // sidebar and a dead button until relaunch (seen on 1.17.1) —
+                // the button's job is to bring the sidebar back, not to feed
+                // a toggle into state that already lost the plot: repair to
+                // the rail first, then toggle normally from there.
+                if !self.sidebar_peek {
+                    if let Some(split) = self.sidebar_split.clone() {
+                        if split.is_collapsed() || !split.shows_sidebar() {
+                            tracing::info!(
+                                "peek: toggle found split hidden (collapsed={} shown={}) — repairing",
+                                split.is_collapsed(),
+                                split.shows_sidebar()
+                            );
+                            // A pending end-of-close restore would stomp the
+                            // peek this press is about to open.
+                            if let Some(timer) = self.peek_close_timer.borrow_mut().take() {
+                                timer.remove();
+                            }
+                            self.rail_active = true;
+                            self.sidebar.emit(SidebarInput::SetCollapsed(true));
+                            self.compact_sidebar_header(true);
+                            self.peek_transition.set(true);
+                            split.set_min_sidebar_width(SIDEBAR_RAIL_WIDTH);
+                            split.set_max_sidebar_width(SIDEBAR_RAIL_WIDTH);
+                            split.set_collapsed(false);
+                            split.set_show_sidebar(true);
+                            self.peek_transition.set(false);
+                            if let Some(g) = self.peek_rail_ghost.as_ref() {
+                                g.set_visible(false);
+                            }
+                        }
+                    }
+                }
                 self.sidebar.emit(SidebarInput::ToggleCollapsed);
             }
 
