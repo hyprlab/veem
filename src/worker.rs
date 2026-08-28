@@ -96,6 +96,15 @@ const WATCHER_LIMIT: usize = 4;
 /// coverage until it changes again.
 const WATCH_LEASE: Duration = Duration::from_secs(3600);
 
+/// How long a watcher lets IDLE sit before verifying the count itself. IDLE
+/// still wakes it instantly where servers announce changes, but a flag flipped
+/// from another client is exactly what some servers (iCloud, observed
+/// 2026-08-28) never announce to an idling session — so the watcher recounts
+/// every minute regardless and reports only when the number moved. One UID
+/// SEARCH per watcher per minute; the ceiling on a watched folder's staleness
+/// whatever the server chooses to say.
+const WATCH_VERIFY: Duration = Duration::from_secs(60);
+
 /// A request from the UI to the worker.
 #[derive(Debug)]
 pub enum MailRequest {
@@ -505,9 +514,9 @@ async fn run_imap(
     // hold an IDLE connection for a [`WATCH_LEASE`], keyed by path.
     let mut watchers: std::collections::HashMap<String, FolderWatch> =
         std::collections::HashMap::new();
-    // Each folder's (UNSEEN, UIDNEXT) from the previous sweep, for spotting the
+    // Each folder's (unseen, UIDNEXT) from the previous sweep, for spotting the
     // folders that changed between sweeps.
-    let mut sweep_baseline: std::collections::HashMap<String, (Option<u32>, Option<u32>)> =
+    let mut sweep_baseline: std::collections::HashMap<String, (u32, Option<u32>)> =
         std::collections::HashMap::new();
     // Set after prefetching; triggers one re-sync (to catch mail that arrived
     // while the connection was busy) before settling into the long IDLE.
@@ -581,6 +590,25 @@ async fn run_imap(
                             None,
                             emit.clone(),
                         ));
+                    }
+                    // Seed the sweep baseline now rather than at the first
+                    // timer tick, so the very first change a sweep sees —
+                    // maybe the user's own manual refresh minutes from now —
+                    // already has something to differ from and earns its
+                    // folder a watcher. Also the first accurate (searched,
+                    // not STATUSed) chip pass for servers where STATUS lies.
+                    if let Some(sess) = session.as_mut() {
+                        let changed = refresh_unread_counts(
+                            account_id,
+                            sess,
+                            cache.as_ref(),
+                            idle_folder.as_ref().map(|(_, p)| p.as_str()),
+                            &mut sweep_baseline,
+                            &emit,
+                        )
+                        .await;
+                        last_unread_sweep = Some(std::time::Instant::now());
+                        watch_changed_folders(&mut watchers, &account, &changed, &emit);
                     }
                 }
                 // Connected but the listing hasn't landed in the cache yet
@@ -2121,9 +2149,10 @@ fn watch_active_folder(
         let Some(stalest) = stalest else { break };
         if let Some(w) = watchers.remove(&stalest) {
             w.handle.abort();
-            tracing::debug!("unwatching {stalest}: slot needed for {path}");
+            tracing::info!("unwatching {stalest}: slot needed for {path}");
         }
     }
+    tracing::info!("watching {path} (recent activity)");
     let lease = Rc::new(Cell::new(std::time::Instant::now()));
     let handle = tokio::task::spawn_local(watch_folder(
         account.clone(),
@@ -2178,6 +2207,7 @@ async fn watch_folder(
         let Ok(mut sess) = connect(&account).await else {
             // Offline, or the server's connection cap is spent (the main
             // session always connects first and is never contended by this).
+            tracing::debug!("watcher for {path}: connect failed, backing off");
             backoff = if backoff < Duration::from_secs(60) {
                 Duration::from_secs(60)
             } else {
@@ -2187,26 +2217,31 @@ async fn watch_folder(
         };
         backoff = Duration::from_secs(60);
         if sess.examine(&path).await.is_err() {
-            tracing::debug!("unwatching {path}: no longer selectable");
+            tracing::info!("unwatching {path}: no longer selectable");
             return;
         }
         // Catch up on whatever happened while unwatched (startup, or the gap a
-        // dropped connection left), then settle into IDLE.
-        match selected_unseen(&mut sess).await {
+        // dropped connection left), then settle into the IDLE/verify cycle.
+        let mut last_count = selected_unseen(&mut sess).await;
+        match last_count {
             Some(unread) => emit(WorkerEvent::FolderUnreadByPath { path: path.clone(), unread }),
             None => continue, // wedged straight out of the gate; reconnect
         }
         loop {
             if lapsed(&lease) {
-                tracing::debug!("unwatching {path}: quiet for the whole lease");
+                tracing::info!("unwatching {path}: quiet for the whole lease");
                 let _ = sess.logout().await;
                 return;
             }
-            // At most the main IDLE's 29 minutes (under RFC 2177's half-hour
-            // re-issue requirement), but never past the lease's own deadline,
-            // so a lapsed watcher frees its connection promptly.
-            let timeout = lease.as_ref().map_or(1740, |l| {
-                WATCH_LEASE.saturating_sub(l.get().elapsed()).as_secs().clamp(1, 1740)
+            // A short IDLE round: woken instantly where the server announces
+            // changes, and capped at [`WATCH_VERIFY`] so the recount below
+            // covers the servers that stay silent — never past the lease's
+            // own deadline, so a lapsed watcher frees its connection promptly.
+            let timeout = lease.as_ref().map_or(WATCH_VERIFY.as_secs(), |l| {
+                WATCH_LEASE
+                    .saturating_sub(l.get().elapsed())
+                    .as_secs()
+                    .clamp(1, WATCH_VERIFY.as_secs())
             });
             let mut handle = sess.idle();
             if handle.init().await.is_err() {
@@ -2223,18 +2258,24 @@ async fn watch_folder(
                 Ok(s) => sess = s,
                 Err(_) => break,
             }
-            if woke {
-                // Server-reported activity: the folder is live — renew the
-                // lease before anything else, whatever the count turns out to be.
-                if let Some(l) = &lease {
-                    l.set(std::time::Instant::now());
-                }
-                match selected_unseen(&mut sess).await {
-                    Some(unread) => {
+            // Recount whether pushed awake or on the verify tick; a changed
+            // number (or any pushed wake) is activity that renews the lease,
+            // and only a changed number is worth an event.
+            match selected_unseen(&mut sess).await {
+                Some(unread) => {
+                    let moved = last_count != Some(unread);
+                    if woke || moved {
+                        if let Some(l) = &lease {
+                            l.set(std::time::Instant::now());
+                        }
+                    }
+                    if moved {
+                        tracing::debug!("watcher for {path}: unseen now {unread}");
+                        last_count = Some(unread);
                         emit(WorkerEvent::FolderUnreadByPath { path: path.clone(), unread });
                     }
-                    None => break, // count unavailable = session gone; reconnect
                 }
+                None => break, // count unavailable = session gone; reconnect
             }
         }
     }
@@ -3578,28 +3619,37 @@ async fn refresh_folders(
     }
 }
 
-/// STATUS-sweep every known folder and emit a [`WorkerEvent::FolderUnread`] for
-/// each — the per-folder event is the one path allowed to assert a genuine zero
-/// (the merged Folders path deliberately won't, see the app's SetFolders). A
-/// failed STATUS emits nothing, so a wedged answer can't wipe a good chip.
+/// Sweep every known folder for its true unread count and emit a
+/// [`WorkerEvent::FolderUnread`] for each — the per-folder event is the one
+/// path allowed to assert a genuine zero (the merged Folders path deliberately
+/// won't, see the app's SetFolders). A folder that can't be read emits
+/// nothing, so a wedged answer can't wipe a good chip.
 ///
-/// `selected` (the mailbox the session has open) is skipped: STATUS on the
-/// selected mailbox misbehaves on some servers, and that folder's count is
-/// already refreshed by every load and IDLE pass.
+/// EXAMINE + UID SEARCH, not STATUS: STATUS answers from a cache that lags
+/// minutes behind on some servers (iCloud, see the inbox refinement in
+/// [`list_folders`]) — stale numbers left chips unmoved and, worse, blinded
+/// the change detection below. The read-only EXAMINE walk costs a second
+/// round trip per folder and leaves the session's selection wherever it ends;
+/// every other network path re-selects what it needs first.
+///
+/// `selected` (the mailbox the main loop is working) is skipped: its count is
+/// already refreshed by every load and IDLE pass, and examining it out from
+/// under the loop would be rude.
 ///
 /// Doubles as the activity detector for the dynamic watchers: each folder's
-/// (UNSEEN, UIDNEXT) pair is compared against `baseline` — the same pair from
+/// (unseen, UIDNEXT) pair is compared against `baseline` — the same pair from
 /// the previous sweep — and the folders that moved are returned so the caller
-/// can put them on the watch list. UIDNEXT catches deliveries of already-read
-/// mail that UNSEEN alone would miss. A folder with no baseline yet (first
-/// sweep of the session) is recorded, not reported: everything that happened
-/// while Vireo was closed would otherwise look like fresh activity.
+/// can put them on the watch list. UIDNEXT (from the EXAMINE response)
+/// catches deliveries of already-read mail that the unseen count alone would
+/// miss. A folder with no baseline yet is recorded, not reported: everything
+/// that happened while Vireo was closed would otherwise look like fresh
+/// activity.
 async fn refresh_unread_counts(
     account_id: u32,
     session: &mut ImapSession,
     cache: Option<&Cache>,
     selected: Option<&str>,
-    baseline: &mut std::collections::HashMap<String, (Option<u32>, Option<u32>)>,
+    baseline: &mut std::collections::HashMap<String, (u32, Option<u32>)>,
     emit: &impl Fn(WorkerEvent),
 ) -> Vec<(FolderKind, String)> {
     let mut changed = Vec::new();
@@ -3608,16 +3658,25 @@ async fn refresh_unread_counts(
         if Some(f.path.as_str()) == selected {
             continue;
         }
-        if let Ok(mb) = session.status(&f.path, "(UNSEEN UIDNEXT)").await {
-            if let Some(unseen) = mb.unseen {
-                emit(WorkerEvent::FolderUnread { folder_id: f.id, unread: unseen });
-            }
-            let now = (mb.unseen, mb.uid_next);
-            match baseline.insert(f.path.clone(), now) {
-                Some(prev) if prev != now => changed.push((f.kind, f.path.clone())),
-                _ => {}
-            }
+        let Ok(mb) = session.examine(&f.path).await else {
+            tracing::debug!("sweep: cannot examine {}", f.path);
+            continue;
+        };
+        let Some(unread) = selected_unseen(session).await else {
+            continue;
+        };
+        emit(WorkerEvent::FolderUnread { folder_id: f.id, unread });
+        let now = (unread, mb.uid_next);
+        match baseline.insert(f.path.clone(), now) {
+            Some(prev) if prev != now => changed.push((f.kind, f.path.clone())),
+            _ => {}
         }
+    }
+    if !changed.is_empty() {
+        tracing::info!(
+            "sweep: changed {:?}",
+            changed.iter().map(|(_, p)| p.as_str()).collect::<Vec<_>>()
+        );
     }
     changed
 }
