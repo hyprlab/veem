@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.17.2b — 2026-08-28
+
+- Beta-channel build matching stable 1.17.1 (see below) — Microsoft 365
+  over Graph, the GOA account flows, the sidebar action bar, and the
+  slimmer list header, on the beta app ID with shared stable data.
+
 ## 1.17.1 — 2026-08-28
 
 - **Microsoft 365 via GNOME Online Accounts works (issue #36).** GOA's
