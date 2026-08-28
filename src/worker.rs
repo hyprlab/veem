@@ -5924,6 +5924,8 @@ struct GraphState {
     uids: std::collections::HashMap<u32, String>,
     /// The Drafts folder's (folder id, path), for draft reloads after a send.
     drafts: Option<(u32, String)>,
+    /// The Inbox's (folder id, path), for the new-mail poll.
+    inbox: Option<(u32, String)>,
 }
 
 impl GraphState {
@@ -5935,6 +5937,10 @@ impl GraphState {
         self.drafts = list
             .iter()
             .find(|f| f.folder.kind == FolderKind::Drafts)
+            .map(|f| (f.folder.id, f.folder.path.clone()));
+        self.inbox = list
+            .iter()
+            .find(|f| f.folder.kind == FolderKind::Inbox)
             .map(|f| (f.folder.id, f.folder.path.clone()));
     }
 }
@@ -5965,6 +5971,7 @@ async fn run_graph(
         folders: Default::default(),
         uids: Default::default(),
         drafts: None,
+        inbox: None,
     };
 
     // Fetch a token and the folder list. A GOA token failure here is the one
@@ -5973,7 +5980,28 @@ async fn run_graph(
         refresh_graph_folders(&token, account_id, cache.as_ref(), &mut state, &emit).await;
     }
 
-    while let Some(req) = rx.recv().await {
+    // Graph has no push channel (nothing like IMAP IDLE is available to this
+    // token), so new mail arrives on a poll. The auto-fetch preference sets the
+    // cadence when it's on; otherwise a quiet couple of minutes.
+    let poll_secs = match crate::config::load_fetch_interval() {
+        0 => 120,
+        s => s.max(60),
+    };
+    let mut poll = tokio::time::interval(Duration::from_secs(poll_secs));
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    poll.tick().await; // consume the interval's immediate first tick
+
+    loop {
+        let req = tokio::select! {
+            req = rx.recv() => match req {
+                Some(req) => req,
+                None => break,
+            },
+            _ = poll.tick() => {
+                graph_poll_inbox(account_id, &account, cache.as_ref(), &mut state, &emit).await;
+                continue;
+            }
+        };
         match req {
             MailRequest::LoadGallery => {
                 if let Some(c) = cache.as_ref() {
@@ -6546,6 +6574,33 @@ async fn run_graph(
                 }
             }
         }
+    }
+}
+
+/// One poll tick: refresh the Inbox and emit it. The app diffs the arriving
+/// list against its cache, so this drives both the visible refresh and the
+/// desktop notification for genuinely new mail. Token failures stay quiet here
+/// — a signed-out account already errors on every interactive action.
+async fn graph_poll_inbox(
+    account_id: u32,
+    account: &AccountConfig,
+    cache: Option<&Cache>,
+    state: &mut GraphState,
+    emit: &impl Fn(WorkerEvent),
+) {
+    let quiet = |_: WorkerEvent| {};
+    let Some(token) = graph_token(account, &quiet).await else { return };
+    if state.inbox.is_none() {
+        // The startup folder listing may have failed (offline launch).
+        refresh_graph_folders(&token, account_id, cache, state, emit).await;
+    }
+    let Some((folder_id, path)) = state.inbox.clone() else { return };
+    if let Ok(messages) =
+        graph_load_folder(&token, account_id, folder_id, &path, cache, state).await
+    {
+        let unread = messages.iter().filter(|m| m.unread).count() as u32;
+        emit(WorkerEvent::Messages { folder_id, messages });
+        emit(WorkerEvent::FolderUnread { folder_id, unread });
     }
 }
 
