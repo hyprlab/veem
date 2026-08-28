@@ -27,6 +27,8 @@ pub struct PrefInit {
     pub threads_expanded: bool,
     /// Conversation card actions hide until the card is hovered.
     pub card_actions_hover: bool,
+    /// With the ⋯ toggle off: card actions appear automatically on hover.
+    pub card_actions_auto: bool,
     pub message_theme: MessageTheme,
     pub app_theme: AppTheme,
     pub notifications: bool,
@@ -144,6 +146,7 @@ pub enum PrefInput {
     ToggleThreading(bool),
     ToggleThreadsExpanded(bool),
     ToggleCardActionsHover(bool),
+    ToggleCardActionsAuto(bool),
     ChangeFetchInterval(u32),
     TogglePush(bool),
     ToggleNotifications(bool),
@@ -175,6 +178,7 @@ pub enum PrefOutput {
     SetThreading(bool),
     SetThreadsExpanded(bool),
     SetCardActionsHover(bool),
+    SetCardActionsAuto(bool),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -359,11 +363,22 @@ impl Component for Preferences {
                         #[name = "card_actions_hover_row"]
                         adw::SwitchRow {
                             set_title: "Hide message card actions until hovered",
-                            set_subtitle: "In conversations, each card's action icons stay \
-                                           tucked behind a \u{22ef} toggle that appears on \
-                                           hover. Off = the icons are always shown.",
+                            set_subtitle: "Each message card's action icons stay tucked \
+                                           behind a \u{22ef} toggle that appears on hover. \
+                                           Off = see the option below.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleCardActionsHover(row.is_active()));
+                            },
+                        },
+
+                        #[name = "card_actions_auto_row"]
+                        adw::SwitchRow {
+                            set_title: "Show card actions while hovering",
+                            set_subtitle: "With the \u{22ef} toggle off: the icons appear \
+                                           by themselves while the pointer is over a \
+                                           message, single or threaded. Off = always shown.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleCardActionsAuto(row.is_active()));
                             },
                         },
 
@@ -649,6 +664,14 @@ impl Component for Preferences {
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
         widgets.card_actions_hover_row.set_active(init.card_actions_hover);
+        widgets.card_actions_auto_row.set_active(init.card_actions_auto);
+        // The auto-on-hover choice only means something with the ⋯ toggle off.
+        widgets
+            .card_actions_hover_row
+            .bind_property("active", &widgets.card_actions_auto_row, "sensitive")
+            .transform_to(|_, active: bool| Some(!active))
+            .sync_create()
+            .build();
 
         // Date and clock combos.
         let date_labels: Vec<&str> = DATE_STYLES.iter().map(|(l, _)| *l).collect();
@@ -733,6 +756,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleCardActionsHover(on) => {
                 let _ = sender.output(PrefOutput::SetCardActionsHover(on));
+            }
+            PrefInput::ToggleCardActionsAuto(on) => {
+                let _ = sender.output(PrefOutput::SetCardActionsAuto(on));
             }
             PrefInput::ChangeFetchInterval(index) => {
                 let secs = FETCH_INTERVALS

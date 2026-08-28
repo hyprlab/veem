@@ -53,9 +53,12 @@ pub struct MessageView {
     /// every load blanks the view for an instant, however briefly.
     shown_fingerprint: Option<u64>,
     /// Conversation card actions hide until the card is hovered (expanded via
-    /// their ⋯ toggle); off = always shown. A preference, applied by stamping
-    /// the document (see `document_html`).
+    /// their ⋯ toggle). A preference, applied by stamping the document (see
+    /// `document_html`).
     card_actions_hover: bool,
+    /// With the toggle off: show the actions automatically while the card is
+    /// hovered (vs always).
+    card_actions_auto: bool,
     /// The open conversation has already auto-scrolled to its first unread
     /// message: later renders of the same thread (bodies streaming in, a theme
     /// flip) carry a no-scroll stamp so the reader's place is kept.
@@ -182,8 +185,9 @@ pub enum MessageViewInput {
     },
     /// The card's "Add sender to Contacts" button.
     CardContact { account_id: u32, id: u32 },
-    /// Preferences: hide card actions until hovered (vs always shown).
-    SetCardActionsHover(bool),
+    /// Preferences: how card actions show — behind the ⋯ toggle, automatically
+    /// on hover, or always.
+    SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
     /// A conversation message was read: clear its card's unread dot in place,
     /// without reloading the document.
     ClearDot { account_id: u32, id: u32 },
@@ -441,6 +445,7 @@ impl Component for MessageView {
             no_autoread: std::collections::HashSet::new(),
             show_banner: crate::config::load_show_remote_banner(),
             card_actions_hover: crate::config::load_card_actions_hover(),
+            card_actions_auto: crate::config::load_card_actions_auto(),
             remote_allowed: false,
             account_name: None,
             chip_provider,
@@ -847,9 +852,12 @@ impl Component for MessageView {
                     });
                 }
             }
-            MessageViewInput::SetCardActionsHover(on) => {
-                if self.card_actions_hover != on {
-                    self.card_actions_hover = on;
+            MessageViewInput::SetCardActionsMode { hover_toggle, hover_auto } => {
+                if self.card_actions_hover != hover_toggle
+                    || self.card_actions_auto != hover_auto
+                {
+                    self.card_actions_hover = hover_toggle;
+                    self.card_actions_auto = hover_auto;
                     if self.current.is_some() && !self.loading {
                         self.render();
                     }
@@ -968,9 +976,17 @@ impl MessageView {
         } else {
             String::new()
         };
-        // Card actions hidden-until-hover is a body stamp too, so the static
-        // document builder (and its tests) need no extra parameter.
-        let hover = if self.card_actions_hover { " data-vireo-actshover=\"1\"" } else { "" };
+        // How card actions show is a body stamp too, so the static document
+        // builder (and its tests) need no extra parameter: "toggle" hides them
+        // behind the ⋯, "hover" shows them while the card is hovered, and no
+        // stamp means always shown.
+        let hover = if self.card_actions_hover {
+            " data-vireo-acts=\"toggle\""
+        } else if self.card_actions_auto {
+            " data-vireo-acts=\"hover\""
+        } else {
+            ""
+        };
         let html = if noscroll.is_empty() && hover.is_empty() {
             html
         } else {
@@ -1010,6 +1026,7 @@ impl MessageView {
         self.theme_grounds(dark).hash(&mut h);
         self.remote_allowed.hash(&mut h);
         self.card_actions_hover.hash(&mut h);
+        self.card_actions_auto.hash(&mut h);
         self.thread.len().hash(&mut h);
         for m in &self.thread {
             let key = (m.account_id, m.id);
@@ -1329,17 +1346,19 @@ impl MessageView {
                .vireo-act:active{{background:rgba(128,128,128,0.3);}}\
                .vireo-act svg{{width:14px;height:14px;display:block;fill:currentColor;}}\
                .vireo-acts-toggle{{display:none;}}\
-               body[data-vireo-actshover] .vireo-acts{{display:none;}}\
-               body[data-vireo-actshover] .vireo-acts.open{{display:flex;}}\
-               body[data-vireo-actshover] .vireo-acts-toggle{{display:block;\
+               body[data-vireo-acts=\"toggle\"] .vireo-acts{{display:none;}}\
+               body[data-vireo-acts=\"toggle\"] .vireo-acts.open{{display:flex;}}\
+               body[data-vireo-acts=\"toggle\"] .vireo-acts-toggle{{display:block;\
                  color:inherit;background:none;border:none;border-radius:6px;\
                  padding:4px 8px;margin-left:4px;cursor:pointer;align-self:center;\
                  opacity:0;transition:opacity 120ms ease,background 120ms ease;}}\
                .vireo-acts-toggle svg{{width:14px;height:14px;display:block;fill:currentColor;}}\
-               body[data-vireo-actshover] .vireo-msg:hover .vireo-acts-toggle{{opacity:0.65;}}\
-               body[data-vireo-actshover] .vireo-acts-toggle:hover{{opacity:1;\
+               body[data-vireo-acts=\"toggle\"] .vireo-msg:hover .vireo-acts-toggle{{opacity:0.65;}}\
+               body[data-vireo-acts=\"toggle\"] .vireo-acts-toggle:hover{{opacity:1;\
                  background:rgba(128,128,128,0.18);}}\
-               body[data-vireo-actshover] .vireo-acts-toggle.open{{opacity:1;}}\
+               body[data-vireo-acts=\"toggle\"] .vireo-acts-toggle.open{{opacity:1;}}\
+               body[data-vireo-acts=\"hover\"] .vireo-acts{{display:none;}}\
+               body[data-vireo-acts=\"hover\"] .vireo-msg:hover .vireo-acts{{display:flex;}}\
                .vireo-folder{{margin-left:0.5em;padding:0.05em 0.45em;border-radius:0.7em;\
                  font-size:0.78em;opacity:0.75;border:1px solid currentColor;}}\
                .vireo-rcpt-toggle{{font:inherit;font-size:0.78em;color:inherit;background:none;\

@@ -328,6 +328,8 @@ pub struct AppModel {
     threads_expanded: bool,
     /// Conversation card actions hide until hovered (preference).
     card_actions_hover: bool,
+    /// With the ⋯ toggle off: card actions appear automatically on hover.
+    card_actions_auto: bool,
     /// How email content is themed (message content only, not the app UI).
     message_theme: config::MessageTheme,
     /// The repeating auto-fetch timer, if armed.
@@ -546,6 +548,7 @@ pub enum AppMsg {
     SetThreading(bool),
     SetThreadsExpanded(bool),
     SetCardActionsHover(bool),
+    SetCardActionsAuto(bool),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -944,12 +947,100 @@ impl SimpleComponent for AppModel {
                                     set_visible: model.showing_outbox && !model.reader_actions_collapsed,
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::RetryAllOutbox),
                                 },
-                                // The toolbar keeps only the actions with no
-                                // per-card counterpart, right-aligned. pack_end
-                                // fills right-to-left; left to right this reads:
-                                // Open Contacts, Print, sender check. Everything
-                                // per-message lives on the cards (and in the
-                                // overflow menu).
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-mail-reply-sender-symbolic",
+                                    set_tooltip_text: Some("Reply"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    // In a conversation these act on the one
+                                    // highlighted card; with none (or several)
+                                    // highlighted they grey out — no way to say
+                                    // which message they'd mean.
+                                    #[watch]
+                                    set_sensitive: model.reply_target().is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::Reply),
+                                },
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-mail-reply-all-symbolic",
+                                    set_tooltip_text: Some("Reply All"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    #[watch]
+                                    set_sensitive: model.reply_target().is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::ReplyAll),
+                                },
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-mail-forward-symbolic",
+                                    set_tooltip_text: Some("Forward"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    #[watch]
+                                    set_sensitive: model.reply_target().is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::Forward),
+                                },
+                                pack_start = &gtk::Button {
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    #[watch]
+                                    set_icon_name: if model.reply_target().is_some_and(|m| m.unread) {
+                                        "co.hyprlab.Vireo-mail-read-symbolic"
+                                    } else {
+                                        "co.hyprlab.Vireo-mail-unread-symbolic"
+                                    },
+                                    #[watch]
+                                    set_tooltip_text: Some(if model.reply_target().is_some_and(|m| m.unread) {
+                                        "Mark as Read"
+                                    } else {
+                                        "Mark as Unread"
+                                    }),
+                                    #[watch]
+                                    set_sensitive: model.reply_target().is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleReadCurrent),
+                                },
+                                pack_start = &gtk::Button {
+                                    set_tooltip_text: Some("Flag"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    #[watch]
+                                    set_icon_name: if model.reply_target().is_some_and(|m| m.starred) {
+                                        "co.hyprlab.Vireo-starred-symbolic"
+                                    } else {
+                                        "co.hyprlab.Vireo-non-starred-symbolic"
+                                    },
+                                    #[watch]
+                                    set_sensitive: model.reply_target().is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleStar),
+                                },
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-contact-new-symbolic",
+                                    set_tooltip_text: Some("Add sender to Contacts"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    #[watch]
+                                    set_sensitive: model.reply_target().is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::AddToContacts),
+                                },
+                                // Open Contacts (the app-wide address book) —
+                                // moved here from the message list's header to
+                                // sit beside the per-sender contact action.
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
+                                    set_tooltip_text: Some("Open Contacts"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::OpenContacts),
+                                },
+                                // pack_end fills right-to-left, so these are declared
+                                // in reverse of their visual order. Left to right:
+                                // Archive, Delete, Spam, Print, sender check.
+                                // (View Source lives in the context menu only.)
                                 pack_end = &gtk::MenuButton {
                                     set_icon_name: "co.hyprlab.Vireo-verified-checkmark-symbolic",
                                     add_css_class: "flat",
@@ -1030,26 +1121,37 @@ impl SimpleComponent for AppModel {
                                     // there, so nobody spends paper to find out.
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::PrintPreview),
                                 },
-                                // Outbox only: a queued message has no card
-                                // actions, so its bin stays in the toolbar.
+                                pack_end = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
+                                    set_tooltip_text: Some("Mark as Spam"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
+                                    #[watch]
+                                    set_sensitive: model.reply_target().is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::MarkSpam),
+                                },
                                 pack_end = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
                                     #[watch]
                                     set_tooltip_text: Some(&model.delete_tooltip()),
                                     add_css_class: "flat",
                                     #[watch]
-                                    set_visible: model.showing_outbox && !model.reader_actions_collapsed,
+                                    set_visible: !model.reader_actions_collapsed,
                                     #[watch]
-                                    set_sensitive: model.current.is_some(),
+                                    set_sensitive: model.reply_target().is_some()
+                                        || model.list_selection.len() > 1,
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Delete),
                                 },
                                 pack_end = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
-                                    set_tooltip_text: Some("Open Contacts"),
+                                    set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
+                                    set_tooltip_text: Some("Archive"),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::OpenContacts),
+                                    #[watch]
+                                    set_sensitive: model.reply_target().is_some(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::Archive),
                                 },
                                 pack_end = &gtk::Spinner {
                                     set_valign: gtk::Align::Center,
@@ -1471,6 +1573,7 @@ impl SimpleComponent for AppModel {
             thread_key: None,
             threads_expanded: config::load_threads_expanded(),
             card_actions_hover: config::load_card_actions_hover(),
+            card_actions_auto: config::load_card_actions_auto(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
             notifications,
@@ -3219,7 +3322,15 @@ impl SimpleComponent for AppModel {
                 if self.card_actions_hover != on {
                     self.card_actions_hover = on;
                     self.save_settings();
-                    self.message_view.emit(MessageViewInput::SetCardActionsHover(on));
+                    self.push_card_actions_mode();
+                }
+            }
+
+            AppMsg::SetCardActionsAuto(on) => {
+                if self.card_actions_auto != on {
+                    self.card_actions_auto = on;
+                    self.save_settings();
+                    self.push_card_actions_mode();
                 }
             }
 
@@ -3534,6 +3645,7 @@ impl SimpleComponent for AppModel {
                     show_attachments: self.show_attachments,
                     sidebar_hover_expand: self.sidebar_hover_expand,
                     card_actions_hover: self.card_actions_hover,
+                    card_actions_auto: self.card_actions_auto,
                     app_theme: self.app_theme,
                     preview_lines: self.preview_lines,
                     single_key_shortcuts: self.single_key.get(),
@@ -3558,6 +3670,7 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
                         PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
                         PrefOutput::SetCardActionsHover(on) => AppMsg::SetCardActionsHover(on),
+                        PrefOutput::SetCardActionsAuto(on) => AppMsg::SetCardActionsAuto(on),
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                         PrefOutput::SetPush(on) => AppMsg::SetPush(on),
                         PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
@@ -4172,6 +4285,7 @@ impl AppModel {
             self.notification_content,
             self.show_attachments,
             self.card_actions_hover,
+            self.card_actions_auto,
             self.preview_lines,
             self.single_key.get(),
             self.run_in_background.get(),
@@ -4544,6 +4658,15 @@ impl AppModel {
             .find(|a| a.id == account_id)
             .map(|a| a.label.clone())
             .unwrap_or_default()
+    }
+
+    /// Tell the reader how card actions should show (⋯ toggle / auto on
+    /// hover / always).
+    fn push_card_actions_mode(&self) {
+        self.message_view.emit(MessageViewInput::SetCardActionsMode {
+            hover_toggle: self.card_actions_hover,
+            hover_auto: self.card_actions_auto,
+        });
     }
 
     /// The message the toolbar's per-message actions act on: the open message

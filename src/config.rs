@@ -601,9 +601,14 @@ struct PrivacyFile {
     #[serde(default = "default_show_attachments")]
     show_attachments: bool,
     /// Whether a conversation card's action icons stay hidden until the card
-    /// is hovered (expanded via their ⋯ toggle). Off = always shown.
+    /// is hovered (expanded via their ⋯ toggle). Off = always shown, unless
+    /// `card_actions_auto` shows them automatically on hover.
     #[serde(default = "default_card_actions_hover")]
     card_actions_hover: bool,
+    /// With the ⋯ toggle off: show the action icons automatically while the
+    /// card is hovered (rather than always).
+    #[serde(default = "default_card_actions_auto")]
+    card_actions_auto: bool,
     /// Hovering the icon rail (narrow-window or user-collapsed) floats the
     /// full sidebar out over the panes without needing the expand button.
     #[serde(default)]
@@ -668,6 +673,10 @@ fn default_card_actions_hover() -> bool {
     true
 }
 
+fn default_card_actions_auto() -> bool {
+    true
+}
+
 fn default_preview_lines() -> u32 {
     1
 }
@@ -698,6 +707,7 @@ impl Default for PrivacyFile {
             notification_content: default_notification_content(),
             show_attachments: default_show_attachments(),
             card_actions_hover: default_card_actions_hover(),
+            card_actions_auto: default_card_actions_auto(),
             sidebar_hover_expand: false,
             app_theme: AppTheme::default(),
             preview_lines: default_preview_lines(),
@@ -812,6 +822,11 @@ pub fn load_card_actions_hover() -> bool {
     load_privacy().card_actions_hover
 }
 
+/// With the ⋯ toggle off: whether card actions appear automatically on hover.
+pub fn load_card_actions_auto() -> bool {
+    load_privacy().card_actions_auto
+}
+
 pub fn load_sidebar_hover_expand() -> bool {
     load_privacy().sidebar_hover_expand
 }
@@ -863,6 +878,7 @@ pub fn save_privacy(
     notification_content: bool,
     show_attachments: bool,
     card_actions_hover: bool,
+    card_actions_auto: bool,
     preview_lines: u32,
     single_key_shortcuts: bool,
     run_in_background: bool,
@@ -896,6 +912,7 @@ pub fn save_privacy(
         notification_content,
         show_attachments,
         card_actions_hover,
+        card_actions_auto,
         preview_lines,
         single_key_shortcuts,
         run_in_background,
