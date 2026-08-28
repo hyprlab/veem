@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use gtk::prelude::*;
 use relm4::prelude::*;
 
+use crate::config::SidebarItemPos;
 use crate::models::{Account, Folder, FolderKind};
 use crate::ui::context_menu::{show_context_menu, MenuEntry};
 
@@ -49,6 +50,10 @@ pub struct SidebarInit {
     pub show_attachments: bool,
     /// Whether the "Contacts" row is shown.
     pub show_contacts: bool,
+    /// Where the "Attachments" row sits (pinned top block, or below accounts).
+    pub attachments_position: SidebarItemPos,
+    /// Where the "Contacts" row sits.
+    pub contacts_position: SidebarItemPos,
 }
 
 /// What is currently selected in the sidebar.
@@ -113,6 +118,10 @@ pub struct Sidebar {
     show_attachments: bool,
     /// Whether the "Contacts" row is shown.
     show_contacts: bool,
+    /// Where the "Attachments" row sits (pinned top block, or below accounts).
+    attachments_position: SidebarItemPos,
+    /// Where the "Contacts" row sits.
+    contacts_position: SidebarItemPos,
     /// How many messages are waiting in the Outbox across all accounts. The row
     /// only exists while this is non-zero — an empty Outbox is the normal state
     /// and does not deserve permanent furniture.
@@ -173,10 +182,11 @@ pub enum SidebarInput {
     /// parents toggle their sub-tree without needing the caret.
     FolderRowActivated { account_id: u32, index: i32 },
     ToggleCollapsed,
-    /// Show or hide the "Attachments" row.
-    SetShowAttachments(bool),
-    /// Show or hide the "Contacts" row.
-    SetShowContacts(bool),
+    /// Show/hide the "Attachments" row and place it (pinned top, or below the
+    /// accounts). `position` is kept current even while hidden.
+    SetAttachmentsRow { show: bool, position: SidebarItemPos },
+    /// Show/hide and place the "Contacts" row.
+    SetContactsRow { show: bool, position: SidebarItemPos },
     /// Whether any account is syncing — spins the refresh button.
     SetBusy(bool),
     /// How many messages are waiting to be sent; 0 hides the Outbox row.
@@ -267,19 +277,31 @@ impl Component for Sidebar {
             gtk::Overlay {
                 set_vexpand: true,
 
+                // The top block (compose bar, All Inboxes, Attachments,
+                // Contacts) is pinned above the scroller so it never scrolls
+                // away; only the per-account sections below scroll.
                 #[wrap(Some)]
-                #[name = "sidebar_scroller"]
-                set_child = &gtk::ScrolledWindow {
-                    set_vexpand: true,
-                    // External, not Never (see the message list's scroller): row
-                    // content — a deeply indented folder tree, say — must not force
-                    // the window's minimum width past what edge-tiling allows. The
-                    // split view's min/max sidebar widths govern instead.
-                    set_hscrollbar_policy: gtk::PolicyType::External,
+                set_child = &gtk::Box {
+                    set_orientation: gtk::Orientation::Vertical,
 
-                    #[name = "normal_box"]
+                    #[name = "pinned_box"]
                     gtk::Box {
                         set_orientation: gtk::Orientation::Vertical,
+                    },
+
+                    #[name = "sidebar_scroller"]
+                    gtk::ScrolledWindow {
+                        set_vexpand: true,
+                        // External, not Never (see the message list's scroller): row
+                        // content — a deeply indented folder tree, say — must not force
+                        // the window's minimum width past what edge-tiling allows. The
+                        // split view's min/max sidebar widths govern instead.
+                        set_hscrollbar_policy: gtk::PolicyType::External,
+
+                        #[name = "normal_box"]
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                        },
                     },
                 },
 
@@ -336,6 +358,8 @@ impl Component for Sidebar {
             collapsed: init.collapsed,
             show_attachments: init.show_attachments,
             show_contacts: init.show_contacts,
+            attachments_position: init.attachments_position,
+            contacts_position: init.contacts_position,
             outbox_count: 0,
             unified_unread: 0,
             folder_badges: HashMap::new(),
@@ -391,7 +415,7 @@ impl Component for Sidebar {
                 self.sections = sections;
                 self.show_unified = show_unified;
                 self.unified_unread = unified_unread;
-                self.rebuild_normal(&widgets.normal_box, &sender);
+                self.rebuild_normal(&widgets.pinned_box, &widgets.normal_box, &sender);
                 self.restore_selection();
             }
 
@@ -443,7 +467,7 @@ impl Component for Sidebar {
                     if count == 0 && self.selected == Sel::Outbox {
                         self.selected = Sel::None;
                     }
-                    self.rebuild_normal(&widgets.normal_box, &sender);
+                    self.rebuild_normal(&widgets.pinned_box, &widgets.normal_box, &sender);
                     self.restore_selection();
                 } else if let Some(list) = &self.outbox_list {
                     if let Some(row) = list.row_at_index(0) {
@@ -575,20 +599,22 @@ impl Component for Sidebar {
                 }
             }
 
-            SidebarInput::SetShowAttachments(on) => {
-                self.show_attachments = on;
+            SidebarInput::SetAttachmentsRow { show, position } => {
+                self.show_attachments = show;
+                self.attachments_position = position;
                 // The row is about to disappear from under the selection; fall
                 // back the same way an emptied selection does.
-                if !on && self.selected == Sel::Attachments {
+                if !show && self.selected == Sel::Attachments {
                     self.selected = Sel::None;
                 }
-                self.rebuild_normal(&widgets.normal_box, &sender);
+                self.rebuild_normal(&widgets.pinned_box, &widgets.normal_box, &sender);
                 self.restore_selection();
             }
 
-            SidebarInput::SetShowContacts(on) => {
-                self.show_contacts = on;
-                self.rebuild_normal(&widgets.normal_box, &sender);
+            SidebarInput::SetContactsRow { show, position } => {
+                self.show_contacts = show;
+                self.contacts_position = position;
+                self.rebuild_normal(&widgets.pinned_box, &widgets.normal_box, &sender);
                 self.restore_selection();
             }
 
@@ -610,14 +636,14 @@ impl Component for Sidebar {
                 // persisted preference.
                 if self.collapsed != collapsed {
                     self.collapsed = collapsed;
-                    self.rebuild_normal(&widgets.normal_box, &sender);
+                    self.rebuild_normal(&widgets.pinned_box, &widgets.normal_box, &sender);
                     self.restore_selection();
                 }
             }
 
             SidebarInput::ToggleCollapsed => {
                 self.collapsed = !self.collapsed;
-                self.rebuild_normal(&widgets.normal_box, &sender);
+                self.rebuild_normal(&widgets.pinned_box, &widgets.normal_box, &sender);
                 self.restore_selection();
                 let _ = sender.output(SidebarOutput::CollapsedChanged(self.collapsed));
             }
@@ -813,7 +839,12 @@ impl Sidebar {
         }
     }
 
-    fn rebuild_normal(&mut self, container: &gtk::Box, sender: &ComponentSender<Self>) {
+    fn rebuild_normal(
+        &mut self,
+        pinned: &gtk::Box,
+        container: &gtk::Box,
+        sender: &ComponentSender<Self>,
+    ) {
         // Keep the scroll offset: rebuilding otherwise snaps the sidebar to
         // the top — felt on every folder drag-and-drop, whose optimistic move
         // rebuilds immediately under the pointer.
@@ -825,11 +856,13 @@ impl Sidebar {
         // the scroll pinned, tearing down and recreating every row can
         // shimmer for a frame. The snapshot covers the rebuild and lifts a
         // few frames later, once the fresh tree has painted beneath it —
-        // identical pixels, so the crossover is invisible.
-        if let (Some(freeze), Some(scroller)) = (self.freeze_frame.clone(), scroller.as_ref()) {
-            if container.first_child().is_some() {
+        // identical pixels, so the crossover is invisible. The snapshot is of
+        // the overlay's whole child (pinned block + scroller), matching the
+        // area the freeze-frame Picture stretches over.
+        if let (Some(freeze), Some(area)) = (self.freeze_frame.clone(), pinned.parent()) {
+            if container.first_child().is_some() || pinned.first_child().is_some() {
                 use gtk::gdk::prelude::PaintableExt;
-                let live = gtk::WidgetPaintable::new(Some(scroller));
+                let live = gtk::WidgetPaintable::new(Some(&area));
                 freeze.set_paintable(Some(&live.current_image()));
                 freeze.set_visible(true);
                 let timer = gtk::glib::timeout_add_local_once(
@@ -848,12 +881,17 @@ impl Sidebar {
                 }
             }
         }
+        while let Some(child) = pinned.first_child() {
+            pinned.remove(&child);
+        }
         while let Some(child) = container.first_child() {
             container.remove(&child);
         }
         if self.collapsed {
+            pinned.add_css_class("rail-collapsed");
             container.add_css_class("rail-collapsed");
         } else {
+            pinned.remove_css_class("rail-collapsed");
             container.remove_css_class("rail-collapsed");
         }
         self.revealers.clear();
@@ -914,10 +952,10 @@ impl Sidebar {
 
         let sections = self.sections.clone();
 
-        // "New message" — the compose action, flanked by Refresh and Status
-        // (moved here from the message pane's header). Expanded: one horizontal
-        // bar, the compose pill in the middle; collapsed rail: the three stack
-        // vertically, icon-only with tooltips.
+        // "New message" — the compose action. Expanded, the pill sits alone
+        // and centred (Refresh lives in the app's header bar, top-left across
+        // from the menu). The collapsed rail's header only has room for the
+        // menu button, so Refresh stacks here instead — directly below it.
         {
             let bar = gtk::Box::new(
                 if self.collapsed {
@@ -925,38 +963,39 @@ impl Sidebar {
                 } else {
                     gtk::Orientation::Horizontal
                 },
-                4,
+                0,
             );
-            // Balance: extra room at the far left of the refresh button, a
-            // tight seam between it and the pill (the pill's own 6px row
-            // margin already provides the visual gap there).
-            bar.set_margin_start(10);
-            // No end margin: the pill's own 6px row margin then puts its right
-            // edge exactly where every other row highlight ends.
-            bar.set_margin_end(0);
-            bar.set_spacing(0);
 
-            // Refresh, showing a spinner while any account syncs.
-            let refresh = gtk::Button::new();
-            refresh.set_tooltip_text(Some("Refresh"));
-            refresh.add_css_class("flat");
-            refresh.set_valign(gtk::Align::Center);
-            let stack = gtk::Stack::new();
-            stack.set_transition_type(gtk::StackTransitionType::Crossfade);
-            let icon = gtk::Image::from_icon_name("co.hyprlab.Vireo-view-refresh-symbolic");
-            stack.add_named(&icon, Some("icon"));
-            let spinner = gtk::Spinner::new();
-            spinner.set_spinning(self.busy);
-            stack.add_named(&spinner, Some("spinner"));
-            stack.set_visible_child_name(if self.busy { "spinner" } else { "icon" });
-            refresh.set_child(Some(&stack));
-            let s = sender.clone();
-            refresh.connect_clicked(move |_| {
-                let _ = s.output(SidebarOutput::RefreshRequested);
-            });
+            self.sync_stack = None;
+            self.sync_spinner = None;
+            if self.collapsed {
+                // Refresh, showing a spinner while any account syncs.
+                let refresh = gtk::Button::new();
+                refresh.set_tooltip_text(Some("Refresh"));
+                refresh.add_css_class("flat");
+                refresh.set_valign(gtk::Align::Center);
+                refresh.set_halign(gtk::Align::Center);
+                let stack = gtk::Stack::new();
+                stack.set_transition_type(gtk::StackTransitionType::Crossfade);
+                let icon = gtk::Image::from_icon_name("co.hyprlab.Vireo-view-refresh-symbolic");
+                stack.add_named(&icon, Some("icon"));
+                let spinner = gtk::Spinner::new();
+                spinner.set_spinning(self.busy);
+                stack.add_named(&spinner, Some("spinner"));
+                stack.set_visible_child_name(if self.busy { "spinner" } else { "icon" });
+                refresh.set_child(Some(&stack));
+                let s = sender.clone();
+                refresh.connect_clicked(move |_| {
+                    let _ = s.output(SidebarOutput::RefreshRequested);
+                });
+                bar.append(&refresh);
+                self.sync_stack = Some(stack);
+                self.sync_spinner = Some(spinner);
+            }
 
             // The compose pill, drawn like a row so it matches the sidebar's
-            // look; it takes the middle rather than the full width now.
+            // look; expanded, it hugs its text (plus the row's own padding)
+            // and centres in the bar rather than stretching across it.
             let list = gtk::ListBox::new();
             list.set_selection_mode(gtk::SelectionMode::None);
             list.add_css_class("navigation-sidebar");
@@ -992,19 +1031,15 @@ impl Sidebar {
                 let _ = s.output(SidebarOutput::ComposeRequested);
             });
 
-            if self.collapsed {
-                refresh.set_halign(gtk::Align::Center);
-            } else {
-                // Refresh at the left; the pill takes all the space to its
-                // right. (The status-bar button is gone — errors reveal the
-                // bar themselves, and the hamburger menu can too.)
+            if !self.collapsed {
+                // Hexpand still claims the bar's width; Center then gives the
+                // list its natural (text-hugging) width within it, while
+                // narrow sidebars can still squeeze it (the label ellipsizes).
                 list.set_hexpand(true);
+                list.set_halign(gtk::Align::Center);
             }
-            bar.append(&refresh);
             bar.append(&list);
-            container.append(&bar);
-            self.sync_stack = Some(stack);
-            self.sync_spinner = Some(spinner);
+            pinned.append(&bar);
         }
 
         // Unified "All Inboxes" row, with an expandable per-account inbox list.
@@ -1090,7 +1125,7 @@ impl Sidebar {
                 );
             });
             list.add_controller(click);
-            container.append(&list);
+            pinned.append(&list);
             self.unified_list = Some(list);
 
             // Per-account inbox sub-list, in both layouts. In the icon-only rail a
@@ -1113,7 +1148,7 @@ impl Sidebar {
                     toggle.connect_clicked(move |_| {
                         let _ = cs.send(SidebarInput::ToggleUnifiedExpand);
                     });
-                    container.append(&toggle);
+                    pinned.append(&toggle);
                     self.unified_chevron = Some(chevron);
                 }
 
@@ -1183,14 +1218,20 @@ impl Sidebar {
                 revealer.set_transition_duration(0);
                 revealer.set_reveal_child(self.unified_expanded);
                 revealer.set_child(Some(&sub));
-                container.append(&revealer);
+                pinned.append(&revealer);
                 self.unified_revealer = Some(revealer);
                 self.unified_inbox_list = Some(sub);
             }
         }
 
+        // Attachments/Contacts rows the user placed below the accounts: built
+        // here (same code as the pinned placement) but appended to the
+        // scrollable container only after the account sections.
+        let mut below_accounts: Vec<gtk::ListBox> = Vec::new();
+
         // "Attachments" row — a gallery of every inbox attachment. Sits under the
-        // All Inboxes block and above the per-account sections.
+        // All Inboxes block and above the per-account sections, or below the
+        // accounts when so configured.
         if self.show_attachments {
             let list = gtk::ListBox::new();
             list.set_selection_mode(gtk::SelectionMode::Single);
@@ -1222,7 +1263,10 @@ impl Sidebar {
                     s.input(SidebarInput::AttachmentsRowSelected);
                 }
             });
-            container.append(&list);
+            match self.attachments_position {
+                SidebarItemPos::Top => pinned.append(&list),
+                SidebarItemPos::BelowAccounts => below_accounts.push(list.clone()),
+            }
             self.attachments_list = Some(list);
         }
 
@@ -1262,7 +1306,10 @@ impl Sidebar {
                     list.unselect_all();
                 }
             });
-            container.append(&list);
+            match self.contacts_position {
+                SidebarItemPos::Top => pinned.append(&list),
+                SidebarItemPos::BelowAccounts => below_accounts.push(list),
+            }
         }
 
         // "Outbox" row — only while something is waiting to be sent. It sits
@@ -1693,6 +1740,11 @@ impl Sidebar {
             self.custom_folder_lists.insert(id, custom_list);
             self.custom_revealers.insert(id, custom_revealer);
             self.custom_chevrons.insert(id, custom_chevron);
+        }
+
+        // Shortcut rows placed below the accounts, in the scrollable section.
+        for list in below_accounts {
+            container.append(&list);
         }
 
         // Per-account avatar colours (background + readable text).

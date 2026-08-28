@@ -225,6 +225,13 @@ pub struct AppModel {
     /// The main-menu button, which moves into the header's centre (the title
     /// slot) while the sidebar is a rail.
     sidebar_menu: Option<gtk::MenuButton>,
+    /// The sidebar header's Refresh button — top-left, across from the menu —
+    /// shown expanded and in the peek. The rail has no header room for it, so
+    /// there the sidebar stacks its own refresh directly under the menu.
+    sidebar_refresh: gtk::Button,
+    /// The icon/spinner stack inside it, switched while any account syncs.
+    sidebar_refresh_stack: gtk::Stack,
+    sidebar_refresh_spinner: gtk::Spinner,
     /// Whether the sidebar is in icon-only (collapsed) mode.
     sidebar_collapsed: bool,
     /// The narrow-window breakpoint is currently applied (window is too narrow
@@ -294,6 +301,10 @@ pub struct AppModel {
     show_attachments: bool,
     /// Whether the sidebar shows the "Contacts" shortcut row.
     show_contacts: bool,
+    /// Where the sidebar's "Attachments" row sits (pinned top, below accounts).
+    attachments_position: config::SidebarItemPos,
+    /// Where the sidebar's "Contacts" row sits.
+    contacts_position: config::SidebarItemPos,
     /// The list header's count text ("N" / "N of M"), from the message list.
     list_count: String,
     /// Lines of preview text per message-list row (1–3).
@@ -579,8 +590,8 @@ pub enum AppMsg {
     SetPush(bool),
     SetNotifications(bool),
     SetNotificationContent(bool),
-    SetShowAttachments(bool),
-    SetShowContacts(bool),
+    SetAttachmentsRow { show: bool, position: config::SidebarItemPos },
+    SetContactsRow { show: bool, position: config::SidebarItemPos },
     /// The message list's visible-count text changed.
     ListCount(String),
     /// Preference: hovering the narrow-window rail floats the sidebar out.
@@ -761,6 +772,7 @@ impl SimpleComponent for AppModel {
                                 set_label: crate::APP_NAME,
                                 add_css_class: "app-title",
                             },
+                            pack_start: &model.sidebar_refresh,
                             #[name = "sidebar_menu"]
                             pack_end = &gtk::MenuButton {
                                 set_icon_name: "co.hyprlab.Vireo-open-menu-symbolic",
@@ -1369,8 +1381,16 @@ impl SimpleComponent for AppModel {
 
         let show_attachments = config::load_show_attachments();
         let show_contacts = config::load_show_contacts();
+        let attachments_position = config::load_attachments_position();
+        let contacts_position = config::load_contacts_position();
         let sidebar = Sidebar::builder()
-            .launch(SidebarInit { collapsed: icon_only, show_attachments, show_contacts })
+            .launch(SidebarInit {
+                collapsed: icon_only,
+                show_attachments,
+                show_contacts,
+                attachments_position,
+                contacts_position,
+            })
             .forward(sender.input_sender(), |out| match out {
                 SidebarOutput::UnifiedSelected => AppMsg::UnifiedSelected,
                 SidebarOutput::AttachmentsSelected => AppMsg::ShowAttachments,
@@ -1539,6 +1559,19 @@ impl SimpleComponent for AppModel {
             app_title: None,
             sidebar_menu: None,
             sidebar_header: None,
+            sidebar_refresh: {
+                let b = gtk::Button::new();
+                b.set_tooltip_text(Some("Refresh"));
+                b.add_css_class("flat");
+                b.set_valign(gtk::Align::Center);
+                b
+            },
+            sidebar_refresh_stack: {
+                let s = gtk::Stack::new();
+                s.set_transition_type(gtk::StackTransitionType::Crossfade);
+                s
+            },
+            sidebar_refresh_spinner: gtk::Spinner::new(),
             sidebar_collapsed: icon_only,
             sidebar_anim: None,
             auto_rail: false,
@@ -1567,6 +1600,8 @@ impl SimpleComponent for AppModel {
             notification_content: config::load_notification_content(),
             show_attachments,
             show_contacts,
+            attachments_position,
+            contacts_position,
             list_count: String::new(),
             preview_lines: config::load_preview_lines(),
             shortcuts_win: None,
@@ -1860,6 +1895,20 @@ impl SimpleComponent for AppModel {
         model.app_title = Some(widgets.app_title.clone());
         model.sidebar_header = Some(widgets.sidebar_header.clone());
         model.sidebar_menu = Some(widgets.sidebar_menu.clone());
+        // The header Refresh's icon/spinner faces, and its click.
+        {
+            let icon = gtk::Image::from_icon_name("co.hyprlab.Vireo-view-refresh-symbolic");
+            model.sidebar_refresh_stack.add_named(&icon, Some("icon"));
+            model
+                .sidebar_refresh_stack
+                .add_named(&model.sidebar_refresh_spinner, Some("spinner"));
+            model.sidebar_refresh_stack.set_visible_child_name("icon");
+            model.sidebar_refresh.set_child(Some(&model.sidebar_refresh_stack));
+            let s = sender.input_sender().clone();
+            model.sidebar_refresh.connect_clicked(move |_| {
+                let _ = s.send(AppMsg::Refresh);
+            });
+        }
         if model.sidebar_collapsed {
             widgets.sidebar_split.set_min_sidebar_width(SIDEBAR_RAIL_WIDTH);
             widgets.sidebar_split.set_max_sidebar_width(SIDEBAR_RAIL_WIDTH);
@@ -1867,6 +1916,7 @@ impl SimpleComponent for AppModel {
                 &widgets.sidebar_header,
                 &widgets.app_title,
                 &widgets.sidebar_menu,
+                &model.sidebar_refresh,
                 true,
             );
         }
@@ -3484,21 +3534,26 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::SetShowAttachments(on) => {
-                if self.show_attachments != on {
-                    self.show_attachments = on;
+            AppMsg::SetAttachmentsRow { show, position } => {
+                // Hiding keeps the stored position, so re-showing restores it.
+                let position = if show { position } else { self.attachments_position };
+                if self.show_attachments != show || self.attachments_position != position {
+                    self.show_attachments = show;
+                    self.attachments_position = position;
                     self.save_settings();
-                    self.sidebar.emit(SidebarInput::SetShowAttachments(on));
+                    self.sidebar.emit(SidebarInput::SetAttachmentsRow { show, position });
                 }
             }
 
             AppMsg::ListCount(text) => self.list_count = text,
 
-            AppMsg::SetShowContacts(on) => {
-                if self.show_contacts != on {
-                    self.show_contacts = on;
+            AppMsg::SetContactsRow { show, position } => {
+                let position = if show { position } else { self.contacts_position };
+                if self.show_contacts != show || self.contacts_position != position {
+                    self.show_contacts = show;
+                    self.contacts_position = position;
                     self.save_settings();
-                    self.sidebar.emit(SidebarInput::SetShowContacts(on));
+                    self.sidebar.emit(SidebarInput::SetContactsRow { show, position });
                 }
             }
 
@@ -3883,6 +3938,8 @@ impl SimpleComponent for AppModel {
                     notification_content: self.notification_content,
                     show_attachments: self.show_attachments,
                     show_contacts: self.show_contacts,
+                    attachments_position: self.attachments_position,
+                    contacts_position: self.contacts_position,
                     sidebar_hover_expand: self.sidebar_hover_expand,
                     card_actions_hover: self.card_actions_hover,
                     card_actions_auto: self.card_actions_auto,
@@ -3922,8 +3979,12 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetNotificationContent(on) => {
                             AppMsg::SetNotificationContent(on)
                         }
-                        PrefOutput::SetShowAttachments(on) => AppMsg::SetShowAttachments(on),
-                        PrefOutput::SetShowContacts(on) => AppMsg::SetShowContacts(on),
+                        PrefOutput::SetAttachmentsRow { show, position } => {
+                            AppMsg::SetAttachmentsRow { show, position }
+                        }
+                        PrefOutput::SetContactsRow { show, position } => {
+                            AppMsg::SetContactsRow { show, position }
+                        }
                         PrefOutput::SetSidebarHoverExpand(on) => {
                             AppMsg::SetSidebarHoverExpand(on)
                         }
@@ -4472,6 +4533,7 @@ impl SimpleComponent for AppModel {
                     self.busy.insert(account_id);
                 }
                 self.sidebar.emit(SidebarInput::SetBusy(!self.busy.is_empty()));
+                self.set_header_refresh_busy(!self.busy.is_empty());
                 self.notifications.emit(NotifyInput::SetStatus(text));
             }
 
@@ -4546,6 +4608,8 @@ impl AppModel {
             self.notification_content,
             self.show_attachments,
             self.show_contacts,
+            self.attachments_position,
+            self.contacts_position,
             self.card_actions_hover,
             self.card_actions_auto,
             self.list_palette_hover,
@@ -4855,6 +4919,7 @@ impl AppModel {
         self.current = None;
         self.busy.clear();
         self.sidebar.emit(SidebarInput::SetBusy(false));
+        self.set_header_refresh_busy(false);
         self.show_message(None, false);
         self.message_list.emit(MessageListInput::SetLoading);
         self.rebuild_sidebar();
@@ -4873,6 +4938,14 @@ impl AppModel {
                     .map(|a| a.accent.clone())
             })
             .unwrap_or_else(|| "#3584e4".to_string())
+    }
+
+    /// Spin the header's Refresh while any account syncs (the rail's own
+    /// refresh button mirrors this via `SidebarInput::SetBusy`).
+    fn set_header_refresh_busy(&self, busy: bool) {
+        self.sidebar_refresh_spinner.set_spinning(busy);
+        self.sidebar_refresh_stack
+            .set_visible_child_name(if busy { "spinner" } else { "icon" });
     }
 
     /// Custom avatar emoji for an account, if set.
@@ -5067,7 +5140,7 @@ impl AppModel {
             self.app_title.as_ref(),
             self.sidebar_menu.as_ref(),
         ) {
-            set_sidebar_header_compact(header, title, menu, compact);
+            set_sidebar_header_compact(header, title, menu, &self.sidebar_refresh, compact);
         }
     }
 
@@ -5079,7 +5152,7 @@ impl AppModel {
             self.app_title.as_ref(),
             self.sidebar_menu.as_ref(),
         ) {
-            set_sidebar_header_peek(header, title, menu);
+            set_sidebar_header_peek(header, title, menu, &self.sidebar_refresh);
         }
     }
 
@@ -5154,6 +5227,7 @@ impl AppModel {
                 let header = self.sidebar_header.clone();
                 let title = self.app_title.clone();
                 let menu = self.sidebar_menu.clone();
+                let refresh = self.sidebar_refresh.clone();
                 let close_timer = self.peek_close_timer.clone();
                 let ghost = self.peek_rail_ghost.clone();
                 move || {
@@ -5165,7 +5239,7 @@ impl AppModel {
                     if let (Some(h), Some(t), Some(m)) =
                         (header.as_ref(), title.as_ref(), menu.as_ref())
                     {
-                        set_sidebar_header_compact(h, t, m, true);
+                        set_sidebar_header_compact(h, t, m, &refresh, true);
                     }
                     guard.set(true);
                     split.set_min_sidebar_width(SIDEBAR_RAIL_WIDTH);
@@ -8144,6 +8218,7 @@ fn set_sidebar_header_compact(
     header: &adw::HeaderBar,
     title: &gtk::Label,
     menu: &gtk::MenuButton,
+    refresh: &gtk::Button,
     compact: bool,
 ) {
     header.set_show_start_title_buttons(!compact);
@@ -8151,8 +8226,13 @@ fn set_sidebar_header_compact(
     // The menu is always in exactly one of three spots — packed end
     // (expanded), the title slot (rail), or packed start (peek) — and
     // HeaderBar::remove detaches it from any of them, so transitions are
-    // free to start from whichever state is current.
+    // free to start from whichever state is current. Refresh is either packed
+    // start (expanded / peek) or unparented (rail, which stacks its own
+    // refresh under the menu instead) — only remove it while it is a child.
     header.remove(menu);
+    if refresh.parent().is_some() {
+        header.remove(refresh);
+    }
     menu.set_margin_start(0);
     // In the rail there is no title to show, so the menu button takes the title
     // slot — the only position a header bar centres — instead of hugging the
@@ -8165,6 +8245,7 @@ fn set_sidebar_header_compact(
         header.remove_css_class("rail-header");
         header.set_title_widget(Some(title));
         header.pack_end(menu);
+        header.pack_start(refresh);
     }
     title.set_visible(!compact);
 }
@@ -8174,13 +8255,24 @@ fn set_sidebar_header_compact(
 /// (start side, centred) instead of jumping to the panel's far end — a cursor
 /// heading for it on the rail keeps finding it in the floating panel. Window
 /// controls stay hidden, matching the rail the peek floats out of.
-fn set_sidebar_header_peek(header: &adw::HeaderBar, title: &gtk::Label, menu: &gtk::MenuButton) {
+fn set_sidebar_header_peek(
+    header: &adw::HeaderBar,
+    title: &gtk::Label,
+    menu: &gtk::MenuButton,
+    refresh: &gtk::Button,
+) {
     header.set_show_start_title_buttons(false);
     header.set_show_end_title_buttons(false);
     header.remove(menu);
+    if refresh.parent().is_some() {
+        header.remove(refresh);
+    }
     header.remove_css_class("rail-header");
     header.set_title_widget(Some(title));
+    // Menu first so its rail-centring margin holds; Refresh follows it, where
+    // the expanded header's top-left slot would put it.
     header.pack_start(menu);
+    header.pack_start(refresh);
     // Centre the button over the rail's width, compensating the header's own
     // start padding, so it sits where the rail drew it.
     let w = menu.width().max(34);

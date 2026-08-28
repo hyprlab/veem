@@ -6,7 +6,7 @@ use adw::prelude::*;
 use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
 
-use crate::config::{AppTheme, ClockStyle, DateStyle, MessageTheme};
+use crate::config::{AppTheme, ClockStyle, DateStyle, MessageTheme, SidebarItemPos};
 
 /// Initial data for the settings window.
 #[derive(Debug)]
@@ -39,6 +39,10 @@ pub struct PrefInit {
     pub notification_content: bool,
     pub show_attachments: bool,
     pub show_contacts: bool,
+    /// Where the "Attachments" row sits when shown.
+    pub attachments_position: SidebarItemPos,
+    /// Where the "Contacts" row sits when shown.
+    pub contacts_position: SidebarItemPos,
     pub sidebar_hover_expand: bool,
     pub preview_lines: u32,
     pub single_key_shortcuts: bool,
@@ -74,6 +78,25 @@ const CLOCK_STYLES: &[(&str, ClockStyle)] = &[
     ("12-hour (5:40 PM)", ClockStyle::Twelve),
     ("24-hour (17:40)", ClockStyle::TwentyFour),
 ];
+
+/// Sidebar shortcut-row placements (Attachments, Contacts), in combo order.
+/// `None` hides the row entirely.
+const SIDEBAR_ITEM_POSITIONS: &[(&str, Option<SidebarItemPos>)] = &[
+    ("Top of the sidebar", Some(SidebarItemPos::Top)),
+    ("Below the accounts", Some(SidebarItemPos::BelowAccounts)),
+    ("Hidden", None),
+];
+
+/// The combo index for a shortcut row's current show/position state.
+fn sidebar_item_index(show: bool, pos: SidebarItemPos) -> u32 {
+    if !show {
+        return 2;
+    }
+    match pos {
+        SidebarItemPos::Top => 0,
+        SidebarItemPos::BelowAccounts => 1,
+    }
+}
 
 /// Selectable mail-check intervals (label, seconds). 0 = manual only.
 const FETCH_INTERVALS: &[(&str, u64)] = &[
@@ -157,8 +180,8 @@ pub enum PrefInput {
     TogglePush(bool),
     ToggleNotifications(bool),
     ToggleNotificationContent(bool),
-    ToggleShowAttachments(bool),
-    ToggleShowContacts(bool),
+    ChangeAttachmentsRow(u32),
+    ChangeContactsRow(u32),
     ToggleSidebarHoverExpand(bool),
     ChangePreviewLines(u32),
     ToggleSingleKey(bool),
@@ -191,8 +214,8 @@ pub enum PrefOutput {
     SetPush(bool),
     SetNotifications(bool),
     SetNotificationContent(bool),
-    SetShowAttachments(bool),
-    SetShowContacts(bool),
+    SetAttachmentsRow { show: bool, position: SidebarItemPos },
+    SetContactsRow { show: bool, position: SidebarItemPos },
     SetSidebarHoverExpand(bool),
     SetAppTheme(AppTheme),
     SetPreviewLines(u32),
@@ -273,20 +296,23 @@ impl Component for Preferences {
                         },
 
                         #[name = "show_attachments_row"]
-                        adw::SwitchRow {
+                        adw::ComboRow {
                             set_title: "Attachments in the sidebar",
-                            set_subtitle: "Show a shortcut for browsing every account's attachments.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleShowAttachments(row.is_active()));
+                            set_subtitle: "A shortcut for browsing every account's attachments — \
+                                           pinned at the top, or in the scrolling list below the \
+                                           accounts.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeAttachmentsRow(row.selected()));
                             },
                         },
 
                         #[name = "show_contacts_row"]
-                        adw::SwitchRow {
+                        adw::ComboRow {
                             set_title: "Contacts in the sidebar",
-                            set_subtitle: "Show a shortcut that opens your contacts.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleShowContacts(row.is_active()));
+                            set_subtitle: "A shortcut that opens your contacts — pinned at the \
+                                           top, or in the scrolling list below the accounts.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeContactsRow(row.selected()));
                             },
                         },
 
@@ -671,8 +697,20 @@ impl Component for Preferences {
         widgets.push_row.set_active(init.push);
         widgets.notifications_row.set_active(init.notifications);
         widgets.notification_content_row.set_active(init.notification_content);
-        widgets.show_attachments_row.set_active(init.show_attachments);
-        widgets.show_contacts_row.set_active(init.show_contacts);
+        let placement_labels: Vec<&str> =
+            SIDEBAR_ITEM_POSITIONS.iter().map(|(l, _)| *l).collect();
+        widgets
+            .show_attachments_row
+            .set_model(Some(&gtk::StringList::new(&placement_labels)));
+        widgets
+            .show_attachments_row
+            .set_selected(sidebar_item_index(init.show_attachments, init.attachments_position));
+        widgets
+            .show_contacts_row
+            .set_model(Some(&gtk::StringList::new(&placement_labels)));
+        widgets
+            .show_contacts_row
+            .set_selected(sidebar_item_index(init.show_contacts, init.contacts_position));
         widgets.sidebar_hover_expand_row.set_active(init.sidebar_hover_expand);
         let preview_labels = ["Off", "1 line", "2 lines", "3 lines"];
         widgets
@@ -823,11 +861,19 @@ impl Component for Preferences {
             PrefInput::ToggleNotificationContent(on) => {
                 let _ = sender.output(PrefOutput::SetNotificationContent(on));
             }
-            PrefInput::ToggleShowAttachments(on) => {
-                let _ = sender.output(PrefOutput::SetShowAttachments(on));
+            PrefInput::ChangeAttachmentsRow(index) => {
+                let pos = SIDEBAR_ITEM_POSITIONS.get(index as usize).and_then(|(_, p)| *p);
+                let _ = sender.output(PrefOutput::SetAttachmentsRow {
+                    show: pos.is_some(),
+                    position: pos.unwrap_or_default(),
+                });
             }
-            PrefInput::ToggleShowContacts(on) => {
-                let _ = sender.output(PrefOutput::SetShowContacts(on));
+            PrefInput::ChangeContactsRow(index) => {
+                let pos = SIDEBAR_ITEM_POSITIONS.get(index as usize).and_then(|(_, p)| *p);
+                let _ = sender.output(PrefOutput::SetContactsRow {
+                    show: pos.is_some(),
+                    position: pos.unwrap_or_default(),
+                });
             }
             PrefInput::ToggleSidebarHoverExpand(on) => {
                 let _ = sender.output(PrefOutput::SetSidebarHoverExpand(on));
