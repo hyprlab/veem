@@ -368,21 +368,28 @@ impl FactoryComponent for MessageRow {
                         set_ellipsize: gtk::pango::EllipsizeMode::End,
                         add_css_class: "message-date",
                     },
-                    // Conversation size + expand/collapse (thread heads only).
-                    gtk::Label {
-                        set_label: &self.thread_count.to_string(),
-                        set_visible: self.thread_count > 1,
-                        add_css_class: "thread-count",
-                        set_valign: gtk::Align::Center,
-                    },
+                    // Conversation chip (thread heads only): the message count
+                    // and the expand/collapse caret merged into one grey pill.
                     gtk::Button {
                         set_visible: self.thread_count > 1,
-                        set_icon_name: if self.thread_expanded { "co.hyprlab.Vireo-pan-down-symbolic" } else { "co.hyprlab.Vireo-pan-end-symbolic" },
                         set_tooltip_text: Some("Show conversation"),
                         add_css_class: "flat",
-                        add_css_class: "thread-toggle",
+                        add_css_class: "thread-chip",
                         set_valign: gtk::Align::Center,
                         connect_clicked[sender] => move |_| sender.input(MessageRowInput::ToggleThreadClicked),
+                        gtk::Box {
+                            set_spacing: 2,
+                            gtk::Label {
+                                set_label: &self.thread_count.to_string(),
+                            },
+                            gtk::Image {
+                                set_icon_name: Some(if self.thread_expanded {
+                                    "co.hyprlab.Vireo-pan-down-symbolic"
+                                } else {
+                                    "co.hyprlab.Vireo-pan-end-symbolic"
+                                }),
+                            },
+                        },
                     },
                 },
 

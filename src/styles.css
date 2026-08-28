@@ -392,36 +392,27 @@ headerbar.rail-header {
 
 /* Conversation threading: count chip + compact expand/collapse chevron on the
    thread head, and an indented, accent-edged look for nested replies. */
-.thread-count {
+/* Thread heads: the conversation's message count and its expand/collapse
+   caret, one grey borderless pill (the old count chip's styling, now
+   clickable). */
+.thread-chip {
   background: alpha(currentColor, 0.1);
+  border: none;
   border-radius: 9999px;
   min-width: 16px;
-  padding: 0 5px;
+  min-height: 0;
+  padding: 2px 7px;
   font-size: 0.72em;
   font-weight: 700;
   opacity: 0.7;
 }
 
-/* An accent-coloured, outlined semi-transparent pill, so the expand/collapse
-   control reads at a glance instead of vanishing into the row. Its metrics
-   mirror the .thread-count chip beside it, so the pair sit as equals. */
-.thread-toggle {
-  min-width: 16px;
-  min-height: 0;
-  padding: 1px 5px;
-  /* A concrete radius, not 9999px: GTK renders an oversized radius on a
-     1px-bordered pill with a faint dot at the centre of each rounded end. */
-  border-radius: 10px;
-  color: @accent_color;
-  background: alpha(@accent_bg_color, 0.12);
-  border: 1px solid alpha(@accent_color, 0.45);
+.thread-chip:hover {
+  background: alpha(currentColor, 0.18);
+  opacity: 1;
 }
 
-.thread-toggle:hover {
-  background: alpha(@accent_bg_color, 0.25);
-}
-
-.thread-toggle image {
+.thread-chip image {
   -gtk-icon-size: 11px;
 }
 
