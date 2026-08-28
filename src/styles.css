@@ -1063,3 +1063,11 @@ headerbar.rail-header {
 .tree-expander-icon.open {
   -gtk-icon-transform: rotate(90deg);
 }
+
+/* A highlighted attachment in the drawer (single click; Space previews it,
+   issue #37): a soft accent wash that keeps the thumbnail legible, rounded to
+   match the cells. */
+.attachment-drawer-flow flowboxchild:selected {
+  background-color: alpha(@accent_bg_color, 0.18);
+  border-radius: 10px;
+}
