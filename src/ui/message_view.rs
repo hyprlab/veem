@@ -726,9 +726,19 @@ impl Component for MessageView {
                         m.unread = true;
                     }
                 }
-                if !self.loading {
-                    self.render();
-                }
+                // Put the card's dot back in place — reloading the document
+                // for one mark made every card visibly resettle (the same
+                // blip ClearDot avoids in the other direction).
+                let js = format!(
+                    "(function(){{\
+                     var h=document.querySelector('.vireo-msg-hdr[data-key=\"{account_id}:{id}\"]');\
+                     if(!h||h.querySelector('.vireo-dot'))return;\
+                     var d=document.createElement('span');d.className='vireo-dot';\
+                     var f=h.querySelector('.vireo-from');\
+                     if(f)h.insertBefore(d,f);else h.appendChild(d);}})()"
+                );
+                self.webview
+                    .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |_| {});
             }
             MessageViewInput::ClearCards => {
                 if !self.selected_cards.is_empty() {
