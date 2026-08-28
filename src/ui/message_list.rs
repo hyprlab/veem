@@ -65,6 +65,11 @@ pub struct RowInit {
     /// Show who the message went to instead of who sent it — a Sent folder's
     /// rows all say "me" otherwise (#27).
     pub show_recipient: bool,
+    /// Starting state for the row's own Revealer. A newly-inserted thread
+    /// reply starts `false` and is flipped to `true` right after mounting, so
+    /// it slides open instead of simply appearing; everything else starts
+    /// (and stays) `true`.
+    pub revealed: bool,
 }
 
 /// The shown rows' (account, folder, uid, id) keys, in list order — rebuilt with
@@ -172,6 +177,10 @@ pub struct MessageRow {
     thread_unread: bool,
     /// Shared row keys, so a drag from this row can carry the whole selection.
     drag_keys: DragKeys,
+    /// Drives the row's own Revealer — false only for the brief window a
+    /// newly-expanded reply is sliding open, or a collapsing one is sliding
+    /// shut before it's removed from the list.
+    revealed: bool,
 }
 
 #[derive(Debug)]
@@ -194,6 +203,14 @@ pub enum MessageRowInput {
     ToggleThreadClicked,
     /// The thread's aggregate unread state changed (a hidden reply was read).
     SetThreadUnread(bool),
+    /// Drive the row's own Revealer directly — used to slide a reply open
+    /// right after it's inserted, or shut just before it's removed.
+    SetRevealed(bool),
+    /// The head's conversation was expanded/collapsed — updates in place
+    /// (the head row survives a toggle; see `expand_thread`/
+    /// `collapse_thread_rows`) so the chevron actually rotates instead of
+    /// mounting pre-set to its final angle.
+    SetThreadExpanded(bool),
 }
 
 #[derive(Debug)]
@@ -290,6 +307,16 @@ impl FactoryComponent for MessageRow {
                     Some(gtk::gdk::ContentProvider::for_value(&payload.to_value()))
                 },
             },
+
+            // Thread replies animate open/shut by sliding, instead of the
+            // list jumping to a new row count the instant a thread toggles
+            // (see `revealed` / `MessageRowInput::SetRevealed`).
+            #[wrap(Some)]
+            set_child = &gtk::Revealer {
+                set_transition_type: gtk::RevealerTransitionType::SlideDown,
+                set_transition_duration: 200,
+                #[watch]
+                set_reveal_child: self.revealed,
 
             #[wrap(Some)]
             set_child = &gtk::Overlay {
@@ -532,6 +559,7 @@ impl FactoryComponent for MessageRow {
                 },
             },
             },
+        },
         }
         }
     }
@@ -554,6 +582,7 @@ impl FactoryComponent for MessageRow {
             thread_unread,
             drag_keys,
             show_recipient,
+            revealed,
         } = init;
         let mut model = Self {
             msg,
@@ -576,12 +605,21 @@ impl FactoryComponent for MessageRow {
             thread_date,
             thread_unread,
             drag_keys,
+            revealed,
         };
 
         // No point fetching anything for a circle that isn't drawn — and a
         // Gravatar lookup would send a hash of the sender's address for nothing.
         if model.avatars {
             model.load_face(&sender);
+        }
+
+        // A row that mounts already collapsed (a freshly-expanded reply)
+        // flips to revealed on the next main-loop iteration, once it has been
+        // measured at its natural size — animating it open instead of
+        // starting from an already-final state.
+        if !model.revealed {
+            sender.input(MessageRowInput::SetRevealed(true));
         }
 
         model
@@ -637,6 +675,8 @@ impl FactoryComponent for MessageRow {
                 }
             }
             MessageRowInput::SetThreadUnread(unread) => self.thread_unread = unread,
+            MessageRowInput::SetRevealed(revealed) => self.revealed = revealed,
+            MessageRowInput::SetThreadExpanded(expanded) => self.thread_expanded = expanded,
         }
     }
 
@@ -1099,6 +1139,10 @@ pub struct MessageList {
     /// When `Some`, a spinner + this message overlays the list — shown while a
     /// large bulk action (archive/delete/spam) is applied.
     busy: Option<String>,
+    /// Threads whose replies are sliding shut. The rows stay in `shown` until
+    /// the paired timer fires and rebuilds the list without them — otherwise
+    /// they'd simply vanish rather than animate away.
+    collapsing_threads: std::collections::HashMap<(u32, String), gtk::glib::SourceId>,
 }
 
 /// How the message list is ordered.
@@ -1209,6 +1253,9 @@ pub enum MessageListInput {
     FocusSearch,
     /// Expand/collapse a conversation thread.
     ToggleThread((u32, String)),
+    /// A collapsing thread's replies have finished sliding shut — drop them
+    /// from the list for real (see `start_collapse_thread`).
+    FinishCollapseThread((u32, String)),
     /// Change the list sort order.
     SetSort(SortOrder),
     MarkRead(u32),
@@ -1562,6 +1609,7 @@ impl SimpleComponent for MessageList {
             threading: true,
 
             busy: None,
+            collapsing_threads: std::collections::HashMap::new(),
         };
 
         let row_box = model.rows.widget();
@@ -1981,11 +2029,31 @@ impl SimpleComponent for MessageList {
                 }
             }
             MessageListInput::ToggleThread(key) => {
-                if !self.expanded_threads.remove(&key) {
-                    self.expanded_threads.insert(key);
+                let was_expanded = self.expanded_threads.contains(&key) != self.default_expanded;
+                if was_expanded {
+                    // Slide the replies shut in place; the list only drops
+                    // them once that animation has actually finished (see
+                    // `start_collapse_thread`) — dropping them right away
+                    // would just make them vanish instead of collapsing.
+                    self.start_collapse_thread(key, &sender);
+                } else {
+                    if !self.expanded_threads.remove(&key) {
+                        self.expanded_threads.insert(key.clone());
+                    }
+                    // Insert just this thread's replies rather than rebuilding
+                    // the whole list — on a long list a full rebuild tears
+                    // down and recreates every row (up to RENDER_CAP), which
+                    // stutters right as the reveal animation is trying to run.
+                    self.expand_thread(&key);
                 }
-                // Preserve the scroll position (a plain rebuild jumps to the top).
-                self.rebuild_preserving_scroll();
+            }
+            MessageListInput::FinishCollapseThread(key) => {
+                self.collapsing_threads.remove(&key);
+                if !self.expanded_threads.remove(&key) {
+                    self.expanded_threads.insert(key.clone());
+                }
+                // Same reasoning as `expand_thread`: drop just these rows.
+                self.collapse_thread_rows(&key);
             }
             MessageListInput::RowActivated(index) => {
                 if let Some(m) = self.shown.get(index as usize) {
@@ -2309,6 +2377,131 @@ impl MessageList {
         }
     }
 
+    /// Begin collapsing a thread: slide its currently-visible replies shut
+    /// (they stay exactly where they are in `self.rows`/`self.shown` — only
+    /// their own Revealer closes), then rebuild the list without them once
+    /// that animation has actually finished. Rebuilding right away — before
+    /// the replies have shrunk — would just make them disappear outright.
+    fn start_collapse_thread(&mut self, key: (u32, String), sender: &ComponentSender<Self>) {
+        if let Some(members) = self.thread_members.get(&key).cloned() {
+            // The head survives the toggle (only its replies are removed),
+            // so its own chevron can rotate shut in place, in step with the
+            // replies sliding closed beneath it.
+            if let Some(&head_key) = members.first() {
+                if let Some(idx) = self.shown.iter().position(|m| (m.account_id, m.id) == head_key)
+                {
+                    self.rows.send(idx, MessageRowInput::SetThreadExpanded(false));
+                }
+            }
+            // `members` is head-first (see `rebuild`); only the replies
+            // beneath it animate closed.
+            for child_key in members.iter().skip(1) {
+                if let Some(idx) =
+                    self.shown.iter().position(|m| (m.account_id, m.id) == *child_key)
+                {
+                    self.rows.send(idx, MessageRowInput::SetRevealed(false));
+                }
+            }
+        }
+        if let Some(old) = self.collapsing_threads.remove(&key) {
+            old.remove();
+        }
+        let s = sender.clone();
+        let timer_key = key.clone();
+        // Matches the Revealer's own transition duration, so the rows are
+        // fully closed by the time they're actually dropped from the list.
+        let timer = gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
+            s.input(MessageListInput::FinishCollapseThread(timer_key));
+        });
+        self.collapsing_threads.insert(key, timer);
+    }
+
+    /// Insert a thread's replies right after its head, without touching any
+    /// other row — the counterpart to `collapse_thread_rows`. Each new row
+    /// mounts with `revealed: false` and animates open on its own (see
+    /// `RowInit::revealed`).
+    fn expand_thread(&mut self, key: &(u32, String)) {
+        let Some(members) = self.thread_members.get(key).cloned() else { return };
+        let Some(&head_key) = members.first() else { return };
+        let Some(head_pos) = self.shown.iter().position(|m| (m.account_id, m.id) == head_key)
+        else {
+            return;
+        };
+        // `members` is already oldest-first (see `rebuild`); look the replies
+        // up from the full index before borrowing `self.rows`/`self.shown`
+        // mutably.
+        let children: Vec<Message> = {
+            let source = self.active_source();
+            members
+                .iter()
+                .skip(1)
+                .filter_map(|k| source.iter().find(|m| (m.account_id, m.id) == *k).cloned())
+                .collect()
+        };
+        if children.is_empty() {
+            return;
+        }
+        // The head survives the toggle (only its replies are inserted), so
+        // its own chevron can rotate open in place.
+        self.rows.send(head_pos, MessageRowInput::SetThreadExpanded(true));
+        {
+            let mut guard = self.rows.guard();
+            for (i, msg) in children.iter().enumerate() {
+                let ring_class = if self.colorize && self.account_colors.contains_key(&msg.account_id)
+                {
+                    Some(format!("vireo-acct-ring-{}", msg.account_id))
+                } else {
+                    None
+                };
+                guard.insert(head_pos + 1 + i, RowInit {
+                    msg: msg.clone(),
+                    gravatar: self.gravatar,
+                    avatars: self.avatars,
+                    sender_logos: self.sender_logos,
+                    preview_lines: self.preview_lines,
+                    ring_class,
+                    palette_collapse_secs: self.palette_collapse_secs.clone(),
+                    palette_hover: self.palette_hover.clone(),
+                    thread_count: 0,
+                    is_thread_child: true,
+                    thread_expanded: false,
+                    thread_key: None,
+                    thread_date: None,
+                    thread_unread: false,
+                    drag_keys: self.drag_keys.clone(),
+                    show_recipient: self.show_recipient,
+                    revealed: false,
+                });
+            }
+        }
+        self.shown.splice(head_pos + 1..head_pos + 1, children);
+        self.publish_drag_keys();
+    }
+
+    /// Drop a thread's reply rows (already slid shut by `start_collapse_thread`)
+    /// without touching any other row — the counterpart to `expand_thread`.
+    fn collapse_thread_rows(&mut self, key: &(u32, String)) {
+        let Some(members) = self.thread_members.get(key).cloned() else { return };
+        let mut indices: Vec<usize> = members
+            .iter()
+            .skip(1)
+            .filter_map(|k| self.shown.iter().position(|m| (m.account_id, m.id) == *k))
+            .collect();
+        indices.sort_unstable();
+        {
+            let mut guard = self.rows.guard();
+            // Remove back-to-front so earlier removals don't shift the
+            // indices still to come.
+            for &idx in indices.iter().rev() {
+                guard.remove(idx);
+            }
+        }
+        for &idx in indices.iter().rev() {
+            self.shown.remove(idx);
+        }
+        self.publish_drag_keys();
+    }
+
     /// Whether a search is currently active (the query is non-empty).
     fn searching(&self) -> bool {
         !self.query.trim().is_empty()
@@ -2509,6 +2702,9 @@ impl MessageList {
                     thread_unread: meta.unread,
                     drag_keys: self.drag_keys.clone(),
                     show_recipient: self.show_recipient,
+                    // A full rebuild never needs a row to mount closed —
+                    // that's only for `expand_thread`'s surgical insert.
+                    revealed: true,
                 });
             }
         }
