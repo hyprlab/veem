@@ -486,6 +486,9 @@ pub enum AppMsg {
     /// The rest of an open message's conversation, found in other folders.
     Related { account_id: u32, message_id: u32, messages: Vec<Message> },
     RowAction { action: RowAction, message: Box<Message> },
+    /// A conversation card's own action pill. Reply/Reply all/Forward open the
+    /// reader's inline composer (like the toolbar); the rest act like RowAction.
+    CardAction { action: RowAction, message: Box<Message> },
     /// A bulk action applied to every selected message.
     Bulk { action: BulkAction, messages: Vec<Message> },
     /// Apply the deferred large bulk action (runs after its spinner has painted).
@@ -1380,10 +1383,8 @@ impl SimpleComponent for AppModel {
                 .forward(sender.input_sender(), |out| match out {
                     MessageViewOutput::AllowSender(addr) => AppMsg::AllowSender(addr),
                     MessageViewOutput::OpenWindow(m) => AppMsg::OpenMessageWindow(*m),
-                    // A card's own Reply/Reply all/Forward: the same action the
-                    // list's row menu performs, aimed at that message.
                     MessageViewOutput::CardAction { action, message } => {
-                        AppMsg::RowAction { action, message }
+                        AppMsg::CardAction { action, message }
                     }
                     MessageViewOutput::MarkSeen { account_id, id } => {
                         AppMsg::ThreadMessageSeen { account_id, id }
@@ -2748,6 +2749,35 @@ impl SimpleComponent for AppModel {
                     );
                 } else {
                     self.purge_messages(messages);
+                }
+            }
+
+            AppMsg::CardAction { action, message } => {
+                // A reply started from a card belongs in the main window's
+                // inline composer, exactly like the toolbar's buttons — not in
+                // a separate compose window.
+                let m = self.with_cached_body(*message);
+                match action {
+                    RowAction::Reply => {
+                        self.open_inline_reply(m.account_id, reply_prefill(&m), &sender);
+                    }
+                    RowAction::ReplyAll => {
+                        let self_email = self.email_of(m.account_id).unwrap_or_default();
+                        self.open_inline_reply(
+                            m.account_id,
+                            reply_all_prefill(&m, &self_email),
+                            &sender,
+                        );
+                    }
+                    RowAction::Forward => {
+                        self.open_inline_reply(m.account_id, forward_prefill(&m), &sender);
+                    }
+                    // Cards only carry the three above; anything else falls
+                    // through to the ordinary row behaviour.
+                    other => sender.input(AppMsg::RowAction {
+                        action: other,
+                        message: Box::new(m),
+                    }),
                 }
             }
 
