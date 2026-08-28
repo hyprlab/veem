@@ -217,10 +217,13 @@ impl Component for AccountsWindow {
         adw::Window {
             set_modal: false,
             set_default_width: 480,
-            set_default_height: 620,
+            // Remembered vertical size (tall by default) — resizing sticks
+            // across restarts via the save on close below.
+            set_default_height: crate::config::load_accounts_height(),
             set_title: Some("Accounts"),
 
-            connect_close_request[sender] => move |_| {
+            connect_close_request[sender] => move |w| {
+                crate::config::save_accounts_height(w.height());
                 let _ = sender.output(AccountsOutput::Closed);
                 gtk::glib::Propagation::Proceed
             },

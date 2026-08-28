@@ -1063,6 +1063,21 @@ struct StateFile {
     /// Message-list pane width in px (#28 — it reset every launch).
     #[serde(default = "default_list_pane_width")]
     list_pane_width: i32,
+    /// Auxiliary window heights, remembering the user's vertical resizes.
+    #[serde(default = "default_aux_height")]
+    prefs_height: i32,
+    #[serde(default = "default_aux_height")]
+    accounts_height: i32,
+    #[serde(default = "default_about_height")]
+    about_height: i32,
+}
+
+fn default_aux_height() -> i32 {
+    820
+}
+
+fn default_about_height() -> i32 {
+    840
 }
 
 fn default_list_pane_width() -> i32 {
@@ -1204,6 +1219,38 @@ pub fn save_gallery_thumb_width(width: i32) {
 pub fn save_gallery_sort(sort: u32) {
     let mut s = load_state();
     s.gallery_sort = sort;
+    save_state(&s);
+}
+
+/// Auxiliary window heights (Preferences / Accounts / About): they open tall
+/// by default and remember the user's own vertical resize across restarts.
+pub fn load_prefs_height() -> i32 {
+    load_state().prefs_height.clamp(400, 4000)
+}
+
+pub fn save_prefs_height(height: i32) {
+    let mut s = load_state();
+    s.prefs_height = height.clamp(400, 4000);
+    save_state(&s);
+}
+
+pub fn load_accounts_height() -> i32 {
+    load_state().accounts_height.clamp(400, 4000)
+}
+
+pub fn save_accounts_height(height: i32) {
+    let mut s = load_state();
+    s.accounts_height = height.clamp(400, 4000);
+    save_state(&s);
+}
+
+pub fn load_about_height() -> i32 {
+    load_state().about_height.clamp(400, 4000)
+}
+
+pub fn save_about_height(height: i32) {
+    let mut s = load_state();
+    s.about_height = height.clamp(400, 4000);
     save_state(&s);
 }
 

@@ -198,10 +198,13 @@ impl Component for Preferences {
         adw::Window {
             set_modal: false,
             set_default_width: 500,
-            set_default_height: 620,
+            // Remembered vertical size (tall by default) — resizing sticks
+            // across restarts via the save on close below.
+            set_default_height: crate::config::load_prefs_height(),
             set_title: Some("Settings"),
 
-            connect_close_request[sender] => move |_| {
+            connect_close_request[sender] => move |w| {
+                crate::config::save_prefs_height(w.height());
                 let _ = sender.output(PrefOutput::Closed);
                 gtk::glib::Propagation::Proceed
             },

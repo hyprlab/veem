@@ -6803,8 +6803,14 @@ impl AppModel {
             .modal(false)
             .title("About Vireo")
             .default_width(460)
-            .default_height(640)
+            // Remembered vertical size (tall by default) — resizing sticks
+            // across restarts via the save on close below.
+            .default_height(config::load_about_height())
             .build();
+        win.connect_close_request(|w| {
+            config::save_about_height(w.height());
+            gtk::glib::Propagation::Proceed
+        });
 
         // A navigation stack so Release Notes / Changelog slide in (and back out)
         // within the same window instead of spawning separate ones.
