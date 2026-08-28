@@ -1314,7 +1314,7 @@ impl MessageView {
                  border:0;border-radius:999px;cursor:pointer;}}\
                .vireo-quote:hover{{opacity:0.95;background:rgba(128,128,128,0.28);}}\
                .vireo-quote.open{{opacity:0.95;}}\
-               .vireo-acts{{display:flex;gap:2px;flex-basis:100%;justify-content:flex-start;margin-top:2px;}}\
+               .vireo-acts{{display:flex;gap:2px;flex-basis:100%;justify-content:flex-end;margin-top:2px;}}\
                .vireo-act{{color:inherit;background:none;border:none;border-radius:6px;\
                  padding:5px 8px;cursor:pointer;opacity:0.7;\
                  transition:opacity 120ms ease,background 120ms ease;}}\
