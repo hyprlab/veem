@@ -650,6 +650,9 @@ pub enum AppMsg {
     /// A folder's background backfill finished — it's fully indexed now.
     BackfillDone { account_id: u32, folder_id: u32 },
     FolderUnread { account_id: u32, folder_id: u32, unread: u32 },
+    /// From a per-folder IDLE watcher, which knows its folder only by path —
+    /// folder ids are positional and may have shifted since it was spawned.
+    FolderUnreadByPath { account_id: u32, path: String, unread: u32 },
     /// `path` is the folder the body was read from — a UID only identifies a
     /// message within its own folder, so applying a body to a message means
     /// checking the folder too.
@@ -3961,6 +3964,21 @@ impl SimpleComponent for AppModel {
             AppMsg::FolderUnread { account_id, folder_id, unread } => {
                 self.folder_unread.insert((account_id, folder_id), unread);
                 self.push_unread_counts();
+            }
+
+            AppMsg::FolderUnreadByPath { account_id, path, unread } => {
+                // Resolve against the current list; a path the app no longer
+                // knows (folder deleted/renamed under a live watcher) is
+                // dropped rather than guessed at.
+                let id = self
+                    .folders
+                    .get(&account_id)
+                    .and_then(|fs| fs.iter().find(|f| f.path == path))
+                    .map(|f| f.id);
+                if let Some(folder_id) = id {
+                    self.folder_unread.insert((account_id, folder_id), unread);
+                    self.push_unread_counts();
+                }
             }
 
             AppMsg::Messages { account_id, folder_id, messages } => {
@@ -8179,6 +8197,9 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
         WorkerEvent::BackfillDone { folder_id } => AppMsg::BackfillDone { account_id, folder_id },
         WorkerEvent::FolderUnread { folder_id, unread } => {
             AppMsg::FolderUnread { account_id, folder_id, unread }
+        }
+        WorkerEvent::FolderUnreadByPath { path, unread } => {
+            AppMsg::FolderUnreadByPath { account_id, path, unread }
         }
         WorkerEvent::RefsRepaired { folder_id } => {
             AppMsg::RefsRepaired { account_id, folder_id }

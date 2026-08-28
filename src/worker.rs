@@ -79,6 +79,13 @@ const PREFETCH_BODY_LIMIT: usize = 50;
 /// throttled — a refresh the user asked for always runs.
 const UNREAD_SWEEP_MIN: Duration = Duration::from_secs(60);
 
+/// How many per-folder IDLE watcher connections one account may open (see
+/// [`watch_folder`]). Five plus the main session stays comfortably under every
+/// major provider's per-user connection cap (Gmail 15, Outlook 20, Dovecot's
+/// default 10) — and is how many folders Apple Mail watches by default. Folders
+/// past the cap stay covered by the periodic unread sweep.
+const WATCHER_LIMIT: usize = 5;
+
 /// A request from the UI to the worker.
 #[derive(Debug)]
 pub enum MailRequest {
@@ -252,6 +259,11 @@ pub enum WorkerEvent {
     /// Server-side unread count for a folder (from STATUS/SEARCH, independent of
     /// the loaded window — accurate even for multi-thousand mailboxes).
     FolderUnread { folder_id: u32, unread: u32 },
+    /// The same, from a per-folder IDLE watcher ([`watch_folder`]), which knows
+    /// its folder only by path: folder ids are positional and shift when the
+    /// list changes, but a path stays true for as long as the folder exists.
+    /// The app resolves it against whatever list it currently holds.
+    FolderUnreadByPath { path: String, unread: u32 },
     /// `path` is the folder the body was read from. A UID is unique only within
     /// its folder, so without it a background prefetch's body can be applied to a
     /// different message that happens to share the number.
@@ -309,7 +321,7 @@ fn accent_for(account_id: u32) -> &'static str {
 pub fn spawn(
     account_id: u32,
     account: Option<AccountConfig>,
-    emit: impl Fn(WorkerEvent) + Send + 'static,
+    emit: impl Fn(WorkerEvent) + Clone + Send + 'static,
 ) -> mpsc::UnboundedSender<MailRequest> {
     let (tx, rx) = mpsc::unbounded_channel();
 
@@ -329,7 +341,11 @@ pub fn spawn(
                     return;
                 }
             };
-            rt.block_on(run(account_id, account, rx, emit));
+            // A LocalSet so the per-folder IDLE watchers ([`watch_folder`]) can
+            // be spawned as (non-Send) local tasks sharing this thread; they
+            // are cancelled with it when the worker winds down.
+            let local = tokio::task::LocalSet::new();
+            local.block_on(&rt, run(account_id, account, rx, emit));
         })
         .expect("failed to spawn mail worker thread");
 
@@ -340,7 +356,7 @@ async fn run(
     account_id: u32,
     account: Option<AccountConfig>,
     rx: mpsc::UnboundedReceiver<MailRequest>,
-    emit: impl Fn(WorkerEvent),
+    emit: impl Fn(WorkerEvent) + Clone + Send + 'static,
 ) {
     match account {
         Some(account) if account.protocol == crate::config::Protocol::Pop3 => {
@@ -362,7 +378,7 @@ async fn run_imap(
     account_id: u32,
     mut account: AccountConfig,
     mut rx: mpsc::UnboundedReceiver<MailRequest>,
-    emit: impl Fn(WorkerEvent),
+    emit: impl Fn(WorkerEvent) + Clone + Send + 'static,
 ) {
     // Resolve the password off the main thread: migrate a legacy plaintext
     // password into the keyring (and strip it from disk), otherwise load it from
@@ -470,6 +486,11 @@ async fn run_imap(
     // When the other folders' unread chips were last re-checked (None = not
     // yet this session; connect_and_list's full listing covers startup itself).
     let mut last_unread_sweep: Option<std::time::Instant> = None;
+    // Whether the per-folder IDLE watchers have been spawned. They wait for the
+    // main session to be up first — its connection must win the first slot on
+    // servers with a per-user cap — and need the folder list in the cache.
+    // Push off = the user opted out of persistent connections entirely.
+    let mut watchers_spawned = !push_enabled;
     // Set after prefetching; triggers one re-sync (to catch mail that arrived
     // while the connection was busy) before settling into the long IDLE.
     let mut pending_resync = false;
@@ -523,6 +544,20 @@ async fn run_imap(
             }
         } else {
             outbox_flushed = false;
+        }
+
+        if !watchers_spawned && session.is_some() {
+            match cache.as_ref().map(|c| c.load_folders(account_id)) {
+                // No cache = no folder list to watch from; stop checking.
+                None => watchers_spawned = true,
+                Some(folders) if !folders.is_empty() => {
+                    watchers_spawned = true;
+                    spawn_folder_watchers(&account, &folders, &emit);
+                }
+                // Connected but the listing hasn't landed in the cache yet
+                // (fresh account, first moments): check again next pass.
+                Some(_) => {}
+            }
         }
 
         // Always prefer incoming requests. When idle: drain the attachment prefetch
@@ -1967,6 +2002,109 @@ async fn idle_wait(
             IdleOutcome::Refreshed
         }
         Wake::Idle(_) => IdleOutcome::Quiet,
+    }
+}
+
+/// Spawn the per-folder IDLE watcher tasks: the Inbox (so its chip stays live
+/// even while another folder is being viewed) plus the first custom folders —
+/// the ones server-side rules file into. Capped at [`WATCHER_LIMIT`] so a big
+/// account doesn't fan out into that many connections; folders past the cap
+/// stay covered by the periodic unread sweep. Connects are staggered a couple
+/// of seconds apart — five TLS handshakes plus logins in the same instant look
+/// like an attack to providers that rate-limit authentication (iCloud does).
+///
+/// Spawned once per worker, from the folder list of the moment; a folder
+/// created or renamed later gets its watcher at the next launch, which is also
+/// when a changed push preference takes effect (like the main IDLE loop).
+fn spawn_folder_watchers(
+    account: &AccountConfig,
+    folders: &[Folder],
+    emit: &(impl Fn(WorkerEvent) + Clone + 'static),
+) {
+    let watched = folders
+        .iter()
+        .filter(|f| matches!(f.kind, FolderKind::Inbox | FolderKind::Custom))
+        .take(WATCHER_LIMIT);
+    for (i, f) in watched.enumerate() {
+        tokio::task::spawn_local(watch_folder(
+            account.clone(),
+            f.path.clone(),
+            Duration::from_secs(2 * i as u64),
+            emit.clone(),
+        ));
+    }
+}
+
+/// One extra IMAP connection that does nothing but sit in IDLE on a single
+/// folder, so a change made anywhere else — rule-filed new mail, a message
+/// read on another device — moves that folder's unread chip within seconds
+/// instead of at the next sweep. This is how Apple Mail keeps every folder
+/// live: IDLE only reports on the selected mailbox, so watching N folders
+/// takes N connections.
+///
+/// EXAMINE (never SELECT) keeps the watcher read-only, and it fetches no
+/// message content — only a UID SEARCH for the unseen count. Failures are
+/// quiet by design: a watcher is a freshness bonus on top of the sweep, so it
+/// reconnects with backoff rather than surfacing errors, and retires for good
+/// when a healthy session refuses the folder (deleted or renamed — spinning on
+/// a mailbox that no longer exists helps no one).
+async fn watch_folder(
+    account: AccountConfig,
+    path: String,
+    start_delay: Duration,
+    emit: impl Fn(WorkerEvent),
+) {
+    let mut backoff = start_delay;
+    loop {
+        tokio::time::sleep(backoff).await;
+        let Ok(mut sess) = connect(&account).await else {
+            // Offline, or the server's connection cap is spent (the main
+            // session always connects first and is never contended by this).
+            backoff = if backoff < Duration::from_secs(60) {
+                Duration::from_secs(60)
+            } else {
+                (backoff * 2).min(Duration::from_secs(900))
+            };
+            continue;
+        };
+        backoff = Duration::from_secs(60);
+        if sess.examine(&path).await.is_err() {
+            tracing::debug!("unwatching {path}: no longer selectable");
+            return;
+        }
+        // Catch up on whatever happened while unwatched (startup, or the gap a
+        // dropped connection left), then settle into IDLE.
+        match selected_unseen(&mut sess).await {
+            Some(unread) => emit(WorkerEvent::FolderUnreadByPath { path: path.clone(), unread }),
+            None => continue, // wedged straight out of the gate; reconnect
+        }
+        loop {
+            let mut handle = sess.idle();
+            if handle.init().await.is_err() {
+                break;
+            }
+            let woke = {
+                // Same 29 minutes as the main IDLE: under RFC 2177's half-hour
+                // re-issue requirement, long enough to be almost always parked.
+                let (idle_fut, _stop) = handle.wait_with_timeout(Duration::from_secs(1740));
+                matches!(
+                    idle_fut.await,
+                    Ok(async_imap::extensions::idle::IdleResponse::NewData(_))
+                )
+            };
+            match handle.done().await {
+                Ok(s) => sess = s,
+                Err(_) => break,
+            }
+            if woke {
+                match selected_unseen(&mut sess).await {
+                    Some(unread) => {
+                        emit(WorkerEvent::FolderUnreadByPath { path: path.clone(), unread });
+                    }
+                    None => break, // count unavailable = session gone; reconnect
+                }
+            }
+        }
     }
 }
 
