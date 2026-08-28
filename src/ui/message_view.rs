@@ -2493,6 +2493,11 @@ fn ground_rgba(hex: &str) -> gtk::gdk::RGBA {
     gtk::gdk::RGBA::new(v(1), v(3), v(5), 1.0)
 }
 
+// The trailing window-blur listener is what makes a click *inside* a message
+// body select its card: the sandboxed frames don't reliably dispatch
+// parent-attached listeners, but a click into an iframe focuses it and blurs
+// the wrapper window — caught there, the focused frame names the card, and
+// focus is handed straight back so the next click fires again.
 const SIZE_SCRIPT: &str = "\
 function s(f){if(f._s)return;f._s=1;try{var d=f.contentDocument;if(!d)return;\
 var b=d.body,e=d.documentElement;\
@@ -2589,7 +2594,12 @@ var t=en[n].target,k=t.dataset.key;ob.unobserve(t);\
 var d=document.querySelector('.vireo-dot[data-key=\"'+k+'\"]');if(d)d.remove();\
 try{window.webkit.messageHandlers.vireo.postMessage('seen:'+k);}catch(_){}}});\
 for(var m=0;m<es.length;m++)io.observe(es[m]);}});\
-window.addEventListener('resize',function(){var fs=all();for(var i=0;i<fs.length;i++)s(fs[i]);});";
+window.addEventListener('resize',function(){var fs=all();for(var i=0;i<fs.length;i++)s(fs[i]);});\
+window.addEventListener('blur',function(){setTimeout(function(){\
+var a=document.activeElement;\
+if(a&&a.tagName==='IFRAME'&&a.classList&&a.classList.contains('vireo-frame')&&a.dataset.key){\
+try{window.webkit.messageHandlers.vireo.postMessage('sel:'+a.dataset.key+':p');}catch(_){}\
+try{a.blur();window.focus();}catch(_){}}},0);});";
 
 /// One message body as a sandboxed iframe: its own document (so CSS can't leak to
 /// other messages) with no `allow-scripts` (so the email can't run JavaScript).
