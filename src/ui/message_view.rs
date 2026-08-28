@@ -1357,8 +1357,10 @@ impl MessageView {
                body[data-vireo-acts=\"toggle\"] .vireo-acts-toggle:hover{{opacity:1;\
                  background:rgba(128,128,128,0.18);}}\
                body[data-vireo-acts=\"toggle\"] .vireo-acts-toggle.open{{opacity:1;}}\
-               body[data-vireo-acts=\"hover\"] .vireo-acts{{display:none;}}\
-               body[data-vireo-acts=\"hover\"] .vireo-msg:hover .vireo-acts{{display:flex;}}\
+               body[data-vireo-acts=\"hover\"] .vireo-acts{{opacity:0;pointer-events:none;\
+                 transition:opacity 300ms ease;}}\
+               body[data-vireo-acts=\"hover\"] .vireo-msg:hover .vireo-acts{{opacity:1;\
+                 pointer-events:auto;}}\
                .vireo-folder{{margin-left:0.5em;padding:0.05em 0.45em;border-radius:0.7em;\
                  font-size:0.78em;opacity:0.75;border:1px solid currentColor;}}\
                .vireo-rcpt-toggle{{font:inherit;font-size:0.78em;color:inherit;background:none;\
