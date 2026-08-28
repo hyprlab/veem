@@ -20,6 +20,12 @@ impl RichEditor {
         settings.set_enable_javascript(true);
         settings.set_enable_developer_extras(false);
         webview.set_settings(&settings);
+        // Transparent until the document paints: a fresh WebView otherwise
+        // renders an opaque default surface (black) for its first frames,
+        // which flashes while the inline composer slides over the reader.
+        // The document itself paints `Canvas` below, so the editor's normal
+        // ground appears with the first real frame.
+        webview.set_background_color(&gtk::gdk::RGBA::new(0.0, 0.0, 0.0, 0.0));
         let dark = adw::StyleManager::default().is_dark();
         webview.load_html(&document(initial_html, dark), Some("https://vireo.localhost/editor"));
 
@@ -215,7 +221,8 @@ fn document(content: &str, dark: bool) -> String {
          <style>\
            :root{{color-scheme:{scheme};}}\
            html,body{{height:100%;box-sizing:border-box;}}\
-           body{{margin:0;padding:20px;font:14px/1.55 system-ui,sans-serif;outline:none;}}\
+           body{{margin:0;padding:20px;font:14px/1.55 system-ui,sans-serif;outline:none;\
+             background:Canvas;color:CanvasText;}}\
            blockquote{{margin:0 0 0 8px;padding-left:10px;\
              border-left:3px solid rgba(128,128,128,0.4);}}\
            .vireo-quote-attr{{opacity:0.7;margin:10px 0 4px;}}\
