@@ -29,6 +29,8 @@ pub struct PrefInit {
     pub card_actions_hover: bool,
     /// With the ⋯ toggle off: card actions appear automatically on hover.
     pub card_actions_auto: bool,
+    /// The list's Actions Palette opens on row hover (no ⋯ click).
+    pub list_palette_hover: bool,
     pub message_theme: MessageTheme,
     pub app_theme: AppTheme,
     pub notifications: bool,
@@ -145,8 +147,8 @@ pub enum PrefInput {
     ChangeClockStyle(u32),
     ToggleThreading(bool),
     ToggleThreadsExpanded(bool),
-    ToggleCardActionsHover(bool),
-    ToggleCardActionsAuto(bool),
+    ChangeCardActionsMode(u32),
+    ToggleListPaletteHover(bool),
     ChangeFetchInterval(u32),
     TogglePush(bool),
     ToggleNotifications(bool),
@@ -177,8 +179,8 @@ pub enum PrefOutput {
     SetClockStyle(ClockStyle),
     SetThreading(bool),
     SetThreadsExpanded(bool),
-    SetCardActionsHover(bool),
-    SetCardActionsAuto(bool),
+    SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
+    SetListPaletteHover(bool),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -360,32 +362,32 @@ impl Component for Preferences {
                             },
                         },
 
-                        #[name = "card_actions_hover_row"]
-                        adw::SwitchRow {
-                            set_title: "Hide message card actions until hovered",
-                            set_subtitle: "Each message card's action icons stay tucked \
-                                           behind a \u{22ef} toggle that appears on hover. \
-                                           Off = see the option below.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleCardActionsHover(row.is_active()));
+                        #[name = "card_actions_row"]
+                        adw::ComboRow {
+                            set_title: "Message card actions",
+                            set_subtitle: "How each message's action icons show in the \
+                                           reader, single or threaded.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeCardActionsMode(row.selected()));
                             },
                         },
 
-                        #[name = "card_actions_auto_row"]
+                        #[name = "list_palette_hover_row"]
                         adw::SwitchRow {
-                            set_title: "Show card actions while hovering",
-                            set_subtitle: "With the \u{22ef} toggle off: the icons appear \
-                                           by themselves while the pointer is over a \
-                                           message, single or threaded. Off = always shown.",
+                            set_title: "Open the Actions Palette on hover",
+                            set_subtitle: "The message list's \u{22ef} palette slides open \
+                                           by itself while the pointer rests on a row.",
                             connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleCardActionsAuto(row.is_active()));
+                                sender.input(PrefInput::ToggleListPaletteHover(row.is_active()));
                             },
                         },
 
                         #[name = "palette_collapse_row"]
                         adw::SpinRow {
                             set_title: "Actions Palette timeout",
-                            set_subtitle: "Seconds the Actions Palette stays open after the cursor leaves it.",
+                            set_subtitle: "Seconds an actions palette stays open after the \
+                                           cursor leaves it — the list's and the message \
+                                           cards' alike.",
                             connect_value_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangePaletteCollapse(row.value() as u64));
                             },
@@ -663,15 +665,19 @@ impl Component for Preferences {
         widgets.single_key_row.set_active(init.single_key_shortcuts);
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
-        widgets.card_actions_hover_row.set_active(init.card_actions_hover);
-        widgets.card_actions_auto_row.set_active(init.card_actions_auto);
-        // The auto-on-hover choice only means something with the ⋯ toggle off.
-        widgets
-            .card_actions_hover_row
-            .bind_property("active", &widgets.card_actions_auto_row, "sensitive")
-            .transform_to(|_, active: bool| Some(!active))
-            .sync_create()
-            .build();
+        widgets.card_actions_row.set_model(Some(&gtk::StringList::new(&[
+            "Hidden behind a \u{22ef} toggle",
+            "Shown while hovering",
+            "Always visible",
+        ])));
+        widgets.card_actions_row.set_selected(if init.card_actions_hover {
+            0
+        } else if init.card_actions_auto {
+            1
+        } else {
+            2
+        });
+        widgets.list_palette_hover_row.set_active(init.list_palette_hover);
 
         // Date and clock combos.
         let date_labels: Vec<&str> = DATE_STYLES.iter().map(|(l, _)| *l).collect();
@@ -754,11 +760,19 @@ impl Component for Preferences {
             PrefInput::ToggleThreadsExpanded(on) => {
                 let _ = sender.output(PrefOutput::SetThreadsExpanded(on));
             }
-            PrefInput::ToggleCardActionsHover(on) => {
-                let _ = sender.output(PrefOutput::SetCardActionsHover(on));
+            PrefInput::ChangeCardActionsMode(index) => {
+                let (hover_toggle, hover_auto) = match index {
+                    0 => (true, false),
+                    1 => (false, true),
+                    _ => (false, false),
+                };
+                let _ = sender.output(PrefOutput::SetCardActionsMode {
+                    hover_toggle,
+                    hover_auto,
+                });
             }
-            PrefInput::ToggleCardActionsAuto(on) => {
-                let _ = sender.output(PrefOutput::SetCardActionsAuto(on));
+            PrefInput::ToggleListPaletteHover(on) => {
+                let _ = sender.output(PrefOutput::SetListPaletteHover(on));
             }
             PrefInput::ChangeFetchInterval(index) => {
                 let secs = FETCH_INTERVALS

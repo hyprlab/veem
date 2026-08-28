@@ -59,6 +59,9 @@ pub struct MessageView {
     /// With the toggle off: show the actions automatically while the card is
     /// hovered (vs always).
     card_actions_auto: bool,
+    /// Seconds an opened card palette lingers after the pointer leaves —
+    /// the same "Actions Palette timeout" the list uses.
+    palette_collapse_secs: u64,
     /// The open conversation has already auto-scrolled to its first unread
     /// message: later renders of the same thread (bodies streaming in, a theme
     /// flip) carry a no-scroll stamp so the reader's place is kept.
@@ -188,6 +191,9 @@ pub enum MessageViewInput {
     /// Preferences: how card actions show — behind the ⋯ toggle, automatically
     /// on hover, or always.
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
+    /// Preferences: seconds an opened card palette lingers after the pointer
+    /// leaves (shared with the list's Actions Palette timeout).
+    SetPaletteCollapse(u64),
     /// A conversation message was read: clear its card's unread dot in place,
     /// without reloading the document.
     ClearDot { account_id: u32, id: u32 },
@@ -446,6 +452,7 @@ impl Component for MessageView {
             show_banner: crate::config::load_show_remote_banner(),
             card_actions_hover: crate::config::load_card_actions_hover(),
             card_actions_auto: crate::config::load_card_actions_auto(),
+            palette_collapse_secs: crate::config::load_palette_collapse(),
             remote_allowed: false,
             account_name: None,
             chip_provider,
@@ -863,6 +870,14 @@ impl Component for MessageView {
                     }
                 }
             }
+            MessageViewInput::SetPaletteCollapse(secs) => {
+                if self.palette_collapse_secs != secs {
+                    self.palette_collapse_secs = secs;
+                    if self.current.is_some() && !self.loading {
+                        self.render();
+                    }
+                }
+            }
             MessageViewInput::ClearDot { account_id, id } => {
                 for m in self.thread.iter_mut() {
                     if m.account_id == account_id && m.id == id {
@@ -987,11 +1002,14 @@ impl MessageView {
         } else {
             ""
         };
-        let html = if noscroll.is_empty() && hover.is_empty() {
-            html
-        } else {
-            html.replacen("<body", &format!("<body{noscroll}{hover}"), 1)
-        };
+        // The palette timeout rides along in ms; the script reads it for the
+        // toggle mode's collapse timer and the hover mode's fade-out delay.
+        let delay = format!(
+            " data-vireo-actsdelay=\"{}\"",
+            self.palette_collapse_secs.max(1) * 1000
+        );
+        let html =
+            html.replacen("<body", &format!("<body{noscroll}{hover}{delay}"), 1);
         self.did_autoscroll = true;
         let n = self.seq.get().wrapping_add(1);
         self.seq.set(n);
@@ -1027,6 +1045,7 @@ impl MessageView {
         self.remote_allowed.hash(&mut h);
         self.card_actions_hover.hash(&mut h);
         self.card_actions_auto.hash(&mut h);
+        self.palette_collapse_secs.hash(&mut h);
         self.thread.len().hash(&mut h);
         for m in &self.thread {
             let key = (m.account_id, m.id);
@@ -1358,9 +1377,9 @@ impl MessageView {
                  background:rgba(128,128,128,0.18);}}\
                body[data-vireo-acts=\"toggle\"] .vireo-acts-toggle.open{{opacity:1;}}\
                body[data-vireo-acts=\"hover\"] .vireo-acts{{opacity:0;pointer-events:none;\
-                 transition:opacity 300ms ease;}}\
+                 transition:opacity 300ms ease var(--acts-delay,0ms);}}\
                body[data-vireo-acts=\"hover\"] .vireo-msg:hover .vireo-acts{{opacity:1;\
-                 pointer-events:auto;}}\
+                 pointer-events:auto;transition:opacity 300ms ease 0ms;}}\
                .vireo-folder{{margin-left:0.5em;padding:0.05em 0.45em;border-radius:0.7em;\
                  font-size:0.78em;opacity:0.75;border:1px solid currentColor;}}\
                .vireo-rcpt-toggle{{font:inherit;font-size:0.78em;color:inherit;background:none;\
@@ -2816,6 +2835,8 @@ try{window.webkit.messageHandlers.vireo.postMessage('desel:0:0');}catch(_){}});\
 var ms=document.querySelectorAll('.vireo-msg');\
 for(var q=0;q<ms.length;q++){ms[q].addEventListener('click',function(e){\
 var k=this.dataset.key;if(k)pick(k,e);});}\
+var actsDelay=parseInt(document.body.dataset.vireoActsdelay||'0',10)||1200;\
+document.documentElement.style.setProperty('--acts-delay',actsDelay+'ms');\
 var ts=document.querySelectorAll('.vireo-acts-toggle');\
 for(var t=0;t<ts.length;t++){ts[t].addEventListener('click',function(e){\
 e.stopPropagation();e.preventDefault();\
@@ -2827,7 +2848,7 @@ for(var q2=0;q2<ms.length;q2++){(function(card){var timer=null;\
 card.addEventListener('mouseleave',function(){\
 var ac=card.querySelector('.vireo-acts.open');if(!ac)return;\
 timer=setTimeout(function(){ac.classList.remove('open');\
-var tg=card.querySelector('.vireo-acts-toggle');if(tg)tg.classList.remove('open');},1200);});\
+var tg=card.querySelector('.vireo-acts-toggle');if(tg)tg.classList.remove('open');},actsDelay);});\
 card.addEventListener('mouseenter',function(){if(timer){clearTimeout(timer);timer=null;}});})(ms[q2]);}\
 var as=document.querySelectorAll('.vireo-act');\
 for(var k=0;k<as.length;k++){as[k].addEventListener('click',function(e){\

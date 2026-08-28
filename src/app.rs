@@ -330,6 +330,8 @@ pub struct AppModel {
     card_actions_hover: bool,
     /// With the ⋯ toggle off: card actions appear automatically on hover.
     card_actions_auto: bool,
+    /// The list's Actions Palette opens on row hover (no ⋯ click).
+    list_palette_hover: bool,
     /// How email content is themed (message content only, not the app UI).
     message_theme: config::MessageTheme,
     /// The repeating auto-fetch timer, if armed.
@@ -547,8 +549,8 @@ pub enum AppMsg {
     SetClockStyle(crate::config::ClockStyle),
     SetThreading(bool),
     SetThreadsExpanded(bool),
-    SetCardActionsHover(bool),
-    SetCardActionsAuto(bool),
+    SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
+    SetListPaletteHover(bool),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -1574,6 +1576,7 @@ impl SimpleComponent for AppModel {
             threads_expanded: config::load_threads_expanded(),
             card_actions_hover: config::load_card_actions_hover(),
             card_actions_auto: config::load_card_actions_auto(),
+            list_palette_hover: config::load_list_palette_hover(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
             notifications,
@@ -3318,17 +3321,12 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::SetCardActionsHover(on) => {
-                if self.card_actions_hover != on {
-                    self.card_actions_hover = on;
-                    self.save_settings();
-                    self.push_card_actions_mode();
-                }
-            }
-
-            AppMsg::SetCardActionsAuto(on) => {
-                if self.card_actions_auto != on {
-                    self.card_actions_auto = on;
+            AppMsg::SetCardActionsMode { hover_toggle, hover_auto } => {
+                if self.card_actions_hover != hover_toggle
+                    || self.card_actions_auto != hover_auto
+                {
+                    self.card_actions_hover = hover_toggle;
+                    self.card_actions_auto = hover_auto;
                     self.save_settings();
                     self.push_card_actions_mode();
                 }
@@ -3347,6 +3345,16 @@ impl SimpleComponent for AppModel {
                     self.palette_collapse_secs = secs;
                     self.save_settings();
                     self.message_list.emit(MessageListInput::SetPaletteCollapse(secs));
+                    // The message cards' palette shares the same timeout.
+                    self.message_view.emit(MessageViewInput::SetPaletteCollapse(secs));
+                }
+            }
+
+            AppMsg::SetListPaletteHover(on) => {
+                if self.list_palette_hover != on {
+                    self.list_palette_hover = on;
+                    self.save_settings();
+                    self.message_list.emit(MessageListInput::SetPaletteHover(on));
                 }
             }
 
@@ -3646,6 +3654,7 @@ impl SimpleComponent for AppModel {
                     sidebar_hover_expand: self.sidebar_hover_expand,
                     card_actions_hover: self.card_actions_hover,
                     card_actions_auto: self.card_actions_auto,
+                    list_palette_hover: self.list_palette_hover,
                     app_theme: self.app_theme,
                     preview_lines: self.preview_lines,
                     single_key_shortcuts: self.single_key.get(),
@@ -3669,8 +3678,10 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetClockStyle(style) => AppMsg::SetClockStyle(style),
                         PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
                         PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
-                        PrefOutput::SetCardActionsHover(on) => AppMsg::SetCardActionsHover(on),
-                        PrefOutput::SetCardActionsAuto(on) => AppMsg::SetCardActionsAuto(on),
+                        PrefOutput::SetCardActionsMode { hover_toggle, hover_auto } => {
+                            AppMsg::SetCardActionsMode { hover_toggle, hover_auto }
+                        }
+                        PrefOutput::SetListPaletteHover(on) => AppMsg::SetListPaletteHover(on),
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                         PrefOutput::SetPush(on) => AppMsg::SetPush(on),
                         PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
@@ -4286,6 +4297,7 @@ impl AppModel {
             self.show_attachments,
             self.card_actions_hover,
             self.card_actions_auto,
+            self.list_palette_hover,
             self.preview_lines,
             self.single_key.get(),
             self.run_in_background.get(),

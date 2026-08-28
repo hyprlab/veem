@@ -609,6 +609,10 @@ struct PrivacyFile {
     /// card is hovered (rather than always).
     #[serde(default = "default_card_actions_auto")]
     card_actions_auto: bool,
+    /// Whether the message list's Actions Palette opens on row hover, without
+    /// needing the ⋯ click.
+    #[serde(default)]
+    list_palette_hover: bool,
     /// Hovering the icon rail (narrow-window or user-collapsed) floats the
     /// full sidebar out over the panes without needing the expand button.
     #[serde(default)]
@@ -708,6 +712,7 @@ impl Default for PrivacyFile {
             show_attachments: default_show_attachments(),
             card_actions_hover: default_card_actions_hover(),
             card_actions_auto: default_card_actions_auto(),
+            list_palette_hover: false,
             sidebar_hover_expand: false,
             app_theme: AppTheme::default(),
             preview_lines: default_preview_lines(),
@@ -827,6 +832,11 @@ pub fn load_card_actions_auto() -> bool {
     load_privacy().card_actions_auto
 }
 
+/// Whether the list's Actions Palette opens on row hover (no ⋯ click).
+pub fn load_list_palette_hover() -> bool {
+    load_privacy().list_palette_hover
+}
+
 pub fn load_sidebar_hover_expand() -> bool {
     load_privacy().sidebar_hover_expand
 }
@@ -879,6 +889,7 @@ pub fn save_privacy(
     show_attachments: bool,
     card_actions_hover: bool,
     card_actions_auto: bool,
+    list_palette_hover: bool,
     preview_lines: u32,
     single_key_shortcuts: bool,
     run_in_background: bool,
@@ -913,6 +924,7 @@ pub fn save_privacy(
         show_attachments,
         card_actions_hover,
         card_actions_auto,
+        list_palette_hover,
         preview_lines,
         single_key_shortcuts,
         run_in_background,

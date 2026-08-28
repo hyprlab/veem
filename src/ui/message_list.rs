@@ -41,6 +41,8 @@ pub struct RowInit {
     /// Shared Actions Palette collapse delay in seconds — how long it stays open
     /// after the cursor leaves it (read live when scheduling).
     pub palette_collapse_secs: std::rc::Rc<std::cell::Cell<u64>>,
+    /// Shared "open the palette on row hover" flag (read live on each hover).
+    pub palette_hover: std::rc::Rc<std::cell::Cell<bool>>,
     /// Number of messages in this conversation (only set on a thread head; 1 for
     /// a standalone message).
     pub thread_count: usize,
@@ -152,6 +154,8 @@ pub struct MessageRow {
     collapse_timer: Option<gtk::glib::SourceId>,
     /// Shared collapse delay (seconds) after the cursor leaves the palette.
     palette_collapse_secs: std::rc::Rc<std::cell::Cell<u64>>,
+    /// Shared "open the palette on row hover" flag (read live per hover).
+    palette_hover: std::rc::Rc<std::cell::Cell<bool>>,
     /// Conversation size (only meaningful on a thread head).
     thread_count: usize,
     /// Nested reply under a thread head.
@@ -541,6 +545,7 @@ impl FactoryComponent for MessageRow {
             preview_lines,
             ring_class,
             palette_collapse_secs,
+            palette_hover,
             thread_count,
             is_thread_child,
             thread_expanded,
@@ -563,6 +568,7 @@ impl FactoryComponent for MessageRow {
             palette_open: false,
             collapse_timer: None,
             palette_collapse_secs,
+            palette_hover,
             thread_count,
             is_thread_child,
             thread_expanded,
@@ -586,7 +592,19 @@ impl FactoryComponent for MessageRow {
             MessageRowInput::SetRead(read) => self.msg.unread = !read,
             MessageRowInput::SetStarred(starred) => self.msg.starred = starred,
             MessageRowInput::SetHasAttachment(has) => self.msg.has_attachment = has,
-            MessageRowInput::SetRowHover(over) => self.row_hovered = over,
+            MessageRowInput::SetRowHover(over) => {
+                self.row_hovered = over;
+                // Hover mode: the palette slides open by itself on the row,
+                // and arms the usual collapse timeout on leave.
+                if self.palette_hover.get() {
+                    if over {
+                        self.palette_open = true;
+                        self.cancel_collapse();
+                    } else if self.palette_open {
+                        self.arm_collapse(&sender);
+                    }
+                }
+            }
             MessageRowInput::TogglePalette => {
                 if self.palette_open {
                     self.palette_open = false;
@@ -1024,6 +1042,8 @@ pub struct MessageList {
     color_provider: gtk::CssProvider,
     /// Actions Palette collapse delay (seconds), shared with every row.
     palette_collapse_secs: std::rc::Rc<std::cell::Cell<u64>>,
+    /// Shared with every row: open the palette on row hover.
+    palette_hover: std::rc::Rc<std::cell::Cell<bool>>,
     /// The message currently being viewed, kept selected across list rebuilds.
     /// Keyed by (account_id, id) since UIDs collide across accounts in the
     /// unified "All Inboxes" view.
@@ -1217,6 +1237,8 @@ pub enum MessageListInput {
     ContextMenu { x: f64, y: f64 },
     /// Set the Actions Palette auto-collapse delay (seconds).
     SetPaletteCollapse(u64),
+    /// Open the Actions Palette on row hover, without the ⋯ click.
+    SetPaletteHover(bool),
     /// Folder switch: reset infinite-scroll paging back to the first page and
     /// scroll to the top (a plain `SetMessages` now preserves paging for refreshes).
     ResetPaging,
@@ -1551,6 +1573,9 @@ impl SimpleComponent for MessageList {
             account_colors: std::collections::HashMap::new(),
             color_provider,
             palette_collapse_secs: std::rc::Rc::new(std::cell::Cell::new(5)),
+            palette_hover: std::rc::Rc::new(std::cell::Cell::new(
+                crate::config::load_list_palette_hover(),
+            )),
             thread_links: Vec::new(),
             drag_keys: DragKeys::default(),
             selected_id: None,
@@ -2150,6 +2175,7 @@ impl SimpleComponent for MessageList {
                 let _ = sender.output(MessageListOutput::Action { action, message });
             }
             MessageListInput::SetPaletteCollapse(secs) => self.palette_collapse_secs.set(secs),
+            MessageListInput::SetPaletteHover(on) => self.palette_hover.set(on),
             MessageListInput::SetSelected(id) => {
                 match id {
                     // Account-less id resolved against the shown list (the app
@@ -2531,6 +2557,7 @@ impl MessageList {
                     preview_lines: self.preview_lines,
                     ring_class,
                     palette_collapse_secs: self.palette_collapse_secs.clone(),
+                    palette_hover: self.palette_hover.clone(),
                     thread_count: meta.count,
                     is_thread_child: meta.is_child,
                     thread_expanded: meta.expanded,
