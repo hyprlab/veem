@@ -195,6 +195,12 @@ headerbar.rail-header {
   color: @accent_fg_color;
 }
 
+/* The inline composer's ground: opaque, so sliding down over the reader
+   actually hides it rather than blending with it. */
+.inline-compose-surface {
+  background-color: @window_bg_color;
+}
+
 /* Compose attachment chips. */
 .attach-chip {
   padding: 3px 4px 3px 10px;

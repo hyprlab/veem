@@ -1173,10 +1173,16 @@ impl SimpleComponent for AppModel {
                             // prepended in `init`. The drawer's widget is a Paned
                             // that holds the reader body + attachment footer.
                             #[wrap(Some)]
+                            // An overlay, so the inline composer can slide
+                            // down OVER the reader and cover the whole pane
+                            // (the box beneath holds the actual reader).
                             #[name = "reader_content_box"]
-                            set_content = &gtk::Box {
-                                set_orientation: gtk::Orientation::Vertical,
-                                append: model.attachment_drawer.widget(),
+                            set_content = &gtk::Overlay {
+                                #[wrap(Some)]
+                                set_child = &gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    append: model.attachment_drawer.widget(),
+                                },
                             },
                             },
                         },
@@ -1479,7 +1485,7 @@ impl SimpleComponent for AppModel {
             reader_compose_revealer: {
                 let r = gtk::Revealer::new();
                 r.set_transition_type(gtk::RevealerTransitionType::SlideDown);
-                r.set_transition_duration(200);
+                r.set_transition_duration(300);
                 r.set_reveal_child(false);
                 r
             },
@@ -1684,11 +1690,14 @@ impl SimpleComponent for AppModel {
                 let _ = s.send(AppMsg::ReaderOverflowMenu);
             });
         }
-        // The inline reply/forward pane sits above the reader body (top of the
-        // content box), sliding down over it when revealed.
+        // The inline compose/reply pane is an overlay over the reader body:
+        // revealed, it slides down from the top and covers the whole pane
+        // (the reader disappears beneath it). While closed it must not eat
+        // the reader's clicks.
+        model.reader_compose_revealer.set_can_target(false);
         widgets
             .reader_content_box
-            .prepend(&model.reader_compose_revealer);
+            .add_overlay(&model.reader_compose_revealer);
         // The attachments gallery is the content stack's second page. Wrap it in a
         // ToolbarView + HeaderBar so it keeps the window controls (close/minimize)
         // that otherwise live only on the reader pane's header.
@@ -5892,7 +5901,13 @@ impl AppModel {
         let (id, init) = self.build_compose_init(account_id, prefill, false, true);
         let controller = self.spawn_compose(init, sender);
         let widget = controller.widget();
+        // Fill the pane and paint an opaque surface: the composer covers the
+        // reader completely, rather than dropping down as a partial panel.
+        widget.set_vexpand(true);
+        widget.set_hexpand(true);
+        widget.add_css_class("inline-compose-surface");
         self.reader_compose_revealer.set_child(Some(widget));
+        self.reader_compose_revealer.set_can_target(true);
         self.reader_compose_revealer.set_reveal_child(true);
         controller.emit(ComposeInput::FocusEditor);
         self.reader_compose = Some(ReaderCompose { id, controller, window: None });
@@ -5911,6 +5926,7 @@ impl AppModel {
             }
             None => {
                 self.reader_compose_revealer.set_reveal_child(false);
+                self.reader_compose_revealer.set_can_target(false);
                 self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
                 r.controller.emit(ComposeInput::SaveDraftIfDirty);
                 self.draining_composers.push((r.id, r.controller));
@@ -5933,6 +5949,7 @@ impl AppModel {
             None => {
                 // inline → window: unparent from the revealer, then host in a window.
                 self.reader_compose_revealer.set_reveal_child(false);
+                self.reader_compose_revealer.set_can_target(false);
                 self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
                 let window = self.compose_window_host(&widget, id, sender);
                 r.window = Some(window);
@@ -5942,7 +5959,11 @@ impl AppModel {
                 // window → inline: unparent from the window, drop it back in place.
                 window.set_content(None::<&gtk::Widget>);
                 window.destroy();
+                widget.set_vexpand(true);
+                widget.set_hexpand(true);
+                widget.add_css_class("inline-compose-surface");
                 self.reader_compose_revealer.set_child(Some(&widget));
+                self.reader_compose_revealer.set_can_target(true);
                 self.reader_compose_revealer.set_reveal_child(true);
                 r.controller.emit(ComposeInput::SetWindowed(false));
             }
