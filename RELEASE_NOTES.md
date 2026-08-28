@@ -2,6 +2,55 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.17.0
+
+A big release: composing without leaving the window, undo for every move,
+and send-as aliases with their own SMTP servers.
+
+- **Compose right where you read.** New message now slides down over the
+  reading pane — toolbar and all — as a full-height editor, with a
+  pop-out button when you'd rather have the old separate window (and a
+  preference to keep composing in a window permanently). The sidebar
+  gains a proper accent-coloured **New message** row to start from.
+- **Ctrl+Z undoes it.** Deleted a message by accident? Moved a thread to
+  the wrong folder? Marked something spam too fast? Every move — single,
+  bulk, drag-and-drop, or spam — can be undone, without limit, straight
+  from the keyboard. Messages return to the folder they came from even
+  though the server renumbers them in transit. **Ctrl+W** now closes the
+  window (mail keeps syncing in the background) and both shortcuts are in
+  the keyboard shortcuts window. (Issue #64.)
+- **Aliases with their own SMTP server (issue #34).** A send-as alias can
+  now carry its own outgoing server — host, port, username, and a
+  password in the system keyring — with a Test button in the alias
+  editor. Mail sent (or retried from the Outbox) as that alias goes
+  through its server; everything else uses the account's, as before.
+- **Reading feels like one conversation.** Every message — threaded or
+  not — uses the conversation layout: single messages fill the pane
+  edge-to-edge as one continuous surface (plain-text mail included),
+  threads keep their inset cards. Opening a thread with unread mail
+  scrolls straight to the last unread message — riding out image loads
+  and quote collapses on the way — and messages are only marked read when
+  you click them, not just for scrolling past.
+- **Message actions live on the message.** Each card has its own action
+  row — reply, forward, move, spam, read/unread, view source and more —
+  tucked behind a ⋯ that appears on hover, always shown, or shown
+  automatically while hovering: your choice in Preferences, sharing one
+  auto-collapse timeout with the message list's palette (which can now
+  also open on hover). Mark as Read/Unread joins the reader toolbar too.
+- **A bolder, calmer message list.** Selection is now a full accent-colour
+  pill with white text in both schemes, the unread dot alone marks unread
+  mail (white on a selected row), thread count and caret merge into one
+  quiet grey chip that inverts when selected, threads date themselves by
+  their newest message, and the separators are gone. The list can also
+  shrink further for narrow screens.
+- **Details throughout.** The remote-content banner follows light/dark
+  properly, reads better, and sits at a steadier 48px; the attachment
+  drawer loses its ugly grab handle — resize it after expanding, and the
+  height sticks across restarts — with Save All always visible;
+  Preferences, Accounts and About remember their window heights; startup
+  highlights All Inboxes in the sidebar; and opening several PDF
+  attachments at once can no longer crash the app.
+
 ## What's new in 1.16.2
 
 - Cancelling the "Open With" dialog for an attachment no longer makes it

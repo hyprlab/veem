@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.17.0" date="2026-08-28" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.17.0</url>
+      <description>
+        <p>Composing slides down inline over the reader (with a pop-out and a preference), Ctrl+Z undoes any move or delete without limit, send-as aliases can use their own SMTP server, single messages adopt the full-width conversation layout with reliable scroll-to-unread, per-message action palettes, a full-accent message list selection, a cleaner attachment drawer, and a fix for a crash when opening several PDF attachments at once.</p>
+      </description>
+    </release>
     <release version="1.16.2" date="2026-08-27" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.16.2</url>
       <description>

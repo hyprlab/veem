@@ -1,5 +1,70 @@
 # Changelog
 
+## 1.17.0 — 2026-08-28
+
+- **Inline compose.** The reader pane is wrapped in an overlay at init; New
+  message slides a full-height composer down over it (300ms SlideDown),
+  covering the toolbar — the compose header takes over the window
+  decorations while inline. A pop-out button moves the draft to the old
+  separate window; "Compose in a window" preference restores the previous
+  behaviour outright. The compose body loses its frame, takes the
+  conversation cards' page ground, and gets a 20px interior document inset.
+  The sidebar footer's collapse button is gone; compose is an accent
+  "New message" row in the sidebar and the sidebar toggle sits leftmost in
+  the message pane header.
+- **Unlimited undo (Ctrl+Z).** Every destructive move records an
+  `UndoEntry` (account, destination, origin folder, Message-IDs): delete,
+  spam, bulk move, and drag-and-drop. Undo re-finds the messages by
+  `HEADER Message-ID` search — UIDs change on IMAP MOVE — moves them back,
+  drops stale cache rows, and reloads the restored folder with a toast.
+  Ctrl+Z is guarded so it never fires while typing in an entry or the
+  composer. **Ctrl+W** maps to `window.close` (background sync continues,
+  matching the existing close-to-background behaviour); both are listed in
+  the shortcuts window. (Issue #64.)
+- **Per-alias SMTP (issue #34).** `AliasConfig` grows optional SMTP
+  host/port/username with the password under a dedicated keyring key; the
+  alias editor gets the fields plus a Test button, and the transport layer
+  picks the alias's server by envelope sender — including Outbox retries.
+- **Conversation layout for everything.** Single messages render through
+  the conversation document as one full-bleed surface: no card padding,
+  radius, or borders, header on the same ground as the subject, and a
+  painted-background heuristic so plain-text/unstyled mail shows one
+  continuous chrome-coloured pane. Threads keep inset cards; expanded
+  thread rows share the list's right edge and widen the pane floor.
+- **Scroll-to-unread that lands.** Opening a thread with unread mail
+  scrolls to the *last* unread card using real rendered frame heights, a
+  follow mode that chases the target through image/quote settling until
+  user input, and a synchronous position report before card interactions
+  so click re-renders restore to the right anchor. Read-marking is
+  click-driven (scrolling past no longer marks read); dot updates patch
+  the DOM via JS instead of re-rendering, killing the height blip.
+- **Card action palettes.** Ten actions per card (reply/reply-all/forward,
+  move, spam, delete, flag, read/unread, print, view source) behind a ⋯
+  toggle with three modes — always shown, hover-to-reveal (space reserved,
+  300ms fade), or click-to-expand — set in Preferences and sharing the
+  palette auto-collapse timeout; the message list palette can also open on
+  hover. Mark as Read/Unread added to the reader toolbar and card headers.
+- **Message list restyle.** Selection is a full-accent pill with white
+  text in both schemes (no focus dimming); unread accent pills are gone —
+  the 10px dot alone marks unread, in white on selected rows; thread count
+  + caret merge into a grey chip that inverts to white-on-accent when
+  selected; thread heads date by their newest member; separators removed;
+  minimum list width down to 348px.
+- **Attachment drawer.** Divider invisible (drawer tint, no
+  border/shadow), resizing locked until the drawer is expanded, height
+  persisted (debounced) across messages and restarts, 6px bottom padding,
+  and Save All… is a standing button at the header's right edge.
+- **Remote-content banner** follows the theme (shield #ffca28 dark /
+  #ff7800 light), 48px tall with standard grey pill buttons, single-line
+  text while there's room, reworded to "Remote content (images, trackers)
+  is blocked to protect your privacy."
+- **Stability & chrome.** Concurrent poppler PDF thumbnail renders crashed
+  (lcms2 heap corruption) — rendering is serialised behind a process-wide
+  mutex. Startup highlights All Inboxes; Preferences/Accounts/About open
+  100px shorter and remember their heights; message inset normalised to
+  20px (cache schema bumped to re-render); View Source left the toolbar
+  for the context menu and card palette.
+
 ## 1.16.2 — 2026-08-27
 
 - **A cancelled attachment chooser stays cancelled (issue #65).** With no
