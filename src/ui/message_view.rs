@@ -167,6 +167,8 @@ pub enum MessageViewInput {
         account_id: u32,
         id: u32,
     },
+    /// The card's "Add sender to Contacts" button.
+    CardContact { account_id: u32, id: u32 },
 }
 
 /// How a click on a conversation card changes the selection, mirroring what the
@@ -199,6 +201,8 @@ pub enum MessageViewOutput {
         action: crate::ui::message_list::RowAction,
         message: Box<Message>,
     },
+    /// A card's "Add sender to Contacts" button — add this message's sender.
+    ContactSender(Box<Message>),
 }
 
 #[relm4::component(pub)]
@@ -507,6 +511,29 @@ impl Component for MessageView {
                         account_id,
                         id,
                     }),
+                    "star" => open_sender.input(MessageViewInput::CardAction {
+                        action: RowAction::ToggleStar,
+                        account_id,
+                        id,
+                    }),
+                    "spam" => open_sender.input(MessageViewInput::CardAction {
+                        action: RowAction::Spam,
+                        account_id,
+                        id,
+                    }),
+                    "archive" => open_sender.input(MessageViewInput::CardAction {
+                        action: RowAction::Archive,
+                        account_id,
+                        id,
+                    }),
+                    "delete" => open_sender.input(MessageViewInput::CardAction {
+                        action: RowAction::Delete,
+                        account_id,
+                        id,
+                    }),
+                    "contact" => {
+                        open_sender.input(MessageViewInput::CardContact { account_id, id })
+                    }
                     _ => {}
                 }
             });
@@ -762,6 +789,16 @@ impl Component for MessageView {
                     });
                 }
             }
+            MessageViewInput::CardContact { account_id, id } => {
+                if let Some(m) = self
+                    .thread
+                    .iter()
+                    .find(|m| m.account_id == account_id && m.id == id)
+                {
+                    let _ =
+                        sender.output(MessageViewOutput::ContactSender(Box::new(m.clone())));
+                }
+            }
             MessageViewInput::OpenHeader { account_id, id } => {
                 if let Some(m) = self
                     .thread
@@ -955,22 +992,23 @@ impl MessageView {
                        </header>{body}{seen_mark}</section>",
                     aid = m.account_id,
                     id = m.id,
-                    // Per-card Reply/Reply all/Forward, only where they earn
-                    // their keep: a real conversation, where the toolbar can't
-                    // say which message it means. A single message answers to
-                    // the toolbar alone — its card carries no action pills.
+                    // Per-card actions, only where they earn their keep: a
+                    // real conversation, where the toolbar can't say which
+                    // message it means — the toolbar's icons grey out there
+                    // and these take their place, one full set per card. A
+                    // single message answers to the toolbar alone.
                     acts = if thread.len() > 1 {
+                        let key = (m.account_id, m.id);
                         format!(
-                            "<span class=\"vireo-acts\">\
-                               <button type=\"button\" class=\"vireo-act\" data-act=\"reply\" \
-                                 data-key=\"{aid}:{id}\" title=\"Reply to this message\">Reply</button>\
-                               <button type=\"button\" class=\"vireo-act\" data-act=\"replyall\" \
-                                 data-key=\"{aid}:{id}\" title=\"Reply to everyone on this message\">Reply all</button>\
-                               <button type=\"button\" class=\"vireo-act\" data-act=\"forward\" \
-                                 data-key=\"{aid}:{id}\" title=\"Forward this message\">Forward</button>\
-                             </span>",
-                            aid = m.account_id,
-                            id = m.id,
+                            "<span class=\"vireo-acts\">{}{}{}{}{}{}{}{}</span>",
+                            card_action_button(key, "reply", "mail-reply-sender-symbolic", "Reply to this message"),
+                            card_action_button(key, "replyall", "mail-reply-all-symbolic", "Reply to everyone on this message"),
+                            card_action_button(key, "forward", "mail-forward-symbolic", "Forward this message"),
+                            card_action_button(key, "contact", "contact-new-symbolic", "Add sender to Contacts"),
+                            card_action_button(key, "star", "non-starred-symbolic", "Flag this message"),
+                            card_action_button(key, "spam", "mail-mark-junk-symbolic", "Mark as Spam"),
+                            card_action_button(key, "archive", "mail-archive-symbolic", "Archive this message"),
+                            card_action_button(key, "delete", "user-trash-symbolic", "Delete this message"),
                         )
                     } else {
                         String::new()
@@ -1166,13 +1204,13 @@ impl MessageView {
                  border:0;border-radius:999px;cursor:pointer;}}\
                .vireo-quote:hover{{opacity:0.95;background:rgba(128,128,128,0.28);}}\
                .vireo-quote.open{{opacity:0.95;}}\
-               .vireo-acts{{display:flex;gap:6px;flex-basis:100%;justify-content:flex-start;margin-top:2px;}}\
-               .vireo-act{{font:inherit;font-size:0.8em;color:inherit;background:none;\
-                 border:1px solid rgba(128,128,128,0.45);border-radius:999px;\
-                 padding:2px 10px;cursor:pointer;opacity:0.75;\
+               .vireo-acts{{display:flex;gap:2px;flex-basis:100%;justify-content:flex-start;margin-top:2px;}}\
+               .vireo-act{{color:inherit;background:none;border:none;border-radius:6px;\
+                 padding:5px 8px;cursor:pointer;opacity:0.7;\
                  transition:opacity 120ms ease,background 120ms ease;}}\
                .vireo-act:hover{{opacity:1;background:rgba(128,128,128,0.18);}}\
                .vireo-act:active{{background:rgba(128,128,128,0.3);}}\
+               .vireo-act svg{{width:14px;height:14px;display:block;fill:currentColor;}}\
                .vireo-folder{{margin-left:0.5em;padding:0.05em 0.45em;border-radius:0.7em;\
                  font-size:0.78em;opacity:0.75;border:1px solid currentColor;}}\
                .vireo-rcpt-toggle{{font:inherit;font-size:0.78em;color:inherit;background:none;\
@@ -1570,6 +1608,30 @@ fn default_image_name(mime: &str) -> String {
         other => other.rsplit('/').next().unwrap_or("img"),
     };
     format!("image.{ext}")
+}
+
+/// One icon button on a conversation card's action line. The icon is the same
+/// embedded symbolic SVG the toolbar draws, inlined (its paths carry no fill,
+/// so the document's `fill:currentColor` recolours it); when the resource
+/// bundle isn't registered (tests), the button simply has no glyph.
+fn card_action_button(key: (u32, u32), act: &str, icon: &str, title: &str) -> String {
+    let path =
+        format!("/co/hyprlab/Vireo/icons/scalable/actions/co.hyprlab.Vireo-{icon}.svg");
+    let svg = gtk::gio::resources_lookup_data(&path, gtk::gio::ResourceLookupFlags::NONE)
+        .ok()
+        .and_then(|b| String::from_utf8(b.to_vec()).ok())
+        .map(|s| {
+            s.replacen("<?xml version=\"1.0\" encoding=\"UTF-8\"?>", "", 1)
+                .trim()
+                .to_string()
+        })
+        .unwrap_or_default();
+    format!(
+        "<button type=\"button\" class=\"vireo-act\" data-act=\"{act}\" \
+         data-key=\"{aid}:{id}\" title=\"{title}\">{svg}</button>",
+        aid = key.0,
+        id = key.1,
+    )
 }
 
 /// Whether a message body paints a background of its own. The colon/equals

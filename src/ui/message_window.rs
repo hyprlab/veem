@@ -245,6 +245,9 @@ impl Component for MessageWindow {
                 MessageViewOutput::CardAction { action, .. } => {
                     MessageWindowInput::CardAction(action)
                 }
+                // A popout shows a single message — its card carries no
+                // actions, so this can't fire; keep the match total.
+                MessageViewOutput::ContactSender(_) => MessageWindowInput::Ignore,
                 MessageViewOutput::MarkSeen { .. } => MessageWindowInput::Ignore,
                 MessageViewOutput::SelectCards(_) => MessageWindowInput::Ignore,
             });
