@@ -73,6 +73,12 @@ const BODY_FETCH_BATCH: usize = 10;
 /// small, so this stays cheap; older messages load on demand.
 const PREFETCH_BODY_LIMIT: usize = 50;
 
+/// Floor between two unread-count sweeps out of the IDLE loop, so a burst of
+/// new mail (one `Refreshed` wake per delivery) doesn't STATUS the whole folder
+/// tree over and over. Explicit [`MailRequest::RefreshUnread`]s are never
+/// throttled — a refresh the user asked for always runs.
+const UNREAD_SWEEP_MIN: Duration = Duration::from_secs(60);
+
 /// A request from the UI to the worker.
 #[derive(Debug)]
 pub enum MailRequest {
@@ -176,6 +182,13 @@ pub enum MailRequest {
         folder_id: u32,
         path: String,
     },
+    /// Re-ask the server for every folder's unread count and answer with one
+    /// [`WorkerEvent::FolderUnread`] per folder. Cheap (STATUS only — no message
+    /// content), so the auto-fetch tick and the manual refresh broadcast it:
+    /// only the visible folder and the IDLE-watched inbox ever re-sync on their
+    /// own, and without this the other folders' sidebar chips go stale until
+    /// each one is selected.
+    RefreshUnread,
     /// Force a fresh connection and re-list folders (e.g. after a failure).
     Reconnect,
 }
@@ -454,6 +467,9 @@ async fn run_imap(
     // IMAP IDLE push: watch the most recently loaded folder for new mail.
     let push_enabled = crate::config::load_push();
     let mut idle_folder: Option<(u32, String)> = None;
+    // When the other folders' unread chips were last re-checked (None = not
+    // yet this session; connect_and_list's full listing covers startup itself).
+    let mut last_unread_sweep: Option<std::time::Instant> = None;
     // Set after prefetching; triggers one re-sync (to catch mail that arrived
     // while the connection was busy) before settling into the long IDLE.
     let mut pending_resync = false;
@@ -660,7 +676,30 @@ async fn run_imap(
                     .await
                     {
                         IdleOutcome::Request(req) => req,
-                        IdleOutcome::Refreshed | IdleOutcome::Quiet => continue,
+                        IdleOutcome::Refreshed | IdleOutcome::Quiet => {
+                            // IDLE only watches one folder; mail filed by
+                            // server-side rules lands in the others without ever
+                            // waking it. Re-check their unread chips whenever
+                            // IDLE surfaces — on new mail, and on the quiet
+                            // timeout, which is the only clock a push-only
+                            // (manual-fetch) account has.
+                            if last_unread_sweep
+                                .map_or(true, |t| t.elapsed() >= UNREAD_SWEEP_MIN)
+                            {
+                                if let Some(sess) = session.as_mut() {
+                                    refresh_unread_counts(
+                                        account_id,
+                                        sess,
+                                        cache.as_ref(),
+                                        Some(fpath.as_str()),
+                                        &emit,
+                                    )
+                                    .await;
+                                    last_unread_sweep = Some(std::time::Instant::now());
+                                }
+                            }
+                            continue;
+                        }
                         IdleOutcome::Closed => break,
                     }
                 } else {
@@ -1058,6 +1097,19 @@ async fn run_imap(
                         lost = true;
                     }
                 }
+            }
+
+            MailRequest::RefreshUnread => {
+                let sess = session.as_mut().unwrap();
+                refresh_unread_counts(
+                    account_id,
+                    sess,
+                    cache.as_ref(),
+                    idle_folder.as_ref().map(|(_, p)| p.as_str()),
+                    &emit,
+                )
+                .await;
+                last_unread_sweep = Some(std::time::Instant::now());
             }
 
             MailRequest::MarkSpam { path, uid, dest } => {
@@ -3256,6 +3308,34 @@ async fn refresh_folders(
     }
 }
 
+/// STATUS-sweep every known folder and emit a [`WorkerEvent::FolderUnread`] for
+/// each — the per-folder event is the one path allowed to assert a genuine zero
+/// (the merged Folders path deliberately won't, see the app's SetFolders). A
+/// failed STATUS emits nothing, so a wedged answer can't wipe a good chip.
+///
+/// `selected` (the mailbox the session has open) is skipped: STATUS on the
+/// selected mailbox misbehaves on some servers, and that folder's count is
+/// already refreshed by every load and IDLE pass.
+async fn refresh_unread_counts(
+    account_id: u32,
+    session: &mut ImapSession,
+    cache: Option<&Cache>,
+    selected: Option<&str>,
+    emit: &impl Fn(WorkerEvent),
+) {
+    let folders = cache.map(|c| c.load_folders(account_id)).unwrap_or_default();
+    for f in &folders {
+        if Some(f.path.as_str()) == selected {
+            continue;
+        }
+        if let Ok(mb) = session.status(&f.path, "(UNSEEN)").await {
+            if let Some(unseen) = mb.unseen {
+                emit(WorkerEvent::FolderUnread { folder_id: f.id, unread: unseen });
+            }
+        }
+    }
+}
+
 /// Count unseen messages in the currently-selected mailbox via SEARCH (safe on
 /// the selected folder, unlike STATUS on some servers). Downloads only ids.
 async fn selected_unseen(session: &mut ImapSession) -> Option<u32> {
@@ -4930,6 +5010,9 @@ async fn run_pop3(
                 .await;
             }
 
+            // POP3 has only the inbox, whose count every sync refreshes.
+            MailRequest::RefreshUnread => {}
+
             MailRequest::Reconnect => {
                 emit(WorkerEvent::Folders(pop3_folders(account_id)));
             }
@@ -5085,6 +5168,7 @@ async fn run_mock(
             | MailRequest::DeleteFolder { .. }
             | MailRequest::FlushOutbox { .. }
             | MailRequest::DeleteOutbox { .. }
+            | MailRequest::RefreshUnread
             | MailRequest::Reconnect => {}
             // The demo backend sends nothing, so its Outbox is always empty.
             MailRequest::LoadOutbox => emit(WorkerEvent::Outbox { items: Vec::new() }),
@@ -6567,6 +6651,16 @@ async fn run_graph(
                 graph_flush_outbox(cache.as_ref(), account_id, &account, id, &emit).await;
             }
 
+            MailRequest::RefreshUnread => {
+                // Quiet token fetch: this rides the auto-fetch tick, and a
+                // signed-out account already errors on interactive actions.
+                let quiet = |_: WorkerEvent| {};
+                if let Some(token) = graph_token(&account, &quiet).await {
+                    graph_refresh_unread(&token, account_id, cache.as_ref(), &mut state, &emit)
+                        .await;
+                }
+            }
+
             MailRequest::Reconnect => {
                 if let Some(token) = graph_token(&account, &emit).await {
                     refresh_graph_folders(&token, account_id, cache.as_ref(), &mut state, &emit)
@@ -6600,6 +6694,47 @@ async fn graph_poll_inbox(
     {
         let unread = messages.iter().filter(|m| m.unread).count() as u32;
         emit(WorkerEvent::Messages { folder_id, messages });
+        emit(WorkerEvent::FolderUnread { folder_id, unread });
+    }
+    // The poll only re-syncs the inbox; mail filed by server-side rules lands
+    // in other folders without passing through it. Re-list for every folder's
+    // unreadItemCount so their chips keep pace too.
+    graph_refresh_unread(&token, account_id, cache, state, emit).await;
+}
+
+/// Re-list the folders for their server-side unread counts and push them, but
+/// stay silent on failure — this runs on the background poll, where a transient
+/// network error is not worth a banner (unlike [`refresh_graph_folders`]).
+///
+/// Emits the merged folder list first (so a renamed/new folder gets fresh ids),
+/// then one [`WorkerEvent::FolderUnread`] per folder: the per-folder event is
+/// the path allowed to assert a genuine zero, which the app's SetFolders merge
+/// deliberately ignores.
+async fn graph_refresh_unread(
+    token: &str,
+    account_id: u32,
+    cache: Option<&Cache>,
+    state: &mut GraphState,
+    emit: &impl Fn(WorkerEvent),
+) {
+    let t = token.to_string();
+    let Ok(list) = tokio::task::spawn_blocking(move || graph_list_folders(&t, account_id))
+        .await
+        .unwrap_or_else(|_| Err("task failed".into()))
+    else {
+        return;
+    };
+    if list.is_empty() {
+        return;
+    }
+    state.adopt_folders(&list);
+    let folders: Vec<Folder> = list.into_iter().map(|f| f.folder).collect();
+    if let Some(c) = cache {
+        c.save_folders(account_id, &folders);
+    }
+    let counts: Vec<(u32, u32)> = folders.iter().map(|f| (f.id, f.unread)).collect();
+    emit(WorkerEvent::Folders(folders));
+    for (folder_id, unread) in counts {
         emit(WorkerEvent::FolderUnread { folder_id, unread });
     }
 }

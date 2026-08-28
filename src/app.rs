@@ -3079,6 +3079,12 @@ impl SimpleComponent for AppModel {
                         }
                     }
                 }
+                // Only the visible folder (and the IDLE-watched inbox) re-synced
+                // above; every other folder's unread chip would drift until it
+                // was selected. Have each account re-check them all.
+                for w in self.workers.values() {
+                    let _ = w.send(MailRequest::RefreshUnread);
+                }
             }
 
             AppMsg::Compose => {
