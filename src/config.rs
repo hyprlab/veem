@@ -77,6 +77,11 @@ pub enum Protocol {
     #[default]
     Imap,
     Pop3,
+    /// Microsoft Graph (REST) — Microsoft 365 accounts imported from GNOME
+    /// Online Accounts, whose token is Graph-scoped and can't speak IMAP
+    /// (issue #36). No servers to configure; everything runs over
+    /// graph.microsoft.com with the GOA token.
+    Graph,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -297,7 +302,20 @@ pub fn load() -> Option<Vec<AccountConfig>> {
     let path = path()?;
     let text = std::fs::read_to_string(&path).ok()?;
     match toml::from_str::<ConfigFile>(&text) {
-        Ok(cfg) if !cfg.accounts.is_empty() => {
+        Ok(mut cfg) if !cfg.accounts.is_empty() => {
+            // Heal pre-#36 Microsoft 365 imports: a GOA OAuth account with no
+            // incoming server could never connect over IMAP (GNOME's ms_graph
+            // provider serves none) — it is a Graph account.
+            for a in &mut cfg.accounts {
+                if a.protocol == Protocol::Imap
+                    && a.oauth
+                    && a.goa_id.is_some()
+                    && a.imap_host.trim().is_empty()
+                {
+                    tracing::info!("{}: empty-host GOA OAuth account — using Microsoft Graph", a.email);
+                    a.protocol = Protocol::Graph;
+                }
+            }
             tracing::info!("loaded {} account(s) from {}", cfg.accounts.len(), path.display());
             Some(cfg.accounts)
         }
@@ -629,6 +647,10 @@ struct PrivacyFile {
     /// account's attachments).
     #[serde(default = "default_show_attachments")]
     show_attachments: bool,
+    /// Whether the sidebar shows the "Contacts" shortcut row (below
+    /// Attachments); it opens the app-wide contacts browser.
+    #[serde(default = "default_show_contacts")]
+    show_contacts: bool,
     /// Whether a conversation card's action icons stay hidden until the card
     /// is hovered (expanded via their ⋯ toggle). Off = always shown, unless
     /// `card_actions_auto` shows them automatically on hover.
@@ -702,6 +724,10 @@ fn default_notifications() -> bool {
     true
 }
 
+fn default_show_contacts() -> bool {
+    true
+}
+
 fn default_show_attachments() -> bool {
     true
 }
@@ -747,6 +773,7 @@ impl Default for PrivacyFile {
             notifications: default_notifications(),
             notification_content: default_notification_content(),
             show_attachments: default_show_attachments(),
+            show_contacts: default_show_contacts(),
             card_actions_hover: default_card_actions_hover(),
             card_actions_auto: default_card_actions_auto(),
             list_palette_hover: false,
@@ -860,6 +887,10 @@ pub fn load_show_attachments() -> bool {
     load_privacy().show_attachments
 }
 
+pub fn load_show_contacts() -> bool {
+    load_privacy().show_contacts
+}
+
 /// Whether conversation card actions hide until hovered.
 pub fn load_card_actions_hover() -> bool {
     load_privacy().card_actions_hover
@@ -930,6 +961,7 @@ pub fn save_privacy(
     notifications: bool,
     notification_content: bool,
     show_attachments: bool,
+    show_contacts: bool,
     card_actions_hover: bool,
     card_actions_auto: bool,
     list_palette_hover: bool,
@@ -966,6 +998,7 @@ pub fn save_privacy(
         notifications,
         notification_content,
         show_attachments,
+        show_contacts,
         card_actions_hover,
         card_actions_auto,
         list_palette_hover,

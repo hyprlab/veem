@@ -2,6 +2,38 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.17.1
+
+**Microsoft 365 accounts from GNOME Online Accounts work now (issue
+#36).** GNOME's Microsoft 365 sign-in only carries permission for
+Microsoft's Graph API — it cannot log in to IMAP at all, which is why
+imports produced an account that failed with "No address associated
+with hostname". Vireo now speaks the Graph API directly for these
+accounts, using GNOME's own sign-in: folders, reading, attachments,
+moves, undo, drafts, search, and sending all work, and new mail is
+polled every couple of minutes (or at your auto-fetch interval).
+Existing broken imports repair themselves on upgrade.
+
+Along with that, Google and Microsoft sign-in now belong to GNOME
+Online Accounts outright — the old built-in Microsoft sign-in is
+retired — and GOA accounts became first-class citizens in the Accounts
+window: switching one off returns it to the import list (it stays in
+GNOME), the Remove button works on them (removing from Vireo only), the
+irrelevant greyed-out server fields are gone from their editor, and
+editing the things Vireo does own — label, signature, colour, aliases —
+saves properly.
+
+The chrome got calmer too:
+
+- **The sidebar carries the actions now.** Refresh sits beside a new
+  **+ New Message** pill; **Contacts** gets its own row below
+  Attachments (with a Preferences toggle); the status-bar button is
+  retired — errors reveal the bar themselves, and "Reveal Status Bar"
+  in the menu covers the rest.
+- **The message list gained a row of space**: the folder-name line is
+  gone, and the message count and sort menu moved up into the pane's
+  header bar.
+
 ## What's new in 1.17.1b
 
 The first release on Vireo's new **beta channel** — a preview build for

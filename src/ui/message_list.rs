@@ -1026,7 +1026,6 @@ pub struct MessageList {
     /// Total messages matching the current filter (may exceed what's rendered).
     total_matches: usize,
     query: String,
-    title: String,
     gravatar: bool,
     /// Lines of preview text per row (1–3), from Preferences.
     preview_lines: u32,
@@ -1093,6 +1092,8 @@ pub struct MessageList {
     scroller: Option<gtk::ScrolledWindow>,
     /// Current sort order for the list.
     sort: SortOrder,
+    /// The last count string sent to the header bar, to emit only on change.
+    last_count: String,
     /// Group messages into conversation threads (user preference).
     threading: bool,
     /// When `Some`, a spinner + this message overlays the list — shown while a
@@ -1112,7 +1113,7 @@ pub enum SortOrder {
 }
 
 impl SortOrder {
-    fn from_key(key: &str) -> Self {
+    pub fn from_key(key: &str) -> Self {
         match key {
             "date_oldest" => SortOrder::DateOldest,
             "sender" => SortOrder::Sender,
@@ -1120,16 +1121,6 @@ impl SortOrder {
             "unread" => SortOrder::UnreadFirst,
             "flagged" => SortOrder::FlaggedFirst,
             _ => SortOrder::DateNewest,
-        }
-    }
-    fn key(self) -> &'static str {
-        match self {
-            SortOrder::DateNewest => "date_newest",
-            SortOrder::DateOldest => "date_oldest",
-            SortOrder::Sender => "sender",
-            SortOrder::Subject => "subject",
-            SortOrder::UnreadFirst => "unread",
-            SortOrder::FlaggedFirst => "flagged",
         }
     }
 }
@@ -1156,11 +1147,11 @@ pub enum BulkAction {
 
 #[derive(Debug)]
 pub enum MessageListInput {
-    SetMessages { title: String, messages: Vec<Message> },
+    SetMessages { messages: Vec<Message> },
     /// Merge more indexed messages into the current list (background backfill),
     /// preserving the current search query and view.
     AppendMessages { messages: Vec<Message> },
-    SetLoading { title: String },
+    SetLoading,
     SetThreading(bool),
     /// Reply headers from the account's other folders, so a conversation joined
     /// through a message that isn't on screen still groups.
@@ -1267,6 +1258,8 @@ pub enum MessageListOutput {
     /// Every selected message, whenever that changes — the reader outlines the
     /// matching cards.
     SelectionKeys(Vec<(u32, u32)>),
+    /// The header-bar count ("N" / "N of M") changed — app.rs shows it.
+    CountChanged(String),
     /// A row was double-clicked: open the message in its own window.
     Activated(Message),
     /// A context-menu action chosen for a specific message.
@@ -1297,33 +1290,8 @@ impl SimpleComponent for MessageList {
                 set_orientation: gtk::Orientation::Vertical,
                 set_spacing: 8,
 
-                gtk::Box {
-                    set_spacing: 6,
-                    gtk::Label {
-                        #[watch]
-                        set_label: &model.title,
-                        set_halign: gtk::Align::Start,
-                        set_hexpand: true,
-                        // The folder's name gives way as the pane narrows rather
-                        // than holding it open (#29).
-                        set_ellipsize: gtk::pango::EllipsizeMode::End,
-                        add_css_class: "list-title",
-                    },
-                    gtk::Label {
-                        #[watch]
-                        set_label: &model.count_label(),
-                        set_valign: gtk::Align::Center,
-                        add_css_class: "list-count",
-                    },
-                    #[name = "sort_btn"]
-                    gtk::MenuButton {
-                        set_icon_name: "co.hyprlab.Vireo-view-sort-descending-symbolic",
-                        set_tooltip_text: Some("Sort messages"),
-                        set_valign: gtk::Align::Center,
-                        add_css_class: "flat",
-                    },
-                },
-
+                // The folder name, count and sort control live in the pane's
+                // header bar now (app.rs) — only search needs this toolbar.
                 gtk::Box {
                     set_spacing: 6,
 
@@ -1564,7 +1532,6 @@ impl SimpleComponent for MessageList {
             render_limit: RENDER_CAP,
             index_complete: true,
             query: String::new(),
-            title: String::new(),
             gravatar: false,
             avatars: true,
             sender_logos: false,
@@ -1591,6 +1558,7 @@ impl SimpleComponent for MessageList {
             rendered_count: 0,
             scroller: None,
             sort: SortOrder::DateNewest,
+            last_count: String::new(),
             threading: true,
 
             busy: None,
@@ -1653,37 +1621,6 @@ impl SimpleComponent for MessageList {
         });
         widgets.scope_dropdown.set_factory(Some(&button_factory));
 
-        // Sort menu: a stateful "order" action drives a radio-style menu, so the
-        // active sort shows a checkmark.
-        let sort_group = gtk::gio::SimpleActionGroup::new();
-        let sort_action = gtk::gio::SimpleAction::new_stateful(
-            "order",
-            Some(gtk::glib::VariantTy::STRING),
-            &model.sort.key().to_variant(),
-        );
-        let ss = sender.clone();
-        sort_action.connect_activate(move |action, param| {
-            if let Some(key) = param.and_then(|v| v.str()) {
-                action.set_state(&key.to_variant());
-                ss.input(MessageListInput::SetSort(SortOrder::from_key(key)));
-            }
-        });
-        sort_group.add_action(&sort_action);
-        widgets.sort_btn.insert_action_group("sortmenu", Some(&sort_group));
-
-        let menu = gtk::gio::Menu::new();
-        for (label, key) in [
-            ("Date (Newest first)", "date_newest"),
-            ("Date (Oldest first)", "date_oldest"),
-            ("Sender (A–Z)", "sender"),
-            ("Subject (A–Z)", "subject"),
-            ("Unread first", "unread"),
-            ("Flagged first", "flagged"),
-        ] {
-            menu.append(Some(label), Some(&format!("sortmenu.order::{key}")));
-        }
-        widgets.sort_btn.set_menu_model(Some(&menu));
-
         schedule_midnight_refresh(&sender);
 
         ComponentParts { model, widgets }
@@ -1691,8 +1628,7 @@ impl SimpleComponent for MessageList {
 
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
         match msg {
-            MessageListInput::SetMessages { title, messages } => {
-                self.title = title;
+            MessageListInput::SetMessages { messages } => {
                 self.all = messages;
                 // Keep any active search query: this also fires for a background
                 // re-sync of the folder you're viewing, which shouldn't drop your
@@ -1722,8 +1658,7 @@ impl SimpleComponent for MessageList {
                     self.rebuild_preserving_scroll();
                 }
             }
-            MessageListInput::SetLoading { title } => {
-                self.title = title;
+            MessageListInput::SetLoading => {
                 self.all.clear();
                 self.clear_search();
                 self.render_limit = RENDER_CAP;
@@ -2224,6 +2159,14 @@ impl SimpleComponent for MessageList {
                 }
             }
         }
+        // Whatever just happened, restate the header count if it moved — every
+        // path that changes the visible rows funnels through here.
+        let count = self.count_label();
+        if count != self.last_count {
+            self.last_count = count.clone();
+            let _ = sender.output(MessageListOutput::CountChanged(count));
+        }
+
     }
 }
 

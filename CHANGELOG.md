@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.17.1 — 2026-08-28
+
+- **Microsoft 365 via GNOME Online Accounts works (issue #36).** GOA's
+  `ms_graph` provider serves no IMAP (its token is Graph-scoped), so the
+  old import produced an empty-host account that died on connect. A new
+  `graph` protocol speaks Microsoft Graph end to end with the GOA token:
+  folders (well-known roles mapped), summaries, raw-MIME bodies through
+  the same parsing pipeline as IMAP, flags, moves, undo, folder
+  management, drafts, and sendMail (which files the Sent copy itself).
+  Threading rides a synthetic conversation token stripped before any
+  wire header; broken pre-#36 imports heal to Graph at config load; the
+  inbox polls on the auto-fetch cadence (default 2 min) since Graph has
+  no push channel.
+- **The embedded Microsoft OAuth client is removed.** Google and
+  Microsoft sign-in both route through GNOME Online Accounts (the
+  provider entries guide there); user-supplied clients via env or
+  oauth.toml remain the only native escape hatch.
+- **GOA accounts, first-class in the Accounts window.** Toggling one off
+  un-imports it back to the GNOME Online Accounts list (GNOME keeps the
+  account); the editor gains the standard Remove button (Vireo-only
+  removal); the greyed-out server section is gone from GOA editors; and
+  saving no longer validates GNOME-owned connection fields — which had
+  blocked every label/signature edit on Graph and Gmail accounts.
+- **Sidebar rework.** Contacts moves from the reader toolbar to a
+  sidebar row below Attachments (with a Preferences toggle); Refresh
+  moves beside a new "+ New Message" pill aligned to the row highlights;
+  the status-bar button is retired in favour of error auto-reveal plus a
+  "Reveal Status Bar" menu entry.
+- **The message list header slims down.** The folder-title row is gone;
+  the visible count and the sort menu live in the pane's header bar,
+  across from the sidebar toggle.
+- The demo inbox (VIREO_DEMO) opens on a six-message conversation for
+  screenshots.
+
 ## 1.17.1b — 2026-08-28
 
 - **The beta channel exists.** First release of Vireo's beta track: app ID

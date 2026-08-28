@@ -66,7 +66,7 @@ const APP_PW: &str = "Requires an app-specific password (not your normal login p
 /// SSL/TLS on 993; SMTP uses implicit TLS on 465 or STARTTLS on 587.
 const PROVIDERS: &[Provider] = &[
     Provider { label: "Google (Gmail) — sign in", kind: ProviderKind::Google, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Sign in with your browser — no password needed." },
-    Provider { label: "Microsoft / Outlook — sign in", kind: ProviderKind::Microsoft, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Sign in with your browser (experimental)." },
+    Provider { label: "Microsoft 365 / Outlook", kind: ProviderKind::Microsoft, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Sign in through GNOME Online Accounts." },
     Provider { label: "iCloud", kind: ProviderKind::Preset, imap_host: "imap.mail.me.com", imap_port: 993, smtp_host: "smtp.mail.me.com", smtp_port: 587, hint: APP_PW },
     Provider { label: "Yahoo Mail", kind: ProviderKind::Preset, imap_host: "imap.mail.yahoo.com", imap_port: 993, smtp_host: "smtp.mail.yahoo.com", smtp_port: 465, hint: APP_PW },
     Provider { label: "Proton Mail (Bridge)", kind: ProviderKind::Preset, imap_host: "127.0.0.1", imap_port: 1143, smtp_host: "127.0.0.1", smtp_port: 1025, hint: "Requires Proton Mail Bridge running locally." },
@@ -195,6 +195,32 @@ pub enum AccountsOutput {
     Closed,
 }
 
+/// Whether a GOA account's mail runs over the Microsoft Graph API: the
+/// "Microsoft 365" (`ms_graph`) provider has no IMAP — its token is
+/// Graph-scoped — so the imported account uses [`Protocol::Graph`] (issue #36).
+fn goa_uses_graph(g: &crate::goa::GoaMailAccount) -> bool {
+    g.oauth2 && g.provider_type == "ms_graph"
+}
+
+/// GNOME Online Accounts mail accounts not (properly) configured in Vireo.
+/// A configured entry counts when it has an IMAP host or runs over Graph — an
+/// entry with neither is a broken pre-#36 Microsoft 365 import, so its GOA
+/// account is offered again and re-importing repairs it. Accounts GOA can
+/// neither serve IMAP nor Graph mail for can never connect and aren't listed.
+fn importable_goa_accounts(configured: &[AccountConfig]) -> Vec<crate::goa::GoaMailAccount> {
+    crate::goa::list_mail_accounts()
+        .into_iter()
+        .filter(|g| {
+            !configured.iter().any(|a| {
+                a.email.eq_ignore_ascii_case(&g.email)
+                    && (!a.imap_host.trim().is_empty()
+                        || a.protocol == crate::config::Protocol::Graph)
+            })
+        })
+        .filter(|g| !g.imap_host.is_empty() || goa_uses_graph(g))
+        .collect()
+}
+
 /// Background command results for the editor.
 #[derive(Debug)]
 pub enum AccountsCmd {
@@ -321,8 +347,9 @@ impl Component for AccountsWindow {
 
                                 #[name = "goa_enabled_row"]
                                 adw::SwitchRow {
-                                    set_title: "Enabled in Vireo",
-                                    set_subtitle: "Hides the account here without removing it from your system.",
+                                    set_title: "Show in Vireo",
+                                    set_subtitle: "Switching this off returns the account to the \
+                                                   import list — it stays in GNOME Online Accounts.",
                                     connect_active_notify[sender] => move |row| {
                                         sender.input(AccountsInput::ToggleCurrentEnabled(row.is_active()));
                                     },
@@ -434,8 +461,9 @@ impl Component for AccountsWindow {
                                     set_wrap: true,
                                 },
 
-                                // Shown for Google when no built-in/own OAuth client
-                                // is available: point the user at GNOME Online Accounts.
+                                // Shown for Google/Microsoft when no built-in/own OAuth
+                                // client is available: point the user at GNOME Online
+                                // Accounts (the only sign-in path for these providers).
                                 #[name = "goa_hint"]
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Vertical,
@@ -447,10 +475,11 @@ impl Component for AccountsWindow {
                                         set_wrap: true,
                                         set_xalign: 0.0,
                                         add_css_class: "dim-label",
-                                        set_label: "Google sign-in uses GNOME Online Accounts.\n\n\
-                                            1. Open Online Accounts and sign in with Google.\n\
-                                            2. Come back to Vireo and reopen this window — your \
-                                            Google account then appears under “GNOME Online \
+                                        set_label: "Google and Microsoft sign-in use GNOME Online \
+                                            Accounts.\n\n\
+                                            1. Open Online Accounts and sign in there.\n\
+                                            2. Come back to Vireo and reopen this window — the \
+                                            account then appears under “GNOME Online \
                                             Accounts” at the top of this window. Enable it there.",
                                     },
                                     gtk::Button {
@@ -582,9 +611,9 @@ impl Component for AccountsWindow {
                                 },
                             },
 
-                            // GOA-imported accounts: you can't meaningfully "remove"
-                            // one from Vireo while it still lives in GNOME Online
-                            // Accounts — so disable it here, or open GOA to change it.
+                            // For a GOA-imported account this removes it from
+                            // Vireo only — it stays in GNOME Online Accounts and
+                            // returns to the import list.
                             #[name = "remove_group"]
                             add = &adw::PreferencesGroup {
                                 gtk::Button {
@@ -617,11 +646,7 @@ impl Component for AccountsWindow {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        // GNOME Online Accounts mail accounts not already configured in Vireo.
-        let goa: Vec<crate::goa::GoaMailAccount> = crate::goa::list_mail_accounts()
-            .into_iter()
-            .filter(|g| !init.iter().any(|a| a.email.eq_ignore_ascii_case(&g.email)))
-            .collect();
+        let goa = importable_goa_accounts(&init);
 
         let model = AccountsWindow {
             accounts: init,
@@ -697,6 +722,8 @@ impl Component for AccountsWindow {
                 widgets.color_btn.set_rgba(&parse_color(DEFAULT_COLOR));
                 widgets.emoji_btn.set_label("Add");
                 widgets.remove_group.set_visible(false);
+                // A prior GOA edit may have hidden the provider picker.
+                widgets.provider_row.set_visible(true);
                 widgets.nav.push_by_tag("editor");
             }
 
@@ -725,7 +752,39 @@ impl Component for AccountsWindow {
                 let is_goa = acc.goa_id.is_some();
                 set_connection_editable(widgets, !is_goa);
                 widgets.goa_banner.set_visible(is_goa);
-                widgets.remove_group.set_visible(!is_goa);
+                // GOA accounts get the same Remove flow — it removes the account
+                // from Vireo only (back to the import list); GNOME keeps it.
+                widgets.remove_group.set_visible(true);
+                // GNOME owns a GOA account's connection outright, so the server
+                // and credential section isn't shown at all — only what Vireo
+                // owns (name, label, colour, signature, aliases) plus the email
+                // for identification. `apply_provider` re-shows what applies the
+                // next time a native account or the add-form opens the editor.
+                widgets.provider_row.set_visible(!is_goa);
+                if is_goa {
+                    for w in [
+                        widgets.protocol_row.upcast_ref::<gtk::Widget>(),
+                        widgets.host_row.upcast_ref(),
+                        widgets.port_row.upcast_ref(),
+                        widgets.smtp_row.upcast_ref(),
+                        widgets.smtp_port_row.upcast_ref(),
+                        widgets.user_row.upcast_ref(),
+                        widgets.pass_row.upcast_ref(),
+                        widgets.smtp_separate_row.upcast_ref(),
+                        widgets.smtp_user_row.upcast_ref(),
+                        widgets.smtp_pass_row.upcast_ref(),
+                        widgets.test_btn.upcast_ref(),
+                        widgets.oauth_signin_btn.upcast_ref(),
+                        widgets.oauth_status.upcast_ref(),
+                        widgets.goa_hint.upcast_ref(),
+                    ] {
+                        w.set_visible(false);
+                    }
+                    // The Google/Microsoft "use GNOME" guidance hid these; a GOA
+                    // account edits its display fields right here.
+                    widgets.name_row.set_visible(true);
+                    widgets.email_row.set_visible(true);
+                }
                 widgets.goa_enabled_row.set_active(acc.enabled);
                 // While Mail is switched off in GNOME Settings the account is
                 // paused from there, not from here — say so where the toggle is.
@@ -733,7 +792,8 @@ impl Component for AccountsWindow {
                 widgets.goa_enabled_row.set_subtitle(if acc.goa_mail_disabled {
                     "Paused: Mail is switched off for this account in GNOME Settings \u{2192} Online Accounts."
                 } else {
-                    "Hides the account here without removing it from your system."
+                    "Switching this off returns the account to the import list — it \
+                     stays in GNOME Online Accounts."
                 });
                 widgets.nav.push_by_tag("editor");
             }
@@ -761,6 +821,15 @@ impl Component for AccountsWindow {
             }
 
             AccountsInput::ToggleEnabled { index, enabled } => {
+                // A GNOME Online Account switched off here isn't paused — it is
+                // un-imported: it drops out of Vireo (the config entry and its
+                // stored copies go) and returns to the "GNOME Online Accounts"
+                // list below, ready to import again. The account itself stays
+                // in GNOME untouched.
+                if !enabled && self.accounts.get(index).is_some_and(|a| a.goa_id.is_some()) {
+                    self.unimport_goa(index, widgets, &sender);
+                    return;
+                }
                 if let Some(acc) = self.accounts.get_mut(index) {
                     if acc.enabled != enabled {
                         acc.enabled = enabled;
@@ -772,6 +841,13 @@ impl Component for AccountsWindow {
 
             AccountsInput::ToggleCurrentEnabled(enabled) => {
                 if let Some(i) = self.editing {
+                    // Same un-import semantics as the list toggle; the editor
+                    // page closes since its account is no longer in Vireo.
+                    if !enabled && self.accounts.get(i).is_some_and(|a| a.goa_id.is_some()) {
+                        self.unimport_goa(i, widgets, &sender);
+                        widgets.nav.pop();
+                        return;
+                    }
                     if let Some(acc) = self.accounts.get_mut(i) {
                         if acc.enabled != enabled {
                             acc.enabled = enabled;
@@ -957,12 +1033,19 @@ impl Component for AccountsWindow {
                     true
                 };
                 let password_ok = account.oauth || !account.password.is_empty();
-                if account.imap_host.is_empty()
-                    || account.username.is_empty()
-                    || !password_ok
-                    || !oauth_ready
-                    || (account.smtp_separate
-                        && (account.smtp_username.is_empty() || account.smtp_password.is_empty()))
+                // A GOA account's connection fields were all restored from the
+                // original above (GNOME owns them; a Graph account rightly has
+                // no IMAP host at all) — validating them would only block the
+                // fields Vireo does own: label, signature, colour, aliases.
+                let is_goa_edit = account.goa_id.is_some();
+                if !is_goa_edit
+                    && (account.imap_host.is_empty()
+                        || account.username.is_empty()
+                        || !password_ok
+                        || !oauth_ready
+                        || (account.smtp_separate
+                            && (account.smtp_username.is_empty()
+                                || account.smtp_password.is_empty())))
                 {
                     widgets.host_row.add_css_class("error");
                     return;
@@ -994,14 +1077,20 @@ impl Component for AccountsWindow {
                 } else {
                     account.name.clone()
                 };
-                let dialog = adw::MessageDialog::new(
-                    Some(root),
-                    Some("Remove Account?"),
-                    Some(&format!(
+                let body = if account.goa_id.is_some() {
+                    format!(
+                        "Remove {name} from Vireo? It stays in GNOME Online Accounts \
+                         and can be imported again from the list below. Mail on the \
+                         server is not affected."
+                    )
+                } else {
+                    format!(
                         "Remove {name} from Vireo? Its saved password is deleted from \
                          the keyring. Mail on the server is not affected."
-                    )),
-                );
+                    )
+                };
+                let dialog =
+                    adw::MessageDialog::new(Some(root), Some("Remove Account?"), Some(&body));
                 dialog.add_response("cancel", "Cancel");
                 dialog.add_response("remove", "Remove");
                 dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
@@ -1022,6 +1111,11 @@ impl Component for AccountsWindow {
                         self.accounts.remove(i);
                         self.rebuild_account_list(&widgets.accounts_list, &sender);
                         let _ = sender.output(AccountsOutput::Removed { email });
+                        // A removed GOA import returns to the list below (and a
+                        // repaired-away broken entry re-offers its GOA account).
+                        self.goa = importable_goa_accounts(&self.accounts);
+                        self.rebuild_goa_list(&widgets.goa_list, &sender);
+                        widgets.goa_group.set_visible(!self.goa.is_empty());
                     }
                 }
                 widgets.nav.pop();
@@ -1503,6 +1597,28 @@ impl AccountsWindow {
         }
     }
 
+    /// Un-import a GNOME Online Account: drop it from Vireo (the app removes
+    /// the config entry and its stored copies) and return it to the "GNOME
+    /// Online Accounts" import list below. The account stays in GNOME.
+    fn unimport_goa(
+        &mut self,
+        index: usize,
+        widgets: &AccountsWindowWidgets,
+        sender: &ComponentSender<Self>,
+    ) {
+        if index >= self.accounts.len() {
+            return;
+        }
+        let email = self.accounts[index].email.clone();
+        self.accounts.remove(index);
+        let _ = sender.output(AccountsOutput::Removed { email });
+        // Re-query GOA so the account's row reappears in the import list fresh.
+        self.goa = importable_goa_accounts(&self.accounts);
+        self.rebuild_account_list(&widgets.accounts_list, sender);
+        self.rebuild_goa_list(&widgets.goa_list, sender);
+        widgets.goa_group.set_visible(!self.goa.is_empty());
+    }
+
     /// Populate the "GNOME Online Accounts" list with importable mail accounts.
     fn rebuild_goa_list(&self, list: &gtk::ListBox, sender: &ComponentSender<Self>) {
         while let Some(child) = list.first_child() {
@@ -1516,7 +1632,8 @@ impl AccountsWindow {
             } else {
                 g.provider.clone()
             };
-            // OAuth providers (Gmail, Microsoft) sign in with a token from GNOME.
+            // OAuth providers (Gmail, Microsoft 365) sign in with a token from
+            // GNOME.
             if g.oauth2 && !g.password_based {
                 subtitle.push_str(" · sign-in via GNOME");
             }
@@ -1549,10 +1666,14 @@ impl AccountsWindow {
         let is_password = p.is_password();
         let is_oauth = p.is_oauth();
         let is_custom = matches!(p.kind, ProviderKind::CustomOAuth);
-        // Google with no built-in (or user-supplied) OAuth client: there's nothing
-        // to sign in with, so guide the user to GNOME Online Accounts instead.
-        let google_needs_goa = matches!(p.kind, ProviderKind::Google)
-            && crate::oauth::provider_credentials("google").0.trim().is_empty();
+        // Google or Microsoft with no built-in (or user-supplied) OAuth client:
+        // there's nothing to sign in with, so guide the user to GNOME Online
+        // Accounts instead. Microsoft always lands here since its embedded
+        // client was removed (issue #36) — mail runs over GOA + Graph.
+        let needs_goa = p
+            .oauth_name()
+            .filter(|_| matches!(p.kind, ProviderKind::Google | ProviderKind::Microsoft))
+            .is_some_and(|n| crate::oauth::provider_credentials(n).0.trim().is_empty());
         // Google/Microsoft servers come from the built-in preset (hidden). Custom
         // OAuth still needs its server addresses and client details entered.
         let show_servers = is_password || is_custom;
@@ -1575,16 +1696,16 @@ impl AccountsWindow {
 
         // OAuth: the user just signs in. Google with no client falls back to the
         // GNOME Online Accounts panel, which replaces the sign-in + identity fields.
-        widgets.name_row.set_visible(!google_needs_goa);
-        widgets.email_row.set_visible(!google_needs_goa);
-        widgets.goa_hint.set_visible(google_needs_goa);
-        widgets.oauth_signin_btn.set_visible(is_oauth && !google_needs_goa);
+        widgets.name_row.set_visible(!needs_goa);
+        widgets.email_row.set_visible(!needs_goa);
+        widgets.goa_hint.set_visible(needs_goa);
+        widgets.oauth_signin_btn.set_visible(is_oauth && !needs_goa);
         widgets.oauth_client_id_row.set_visible(is_custom);
         widgets.oauth_secret_row.set_visible(is_custom);
         widgets.oauth_auth_url_row.set_visible(is_custom);
         widgets.oauth_token_url_row.set_visible(is_custom);
         widgets.oauth_scope_row.set_visible(is_custom);
-        if !is_oauth || google_needs_goa {
+        if !is_oauth || needs_goa {
             widgets.oauth_status.set_visible(false);
         }
 
