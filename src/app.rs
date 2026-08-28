@@ -953,11 +953,12 @@ impl SimpleComponent for AppModel {
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
-                                    // A conversation is on screen: which message
-                                    // would this reply to? Each card carries its
-                                    // own Reply/Reply all/Forward instead.
+                                    // In a conversation these act on the one
+                                    // highlighted card; with none (or several)
+                                    // highlighted they grey out — no way to say
+                                    // which message they'd mean.
                                     #[watch]
-                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Reply),
                                 },
                                 pack_start = &gtk::Button {
@@ -966,11 +967,8 @@ impl SimpleComponent for AppModel {
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
-                                    // A conversation is on screen: which message
-                                    // would this reply to? Each card carries its
-                                    // own Reply/Reply all/Forward instead.
                                     #[watch]
-                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ReplyAll),
                                 },
                                 pack_start = &gtk::Button {
@@ -979,11 +977,8 @@ impl SimpleComponent for AppModel {
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed,
-                                    // A conversation is on screen: which message
-                                    // would this reply to? Each card carries its
-                                    // own Reply/Reply all/Forward instead.
                                     #[watch]
-                                    set_sensitive: model.current.is_some() && model.current_thread.len() <= 1,
+                                    set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::Forward),
                                 },
                                 pack_start = &gtk::Button {
@@ -2902,13 +2897,13 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::Reply => {
-                if let Some(m) = self.current.clone() {
+                if let Some(m) = self.reply_target() {
                     self.open_inline_reply(m.account_id, reply_prefill(&m), &sender);
                 }
             }
 
             AppMsg::ReplyAll => {
-                if let Some(m) = self.current.clone() {
+                if let Some(m) = self.reply_target() {
                     let self_email = self.email_of(m.account_id).unwrap_or_default();
                     self.open_inline_reply(
                         m.account_id,
@@ -2919,7 +2914,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::Forward => {
-                if let Some(m) = self.current.clone() {
+                if let Some(m) = self.reply_target() {
                     self.open_inline_reply(m.account_id, forward_prefill(&m), &sender);
                 }
             }
@@ -4551,6 +4546,25 @@ impl AppModel {
             .unwrap_or_default()
     }
 
+    /// The message the toolbar's Reply/Reply all/Forward act on: the open
+    /// message itself, or — in a conversation — the one highlighted card,
+    /// when exactly one is highlighted. `None` greys the buttons out: with no
+    /// card (or several) selected there is no way to say which message an
+    /// action would mean.
+    fn reply_target(&self) -> Option<Message> {
+        if self.current_thread.len() <= 1 {
+            return self.current.clone();
+        }
+        match self.list_selection.as_slice() {
+            [(account_id, id)] => self
+                .current_thread
+                .iter()
+                .find(|m| m.account_id == *account_id && m.id == *id)
+                .cloned(),
+            _ => None,
+        }
+    }
+
     /// The account email for an id, if known.
     fn email_of(&self, account_id: u32) -> Option<String> {
         self.accounts
@@ -5015,7 +5029,7 @@ impl AppModel {
             // A conversation is on screen: which message would a reply go to?
             // Each card carries its own Reply/Reply all/Forward instead —
             // mirroring the toolbar buttons' sensitivity.
-            let can_reply = has_current && self.current_thread.len() <= 1;
+            let can_reply = self.reply_target().is_some();
             let starred = self.current.as_ref().is_some_and(|m| m.starred);
             vec![
                 vec![
