@@ -402,6 +402,12 @@ headerbar.rail-header {
   opacity: 1;
 }
 
+/* The unread dot inverts on the accent ground too — accent-on-accent would
+   vanish, and a selected thread head must still show its unread mark. */
+.message-listbox > row:selected .message-row .unread-dot {
+  background: white;
+}
+
 /* The thread chip inverts on the accent ground: white pill, accent text
    and caret — a grey chip would sink into the highlight. */
 .message-listbox > row:selected .message-row .thread-chip {
