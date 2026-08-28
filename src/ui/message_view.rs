@@ -561,6 +561,11 @@ impl Component for MessageView {
                         account_id,
                         id,
                     }),
+                    "viewsource" => open_sender.input(MessageViewInput::CardAction {
+                        action: RowAction::ViewSource,
+                        account_id,
+                        id,
+                    }),
                     "contact" => {
                         open_sender.input(MessageViewInput::CardContact { account_id, id })
                     }
@@ -1111,7 +1116,7 @@ impl MessageView {
                     acts = if thread.len() > 1 {
                         let key = (m.account_id, m.id);
                         format!(
-                            "<span class=\"vireo-acts\">{}{}{}{}{}{}{}{}{}</span>",
+                            "<span class=\"vireo-acts\">{}{}{}{}{}{}{}{}{}{}</span>",
                             card_action_button(key, "reply", "mail-reply-sender-symbolic", "Reply to this message"),
                             card_action_button(key, "replyall", "mail-reply-all-symbolic", "Reply to everyone on this message"),
                             card_action_button(key, "forward", "mail-forward-symbolic", "Forward this message"),
@@ -1125,6 +1130,7 @@ impl MessageView {
                             card_action_button(key, "spam", "mail-mark-junk-symbolic", "Mark as Spam"),
                             card_action_button(key, "archive", "mail-archive-symbolic", "Archive this message"),
                             card_action_button(key, "delete", "user-trash-symbolic", "Delete this message"),
+                            card_action_button(key, "viewsource", "code-symbolic", "View source"),
                         )
                     } else {
                         String::new()
