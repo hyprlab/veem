@@ -69,6 +69,7 @@ relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
 relm4::new_stateless_action!(ShortcutsAction, WindowActionGroup, "shortcuts");
 relm4::new_stateless_action!(PrintAction, WindowActionGroup, "print");
 relm4::new_stateless_action!(PrintPreviewAction, WindowActionGroup, "print-preview");
+relm4::new_stateless_action!(StatusBarAction, WindowActionGroup, "status-bar");
 
 use crate::config::{self, split_identity, AccountConfig};
 use crate::models::{Account, Attachment, Folder, FolderKind, Message};
@@ -99,7 +100,6 @@ use crate::worker::{self, MailRequest, OutgoingMessage, WorkerEvent};
 struct SelectedFolder {
     account_id: u32,
     folder_id: u32,
-    name: String,
     path: String,
 }
 
@@ -292,6 +292,10 @@ pub struct AppModel {
     notification_content: bool,
     /// Whether the sidebar shows the "Attachments" row.
     show_attachments: bool,
+    /// Whether the sidebar shows the "Contacts" shortcut row.
+    show_contacts: bool,
+    /// The list header's count text ("N" / "N of M"), from the message list.
+    list_count: String,
     /// Lines of preview text per message-list row (1–3).
     preview_lines: u32,
     /// The keyboard-shortcut reference, while it is open — so the shortcut that
@@ -576,6 +580,9 @@ pub enum AppMsg {
     SetNotifications(bool),
     SetNotificationContent(bool),
     SetShowAttachments(bool),
+    SetShowContacts(bool),
+    /// The message list's visible-count text changed.
+    ListCount(String),
     /// Preference: hovering the narrow-window rail floats the sidebar out.
     SetSidebarHoverExpand(bool),
     /// Preference: the app chrome's theme (follow system / light / dark).
@@ -859,55 +866,22 @@ impl SimpleComponent for AppModel {
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleSidebar),
                                 },
-                                // The action cluster sits at the far end, in
-                                // fixed order: Status, Refresh (pack_end packs
-                                // right-to-left). Compose lives in the
-                                // sidebar's "New message" row now.
-                                pack_end = &gtk::Button {
-                                    set_tooltip_text: Some("Refresh"),
+                                // Across from the sidebar toggle: the visible
+                                // message count and the sort menu (moved out of
+                                // the list's own toolbar to reclaim a row).
+                                // pack_end packs right-to-left: sort rightmost.
+                                #[name = "list_sort_btn"]
+                                pack_end = &gtk::MenuButton {
+                                    set_icon_name: "co.hyprlab.Vireo-view-sort-descending-symbolic",
+                                    set_tooltip_text: Some("Sort messages"),
+                                    set_valign: gtk::Align::Center,
                                     add_css_class: "flat",
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::Refresh),
-                                    gtk::Stack {
-                                        set_transition_type: gtk::StackTransitionType::Crossfade,
-                                        add_named[Some("icon")] = &gtk::Image {
-                                            set_icon_name: Some("co.hyprlab.Vireo-view-refresh-symbolic"),
-                                        },
-                                        add_named[Some("spinner")] = &gtk::Spinner {
-                                            #[watch]
-                                            set_spinning: !model.busy.is_empty(),
-                                        },
-                                        #[watch]
-                                        set_visible_child_name: if model.busy.is_empty() { "icon" } else { "spinner" },
-                                    },
                                 },
-                                pack_end = &gtk::Button {
-                                    set_tooltip_text: Some("Status Bar"),
-                                    add_css_class: "flat",
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleNotifications),
-                                    gtk::Box {
-                                        set_spacing: 5,
-                                        gtk::Image {
-                                            #[watch]
-                                            set_icon_name: Some(if model.notify_count > 0 {
-                                                "co.hyprlab.Vireo-dialog-warning-symbolic"
-                                            } else {
-                                                "co.hyprlab.Vireo-preferences-system-notifications-symbolic"
-                                            }),
-                                            #[watch]
-                                            set_css_classes: if model.notify_count > 0 {
-                                                &["attention-icon"] as &[&str]
-                                            } else {
-                                                &[] as &[&str]
-                                            },
-                                        },
-                                        gtk::Label {
-                                            #[watch]
-                                            set_visible: model.notify_count > 0,
-                                            #[watch]
-                                            set_label: &model.notify_count.to_string(),
-                                            add_css_class: "needs-attention",
-                                        },
-                                    },
+                                pack_end = &gtk::Label {
+                                    #[watch]
+                                    set_label: &model.list_count,
+                                    set_valign: gtk::Align::Center,
+                                    add_css_class: "list-count",
                                 },
                             },
                             #[wrap(Some)]
@@ -1056,18 +1030,6 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::AddToContacts),
-                                },
-                                // Open Contacts (the app-wide address book) —
-                                // moved here from the message list's header to
-                                // sit beside the per-sender contact action.
-                                pack_start = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
-                                    set_tooltip_text: Some("Open Contacts"),
-                                    add_css_class: "flat",
-                                    #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
-                                        && model.reader_compose.is_none(),
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::OpenContacts),
                                 },
                                 // pack_end fills right-to-left, so these are declared
                                 // in reverse of their visual order. Left to right:
@@ -1403,11 +1365,14 @@ impl SimpleComponent for AppModel {
         let tree_collapsed = sidebar_state.tree_collapsed;
 
         let show_attachments = config::load_show_attachments();
+        let show_contacts = config::load_show_contacts();
         let sidebar = Sidebar::builder()
-            .launch(SidebarInit { collapsed: icon_only, show_attachments })
+            .launch(SidebarInit { collapsed: icon_only, show_attachments, show_contacts })
             .forward(sender.input_sender(), |out| match out {
                 SidebarOutput::UnifiedSelected => AppMsg::UnifiedSelected,
                 SidebarOutput::AttachmentsSelected => AppMsg::ShowAttachments,
+                SidebarOutput::ContactsClicked => AppMsg::OpenContacts,
+                SidebarOutput::RefreshRequested => AppMsg::Refresh,
                 SidebarOutput::OutboxSelected => AppMsg::ShowOutbox,
                 SidebarOutput::FolderSelected { account_id, folder_id, name, path } => {
                     AppMsg::FolderSelected { account_id, folder_id, name, path }
@@ -1437,6 +1402,7 @@ impl SimpleComponent for AppModel {
                         AppMsg::MessageSelected { message, thread, solo }
                     }
                     MessageListOutput::SelectionKeys(keys) => AppMsg::SelectionKeys(keys),
+                    MessageListOutput::CountChanged(text) => AppMsg::ListCount(text),
                     MessageListOutput::Activated(m) => AppMsg::OpenMessageWindow(m),
                     MessageListOutput::Action { action, message } => {
                         AppMsg::RowAction { action, message }
@@ -1498,6 +1464,7 @@ impl SimpleComponent for AppModel {
         menu.append(Some("Preferences"), Some("win.preferences"));
         menu.append(Some("Print Preview…"), Some("win.print-preview"));
         menu.append(Some("Print Message…"), Some("win.print"));
+        menu.append(Some("Reveal Status Bar"), Some("win.status-bar"));
         menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
         menu.append(Some(format!("About {}", crate::APP_NAME).as_str()), Some("win.about"));
         // Last, where a Quit item belongs.
@@ -1596,6 +1563,8 @@ impl SimpleComponent for AppModel {
             notifications_enabled: config::load_notifications(),
             notification_content: config::load_notification_content(),
             show_attachments,
+            show_contacts,
+            list_count: String::new(),
             preview_lines: config::load_preview_lines(),
             shortcuts_win: None,
             run_in_background: std::rc::Rc::new(std::cell::Cell::new(
@@ -1971,6 +1940,12 @@ impl SimpleComponent for AppModel {
         group.add_action(RelmAction::<PrintPreviewAction>::new_stateless(move |_| {
             preview_sender.input(AppMsg::PrintPreview);
         }));
+        // The status bar reveals itself for errors; this is the manual path
+        // (the dedicated button is gone from the sidebar).
+        let status_sender = sender.clone();
+        group.add_action(RelmAction::<StatusBarAction>::new_stateless(move |_| {
+            status_sender.input(AppMsg::ToggleNotifications);
+        }));
         group.register_for_widget(&root);
 
         // A real accelerator rather than a key handler: GTK matches these before
@@ -2105,6 +2080,40 @@ impl SimpleComponent for AppModel {
                 }
             });
             widgets.lightbox_picture.add_controller(click);
+        }
+
+        // The list header's sort menu (moved out of the message list's own
+        // toolbar): a stateful radio action feeding the list's SetSort.
+        {
+            use crate::ui::message_list::SortOrder;
+            let sort_group = gtk::gio::SimpleActionGroup::new();
+            let sort_action = gtk::gio::SimpleAction::new_stateful(
+                "order",
+                Some(gtk::glib::VariantTy::STRING),
+                &"date_newest".to_variant(),
+            );
+            let list = model.message_list.sender().clone();
+            sort_action.connect_activate(move |action, param| {
+                if let Some(key) = param.and_then(|v| v.str()) {
+                    action.set_state(&key.to_variant());
+                    let _ = list.send(MessageListInput::SetSort(SortOrder::from_key(key)));
+                }
+            });
+            sort_group.add_action(&sort_action);
+            widgets.list_sort_btn.insert_action_group("sortmenu", Some(&sort_group));
+
+            let menu = gtk::gio::Menu::new();
+            for (label, key) in [
+                ("Date (Newest first)", "date_newest"),
+                ("Date (Oldest first)", "date_oldest"),
+                ("Sender (A–Z)", "sender"),
+                ("Subject (A–Z)", "subject"),
+                ("Unread first", "unread"),
+                ("Flagged first", "flagged"),
+            ] {
+                menu.append(Some(label), Some(&format!("sortmenu.order::{key}")));
+            }
+            widgets.list_sort_btn.set_menu_model(Some(&menu));
         }
 
         ComponentParts { model, widgets }
@@ -2259,7 +2268,7 @@ impl SimpleComponent for AppModel {
                 self.unified_by_account.retain(|a, _| live.contains(a));
                 if self.unified_by_account.is_empty() {
                     self.message_list
-                        .emit(MessageListInput::SetLoading { title: "All Inboxes".into() });
+                        .emit(MessageListInput::SetLoading);
                 } else {
                     self.emit_unified();
                 }
@@ -2535,7 +2544,7 @@ impl SimpleComponent for AppModel {
                     self.current = None;
                     self.current_thread.clear();
                     self.show_message(None, false);
-                    self.message_list.emit(MessageListInput::SetLoading { title: String::new() });
+                    self.message_list.emit(MessageListInput::SetLoading);
                 }
                 self.send_to(account_id, MailRequest::DeleteFolder { path, trash });
             }
@@ -3389,6 +3398,16 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::ListCount(text) => self.list_count = text,
+
+            AppMsg::SetShowContacts(on) => {
+                if self.show_contacts != on {
+                    self.show_contacts = on;
+                    self.save_settings();
+                    self.sidebar.emit(SidebarInput::SetShowContacts(on));
+                }
+            }
+
             AppMsg::SetThreading(on) => {
                 if self.threading != on {
                     self.threading = on;
@@ -3769,6 +3788,7 @@ impl SimpleComponent for AppModel {
                     notifications: self.notifications_enabled,
                     notification_content: self.notification_content,
                     show_attachments: self.show_attachments,
+                    show_contacts: self.show_contacts,
                     sidebar_hover_expand: self.sidebar_hover_expand,
                     card_actions_hover: self.card_actions_hover,
                     card_actions_auto: self.card_actions_auto,
@@ -3809,6 +3829,7 @@ impl SimpleComponent for AppModel {
                             AppMsg::SetNotificationContent(on)
                         }
                         PrefOutput::SetShowAttachments(on) => AppMsg::SetShowAttachments(on),
+                        PrefOutput::SetShowContacts(on) => AppMsg::SetShowContacts(on),
                         PrefOutput::SetSidebarHoverExpand(on) => {
                             AppMsg::SetSidebarHoverExpand(on)
                         }
@@ -3967,9 +3988,8 @@ impl SimpleComponent for AppModel {
                     }
                 } else if let Some(sel) = self.selected.as_ref() {
                     if sel.account_id == account_id && sel.folder_id == folder_id {
-                        let title = sel.name.clone();
                         self.message_list
-                            .emit(MessageListInput::SetMessages { title, messages });
+                            .emit(MessageListInput::SetMessages { messages });
                     }
                 }
                 // The reader's message was removed by this sync (deleted/moved on
@@ -4342,6 +4362,7 @@ impl SimpleComponent for AppModel {
                 } else {
                     self.busy.insert(account_id);
                 }
+                self.sidebar.emit(SidebarInput::SetBusy(!self.busy.is_empty()));
                 self.notifications.emit(NotifyInput::SetStatus(text));
             }
 
@@ -4415,6 +4436,7 @@ impl AppModel {
             self.notifications_enabled,
             self.notification_content,
             self.show_attachments,
+            self.show_contacts,
             self.card_actions_hover,
             self.card_actions_auto,
             self.list_palette_hover,
@@ -4585,7 +4607,6 @@ impl AppModel {
         self.sidebar.emit(SidebarInput::SetOutboxCount(items.len() as u32));
         if self.showing_outbox {
             self.message_list.emit(MessageListInput::SetMessages {
-                title: "Outbox".into(),
                 messages: items.iter().map(|i| i.as_message()).collect(),
             });
         }
@@ -4724,8 +4745,9 @@ impl AppModel {
         self.attachment_cache.clear();
         self.current = None;
         self.busy.clear();
+        self.sidebar.emit(SidebarInput::SetBusy(false));
         self.show_message(None, false);
-        self.message_list.emit(MessageListInput::SetLoading { title: String::new() });
+        self.message_list.emit(MessageListInput::SetLoading);
         self.rebuild_sidebar();
         self.spawn_workers(sender);
     }
@@ -5450,7 +5472,7 @@ impl AppModel {
     /// Switch the message list to a folder: reset the view, show its cached
     /// messages instantly (if any), and kick off a background sync. Shared by the
     /// sidebar selection and the "open message from notification" flow.
-    fn select_folder(&mut self, account_id: u32, folder_id: u32, name: String, path: String) {
+    fn select_folder(&mut self, account_id: u32, folder_id: u32, _name: String, path: String) {
         self.showing_gallery = false;
         self.showing_outbox = false;
         // Mirror the selection in the sidebar. Navigation that starts in the
@@ -5478,7 +5500,6 @@ impl AppModel {
         self.selected = Some(SelectedFolder {
             account_id,
             folder_id,
-            name: name.clone(),
             path: path.clone(),
         });
         self.current = None;
@@ -5486,10 +5507,9 @@ impl AppModel {
         self.show_message(None, false);
         match self.message_cache.get(&(account_id, folder_id)) {
             Some(cached) => self.message_list.emit(MessageListInput::SetMessages {
-                title: name,
                 messages: cached.clone(),
             }),
-            None => self.message_list.emit(MessageListInput::SetLoading { title: name }),
+            None => self.message_list.emit(MessageListInput::SetLoading),
         }
         self.push_index_complete();
         self.send_to(account_id, MailRequest::LoadMessages { folder_id, path });
@@ -6450,7 +6470,7 @@ impl AppModel {
             self.current = None;
             self.current_thread.clear();
             self.show_message(None, false);
-            self.message_list.emit(MessageListInput::SetLoading { title: String::new() });
+            self.message_list.emit(MessageListInput::SetLoading);
         }
 
         // Optimistic: reshape the local tree NOW so the sidebar shows the move
@@ -6882,10 +6902,7 @@ impl AppModel {
         let mut merged: Vec<Message> =
             self.unified_by_account.values().flatten().cloned().collect();
         merged.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        self.message_list.emit(MessageListInput::SetMessages {
-            title: "All Inboxes".into(),
-            messages: merged,
-        });
+        self.message_list.emit(MessageListInput::SetMessages { messages: merged });
     }
 
     fn refresh_list_display(&self) {
@@ -6893,10 +6910,7 @@ impl AppModel {
             self.emit_unified();
         } else if let Some(sel) = self.selected.as_ref() {
             if let Some(msgs) = self.message_cache.get(&(sel.account_id, sel.folder_id)) {
-                self.message_list.emit(MessageListInput::SetMessages {
-                    title: sel.name.clone(),
-                    messages: msgs.clone(),
-                });
+                self.message_list.emit(MessageListInput::SetMessages { messages: msgs.clone() });
             }
         }
     }

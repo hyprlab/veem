@@ -647,6 +647,10 @@ struct PrivacyFile {
     /// account's attachments).
     #[serde(default = "default_show_attachments")]
     show_attachments: bool,
+    /// Whether the sidebar shows the "Contacts" shortcut row (below
+    /// Attachments); it opens the app-wide contacts browser.
+    #[serde(default = "default_show_contacts")]
+    show_contacts: bool,
     /// Whether a conversation card's action icons stay hidden until the card
     /// is hovered (expanded via their ⋯ toggle). Off = always shown, unless
     /// `card_actions_auto` shows them automatically on hover.
@@ -720,6 +724,10 @@ fn default_notifications() -> bool {
     true
 }
 
+fn default_show_contacts() -> bool {
+    true
+}
+
 fn default_show_attachments() -> bool {
     true
 }
@@ -765,6 +773,7 @@ impl Default for PrivacyFile {
             notifications: default_notifications(),
             notification_content: default_notification_content(),
             show_attachments: default_show_attachments(),
+            show_contacts: default_show_contacts(),
             card_actions_hover: default_card_actions_hover(),
             card_actions_auto: default_card_actions_auto(),
             list_palette_hover: false,
@@ -878,6 +887,10 @@ pub fn load_show_attachments() -> bool {
     load_privacy().show_attachments
 }
 
+pub fn load_show_contacts() -> bool {
+    load_privacy().show_contacts
+}
+
 /// Whether conversation card actions hide until hovered.
 pub fn load_card_actions_hover() -> bool {
     load_privacy().card_actions_hover
@@ -948,6 +961,7 @@ pub fn save_privacy(
     notifications: bool,
     notification_content: bool,
     show_attachments: bool,
+    show_contacts: bool,
     card_actions_hover: bool,
     card_actions_auto: bool,
     list_palette_hover: bool,
@@ -984,6 +998,7 @@ pub fn save_privacy(
         notifications,
         notification_content,
         show_attachments,
+        show_contacts,
         card_actions_hover,
         card_actions_auto,
         list_palette_hover,

@@ -47,6 +47,8 @@ pub struct SidebarInit {
     pub collapsed: bool,
     /// Whether the "Attachments" row is shown.
     pub show_attachments: bool,
+    /// Whether the "Contacts" row is shown.
+    pub show_contacts: bool,
 }
 
 /// What is currently selected in the sidebar.
@@ -95,6 +97,11 @@ pub struct Sidebar {
     unified_list: Option<gtk::ListBox>,
     /// The "Attachments" row list box (one row), when shown.
     attachments_list: Option<gtk::ListBox>,
+    /// Refresh/spinner stack + spinner beside the "New Message" button.
+    sync_stack: Option<gtk::Stack>,
+    sync_spinner: Option<gtk::Spinner>,
+    /// Whether any account is syncing (drives the refresh spinner).
+    busy: bool,
     /// The "Outbox" row list box (one row), while anything is queued.
     outbox_list: Option<gtk::ListBox>,
     /// Display-wide provider holding each account's avatar colour rules.
@@ -104,6 +111,8 @@ pub struct Sidebar {
     collapsed: bool,
     /// Whether the "Attachments" row is shown.
     show_attachments: bool,
+    /// Whether the "Contacts" row is shown.
+    show_contacts: bool,
     /// How many messages are waiting in the Outbox across all accounts. The row
     /// only exists while this is non-zero — an empty Outbox is the normal state
     /// and does not deserve permanent furniture.
@@ -139,6 +148,8 @@ pub enum SidebarInput {
     UnifiedRowSelected,
     /// The "Attachments" row was chosen.
     AttachmentsRowSelected,
+    /// The "Contacts" row was clicked (it acts as a launcher, not a selection).
+    ContactsRowClicked,
     FolderRowSelected { account_id: u32, index: i32 },
     /// Select a folder row programmatically — the app navigated there itself
     /// ("Go to Message" from the gallery, a notification click) and the
@@ -164,6 +175,10 @@ pub enum SidebarInput {
     ToggleCollapsed,
     /// Show or hide the "Attachments" row.
     SetShowAttachments(bool),
+    /// Show or hide the "Contacts" row.
+    SetShowContacts(bool),
+    /// Whether any account is syncing — spins the refresh button.
+    SetBusy(bool),
     /// How many messages are waiting to be sent; 0 hides the Outbox row.
     SetOutboxCount(u32),
     /// The "Outbox" row was chosen.
@@ -183,6 +198,8 @@ pub enum SidebarInput {
 pub enum SidebarOutput {
     /// The "New message" row at the top of the sidebar.
     ComposeRequested,
+    /// The refresh button beside it.
+    RefreshRequested,
     /// A folder-tree node was collapsed or expanded (#51) — for persistence.
     FolderNodeCollapsed { account_id: u32, path: String, collapsed: bool },
     /// A folder was dropped onto a new parent ("" = the account's top level).
@@ -190,6 +207,8 @@ pub enum SidebarOutput {
     UnifiedSelected,
     /// The attachments gallery was selected.
     AttachmentsSelected,
+    /// The "Contacts" row was clicked — open the contacts browser.
+    ContactsClicked,
     OutboxSelected,
     FolderSelected {
         account_id: u32,
@@ -308,11 +327,15 @@ impl Component for Sidebar {
             custom_chevrons: HashMap::new(),
             unified_list: None,
             attachments_list: None,
+            sync_stack: None,
+            sync_spinner: None,
+            busy: false,
             outbox_list: None,
             color_provider,
             selected: Sel::None,
             collapsed: init.collapsed,
             show_attachments: init.show_attachments,
+            show_contacts: init.show_contacts,
             outbox_count: 0,
             unified_unread: 0,
             folder_badges: HashMap::new(),
@@ -388,6 +411,12 @@ impl Component for Sidebar {
                 self.selected = Sel::Attachments;
                 self.clear_other_selections(Sel::Attachments);
                 let _ = sender.output(SidebarOutput::AttachmentsSelected);
+            }
+
+            // The Contacts row launches a window rather than switching the
+            // panes, so it never becomes the sidebar selection.
+            SidebarInput::ContactsRowClicked => {
+                let _ = sender.output(SidebarOutput::ContactsClicked);
             }
 
             SidebarInput::OutboxRowSelected => {
@@ -556,6 +585,23 @@ impl Component for Sidebar {
                 self.rebuild_normal(&widgets.normal_box, &sender);
                 self.restore_selection();
             }
+
+            SidebarInput::SetShowContacts(on) => {
+                self.show_contacts = on;
+                self.rebuild_normal(&widgets.normal_box, &sender);
+                self.restore_selection();
+            }
+
+            SidebarInput::SetBusy(busy) => {
+                self.busy = busy;
+                if let Some(sp) = &self.sync_spinner {
+                    sp.set_spinning(busy);
+                }
+                if let Some(stack) = &self.sync_stack {
+                    stack.set_visible_child_name(if busy { "spinner" } else { "icon" });
+                }
+            }
+
 
             SidebarInput::SetCollapsed(collapsed) => {
                 // Driven by the app's narrow-window breakpoint: same visual
@@ -868,10 +914,49 @@ impl Sidebar {
 
         let sections = self.sections.clone();
 
-        // "New message" — the compose action, drawn like a row so its icon and
-        // label align with the rows below (and its highlight spans the same
-        // width); icon-only with a tooltip on the collapsed rail.
+        // "New message" — the compose action, flanked by Refresh and Status
+        // (moved here from the message pane's header). Expanded: one horizontal
+        // bar, the compose pill in the middle; collapsed rail: the three stack
+        // vertically, icon-only with tooltips.
         {
+            let bar = gtk::Box::new(
+                if self.collapsed {
+                    gtk::Orientation::Vertical
+                } else {
+                    gtk::Orientation::Horizontal
+                },
+                4,
+            );
+            // Balance: extra room at the far left of the refresh button, a
+            // tight seam between it and the pill (the pill's own 6px row
+            // margin already provides the visual gap there).
+            bar.set_margin_start(10);
+            // No end margin: the pill's own 6px row margin then puts its right
+            // edge exactly where every other row highlight ends.
+            bar.set_margin_end(0);
+            bar.set_spacing(0);
+
+            // Refresh, showing a spinner while any account syncs.
+            let refresh = gtk::Button::new();
+            refresh.set_tooltip_text(Some("Refresh"));
+            refresh.add_css_class("flat");
+            refresh.set_valign(gtk::Align::Center);
+            let stack = gtk::Stack::new();
+            stack.set_transition_type(gtk::StackTransitionType::Crossfade);
+            let icon = gtk::Image::from_icon_name("co.hyprlab.Vireo-view-refresh-symbolic");
+            stack.add_named(&icon, Some("icon"));
+            let spinner = gtk::Spinner::new();
+            spinner.set_spinning(self.busy);
+            stack.add_named(&spinner, Some("spinner"));
+            stack.set_visible_child_name(if self.busy { "spinner" } else { "icon" });
+            refresh.set_child(Some(&stack));
+            let s = sender.clone();
+            refresh.connect_clicked(move |_| {
+                let _ = s.output(SidebarOutput::RefreshRequested);
+            });
+
+            // The compose pill, drawn like a row so it matches the sidebar's
+            // look; it takes the middle rather than the full width now.
             let list = gtk::ListBox::new();
             list.set_selection_mode(gtk::SelectionMode::None);
             list.add_css_class("navigation-sidebar");
@@ -879,19 +964,25 @@ impl Sidebar {
             row.add_css_class("compose-row");
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
             hbox.add_css_class("folder-row");
-            let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-message-new-symbolic");
-            img.add_css_class("folder-icon");
             if self.collapsed {
+                // The rail has no room for a label; the icon carries it there.
+                let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-message-new-symbolic");
+                img.add_css_class("folder-icon");
                 hbox.set_halign(gtk::Align::Center);
-                row.set_tooltip_text(Some("New message"));
+                row.set_tooltip_text(Some("New Message"));
                 hbox.append(&img);
             } else {
-                // Icon + label centred as a unit: it reads as a button, not
-                // as a highlighted row.
                 hbox.set_halign(gtk::Align::Center);
-                hbox.append(&img);
-                let label = gtk::Label::new(Some("New message"));
+                hbox.set_spacing(6);
+                let plus = gtk::Image::from_icon_name("co.hyprlab.Vireo-list-add-symbolic");
+                plus.add_css_class("folder-icon");
+                hbox.append(&plus);
+                let label = gtk::Label::new(Some("New Message"));
                 label.add_css_class("account-name");
+                // The pill must be able to shrink with the sidebar (down to its
+                // 180px minimum) — otherwise the whole column's minimum width
+                // exceeds the pane and every row highlight overflows the edge.
+                label.set_ellipsize(gtk::pango::EllipsizeMode::End);
                 hbox.append(&label);
             }
             row.set_child(Some(&hbox));
@@ -900,7 +991,20 @@ impl Sidebar {
             list.connect_row_activated(move |_, _| {
                 let _ = s.output(SidebarOutput::ComposeRequested);
             });
-            container.append(&list);
+
+            if self.collapsed {
+                refresh.set_halign(gtk::Align::Center);
+            } else {
+                // Refresh at the left; the pill takes all the space to its
+                // right. (The status-bar button is gone — errors reveal the
+                // bar themselves, and the hamburger menu can too.)
+                list.set_hexpand(true);
+            }
+            bar.append(&refresh);
+            bar.append(&list);
+            container.append(&bar);
+            self.sync_stack = Some(stack);
+            self.sync_spinner = Some(spinner);
         }
 
         // Unified "All Inboxes" row, with an expandable per-account inbox list.
@@ -1120,6 +1224,45 @@ impl Sidebar {
             });
             container.append(&list);
             self.attachments_list = Some(list);
+        }
+
+        // "Contacts" row — opens the app-wide contacts browser. A launcher, not
+        // a view: clicking fires and the row unselects itself, leaving the real
+        // folder selection alone.
+        if self.show_contacts {
+            let list = gtk::ListBox::new();
+            list.set_selection_mode(gtk::SelectionMode::Single);
+            list.add_css_class("navigation-sidebar");
+
+            let row = gtk::ListBoxRow::new();
+            let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            hbox.add_css_class("folder-row");
+            let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-x-office-address-book-symbolic");
+            img.add_css_class("folder-icon");
+            if self.collapsed {
+                hbox.set_halign(gtk::Align::Center);
+                row.set_tooltip_text(Some("Contacts"));
+                hbox.append(&img);
+            } else {
+                hbox.append(&img);
+                let label = gtk::Label::new(Some("Contacts"));
+                label.set_hexpand(true);
+                label.set_halign(gtk::Align::Start);
+                label.add_css_class("account-name");
+                hbox.append(&label);
+            }
+            row.set_child(Some(&hbox));
+            list.append(&row);
+
+            let s = sender.clone();
+            list.connect_row_selected(move |list, row| {
+                if row.is_some() {
+                    s.input(SidebarInput::ContactsRowClicked);
+                    // Re-entrant unselect fires this handler again with None.
+                    list.unselect_all();
+                }
+            });
+            container.append(&list);
         }
 
         // "Outbox" row — only while something is waiting to be sent. It sits

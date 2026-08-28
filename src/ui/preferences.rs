@@ -38,6 +38,7 @@ pub struct PrefInit {
     pub notifications: bool,
     pub notification_content: bool,
     pub show_attachments: bool,
+    pub show_contacts: bool,
     pub sidebar_hover_expand: bool,
     pub preview_lines: u32,
     pub single_key_shortcuts: bool,
@@ -157,6 +158,7 @@ pub enum PrefInput {
     ToggleNotifications(bool),
     ToggleNotificationContent(bool),
     ToggleShowAttachments(bool),
+    ToggleShowContacts(bool),
     ToggleSidebarHoverExpand(bool),
     ChangePreviewLines(u32),
     ToggleSingleKey(bool),
@@ -190,6 +192,7 @@ pub enum PrefOutput {
     SetNotifications(bool),
     SetNotificationContent(bool),
     SetShowAttachments(bool),
+    SetShowContacts(bool),
     SetSidebarHoverExpand(bool),
     SetAppTheme(AppTheme),
     SetPreviewLines(u32),
@@ -275,6 +278,15 @@ impl Component for Preferences {
                             set_subtitle: "Show a shortcut for browsing every account's attachments.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleShowAttachments(row.is_active()));
+                            },
+                        },
+
+                        #[name = "show_contacts_row"]
+                        adw::SwitchRow {
+                            set_title: "Contacts in the sidebar",
+                            set_subtitle: "Show a shortcut that opens your contacts.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleShowContacts(row.is_active()));
                             },
                         },
 
@@ -660,6 +672,7 @@ impl Component for Preferences {
         widgets.notifications_row.set_active(init.notifications);
         widgets.notification_content_row.set_active(init.notification_content);
         widgets.show_attachments_row.set_active(init.show_attachments);
+        widgets.show_contacts_row.set_active(init.show_contacts);
         widgets.sidebar_hover_expand_row.set_active(init.sidebar_hover_expand);
         let preview_labels = ["Off", "1 line", "2 lines", "3 lines"];
         widgets
@@ -812,6 +825,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleShowAttachments(on) => {
                 let _ = sender.output(PrefOutput::SetShowAttachments(on));
+            }
+            PrefInput::ToggleShowContacts(on) => {
+                let _ = sender.output(PrefOutput::SetShowContacts(on));
             }
             PrefInput::ToggleSidebarHoverExpand(on) => {
                 let _ = sender.output(PrefOutput::SetSidebarHoverExpand(on));
