@@ -6,6 +6,30 @@
 
 /* ---- Sidebar / account header ---- */
 
+/* The sidebar's "New message" action: a standing accent button shaped like a
+   row — full width, rounded like the row highlights, icon column aligned with
+   the rows below. Text and icon in plain white on the accent. */
+row.compose-row {
+  background-color: @accent_bg_color;
+  color: white;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+row.compose-row:hover {
+  background-color: shade(@accent_bg_color, 1.1);
+}
+
+row.compose-row:active {
+  background-color: shade(@accent_bg_color, 0.9);
+}
+
+row.compose-row .folder-icon,
+row.compose-row .account-name {
+  color: white;
+  opacity: 1;
+}
+
 .account-header {
   padding: 10px 12px 14px 12px;
   /* Match the side margin + rounded highlight of the navigation-sidebar rows

@@ -830,16 +830,9 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleSidebar),
                                 },
                                 // The action cluster sits at the far end, in
-                                // fixed order: Status, Refresh, Compose
-                                // (pack_end packs right-to-left, so Compose —
-                                // the window's primary action — goes first and
-                                // lands rightmost).
-                                pack_end = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-mail-message-new-symbolic",
-                                    set_tooltip_text: Some("Compose"),
-                                    add_css_class: "suggested-action",
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::Compose),
-                                },
+                                // fixed order: Status, Refresh (pack_end packs
+                                // right-to-left). Compose lives in the
+                                // sidebar's "New message" row now.
                                 pack_end = &gtk::Button {
                                     set_tooltip_text: Some("Refresh"),
                                     add_css_class: "flat",
@@ -1357,6 +1350,7 @@ impl SimpleComponent for AppModel {
                     AppMsg::FolderNodeCollapsed { account_id, path, collapsed }
                 }
                 SidebarOutput::AddAccount => AppMsg::AddFirstAccount,
+                SidebarOutput::ComposeRequested => AppMsg::Compose,
                 SidebarOutput::Context(action) => AppMsg::SidebarContext(action),
                 SidebarOutput::MoveMessages { dest_account, dest, items } => {
                     AppMsg::DropMoveMessages { dest_account, dest, items }

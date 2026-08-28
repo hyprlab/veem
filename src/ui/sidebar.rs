@@ -181,6 +181,8 @@ pub enum SidebarInput {
 
 #[derive(Debug)]
 pub enum SidebarOutput {
+    /// The "New message" row at the top of the sidebar.
+    ComposeRequested,
     /// A folder-tree node was collapsed or expanded (#51) — for persistence.
     FolderNodeCollapsed { account_id: u32, path: String, collapsed: bool },
     /// A folder was dropped onto a new parent ("" = the account's top level).
@@ -865,6 +867,41 @@ impl Sidebar {
         }
 
         let sections = self.sections.clone();
+
+        // "New message" — the compose action, drawn like a row so its icon and
+        // label align with the rows below (and its highlight spans the same
+        // width); icon-only with a tooltip on the collapsed rail.
+        {
+            let list = gtk::ListBox::new();
+            list.set_selection_mode(gtk::SelectionMode::None);
+            list.add_css_class("navigation-sidebar");
+            let row = gtk::ListBoxRow::new();
+            row.add_css_class("compose-row");
+            let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            hbox.add_css_class("folder-row");
+            let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-message-new-symbolic");
+            img.add_css_class("folder-icon");
+            if self.collapsed {
+                hbox.set_halign(gtk::Align::Center);
+                row.set_tooltip_text(Some("New message"));
+                hbox.append(&img);
+            } else {
+                // Icon + label centred as a unit: it reads as a button, not
+                // as a highlighted row.
+                hbox.set_halign(gtk::Align::Center);
+                hbox.append(&img);
+                let label = gtk::Label::new(Some("New message"));
+                label.add_css_class("account-name");
+                hbox.append(&label);
+            }
+            row.set_child(Some(&hbox));
+            list.append(&row);
+            let s = sender.clone();
+            list.connect_row_activated(move |_, _| {
+                let _ = s.output(SidebarOutput::ComposeRequested);
+            });
+            container.append(&list);
+        }
 
         // Unified "All Inboxes" row, with an expandable per-account inbox list.
         if self.show_unified {
