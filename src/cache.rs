@@ -163,7 +163,7 @@ impl Cache {
         // bytes and the harvested address book, and a shared world-writable
         // directory is the wrong place for any of it. Without a data dir there
         // is no acceptable location, so fail instead of picking a bad one.
-        let path = dirs::data_dir()
+        let path = crate::config::data_base()
             .ok_or_else(|| {
                 rusqlite::Error::InvalidPath(std::path::PathBuf::from(
                     "no XDG data directory for the mail cache",

@@ -26,7 +26,19 @@ use relm4::RelmApp;
 
 use crate::app::AppModel;
 
-const APP_ID: &str = "co.hyprlab.Vireo";
+const APP_ID: &str =
+    if cfg!(feature = "beta") { "co.hyprlab.Vireo.Beta" } else { "co.hyprlab.Vireo" };
+
+/// The user-visible application name.
+pub const APP_NAME: &str = if cfg!(feature = "beta") { "Vireo (beta)" } else { "Vireo" };
+
+/// The user-visible version: the crate version, with a "b" suffix on the beta
+/// channel (1.17.1 builds as 1.17.1b).
+pub const VERSION: &str = if cfg!(feature = "beta") {
+    concat!(env!("CARGO_PKG_VERSION"), "b")
+} else {
+    env!("CARGO_PKG_VERSION")
+};
 
 /// Command-line flag for starting without a window (used by the autostart entry
 /// the background portal writes).
@@ -63,6 +75,13 @@ fn main() {
     let adw_app = adw::Application::builder()
         .application_id(APP_ID)
         .build();
+    // The embedded icon gresource lives at /co/hyprlab/Vireo regardless of the
+    // channel; pin the base path so the beta's app ID (co.hyprlab.Vireo.Beta)
+    // doesn't derive a base the bundled symbolic icons aren't under.
+    {
+        use gtk::gio::prelude::ApplicationExt;
+        adw_app.set_resource_base_path(Some("/co/hyprlab/Vireo"));
+    }
 
     let app = RelmApp::from_app(adw_app)
         .with_args(args)
@@ -76,7 +95,7 @@ fn main() {
 /// `config::load_key`.
 fn migrate_legacy_dirs() {
     // Native installs: the old dirs live under the same XDG prefix — rename.
-    for base in [dirs::config_dir(), dirs::cache_dir()] {
+    for base in [config::config_base(), config::cache_base()] {
         let Some(base) = base else { continue };
         let old = base.join("veem");
         let new = base.join("vireo");
@@ -99,7 +118,7 @@ fn migrate_flatpak_data() {
     }
     let Some(home) = dirs::home_dir() else { return };
     let legacy = home.join(".var/app/com.getveem.Veem");
-    for (sub, base) in [("config", dirs::config_dir()), ("cache", dirs::cache_dir())] {
+    for (sub, base) in [("config", config::config_base()), ("cache", config::cache_base())] {
         let Some(base) = base else { continue };
         let old = legacy.join(sub).join("veem");
         let new = base.join("vireo");

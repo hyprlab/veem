@@ -38,6 +38,35 @@ fn write_private(path: &std::path::Path, contents: &str) -> std::io::Result<()> 
     Ok(())
 }
 
+/// XDG base directories, with one twist: the beta channel running inside its
+/// own Flatpak sandbox (app ID co.hyprlab.Vireo.Beta) would get an empty
+/// `~/.var/app/co.hyprlab.Vireo.Beta` tree of its own — so it redirects to the
+/// STABLE app's tree instead, sharing accounts, settings and the mail cache
+/// with the stable install. The keyring service name is identical across
+/// channels, so credentials are shared through the same redirection-free path.
+/// Outside Flatpak (host builds) both channels already share `~/.config/vireo`
+/// et al., so no redirection is needed or done.
+fn shared_base(own: fn() -> Option<PathBuf>, sub: &str) -> Option<PathBuf> {
+    if cfg!(feature = "beta")
+        && std::env::var("FLATPAK_ID").is_ok_and(|id| id == "co.hyprlab.Vireo.Beta")
+    {
+        return Some(dirs::home_dir()?.join(".var/app/co.hyprlab.Vireo").join(sub));
+    }
+    own()
+}
+
+pub fn config_base() -> Option<PathBuf> {
+    shared_base(dirs::config_dir, "config")
+}
+
+pub fn cache_base() -> Option<PathBuf> {
+    shared_base(dirs::cache_dir, "cache")
+}
+
+pub fn data_base() -> Option<PathBuf> {
+    shared_base(dirs::data_dir, "data")
+}
+
 /// Service name used for keyring entries; password items are keyed by email.
 const KEYRING_SERVICE: &str = "co.hyprlab.Vireo";
 
@@ -258,7 +287,7 @@ struct ConfigFile {
 
 /// Path to the accounts config file (`~/.config/vireo/accounts.toml`).
 pub fn path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("vireo").join("accounts.toml"))
+    Some(config_base()?.join("vireo").join("accounts.toml"))
 }
 
 /// Returns the configured accounts, or `None` if there is no usable config
@@ -733,7 +762,7 @@ impl Default for PrivacyFile {
 }
 
 fn privacy_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("vireo").join("privacy.toml"))
+    Some(config_base()?.join("vireo").join("privacy.toml"))
 }
 
 fn load_privacy() -> PrivacyFile {
@@ -983,7 +1012,7 @@ struct SidebarFile {
 }
 
 fn sidebar_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("vireo").join("sidebar.toml"))
+    Some(config_base()?.join("vireo").join("sidebar.toml"))
 }
 
 /// Sidebar state persisted across restarts.
@@ -1063,7 +1092,7 @@ impl Default for WindowFile {
 }
 
 fn window_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("vireo").join("window.toml"))
+    Some(config_base()?.join("vireo").join("window.toml"))
 }
 
 /// Returns the saved `(width, height, maximized)`, or sensible defaults.
@@ -1154,7 +1183,7 @@ fn default_gallery_thumb_width() -> i32 {
 }
 
 fn state_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("vireo").join("state.toml"))
+    Some(config_base()?.join("vireo").join("state.toml"))
 }
 
 fn load_state() -> StateFile {

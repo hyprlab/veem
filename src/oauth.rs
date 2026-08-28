@@ -279,7 +279,7 @@ struct FileCreds {
 }
 
 fn creds_from_file(provider: &str) -> Option<(String, String)> {
-    let path = dirs::config_dir()?.join("vireo").join("oauth.toml");
+    let path = crate::config::config_base()?.join("vireo").join("oauth.toml");
     let text = std::fs::read_to_string(path).ok()?;
     let file: OAuthFile = toml::from_str(&text).ok()?;
     let creds = match provider {

@@ -7,6 +7,13 @@ license = "AGPL-3.0-or-later"
 repository = "https://github.com/hyprlab/vireo"
 homepage = "https://vireo.hyprlab.co"
 
+[features]
+# The community beta channel: "Vireo (beta)" branding, app ID
+# co.hyprlab.Vireo.Beta, a "b"-suffixed version, and — inside Flatpak — the
+# stable app's data dirs, so beta testers share their accounts and mail cache
+# with the stable install instead of setting everything up twice.
+beta = []
+
 [dependencies]
 # v4_14 for GtkPrintDialog: printing needs an async dialog, because the older
 # blocking one spins a nested main loop and glib's future executor aborts when

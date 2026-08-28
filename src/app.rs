@@ -670,7 +670,7 @@ impl SimpleComponent for AppModel {
 
     view! {
         adw::ApplicationWindow {
-            set_title: Some("Vireo"),
+            set_title: Some(crate::APP_NAME),
             set_icon_name: Some(crate::APP_ID),
             add_css_class: "vireo",
 
@@ -748,7 +748,7 @@ impl SimpleComponent for AppModel {
                             #[wrap(Some)]
                             #[name = "app_title"]
                             set_title_widget = &gtk::Label {
-                                set_label: "Vireo",
+                                set_label: crate::APP_NAME,
                                 add_css_class: "app-title",
                             },
                             #[name = "sidebar_menu"]
@@ -1499,7 +1499,7 @@ impl SimpleComponent for AppModel {
         menu.append(Some("Print Preview…"), Some("win.print-preview"));
         menu.append(Some("Print Message…"), Some("win.print"));
         menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
-        menu.append(Some("About Vireo"), Some("win.about"));
+        menu.append(Some(format!("About {}", crate::APP_NAME).as_str()), Some("win.about"));
         // Last, where a Quit item belongs.
         menu.append(Some("Quit"), Some("app.quit"));
 
@@ -7057,7 +7057,7 @@ impl AppModel {
         let win = adw::Window::builder()
             .transient_for(&self.window)
             .modal(false)
-            .title("About Vireo")
+            .title(format!("About {}", crate::APP_NAME).as_str())
             .default_width(460)
             // Remembered vertical size (tall by default) — resizing sticks
             // across restarts via the save on close below.
@@ -7087,11 +7087,11 @@ impl AppModel {
         icon.set_margin_bottom(10);
         page.append(&icon);
 
-        let name = gtk::Label::new(Some("Vireo"));
+        let name = gtk::Label::new(Some(crate::APP_NAME));
         name.add_css_class("title-1");
         page.append(&name);
 
-        let version = gtk::Label::new(Some(env!("CARGO_PKG_VERSION")));
+        let version = gtk::Label::new(Some(crate::VERSION));
         version.add_css_class("about-version-chip");
         version.set_halign(gtk::Align::Center);
         version.set_margin_top(8);
@@ -7105,6 +7105,22 @@ impl AppModel {
         desc.set_margin_top(12);
         page.append(&desc);
 
+        if cfg!(feature = "beta") {
+            let warn = gtk::Label::new(Some(
+                "This is a beta build for trying upcoming changes early. \
+                 Expect bugs and instability — please report anything broken \
+                 on GitHub. It shares your accounts and mail with the stable \
+                 Vireo install.",
+            ));
+            warn.set_wrap(true);
+            warn.set_justify(gtk::Justification::Center);
+            warn.add_css_class("warning");
+            warn.set_margin_top(10);
+            warn.set_margin_start(12);
+            warn.set_margin_end(12);
+            page.append(&warn);
+        }
+
         // Release notes: slide in as a sub-page of this window.
         let info = gtk::ListBox::new();
         info.add_css_class("boxed-list");
@@ -7113,7 +7129,7 @@ impl AppModel {
 
         let notes_row = adw::ActionRow::builder()
             .title("Release Notes")
-            .subtitle(format!("What's new in {}", env!("CARGO_PKG_VERSION")))
+            .subtitle(format!("What's new in {}", crate::VERSION))
             .activatable(true)
             .build();
         notes_row.add_suffix(&gtk::Image::from_icon_name("co.hyprlab.Vireo-go-next-symbolic"));
@@ -7236,7 +7252,7 @@ impl AppModel {
         main_tv.set_content(Some(&scroller));
         nav.add(
             &adw::NavigationPage::builder()
-                .title("About Vireo")
+                .title(format!("About {}", crate::APP_NAME).as_str())
                 .tag("main")
                 .child(&main_tv)
                 .build(),

@@ -13,6 +13,8 @@ on:
   push:
     tags:
       - 'v*'
+      # The beta channel (vX.Y.Zb tags) ships x86_64 only — no ARM build.
+      - '!v*b'
   workflow_dispatch:
     inputs:
       ref:
