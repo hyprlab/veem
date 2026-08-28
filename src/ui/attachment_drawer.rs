@@ -216,15 +216,36 @@ impl SimpleComponent for AttachmentDrawer {
                         add_css_class: "heading",
                     },
                     gtk::Box { set_hexpand: true },
-                    gtk::Button {
-                        set_label: "Save All…",
-                        // A standing button, not a flat hover-reveal: saving
-                        // everything is the header's one real action.
+                    gtk::Image {
+                        set_icon_name: Some("co.hyprlab.Vireo-image-x-generic-symbolic"),
+                        add_css_class: "dim-label",
+                        set_pixel_size: 12,
+                        // The size slider is meaningless with the grid hidden
+                        // (and sizes thumbnails only, so also in the list view).
+                        #[watch]
+                        set_visible: !model.collapsed && !model.list_view,
+                    },
+                    gtk::Scale {
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_width_request: 130,
+                        set_range: (MIN_THUMB, MAX_THUMB),
+                        set_value: model.thumb as f64,
+                        set_round_digits: 0,
+                        set_draw_value: false,
+                        set_tooltip_text: Some("Thumbnail size"),
                         set_valign: gtk::Align::Center,
-                        set_tooltip_text: Some("Save every attachment to a folder"),
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AttachmentDrawerInput::SaveAll);
+                        #[watch]
+                        set_visible: !model.collapsed && !model.list_view,
+                        connect_value_changed[sender] => move |s| {
+                            sender.input(AttachmentDrawerInput::SetThumbSize(s.value() as i32));
                         },
+                    },
+                    gtk::Image {
+                        set_icon_name: Some("co.hyprlab.Vireo-image-x-generic-symbolic"),
+                        add_css_class: "dim-label",
+                        set_pixel_size: 22,
+                        #[watch]
+                        set_visible: !model.collapsed && !model.list_view,
                     },
                     gtk::Button {
                         add_css_class: "flat",
@@ -269,36 +290,16 @@ impl SimpleComponent for AttachmentDrawer {
                             sender.input(AttachmentDrawerInput::ToggleListView);
                         },
                     },
-                    gtk::Image {
-                        set_icon_name: Some("co.hyprlab.Vireo-image-x-generic-symbolic"),
-                        add_css_class: "dim-label",
-                        set_pixel_size: 12,
-                        // The size slider is meaningless with the grid hidden
-                        // (and sizes thumbnails only, so also in the list view).
-                        #[watch]
-                        set_visible: !model.collapsed && !model.list_view,
-                    },
-                    gtk::Scale {
-                        set_orientation: gtk::Orientation::Horizontal,
-                        set_width_request: 130,
-                        set_range: (MIN_THUMB, MAX_THUMB),
-                        set_value: model.thumb as f64,
-                        set_round_digits: 0,
-                        set_draw_value: false,
-                        set_tooltip_text: Some("Thumbnail size"),
+                    // Rightmost by design: the header's one real action, with
+                    // the view controls (slider, sort, list/grid) to its left.
+                    gtk::Button {
+                        set_label: "Save All…",
+                        // A standing button, not a flat hover-reveal.
                         set_valign: gtk::Align::Center,
-                        #[watch]
-                        set_visible: !model.collapsed && !model.list_view,
-                        connect_value_changed[sender] => move |s| {
-                            sender.input(AttachmentDrawerInput::SetThumbSize(s.value() as i32));
+                        set_tooltip_text: Some("Save every attachment to a folder"),
+                        connect_clicked[sender] => move |_| {
+                            sender.input(AttachmentDrawerInput::SaveAll);
                         },
-                    },
-                    gtk::Image {
-                        set_icon_name: Some("co.hyprlab.Vireo-image-x-generic-symbolic"),
-                        add_css_class: "dim-label",
-                        set_pixel_size: 22,
-                        #[watch]
-                        set_visible: !model.collapsed && !model.list_view,
                     },
                 },
 
