@@ -31,6 +31,8 @@ pub struct PrefInit {
     pub card_actions_auto: bool,
     /// The list's Actions Palette opens on row hover (no ⋯ click).
     pub list_palette_hover: bool,
+    /// "New message" composes inline over the reading pane (vs a window).
+    pub compose_inline: bool,
     pub message_theme: MessageTheme,
     pub app_theme: AppTheme,
     pub notifications: bool,
@@ -149,6 +151,7 @@ pub enum PrefInput {
     ToggleThreadsExpanded(bool),
     ChangeCardActionsMode(u32),
     ToggleListPaletteHover(bool),
+    ToggleComposeInline(bool),
     ChangeFetchInterval(u32),
     TogglePush(bool),
     ToggleNotifications(bool),
@@ -181,6 +184,7 @@ pub enum PrefOutput {
     SetThreadsExpanded(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
     SetListPaletteHover(bool),
+    SetComposeInline(bool),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -359,6 +363,17 @@ impl Component for Preferences {
                                            newest message.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleThreadsExpanded(row.is_active()));
+                            },
+                        },
+
+                        #[name = "compose_inline_row"]
+                        adw::SwitchRow {
+                            set_title: "Compose in the main window",
+                            set_subtitle: "New message slides down over the reading pane, \
+                                           like a reply — pop it out to a window from its \
+                                           header. Off = open a separate window directly.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleComposeInline(row.is_active()));
                             },
                         },
 
@@ -678,6 +693,7 @@ impl Component for Preferences {
             2
         });
         widgets.list_palette_hover_row.set_active(init.list_palette_hover);
+        widgets.compose_inline_row.set_active(init.compose_inline);
 
         // Date and clock combos.
         let date_labels: Vec<&str> = DATE_STYLES.iter().map(|(l, _)| *l).collect();
@@ -773,6 +789,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleListPaletteHover(on) => {
                 let _ = sender.output(PrefOutput::SetListPaletteHover(on));
+            }
+            PrefInput::ToggleComposeInline(on) => {
+                let _ = sender.output(PrefOutput::SetComposeInline(on));
             }
             PrefInput::ChangeFetchInterval(index) => {
                 let secs = FETCH_INTERVALS

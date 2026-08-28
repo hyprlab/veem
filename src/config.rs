@@ -613,6 +613,10 @@ struct PrivacyFile {
     /// needing the ⋯ click.
     #[serde(default)]
     list_palette_hover: bool,
+    /// Whether "New message" opens inline over the reading pane (like a
+    /// reply) rather than in its own window.
+    #[serde(default = "default_compose_inline")]
+    compose_inline: bool,
     /// Hovering the icon rail (narrow-window or user-collapsed) floats the
     /// full sidebar out over the panes without needing the expand button.
     #[serde(default)]
@@ -681,6 +685,10 @@ fn default_card_actions_auto() -> bool {
     true
 }
 
+fn default_compose_inline() -> bool {
+    true
+}
+
 fn default_preview_lines() -> u32 {
     1
 }
@@ -713,6 +721,7 @@ impl Default for PrivacyFile {
             card_actions_hover: default_card_actions_hover(),
             card_actions_auto: default_card_actions_auto(),
             list_palette_hover: false,
+            compose_inline: default_compose_inline(),
             sidebar_hover_expand: false,
             app_theme: AppTheme::default(),
             preview_lines: default_preview_lines(),
@@ -837,6 +846,11 @@ pub fn load_list_palette_hover() -> bool {
     load_privacy().list_palette_hover
 }
 
+/// Whether "New message" composes inline over the reading pane.
+pub fn load_compose_inline() -> bool {
+    load_privacy().compose_inline
+}
+
 pub fn load_sidebar_hover_expand() -> bool {
     load_privacy().sidebar_hover_expand
 }
@@ -890,6 +904,7 @@ pub fn save_privacy(
     card_actions_hover: bool,
     card_actions_auto: bool,
     list_palette_hover: bool,
+    compose_inline: bool,
     preview_lines: u32,
     single_key_shortcuts: bool,
     run_in_background: bool,
@@ -925,6 +940,7 @@ pub fn save_privacy(
         card_actions_hover,
         card_actions_auto,
         list_palette_hover,
+        compose_inline,
         preview_lines,
         single_key_shortcuts,
         run_in_background,

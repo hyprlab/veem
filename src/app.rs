@@ -332,6 +332,8 @@ pub struct AppModel {
     card_actions_auto: bool,
     /// The list's Actions Palette opens on row hover (no ⋯ click).
     list_palette_hover: bool,
+    /// "New message" composes inline over the reading pane (vs a window).
+    compose_inline: bool,
     /// How email content is themed (message content only, not the app UI).
     message_theme: config::MessageTheme,
     /// The repeating auto-fetch timer, if armed.
@@ -551,6 +553,7 @@ pub enum AppMsg {
     SetThreadsExpanded(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
     SetListPaletteHover(bool),
+    SetComposeInline(bool),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -1577,6 +1580,7 @@ impl SimpleComponent for AppModel {
             card_actions_hover: config::load_card_actions_hover(),
             card_actions_auto: config::load_card_actions_auto(),
             list_palette_hover: config::load_list_palette_hover(),
+            compose_inline: config::load_compose_inline(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
             notifications,
@@ -2969,7 +2973,14 @@ impl SimpleComponent for AppModel {
 
             AppMsg::Compose => {
                 let account = self.active_account();
-                self.open_compose(account, ComposePrefill::default(), &sender);
+                if self.compose_inline {
+                    // The new-message pane slides down over the reader,
+                    // exactly like an inline reply — same composer, same
+                    // pop-out-to-window toggle in its header.
+                    self.open_inline_reply(account, ComposePrefill::default(), &sender);
+                } else {
+                    self.open_compose(account, ComposePrefill::default(), &sender);
+                }
             }
 
             AppMsg::Reply => {
@@ -3358,6 +3369,13 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetComposeInline(on) => {
+                if self.compose_inline != on {
+                    self.compose_inline = on;
+                    self.save_settings();
+                }
+            }
+
             AppMsg::SetMessageTheme(theme) => {
                 if self.message_theme != theme {
                     self.message_theme = theme;
@@ -3655,6 +3673,7 @@ impl SimpleComponent for AppModel {
                     card_actions_hover: self.card_actions_hover,
                     card_actions_auto: self.card_actions_auto,
                     list_palette_hover: self.list_palette_hover,
+                    compose_inline: self.compose_inline,
                     app_theme: self.app_theme,
                     preview_lines: self.preview_lines,
                     single_key_shortcuts: self.single_key.get(),
@@ -3682,6 +3701,7 @@ impl SimpleComponent for AppModel {
                             AppMsg::SetCardActionsMode { hover_toggle, hover_auto }
                         }
                         PrefOutput::SetListPaletteHover(on) => AppMsg::SetListPaletteHover(on),
+                        PrefOutput::SetComposeInline(on) => AppMsg::SetComposeInline(on),
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                         PrefOutput::SetPush(on) => AppMsg::SetPush(on),
                         PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
@@ -4298,6 +4318,7 @@ impl AppModel {
             self.card_actions_hover,
             self.card_actions_auto,
             self.list_palette_hover,
+            self.compose_inline,
             self.preview_lines,
             self.single_key.get(),
             self.run_in_background.get(),
