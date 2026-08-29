@@ -1575,7 +1575,7 @@ impl SimpleComponent for AppModel {
         let menu = gtk::gio::Menu::new();
         {
             let settings = gtk::gio::Menu::new();
-            settings.append(Some("Settings"), Some("win.accounts"));
+            settings.append(Some("Accounts & Settings"), Some("win.accounts"));
             menu.append_section(None, &settings);
 
             let printing = gtk::gio::Menu::new();
