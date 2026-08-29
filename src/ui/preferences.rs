@@ -64,6 +64,7 @@ pub struct PrefInit {
 pub fn settings_tabs<F: Fn() + 'static>(accounts_active: bool, switch: F) -> gtk::Box {
     let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     tabs.add_css_class("linked");
+    tabs.add_css_class("settings-tabs");
     let accounts = gtk::ToggleButton::with_label("Accounts");
     let prefs = gtk::ToggleButton::with_label("Preferences");
     prefs.set_group(Some(&accounts));

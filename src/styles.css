@@ -288,6 +288,13 @@ button.star-active {
   opacity: 0.6;
 }
 
+/* The Accounts/Preferences tab pair in the combined settings window's header
+   bars: the selected side wears the accent, like the compose row. */
+.settings-tabs button:checked {
+  background-color: @accent_bg_color;
+  color: white;
+}
+
 /* Faint rule above the pinned Contacts/Attachments footer, just enough to
    set the utility rows apart from the account list scrolling above. */
 .footer-separator {
