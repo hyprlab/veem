@@ -128,9 +128,10 @@ pub fn read_contacts() -> Vec<Contact> {
     // Local books: table `folder_id` + `folder_id_email_list`. Read the vCard
     // (not `full_name`, which EDS stores case-folded for search) so the display
     // name keeps its original capitalisation.
+    let active = active_book_uids();
     if let Some(dir) = data_dir() {
         for db in find_dbs(&dir, "contacts.db") {
-            if !db_book_active(&db) {
+            if !db_book_active(&db, &active) {
                 continue;
             }
             read_book_db(
@@ -145,7 +146,7 @@ pub fn read_contacts() -> Vec<Contact> {
     // Cached books (CardDAV etc.): table `ECacheObjects` + `attrlist_email_list`.
     if let Some(dir) = cache_dir() {
         for db in find_dbs(&dir, "cache.db") {
-            if !db_book_active(&db) {
+            if !db_book_active(&db, &active) {
                 continue;
             }
             read_book_db(
@@ -160,14 +161,14 @@ pub fn read_contacts() -> Vec<Contact> {
     out
 }
 
-/// `book_source_active` keyed off a book database's directory name.
-fn db_book_active(db: &std::path::Path) -> bool {
+/// `book_uid_active` keyed off a book database's directory name.
+fn db_book_active(db: &std::path::Path, active: &Option<HashSet<String>>) -> bool {
     let Some(folder) = db.parent().and_then(|p| p.file_name()) else {
         return true;
     };
     let folder = folder.to_string_lossy();
     let uid = if folder == "system" { "system-address-book" } else { folder.as_ref() };
-    book_source_active(uid)
+    book_uid_active(uid, active)
 }
 
 /// Photo bytes and the EDS database state they came from. The inexpensive
@@ -668,6 +669,7 @@ fn read_book_db(path: &std::path::Path, query: &str, out: &mut Vec<Contact>, see
 /// Address books the user can add contacts to (local + cached/CardDAV).
 pub fn writable_books() -> Vec<Book> {
     let mut books = Vec::new();
+    let active = active_book_uids();
     if let Some(dir) = data_dir() {
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             if !entry.path().join("contacts.db").is_file() {
@@ -680,7 +682,7 @@ pub fn writable_books() -> Vec<Book> {
             } else {
                 folder
             };
-            if !book_source_active(&uid) {
+            if !book_uid_active(&uid, &active) {
                 continue;
             }
             let name = source_display_name(&uid).unwrap_or_else(|| "On This Computer".to_string());
@@ -693,7 +695,7 @@ pub fn writable_books() -> Vec<Book> {
                 continue;
             }
             let uid = entry.file_name().to_string_lossy().to_string();
-            if !book_source_active(&uid) {
+            if !book_uid_active(&uid, &active) {
                 continue;
             }
             let name = source_display_name(&uid).unwrap_or_else(|| "CardDAV Address Book".to_string());
@@ -922,25 +924,86 @@ impl ContactDetails {
     }
 }
 
-/// Whether a book's EDS source still exists and is enabled — the cache/data
-/// directories of removed accounts linger on disk (EDS never deletes them),
-/// so without this check a book removed in GOA or GNOME Contacts keeps
-/// showing its contacts here forever. The built-in system book has no source
-/// file of its own and is always live.
-fn book_source_active(uid: &str) -> bool {
-    if uid == "system-address-book" {
-        return true;
+/// The UIDs of every *live, enabled* address-book source, straight from the
+/// EDS source registry over D-Bus. The cache/data directories of removed
+/// accounts linger on disk (EDS never deletes them), so without this check a
+/// book removed in GOA or GNOME Contacts keeps showing its contacts forever.
+/// The registry — not the sources directory — is the authority: GOA-derived
+/// sources are registry-only and never written to disk. `None` when the
+/// registry can't be reached (then keep everything rather than hide it all).
+fn active_book_uids() -> Option<HashSet<String>> {
+    let dest = sources_dest()?;
+    let conn = zbus::blocking::Connection::session().ok()?;
+    let reply = conn
+        .call_method(
+            Some(dest.as_str()),
+            "/org/gnome/evolution/dataserver/SourceManager",
+            Some("org.freedesktop.DBus.ObjectManager"),
+            "GetManagedObjects",
+            &(),
+        )
+        .ok()?;
+    type Props = HashMap<String, zbus::zvariant::OwnedValue>;
+    type Objects = HashMap<zbus::zvariant::OwnedObjectPath, HashMap<String, Props>>;
+    let (objects,): (Objects,) = reply.body().deserialize().ok()?;
+    let mut uids = HashSet::new();
+    for ifaces in objects.values() {
+        let Some(props) = ifaces.get("org.gnome.evolution.dataserver.Source") else {
+            continue;
+        };
+        let uid =
+            props.get("UID").and_then(|v| v.downcast_ref::<&str>().ok()).map(str::to_string);
+        let data =
+            props.get("Data").and_then(|v| v.downcast_ref::<&str>().ok()).map(str::to_string);
+        let (Some(uid), Some(data)) = (uid, data) else { continue };
+        // An address book, and not switched off (GOA sets the book source's
+        // [Data Source] Enabled=false when Contacts is toggled off for the
+        // account). Only that section's Enabled counts — other sections
+        // (Refresh etc.) have Enabled keys of their own.
+        if data.contains("[Address Book]") && !data_source_disabled(&data) {
+            uids.insert(uid);
+        }
     }
-    let Some(dir) = config_dir() else {
-        return true; // can't verify — keep rather than hide everything
-    };
-    let path = dir.join(format!("sources/{uid}.source"));
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return false; // source gone: the account/book was removed
-    };
-    // Still an address book, and not switched off (GOA writes Enabled=false
-    // when Contacts is toggled off for the account).
-    text.contains("[Address Book]") && !text.to_lowercase().contains("enabled=false")
+    Some(uids)
+}
+
+/// Whether a source keyfile's `[Data Source]` section says `Enabled=false`.
+fn data_source_disabled(data: &str) -> bool {
+    let mut in_data_source = false;
+    for line in data.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_data_source = line.eq_ignore_ascii_case("[Data Source]");
+            continue;
+        }
+        if in_data_source {
+            if let Some(v) = line.strip_prefix("Enabled=") {
+                return v.trim().eq_ignore_ascii_case("false");
+            }
+        }
+    }
+    false
+}
+
+/// Discover the versioned Sources registry bus name (e.g. `…Sources5`).
+fn sources_dest() -> Option<String> {
+    let dir = std::path::Path::new("/usr/share/dbus-1/services");
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.contains("evolution.dataserver.Sources") && name.ends_with(".service") {
+            if let Ok(text) = std::fs::read_to_string(entry.path()) {
+                if let Some(n) = text.lines().find_map(|l| l.strip_prefix("Name=")) {
+                    return Some(n.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Whether the registry lists `uid` as live (fail-open when unreachable).
+fn book_uid_active(uid: &str, active: &Option<HashSet<String>>) -> bool {
+    active.as_ref().map_or(true, |set| set.contains(uid))
 }
 
 /// Every contact from the local + cached (CardDAV) EDS books, fully parsed
@@ -949,6 +1012,7 @@ fn book_source_active(uid: &str) -> bool {
 pub fn read_contact_details() -> Vec<ContactDetails> {
     let mut out: Vec<ContactDetails> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
+    let active = active_book_uids();
     // Walk the book directories directly (like `writable_books`) so each
     // contact remembers which book it belongs to.
     if let Some(dir) = data_dir() {
@@ -959,7 +1023,7 @@ pub fn read_contact_details() -> Vec<ContactDetails> {
             }
             let folder = entry.file_name().to_string_lossy().to_string();
             let uid = if folder == "system" { "system-address-book".to_string() } else { folder };
-            if !book_source_active(&uid) {
+            if !book_uid_active(&uid, &active) {
                 continue;
             }
             let name =
@@ -974,7 +1038,7 @@ pub fn read_contact_details() -> Vec<ContactDetails> {
                 continue;
             }
             let uid = entry.file_name().to_string_lossy().to_string();
-            if !book_source_active(&uid) {
+            if !book_uid_active(&uid, &active) {
                 continue;
             }
             let name =
