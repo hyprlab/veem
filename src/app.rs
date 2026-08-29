@@ -301,6 +301,8 @@ pub struct AppModel {
     show_attachments: bool,
     /// Whether the sidebar's footer shows the "Contacts" shortcut row.
     show_contacts: bool,
+    /// Whether the settings window opens on Accounts (vs Preferences).
+    settings_open_accounts: bool,
     /// The list header's count text ("N" / "N of M"), from the message list.
     list_count: String,
     /// Lines of preview text per message-list row (1–3).
@@ -665,10 +667,14 @@ pub enum AppMsg {
     /// The system resumed from sleep — worker IMAP sockets are stale, so
     /// reconnect every account and reload the visible folder.
     SystemResumed,
+    /// Open the settings window on the user's preferred view (the menu entry).
+    OpenSettings,
     OpenPreferences,
     ClosePreferences,
     /// The accounts editor subpage opened/closed in the settings window.
     SettingsEditorOpen(bool),
+    /// The "settings window opens to" preference changed (true = Accounts).
+    SetSettingsOpenAccounts(bool),
     // Worker events (each carries the account it came from)
     SetAccount(Account),
     SetFolders { account_id: u32, folders: Vec<Folder> },
@@ -1625,6 +1631,7 @@ impl SimpleComponent for AppModel {
             notification_content: config::load_notification_content(),
             show_attachments,
             show_contacts,
+            settings_open_accounts: config::load_settings_open_accounts(),
             list_count: String::new(),
             preview_lines: config::load_preview_lines(),
             shortcuts_win: None,
@@ -2008,7 +2015,7 @@ impl SimpleComponent for AppModel {
         let mut group = RelmActionGroup::<WindowActionGroup>::new();
         let accounts_sender = sender.clone();
         group.add_action(RelmAction::<AccountsAction>::new_stateless(move |_| {
-            accounts_sender.input(AppMsg::OpenAccounts);
+            accounts_sender.input(AppMsg::OpenSettings);
         }));
         let prefs_sender = sender.clone();
         group.add_action(RelmAction::<PreferencesAction>::new_stateless(move |_| {
@@ -3993,7 +4000,19 @@ impl SimpleComponent for AppModel {
                 self.arm_auto_fetch(&sender);
             }
 
+            AppMsg::OpenSettings => {
+                let on_accounts = self.settings_open_accounts;
+                self.open_settings_window(&sender, on_accounts, false);
+            }
+
             AppMsg::OpenPreferences => self.open_settings_window(&sender, false, false),
+
+            AppMsg::SetSettingsOpenAccounts(on) => {
+                if self.settings_open_accounts != on {
+                    self.settings_open_accounts = on;
+                    self.save_settings();
+                }
+            }
 
             // Closing the combined Accounts & Preferences window drops both
             // panels' components.
@@ -4623,6 +4642,7 @@ impl AppModel {
             self.notification_content,
             self.show_attachments,
             self.show_contacts,
+            self.settings_open_accounts,
             self.card_actions_hover,
             self.card_actions_auto,
             self.list_palette,
@@ -7361,6 +7381,7 @@ impl AppModel {
             notification_content: self.notification_content,
             show_attachments: self.show_attachments,
             show_contacts: self.show_contacts,
+            settings_open_accounts: self.settings_open_accounts,
             sidebar_hover_expand: self.sidebar_hover_expand,
             card_actions_hover: self.card_actions_hover,
             card_actions_auto: self.card_actions_auto,
@@ -7414,6 +7435,9 @@ impl AppModel {
                     AppMsg::SetSidebarHoverExpand(on)
                 }
                 PrefOutput::SetAppTheme(theme) => AppMsg::SetAppTheme(theme),
+                PrefOutput::SetSettingsOpenAccounts(on) => {
+                    AppMsg::SetSettingsOpenAccounts(on)
+                }
                 PrefOutput::SetPreviewLines(n) => AppMsg::SetPreviewLines(n),
                 PrefOutput::SetSingleKey(on) => AppMsg::SetSingleKey(on),
                 PrefOutput::SetRunInBackground(on) => AppMsg::SetRunInBackground(on),

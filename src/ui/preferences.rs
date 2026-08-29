@@ -55,6 +55,8 @@ pub struct PrefInit {
     pub accounts_panel: gtk::Widget,
     /// Open showing the Accounts tab instead of Preferences.
     pub start_on_accounts: bool,
+    /// The persisted "this window opens to" choice (true = Accounts).
+    pub settings_open_accounts: bool,
 }
 
 
@@ -196,6 +198,7 @@ pub enum PrefInput {
     ChangePaletteCollapse(u64),
     ChangeMessageTheme(u32),
     ChangeAppTheme(u32),
+    ChangeSettingsOpen(u32),
     /// Switch the window to the Accounts panel (true) or Preferences (false).
     ShowAccounts(bool),
     /// The accounts editor subpage opened/closed — hide/show the shared
@@ -232,6 +235,8 @@ pub enum PrefOutput {
     SetContactsRow(bool),
     SetSidebarHoverExpand(bool),
     SetAppTheme(AppTheme),
+    /// The "this window opens to" choice changed (true = Accounts).
+    SetSettingsOpenAccounts(bool),
     SetPreviewLines(u32),
     SetSingleKey(bool),
     SetRunInBackground(bool),
@@ -530,6 +535,16 @@ impl Component for Preferences {
                                            setting under Reading.",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeAppTheme(row.selected()));
+                            },
+                        },
+
+                        #[name = "settings_open_row"]
+                        adw::ComboRow {
+                            set_title: "This window opens to",
+                            set_subtitle: "The view shown first when Accounts & Preferences \
+                                           is opened from the menu.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeSettingsOpen(row.selected()));
                             },
                         },
                     },
@@ -864,6 +879,13 @@ impl Component for Preferences {
         let adj = gtk::Adjustment::new(init.palette_collapse_secs as f64, 1.0, 30.0, 1.0, 5.0, 0.0);
         widgets.palette_collapse_row.set_adjustment(Some(&adj));
 
+        widgets
+            .settings_open_row
+            .set_model(Some(&gtk::StringList::new(&["Preferences", "Accounts"])));
+        widgets
+            .settings_open_row
+            .set_selected(if init.settings_open_accounts { 1 } else { 0 });
+
         // The view switcher drives the panel stack; the pages carry icons so
         // the switcher shows the standard icon-and-label tabs.
         widgets.switcher.set_stack(Some(&widgets.panels_stack));
@@ -995,6 +1017,9 @@ impl Component for Preferences {
                     .map(|(_, t)| *t)
                     .unwrap_or_default();
                 let _ = sender.output(PrefOutput::SetAppTheme(theme));
+            }
+            PrefInput::ChangeSettingsOpen(index) => {
+                let _ = sender.output(PrefOutput::SetSettingsOpenAccounts(index == 1));
             }
             PrefInput::ShowAccounts(accounts) => {
                 if let Some(stack) = &self.panels_stack {
