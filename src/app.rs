@@ -4164,6 +4164,18 @@ impl SimpleComponent for AppModel {
                 } else {
                     self.rebuild_sidebar();
                 }
+                // Launch with "All Inboxes" already selected: UnifiedSelected
+                // fired before any folder list existed, so its inbox requests
+                // went nowhere and the list sat empty until the user visited a
+                // folder by hand. The moment an account's folders arrive while
+                // the unified view is up and that account has contributed
+                // nothing yet, ask for its inbox.
+                if self.unified && !self.unified_by_account.contains_key(&account_id) {
+                    if let Some(inbox) = self.inbox_of(account_id) {
+                        let (folder_id, path) = (inbox.id, inbox.path.clone());
+                        self.send_to(account_id, MailRequest::LoadMessages { folder_id, path });
+                    }
+                }
             }
 
             AppMsg::FolderUnread { account_id, folder_id, unread } => {
