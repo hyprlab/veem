@@ -176,9 +176,13 @@ headerbar.rail-header {
 .unified-row .folder-row {
   padding-right: 12px;
 }
+/* A generous hit target without moving the icon: the button grows to 32px
+   and the negative end margin slides its extra width into the row padding,
+   keeping the centred 16px icon exactly in the chevron column. */
 .unified-row .chevron-btn {
-  min-width: 16px;
-  min-height: 16px;
+  min-width: 32px;
+  min-height: 32px;
+  margin-right: -8px;
 }
 
 /* Draggable account rows in the Accounts window. */
