@@ -1520,6 +1520,7 @@ impl SimpleComponent for AppModel {
                 .launch(())
                 .forward(sender.input_sender(), |out| match out {
                     ContactsPageOutput::Compose(email) => AppMsg::ComposeTo(email),
+                    ContactsPageOutput::ToggleSidebar => AppMsg::ToggleSidebar,
                 });
 
         let notifications = NotificationCenter::builder().launch(()).forward(
@@ -1813,24 +1814,11 @@ impl SimpleComponent for AppModel {
             gallery_tv.set_content(Some(model.gallery.widget()));
             widgets.content_stack.add_named(&gallery_tv, Some("gallery"));
 
-            // The contacts view gets the same chrome, plus the escape hatch to
-            // the full GNOME Contacts app for anything Vireo doesn't do
-            // (editing, linking, new address books).
-            let contacts_tv = adw::ToolbarView::new();
-            let contacts_hb = adw::HeaderBar::new();
-            contacts_hb.add_css_class("flat");
-            let title = gtk::Label::new(Some("Contacts"));
-            title.add_css_class("pane-title");
-            contacts_hb.set_title_widget(Some(&title));
-            let open_gnome = gtk::Button::from_icon_name(
-                "co.hyprlab.Vireo-adw-external-link-symbolic",
-            );
-            open_gnome.set_tooltip_text(Some("Open GNOME Contacts"));
-            open_gnome.connect_clicked(|_| crate::ui::contacts_browser::launch_gnome_contacts());
-            contacts_hb.pack_end(&open_gnome);
-            contacts_tv.add_top_bar(&contacts_hb);
-            contacts_tv.set_content(Some(model.contacts_page.widget()));
-            widgets.content_stack.add_named(&contacts_tv, Some("contacts"));
+            // The contacts view brings its own per-pane headers (so its
+            // divider runs to the very top, like the mail panes').
+            widgets
+                .content_stack
+                .add_named(model.contacts_page.widget(), Some("contacts"));
         }
         // Desktop-notification click actions: raise the window (error alerts) and
         // raise + open a specific message (new-mail alerts). Registered here rather

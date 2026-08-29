@@ -9,9 +9,18 @@ use relm4::prelude::*;
 
 use crate::contacts::{ContactDetails, Labeled};
 
+/// How the contact list is ordered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContactSort {
+    FirstName,
+    LastName,
+    Email,
+}
+
 pub struct ContactsPage {
     contacts: Vec<ContactDetails>,
     query: String,
+    sort: ContactSort,
     /// Index into `contacts` of the contact shown in the detail pane.
     selected: Option<usize>,
     /// Filtered list-row order → index into `contacts`.
@@ -27,6 +36,7 @@ pub enum ContactsPageInput {
     /// The page was just opened; a read is on its way.
     SetLoading,
     Query(String),
+    SetSort(ContactSort),
     RowSelected(i32),
     Compose(String),
     OpenUrl(String),
@@ -36,6 +46,8 @@ pub enum ContactsPageInput {
 pub enum ContactsPageOutput {
     /// Start a message to this address.
     Compose(String),
+    /// The header's sidebar button (same spot as the message list's).
+    ToggleSidebar,
 }
 
 #[relm4::component(pub)]
@@ -51,49 +63,127 @@ impl Component for ContactsPage {
             set_transition_type: gtk::StackTransitionType::Crossfade,
 
             // No contacts at all (or still loading the first read).
-            add_named[Some("none")] = &adw::StatusPage {
-                set_icon_name: Some("co.hyprlab.Vireo-x-office-address-book-symbolic"),
-                #[watch]
-                set_title: if model.loading { "Loading Contacts…" } else { "No Contacts" },
-                #[watch]
-                set_description: Some(if model.loading {
-                    ""
-                } else {
-                    "Contacts you add in GNOME Contacts appear here."
-                }),
+            add_named[Some("none")] = &adw::ToolbarView {
+                add_top_bar = &adw::HeaderBar {
+                    add_css_class: "flat",
+                    #[wrap(Some)]
+                    set_title_widget = &gtk::Label {
+                        set_label: "Contacts",
+                        add_css_class: "pane-title",
+                    },
+                    pack_start = &gtk::Button {
+                        set_icon_name: "co.hyprlab.Vireo-sidebar-show-symbolic",
+                        set_tooltip_text: Some("Toggle sidebar"),
+                        add_css_class: "flat",
+                        connect_clicked[sender] => move |_| {
+                            let _ = sender.output(ContactsPageOutput::ToggleSidebar);
+                        },
+                    },
+                    pack_end = &gtk::Button {
+                        set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
+                        set_tooltip_text: Some("Open GNOME Contacts"),
+                        add_css_class: "flat",
+                        connect_clicked => move |_| {
+                            crate::ui::contacts_browser::launch_gnome_contacts();
+                        },
+                    },
+                },
+
+                #[wrap(Some)]
+                set_content = &adw::StatusPage {
+                    set_icon_name: Some("co.hyprlab.Vireo-x-office-address-book-symbolic"),
+                    #[watch]
+                    set_title: if model.loading { "Loading Contacts…" } else { "No Contacts" },
+                    #[watch]
+                    set_description: Some(if model.loading {
+                        ""
+                    } else {
+                        "Contacts you add in GNOME Contacts appear here."
+                    }),
+                },
             },
 
+            // Each pane carries its own header (like the mail view), so the
+            // divider between them runs the full height of the window.
             add_named[Some("browser")] = &gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
 
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Vertical,
-                    set_width_request: 280,
-
-                    #[name = "search"]
-                    gtk::SearchEntry {
-                        set_placeholder_text: Some("Search contacts"),
-                        set_margin_top: 8,
-                        set_margin_bottom: 8,
-                        set_margin_start: 10,
-                        set_margin_end: 10,
-                        connect_search_changed[sender] => move |e| {
-                            sender.input(ContactsPageInput::Query(e.text().to_string()));
+                adw::ToolbarView {
+                    add_top_bar = &adw::HeaderBar {
+                        add_css_class: "flat",
+                        // Left pane: no window controls (the detail pane's
+                        // header carries the window's close button).
+                        set_show_start_title_buttons: false,
+                        set_show_end_title_buttons: false,
+                        #[wrap(Some)]
+                        set_title_widget = &gtk::Label {
+                            set_label: "",
+                        },
+                        // Leftmost, mirroring the pane it acts on — same spot
+                        // as in the message list's header.
+                        pack_start = &gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-sidebar-show-symbolic",
+                            set_tooltip_text: Some("Toggle sidebar"),
+                            add_css_class: "flat",
+                            connect_clicked[sender] => move |_| {
+                                let _ = sender.output(ContactsPageOutput::ToggleSidebar);
+                            },
+                        },
+                        // pack_end packs right-to-left: GNOME Contacts at the
+                        // far right, then sort, then the count — the same
+                        // count-and-sort pair the message list's header has.
+                        pack_end = &gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
+                            set_tooltip_text: Some("Open GNOME Contacts"),
+                            add_css_class: "flat",
+                            connect_clicked => move |_| {
+                                crate::ui::contacts_browser::launch_gnome_contacts();
+                            },
+                        },
+                        #[name = "sort_btn"]
+                        pack_end = &gtk::MenuButton {
+                            set_icon_name: "co.hyprlab.Vireo-view-sort-descending-symbolic",
+                            set_tooltip_text: Some("Sort contacts"),
+                            set_valign: gtk::Align::Center,
+                            add_css_class: "flat",
+                        },
+                        #[name = "count_label"]
+                        pack_end = &gtk::Label {
+                            set_valign: gtk::Align::Center,
+                            add_css_class: "list-count",
                         },
                     },
 
-                    gtk::ScrolledWindow {
-                        set_vexpand: true,
-                        set_hscrollbar_policy: gtk::PolicyType::Never,
+                    #[wrap(Some)]
+                    set_content = &gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_width_request: 280,
 
-                        #[name = "list"]
-                        gtk::ListBox {
-                            add_css_class: "navigation-sidebar",
-                            set_selection_mode: gtk::SelectionMode::Single,
-                            connect_row_selected[sender] => move |_, row| {
-                                if let Some(row) = row {
-                                    sender.input(ContactsPageInput::RowSelected(row.index()));
-                                }
+                        #[name = "search"]
+                        gtk::SearchEntry {
+                            set_placeholder_text: Some("Search contacts"),
+                            set_margin_top: 8,
+                            set_margin_bottom: 8,
+                            set_margin_start: 10,
+                            set_margin_end: 10,
+                            connect_search_changed[sender] => move |e| {
+                                sender.input(ContactsPageInput::Query(e.text().to_string()));
+                            },
+                        },
+
+                        gtk::ScrolledWindow {
+                            set_vexpand: true,
+                            set_hscrollbar_policy: gtk::PolicyType::Never,
+
+                            #[name = "list"]
+                            gtk::ListBox {
+                                add_css_class: "navigation-sidebar",
+                                set_selection_mode: gtk::SelectionMode::Single,
+                                connect_row_selected[sender] => move |_, row| {
+                                    if let Some(row) = row {
+                                        sender.input(ContactsPageInput::RowSelected(row.index()));
+                                    }
+                                },
                             },
                         },
                     },
@@ -103,23 +193,38 @@ impl Component for ContactsPage {
                     set_orientation: gtk::Orientation::Vertical,
                 },
 
-                gtk::ScrolledWindow {
+                adw::ToolbarView {
                     set_hexpand: true,
-                    set_vexpand: true,
-                    set_hscrollbar_policy: gtk::PolicyType::Never,
-                    add_css_class: "contact-detail-pane",
 
-                    adw::Clamp {
-                        set_maximum_size: 560,
-                        set_tightening_threshold: 420,
+                    add_top_bar = &adw::HeaderBar {
+                        add_css_class: "flat",
+                        set_show_start_title_buttons: false,
+                        #[wrap(Some)]
+                        set_title_widget = &gtk::Label {
+                            set_label: "Contacts",
+                            add_css_class: "pane-title",
+                        },
+                    },
 
-                        #[name = "detail_box"]
-                        gtk::Box {
-                            set_orientation: gtk::Orientation::Vertical,
-                            set_margin_top: 24,
-                            set_margin_bottom: 32,
-                            set_margin_start: 18,
-                            set_margin_end: 18,
+                    #[wrap(Some)]
+                    set_content = &gtk::ScrolledWindow {
+                        set_hexpand: true,
+                        set_vexpand: true,
+                        set_hscrollbar_policy: gtk::PolicyType::Never,
+                        add_css_class: "contact-detail-pane",
+
+                        adw::Clamp {
+                            set_maximum_size: 560,
+                            set_tightening_threshold: 420,
+
+                            #[name = "detail_box"]
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_margin_top: 24,
+                                set_margin_bottom: 32,
+                                set_margin_start: 18,
+                                set_margin_end: 18,
+                            },
                         },
                     },
                 },
@@ -135,11 +240,49 @@ impl Component for ContactsPage {
         let model = ContactsPage {
             contacts: Vec::new(),
             query: String::new(),
+            sort: ContactSort::FirstName,
             selected: None,
             row_map: Vec::new(),
             loading: true,
         };
         let widgets = view_output!();
+
+        // The sort menu: a radio per order, mirroring the message list's
+        // sort button.
+        {
+            let pop = gtk::Popover::new();
+            let vbox = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            vbox.set_margin_top(6);
+            vbox.set_margin_bottom(6);
+            vbox.set_margin_start(6);
+            vbox.set_margin_end(6);
+            let mut first: Option<gtk::CheckButton> = None;
+            for (label, sort) in [
+                ("First name", ContactSort::FirstName),
+                ("Last name", ContactSort::LastName),
+                ("Email", ContactSort::Email),
+            ] {
+                let check = gtk::CheckButton::with_label(label);
+                if let Some(f) = &first {
+                    check.set_group(Some(f));
+                } else {
+                    check.set_active(true);
+                    first = Some(check.clone());
+                }
+                let s = sender.input_sender().clone();
+                let p = pop.clone();
+                check.connect_toggled(move |c| {
+                    if c.is_active() {
+                        let _ = s.send(ContactsPageInput::SetSort(sort));
+                        p.popdown();
+                    }
+                });
+                vbox.append(&check);
+            }
+            pop.set_child(Some(&vbox));
+            widgets.sort_btn.set_popover(Some(&pop));
+        }
+
         ComponentParts { model, widgets }
     }
 
@@ -177,6 +320,13 @@ impl Component for ContactsPage {
             ContactsPageInput::Query(q) => {
                 self.query = q.to_lowercase();
                 self.rebuild(widgets, &sender);
+            }
+
+            ContactsPageInput::SetSort(sort) => {
+                if self.sort != sort {
+                    self.sort = sort;
+                    self.rebuild(widgets, &sender);
+                }
             }
 
             ContactsPageInput::RowSelected(row) => {
@@ -228,12 +378,31 @@ impl ContactsPage {
         while let Some(child) = widgets.list.first_child() {
             widgets.list.remove(&child);
         }
-        self.row_map.clear();
-        for (idx, c) in self.contacts.iter().enumerate() {
-            if !self.matches(c) {
-                continue;
+        self.row_map = (0..self.contacts.len())
+            .filter(|&i| self.matches(&self.contacts[i]))
+            .collect();
+        self.row_map.sort_by_key(|&i| {
+            let c = &self.contacts[i];
+            let name = c.name.to_lowercase();
+            match self.sort {
+                ContactSort::FirstName => name,
+                // Sort by the final word of the name (then the whole name for
+                // ties) — how an address book orders by surname.
+                ContactSort::LastName => {
+                    format!("{} {name}", name.rsplit(' ').next().unwrap_or(&name))
+                }
+                ContactSort::Email => {
+                    c.primary_email().map(str::to_lowercase).unwrap_or(name)
+                }
             }
-            self.row_map.push(idx);
+        });
+        widgets.count_label.set_label(&if self.query.is_empty() {
+            self.contacts.len().to_string()
+        } else {
+            format!("{} of {}", self.row_map.len(), self.contacts.len())
+        });
+        for &idx in &self.row_map {
+            let c = &self.contacts[idx];
             let row = adw::ActionRow::new();
             row.set_title(&gtk::glib::markup_escape_text(&c.name));
             if let Some(email) = c.primary_email() {
