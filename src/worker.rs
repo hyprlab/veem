@@ -5161,6 +5161,7 @@ async fn run_pop3(
             MailRequest::LoadMessages { folder_id, path } => {
                 if path != INBOX {
                     emit(WorkerEvent::Messages { folder_id, messages: Vec::new() });
+                    emit(WorkerEvent::BackfillDone { folder_id });
                     continue;
                 }
                 // Serve cache first for instant display.
@@ -5176,6 +5177,9 @@ async fn run_pop3(
                         let unread = messages.iter().filter(|m| m.unread).count() as u32;
                         emit(WorkerEvent::Messages { folder_id, messages });
                         emit(WorkerEvent::FolderUnread { folder_id: inbox_id, unread });
+                        // POP3 syncs the whole mailbox in one pass; no backfill
+                        // follows, so the index is complete (see the Graph path).
+                        emit(WorkerEvent::BackfillDone { folder_id });
                     }
                     Err(e) => emit(WorkerEvent::Error {
                         text: format!("Could not fetch mail: {e}"),
@@ -6514,6 +6518,12 @@ async fn run_graph(
                         let unread = messages.iter().filter(|m| m.unread).count() as u32;
                         emit(WorkerEvent::Messages { folder_id, messages });
                         emit(WorkerEvent::FolderUnread { folder_id, unread });
+                        // Graph loads the whole folder in one pass — there is no
+                        // background backfill, so the index is complete now.
+                        // Without this the list's "Loading more…" tail spinner
+                        // never clears on folders with less than a page of mail
+                        // (an emptied inbox most visibly).
+                        emit(WorkerEvent::BackfillDone { folder_id });
                     }
                     Err(e) => emit(WorkerEvent::Error {
                         text: format!("Could not fetch mail: {e}"),

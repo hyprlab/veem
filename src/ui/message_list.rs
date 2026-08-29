@@ -1108,6 +1108,9 @@ pub struct MessageList {
     /// Whether the folder's background index is fully loaded. When false, more
     /// rows may still stream in, so hitting the bottom shows a loading spinner.
     index_complete: bool,
+    /// Whether a SetMessages has arrived since the last SetLoading — gates the
+    /// empty-folder placeholder so it never flashes during a folder switch.
+    loaded: bool,
     /// The list's scroller, kept so expand/collapse can preserve scroll position.
     scroller: Option<gtk::ScrolledWindow>,
     /// Current sort order for the list.
@@ -1507,6 +1510,17 @@ impl SimpleComponent for MessageList {
                             add_css_class: "dim-label",
                         },
                     },
+
+                    // Placeholder when the folder has loaded and holds nothing.
+                    adw::StatusPage {
+                        set_icon_name: Some("co.hyprlab.Vireo-mail-inbox-symbolic"),
+                        set_title: "No Messages",
+                        set_description: Some("There's nothing here right now."),
+                        set_vexpand: true,
+                        add_css_class: "compact",
+                        #[watch]
+                        set_visible: model.is_empty_state(),
+                    },
                 },
                 },
 
@@ -1547,6 +1561,7 @@ impl SimpleComponent for MessageList {
             total_matches: 0,
             render_limit: RENDER_CAP,
             index_complete: true,
+            loaded: false,
             query: String::new(),
             gravatar: false,
             avatars: true,
@@ -1649,6 +1664,7 @@ impl SimpleComponent for MessageList {
         match msg {
             MessageListInput::SetMessages { messages } => {
                 self.all = messages;
+                self.loaded = true;
                 // Keep any active search query: this also fires for a background
                 // re-sync of the folder you're viewing, which shouldn't drop your
                 // search. Folder switches clear the query via `ResetPaging` first.
@@ -1679,6 +1695,7 @@ impl SimpleComponent for MessageList {
             }
             MessageListInput::SetLoading => {
                 self.all.clear();
+                self.loaded = false;
                 self.clear_search();
                 self.render_limit = RENDER_CAP;
                 self.rebuild();
@@ -2349,6 +2366,13 @@ impl MessageList {
     /// index is still streaming in.
     fn is_loading_more(&self) -> bool {
         self.render_limit > self.total_matches && !self.index_complete
+    }
+
+    /// Whether to show the empty-folder placeholder: the folder has loaded,
+    /// nothing is in it, no search is filtering it, and no more rows are on
+    /// their way (the loading indicator covers that state instead).
+    fn is_empty_state(&self) -> bool {
+        self.loaded && self.shown.is_empty() && self.query.is_empty() && self.index_complete
     }
 
     /// A full rebuild that keeps the current scroll offset (a plain rebuild jumps
