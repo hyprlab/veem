@@ -1,6 +1,7 @@
-//! Accounts window: manage all mail accounts (add / edit / remove / reorder).
+//! Accounts panel: manage all mail accounts (add / edit / remove / reorder).
 //!
-//! A standalone window (opened from the main menu, separate from Preferences).
+//! Not a window of its own: the panel is embedded behind the "Accounts" tab
+//! of the combined Accounts & Preferences window (see `ui/preferences.rs`).
 //! It uses an `AdwNavigationView` with two pages: a list of accounts (drag rows
 //! to set the sidebar order) and a reusable editor form pushed on top.
 
@@ -192,7 +193,9 @@ pub enum AccountsOutput {
     EnabledChanged { email: String, enabled: bool },
     /// Import a GNOME Online Account into Vireo (with its credentials).
     ImportGoa(Box<AccountConfig>),
-    Closed,
+    /// The editor subpage opened (true) or closed (false) — the combined
+    /// settings window hides its shared header while it is open.
+    EditorOpen(bool),
 }
 
 /// Whether a GOA account's mail runs over the Microsoft Graph API: the
@@ -240,23 +243,10 @@ impl Component for AccountsWindow {
     type CommandOutput = AccountsCmd;
 
     view! {
-        adw::Window {
-            set_modal: false,
-            set_default_width: 480,
-            // Remembered vertical size (tall by default) — resizing sticks
-            // across restarts via the save on close below.
-            set_default_height: crate::config::load_accounts_height(),
-            set_title: Some("Accounts"),
-
-            connect_close_request[sender] => move |w| {
-                crate::config::save_accounts_height(w.height());
-                let _ = sender.output(AccountsOutput::Closed);
-                gtk::glib::Propagation::Proceed
-            },
-
+        adw::Bin {
             #[wrap(Some)]
             #[name = "nav"]
-            set_content = &adw::NavigationView {
+            set_child = &adw::NavigationView {
 
                 // ---- list page ----
                 add = &adw::NavigationPage {
@@ -265,7 +255,8 @@ impl Component for AccountsWindow {
 
                     #[wrap(Some)]
                     set_child = &adw::ToolbarView {
-                        add_top_bar = &adw::HeaderBar {},
+                        // No header of its own: the combined settings window's
+                        // shared header (with the view switcher) sits above.
 
                         #[wrap(Some)]
                         set_content = &adw::PreferencesPage {
@@ -695,6 +686,19 @@ impl Component for AccountsWindow {
         let es = sender.clone();
         widgets.email_row.connect_changed(move |_| es.input(AccountsInput::EmailChanged));
 
+        // Tell the combined settings window when the editor subpage is up —
+        // every way in or out (Save, back button, swipe) lands here.
+        {
+            let s = sender.output_sender().clone();
+            widgets.nav.connect_visible_page_notify(move |nav| {
+                let editor = nav
+                    .visible_page()
+                    .and_then(|p| p.tag())
+                    .is_some_and(|tag| tag == "editor");
+                let _ = s.send(AccountsOutput::EditorOpen(editor));
+            });
+        }
+
         ComponentParts { model, widgets }
     }
 
@@ -910,7 +914,18 @@ impl Component for AccountsWindow {
             }
 
             AccountsInput::ProviderChanged => {
-                self.apply_provider(widgets);
+                // Editing a GOA account: the provider dropdown is hidden and the
+                // connection section deliberately not shown — but filling the
+                // editor sets the dropdown, whose notify lands here right after
+                // EditAccount and would undo that. GNOME owns those fields;
+                // leave them hidden.
+                let editing_goa = self
+                    .editing
+                    .and_then(|i| self.accounts.get(i))
+                    .is_some_and(|a| a.goa_id.is_some());
+                if !editing_goa {
+                    self.apply_provider(widgets);
+                }
             }
 
             AccountsInput::OAuthSignIn => {
@@ -1089,8 +1104,11 @@ impl Component for AccountsWindow {
                          the keyring. Mail on the server is not affected."
                     )
                 };
+                // The panel is embedded — dialogs parent to whatever window
+                // it currently sits in (the combined settings window).
+                let host = root.root().and_downcast::<gtk::Window>();
                 let dialog =
-                    adw::MessageDialog::new(Some(root), Some("Remove Account?"), Some(&body));
+                    adw::MessageDialog::new(host.as_ref(), Some("Remove Account?"), Some(&body));
                 dialog.add_response("cancel", "Cancel");
                 dialog.add_response("remove", "Remove");
                 dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
@@ -1358,18 +1376,19 @@ impl AccountsWindow {
     /// Open the modal alias editor (#34), prefilled from `alias`.
     fn open_alias_dialog(
         &mut self,
-        root: &adw::Window,
+        root: &adw::Bin,
         alias: &AliasConfig,
         sender: &ComponentSender<Self>,
     ) {
         self.close_alias_dialog();
 
         let window = adw::Window::builder()
-            .transient_for(root)
             .modal(true)
             .default_width(440)
             .title(if self.alias_editing.is_some() { "Edit Alias" } else { "Add Alias" })
             .build();
+        // Parent to whatever window the embedded panel currently sits in.
+        window.set_transient_for(root.root().and_downcast::<gtk::Window>().as_ref());
 
         let cancel = gtk::Button::with_label("Cancel");
         let save = gtk::Button::with_label("Save");
@@ -1530,7 +1549,8 @@ impl AccountsWindow {
             // Source badge: is this account from GNOME Online Accounts, or added
             // directly in Vireo?
             let from_goa = acc.goa_id.is_some();
-            let badge = gtk::Label::new(Some(if from_goa { "Online Account" } else { "Vireo" }));
+            let badge =
+                gtk::Label::new(Some(if from_goa { "GNOME Online Account" } else { "Vireo" }));
             badge.set_valign(gtk::Align::Center);
             badge.add_css_class("account-source-badge");
             if from_goa {

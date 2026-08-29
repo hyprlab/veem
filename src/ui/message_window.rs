@@ -16,6 +16,9 @@ use crate::ui::message_view::{MessageView, MessageViewInput, MessageViewOutput};
 #[derive(Debug)]
 pub struct MessageWindowInit {
     pub message: Message,
+    /// The whole conversation (oldest first) when the popped-out message heads
+    /// one; empty for a plain single message.
+    pub thread: Vec<Message>,
     pub account_name: Option<String>,
     pub account_color: Option<String>,
     pub allow_remote: bool,
@@ -31,6 +34,8 @@ pub struct MessageWindowInit {
 
 pub struct MessageWindow {
     msg: Message,
+    /// What the reader renders: the whole conversation, or just `[msg]`.
+    thread: Vec<Message>,
     view: Controller<MessageView>,
     account_name: Option<String>,
     account_color: Option<String>,
@@ -50,8 +55,9 @@ pub enum MessageWindowInput {
     PrintPreview,
     /// No-op (unreachable output mapping).
     Ignore,
-    /// The message body arrived from the server.
-    SetBody(String),
+    /// A message body arrived from the server — the popped-out message itself
+    /// or, in a conversation window, any member of the thread.
+    SetBody { account_id: u32, id: u32, body: String },
     /// The sender-authentication verdict for this message.
     SetSenderCheck(Box<crate::models::SenderCheck>),
     /// Reflect a star toggle that happened elsewhere (or came back from the app).
@@ -78,7 +84,13 @@ pub enum MessageWindowInput {
     // ---- from the embedded reader ----
     AllowSender(String),
     /// The message card's own Reply/Reply all/Forward button.
-    CardAction(RowAction),
+    /// An action chosen on one card — in a conversation window, possibly a
+    /// member other than the popped-out message itself.
+    CardAction { action: RowAction, message: Box<Message> },
+    /// A card's "Add sender to Contacts" — for that card's message.
+    ContactFor(Box<Message>),
+    /// An email address in a card header was clicked — compose to it.
+    ComposeTo(String),
 }
 
 #[derive(Debug)]
@@ -95,6 +107,8 @@ pub enum MessageWindowOutput {
     SaveAllAttachments(Vec<Attachment>),
     /// Persist a remote-content allowlist entry.
     AllowSender(String),
+    /// An email address in a card header was clicked — compose to it.
+    ComposeTo(String),
     /// The window was closed.
     Closed,
 }
@@ -154,12 +168,12 @@ impl Component for MessageWindow {
                     },
                     pack_start = &gtk::Button {
                         set_tooltip_text: Some("Flag"),
-                        add_css_class: "flat",
+                        set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
                         #[watch]
-                        set_icon_name: if model.msg.starred {
-                            "co.hyprlab.Vireo-starred-symbolic"
+                        set_css_classes: if model.msg.starred {
+                            &["flat", "star-active"]
                         } else {
-                            "co.hyprlab.Vireo-non-starred-symbolic"
+                            &["flat"]
                         },
                         connect_clicked => MessageWindowInput::ToggleStar,
                     },
@@ -240,22 +254,28 @@ impl Component for MessageWindow {
                 // A popout is already its own window; opening another from its
                 // single card is a no-op that keeps the match total.
                 MessageViewOutput::OpenWindow(_) => MessageWindowInput::Ignore,
-                // The card's Reply/Reply all/Forward act on this window's one
-                // message, exactly like the toolbar's buttons.
-                MessageViewOutput::CardAction { action, .. } => {
-                    MessageWindowInput::CardAction(action)
+                // Card actions carry their own message, so in a conversation
+                // window each card acts on its member — the head card behaves
+                // exactly like the toolbar's buttons.
+                MessageViewOutput::CardAction { action, message } => {
+                    MessageWindowInput::CardAction { action, message }
                 }
-                // A popout shows a single message — its card carries no
-                // actions, so this can't fire; keep the match total.
-                MessageViewOutput::ContactSender(_) => MessageWindowInput::Ignore,
+                MessageViewOutput::ContactSender(m) => MessageWindowInput::ContactFor(m),
                 MessageViewOutput::MarkSeen { .. } => MessageWindowInput::Ignore,
                 MessageViewOutput::SelectCards(_) => MessageWindowInput::Ignore,
+                MessageViewOutput::ComposeTo(addr) => MessageWindowInput::ComposeTo(addr),
             });
         // Apply the message-content theme before the first render.
         view.emit(MessageViewInput::SetContentTheme(init.content_dark));
 
+        let thread = if init.thread.is_empty() {
+            vec![init.message.clone()]
+        } else {
+            init.thread
+        };
         let model = MessageWindow {
             msg: init.message,
+            thread,
             view,
             account_name: init.account_name,
             account_color: init.account_color,
@@ -307,9 +327,22 @@ impl Component for MessageWindow {
             MessageWindowInput::SetSenderCheck(check) => {
                 self.view.emit(MessageViewInput::SetSenderCheck(check));
             }
-            MessageWindowInput::SetBody(body) => {
-                self.msg.body = body;
-                self.loading = false;
+            MessageWindowInput::SetBody { account_id, id, body } => {
+                let mine = self.msg.account_id == account_id && self.msg.id == id;
+                let member = self
+                    .thread
+                    .iter_mut()
+                    .find(|t| t.account_id == account_id && t.id == id);
+                if !mine && member.is_none() {
+                    return;
+                }
+                if let Some(t) = member {
+                    t.body = body.clone();
+                }
+                if mine {
+                    self.msg.body = body;
+                    self.loading = false;
+                }
                 self.render_body();
             }
             MessageWindowInput::SetStarred(starred) => {
@@ -369,8 +402,17 @@ impl Component for MessageWindow {
             MessageWindowInput::AllowSender(addr) => {
                 let _ = sender.output(MessageWindowOutput::AllowSender(addr));
             }
-            MessageWindowInput::CardAction(action) => {
-                self.emit_action(action, &sender);
+            MessageWindowInput::CardAction { action, message } => {
+                let _ = sender.output(MessageWindowOutput::Action { action, message });
+            }
+            MessageWindowInput::ContactFor(m) => {
+                let _ = sender.output(MessageWindowOutput::AddToContacts {
+                    name: m.from_name.clone(),
+                    email: m.from_addr.clone(),
+                });
+            }
+            MessageWindowInput::ComposeTo(addr) => {
+                let _ = sender.output(MessageWindowOutput::ComposeTo(addr));
             }
         }
     }
@@ -386,14 +428,14 @@ impl MessageWindow {
 
     fn render_body(&self) {
         self.view.emit(MessageViewInput::Show {
-            thread: vec![self.msg.clone()],
+            thread: self.thread.clone(),
             allow_remote: self.allow_remote,
             account_name: self.account_name.clone(),
             account_color: self.account_color.clone(),
             primary: None,
             folder_labels: std::collections::HashMap::new(),
             loading: self.loading,
-            // A popout shows one message; there is no conversation to cover.
+            // The popout renders what it was handed; no staged reveal.
             instant: true,
         });
     }

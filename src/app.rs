@@ -58,9 +58,6 @@ const READER_ACTIONS_BREAKPOINT: f64 = 560.0;
 
 const SIDEBAR_RAIL_WIDTH: f64 = 80.0;
 
-/// Selection size at/above which a bulk archive/delete/spam shows a spinner and
-/// applies deferred (smaller batches are fast enough to run inline).
-const BULK_SPINNER_MIN: usize = 25;
 
 relm4::new_action_group!(WindowActionGroup, "win");
 relm4::new_stateless_action!(AccountsAction, WindowActionGroup, "accounts");
@@ -83,13 +80,14 @@ use crate::ui::message_list::{
 use crate::ui::attachments_gallery::{
     AttachmentsGallery, GalleryInput, GalleryOutput,
 };
+use crate::ui::contacts_page::{ContactsPage, ContactsPageInput, ContactsPageOutput};
 use crate::ui::attachment_drawer::{AttachmentDrawer, AttachmentDrawerInput};
 use crate::ui::message_view::{MessageView, MessageViewInput, MessageViewOutput};
 use crate::ui::message_window::{
     MessageWindow, MessageWindowInit, MessageWindowInput, MessageWindowOutput,
 };
 use crate::ui::notifications::{NotificationCenter, NotifyInput, NotifyOutput};
-use crate::ui::preferences::{PrefInit, PrefOutput, Preferences};
+use crate::ui::preferences::{PrefInit, PrefInput, PrefOutput, Preferences};
 use crate::ui::sidebar::{
     CtxAction, SectionData, Sidebar, SidebarInit, SidebarInput, SidebarOutput,
 };
@@ -150,6 +148,9 @@ pub struct AppModel {
     draining_composers: Vec<(u32, Controller<Compose>)>,
     /// SlideDown revealer under the reader toolbar that hosts the inline pane.
     reader_compose_revealer: gtk::Revealer,
+    /// Same idea over the contacts view's detail pane: composing from a
+    /// contact slides down right there instead of yanking the mail view back.
+    contacts_compose_revealer: gtk::Revealer,
     /// Monotonic id source for composers.
     next_compose_id: u32,
     menu: gtk::gio::Menu,
@@ -198,6 +199,9 @@ pub struct AppModel {
     unified: bool,
     /// account_id → that account's latest inbox messages (for the unified view).
     unified_by_account: HashMap<u32, Vec<Message>>,
+    /// Accounts whose inbox has been requested for the unified view since
+    /// launch (the cache-primed slices still need their catch-up sync).
+    unified_boot_requested: HashSet<u32>,
     /// (account_id, folder_id) → last-seen message list, shown instantly on
     /// revisit while a fresh sync runs in the background.
     message_cache: HashMap<(u32, u32), Vec<Message>>,
@@ -225,6 +229,13 @@ pub struct AppModel {
     /// The main-menu button, which moves into the header's centre (the title
     /// slot) while the sidebar is a rail.
     sidebar_menu: Option<gtk::MenuButton>,
+    /// The sidebar header's Refresh button — top-left, across from the menu —
+    /// shown expanded and in the peek. The rail has no header room for it, so
+    /// there the sidebar stacks its own refresh directly under the menu.
+    sidebar_refresh: gtk::Button,
+    /// The icon/spinner stack inside it, switched while any account syncs.
+    sidebar_refresh_stack: gtk::Stack,
+    sidebar_refresh_spinner: gtk::Spinner,
     /// Whether the sidebar is in icon-only (collapsed) mode.
     sidebar_collapsed: bool,
     /// The narrow-window breakpoint is currently applied (window is too narrow
@@ -290,10 +301,12 @@ pub struct AppModel {
     notifications_enabled: bool,
     /// Whether new-mail notifications may name the sender and subject.
     notification_content: bool,
-    /// Whether the sidebar shows the "Attachments" row.
+    /// Whether the sidebar's footer shows the "Attachments" row.
     show_attachments: bool,
-    /// Whether the sidebar shows the "Contacts" shortcut row.
+    /// Whether the sidebar's footer shows the "Contacts" shortcut row.
     show_contacts: bool,
+    /// Whether the settings window opens on Accounts (vs Preferences).
+    settings_open_accounts: bool,
     /// The list header's count text ("N" / "N of M"), from the message list.
     list_count: String,
     /// Lines of preview text per message-list row (1–3).
@@ -341,11 +354,23 @@ pub struct AppModel {
     thread_key: Option<(u32, u32)>,
     /// Whether conversation threads start expanded in the message list.
     threads_expanded: bool,
+    /// Whether conversation rows may expand into their members in the list
+    /// (the row keeps its chip and chevron either way).
+    thread_expansion: bool,
+    /// Whether deleting a whole selected conversation asks for confirmation.
+    confirm_thread_delete: bool,
+    /// Whether the current `list_selection` came from card clicks in the
+    /// reader (as opposed to rows picked in the list). A lone list-row
+    /// selection over an open conversation stands for the whole thread when
+    /// deleting; a lone picked card never does.
+    selection_from_cards: bool,
     /// Conversation card actions hide until hovered (preference).
     card_actions_hover: bool,
     /// With the ⋯ toggle off: card actions appear automatically on hover.
     card_actions_auto: bool,
     /// The list's Actions Palette opens on row hover (no ⋯ click).
+    /// Whether the message list rows carry an Actions Palette at all.
+    list_palette: bool,
     list_palette_hover: bool,
     /// "New message" composes inline over the reading pane (vs a window).
     compose_inline: bool,
@@ -363,6 +388,10 @@ pub struct AppModel {
     /// In-message attachment thumbnail drawer, docked below the reader body.
     attachment_drawer: Controller<AttachmentDrawer>,
     gallery: Controller<AttachmentsGallery>,
+    /// The in-app contacts view behind the sidebar's Contacts row.
+    contacts_page: Controller<ContactsPage>,
+    /// Whether the content area shows the contacts view.
+    showing_contacts: bool,
     /// True when the attachments gallery replaces the mail panes.
     showing_gallery: bool,
     /// Whether the Outbox is showing instead of the mail panes.
@@ -386,14 +415,9 @@ pub struct AppModel {
     /// A draft awaiting its body before opening in the compose editor.
     pending_draft: Option<Message>,
     /// Outstanding bulk MoveMessages requests awaiting a worker `BulkComplete`.
-    /// While > 0 (and a large selection triggered it) the list shows a spinner.
+    /// Outstanding server-side bulk operations; while > 0 the refresh spinner
+    /// spins and the status bar narrates.
     bulk_pending: usize,
-    /// A large bulk archive/delete/spam deferred one tick so its spinner paints
-    /// before the (blocking) apply runs.
-    pending_bulk: Option<(BulkAction, Vec<Message>)>,
-    /// Messages awaiting a deferred permanent delete (same spinner-first trick as
-    /// `pending_bulk`).
-    pending_purge: Option<Vec<Message>>,
     /// Ids handed to conversation messages pulled in from another folder,
     /// allocated downwards from the top of the range. A message's id is its UID,
     /// which is only unique within its own folder — and the reader keys bodies by
@@ -488,7 +512,7 @@ pub enum AppMsg {
     /// removed), so the reader should clear.
     ClearReader,
     /// Double-click: open the message in its own standalone window.
-    OpenMessageWindow(Message),
+    OpenMessageWindow { message: Message, thread: Vec<Message> },
     /// A popped-out message window was closed (remove it from the map).
     PopoutClosed((u32, u32)),
     /// Add a contact from a popout window's sender.
@@ -522,10 +546,8 @@ pub enum AppMsg {
     ToggleReadCurrent,
     /// A bulk action applied to every selected message.
     Bulk { action: BulkAction, messages: Vec<Message> },
-    /// Apply the deferred large bulk action (runs after its spinner has painted).
-    BulkApply,
-    /// A worker finished one bulk MoveMessages request; clears the spinner once
-    /// all outstanding bulk moves are done.
+    /// A worker finished one bulk MoveMessages request; stops the busy
+    /// indicator once all outstanding bulk moves are done.
     BulkComplete,
     Compose,
     OpenAbout,
@@ -569,8 +591,16 @@ pub enum AppMsg {
     SetDateStyle(crate::config::DateStyle),
     SetClockStyle(crate::config::ClockStyle),
     SetThreading(bool),
+    SetThreadExpansion(bool),
+    SetConfirmThreadDelete(bool),
+    /// Delete requested on a whole conversation (a lone selected thread-head
+    /// row): confirm (per preference), then delete every member.
+    DeleteThread(Vec<Message>),
+    /// The thread-delete dialog was confirmed.
+    DeleteThreadConfirmed(Vec<Message>),
     SetThreadsExpanded(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
+    SetListPalette(bool),
     SetListPaletteHover(bool),
     SetComposeInline(bool),
     /// Ctrl+Z: undo the most recent move/delete.
@@ -579,8 +609,8 @@ pub enum AppMsg {
     SetPush(bool),
     SetNotifications(bool),
     SetNotificationContent(bool),
-    SetShowAttachments(bool),
-    SetShowContacts(bool),
+    SetAttachmentsRow(bool),
+    SetContactsRow(bool),
     /// The message list's visible-count text changed.
     ListCount(String),
     /// Preference: hovering the narrow-window rail floats the sidebar out.
@@ -638,9 +668,14 @@ pub enum AppMsg {
     /// The system resumed from sleep — worker IMAP sockets are stale, so
     /// reconnect every account and reload the visible folder.
     SystemResumed,
-    CloseAccounts,
+    /// Open the settings window on the user's preferred view (the menu entry).
+    OpenSettings,
     OpenPreferences,
     ClosePreferences,
+    /// The accounts editor subpage opened/closed in the settings window.
+    SettingsEditorOpen(bool),
+    /// The "settings window opens to" preference changed (true = Accounts).
+    SetSettingsOpenAccounts(bool),
     // Worker events (each carries the account it came from)
     SetAccount(Account),
     SetFolders { account_id: u32, folders: Vec<Folder> },
@@ -650,6 +685,9 @@ pub enum AppMsg {
     /// A folder's background backfill finished — it's fully indexed now.
     BackfillDone { account_id: u32, folder_id: u32 },
     FolderUnread { account_id: u32, folder_id: u32, unread: u32 },
+    /// From a per-folder IDLE watcher, which knows its folder only by path —
+    /// folder ids are positional and may have shifted since it was spawned.
+    FolderUnreadByPath { account_id: u32, path: String, unread: u32 },
     /// `path` is the folder the body was read from — a UID only identifies a
     /// message within its own folder, so applying a body to a message means
     /// checking the folder too.
@@ -667,6 +705,16 @@ pub enum AppMsg {
     NotifyCount(usize),
     ToggleNotifications,
     OpenContacts,
+    /// The background EDS read for the contacts view finished.
+    ContactsLoaded(Vec<crate::contacts::ContactDetails>),
+    /// Right-click on the sidebar's Contacts row: the external app.
+    LaunchGnomeContacts,
+    /// Contact editor writes (run on a background thread against EDS).
+    SaveContact { book_uid: String, vcard: String },
+    CreateContact(String),
+    DeleteContact { book_uid: String, uid: String },
+    /// A contact write finished (`Some` = the error to show).
+    ContactWriteDone(Option<String>),
 }
 
 #[relm4::component(pub)]
@@ -758,6 +806,7 @@ impl SimpleComponent for AppModel {
                                 set_label: crate::APP_NAME,
                                 add_css_class: "app-title",
                             },
+                            pack_start: &model.sidebar_refresh,
                             #[name = "sidebar_menu"]
                             pack_end = &gtk::MenuButton {
                                 set_icon_name: "co.hyprlab.Vireo-open-menu-symbolic",
@@ -790,9 +839,16 @@ impl SimpleComponent for AppModel {
                     gtk::Stack {
                         set_hexpand: true,
                         set_transition_type: gtk::StackTransitionType::Crossfade,
-                        // Swap the mail panes for the attachments gallery.
+                        // Swap the mail panes for the attachments gallery or
+                        // the contacts view.
                         #[watch]
-                        set_visible_child_name: if model.showing_gallery { "gallery" } else { "mail" },
+                        set_visible_child_name: if model.showing_gallery {
+                            "gallery"
+                        } else if model.showing_contacts {
+                            "contacts"
+                        } else {
+                            "mail"
+                        },
 
                     add_named[Some("mail")] = &gtk::Paned {
                         set_orientation: gtk::Orientation::Horizontal,
@@ -988,11 +1044,14 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed
                                         && model.reader_compose.is_none(),
+                                    // The icon shows the message's STATE (unread
+                                    // envelope while unread); the tooltip names
+                                    // the action.
                                     #[watch]
                                     set_icon_name: if model.reply_target().is_some_and(|m| m.unread) {
-                                        "co.hyprlab.Vireo-mail-read-symbolic"
-                                    } else {
                                         "co.hyprlab.Vireo-mail-unread-symbolic"
+                                    } else {
+                                        "co.hyprlab.Vireo-mail-read-symbolic"
                                     },
                                     #[watch]
                                     set_tooltip_text: Some(if model.reply_target().is_some_and(|m| m.unread) {
@@ -1006,16 +1065,18 @@ impl SimpleComponent for AppModel {
                                 },
                                 pack_start = &gtk::Button {
                                     set_tooltip_text: Some("Flag"),
-                                    add_css_class: "flat",
+                                    // One glyph in both states, like every other
+                                    // icon; the flagged state carries colour only.
+                                    set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
+                                    #[watch]
+                                    set_css_classes: if model.reply_target().is_some_and(|m| m.starred) {
+                                        &["flat", "star-active"]
+                                    } else {
+                                        &["flat"]
+                                    },
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed
                                         && model.reader_compose.is_none(),
-                                    #[watch]
-                                    set_icon_name: if model.reply_target().is_some_and(|m| m.starred) {
-                                        "co.hyprlab.Vireo-starred-symbolic"
-                                    } else {
-                                        "co.hyprlab.Vireo-non-starred-symbolic"
-                                    },
                                     #[watch]
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleStar),
@@ -1367,12 +1428,18 @@ impl SimpleComponent for AppModel {
         let show_attachments = config::load_show_attachments();
         let show_contacts = config::load_show_contacts();
         let sidebar = Sidebar::builder()
-            .launch(SidebarInit { collapsed: icon_only, show_attachments, show_contacts })
+            .launch(SidebarInit {
+                collapsed: icon_only,
+                show_attachments,
+                show_contacts,
+            })
             .forward(sender.input_sender(), |out| match out {
                 SidebarOutput::UnifiedSelected => AppMsg::UnifiedSelected,
                 SidebarOutput::AttachmentsSelected => AppMsg::ShowAttachments,
                 SidebarOutput::ContactsClicked => AppMsg::OpenContacts,
                 SidebarOutput::RefreshRequested => AppMsg::Refresh,
+                SidebarOutput::StatusBarRequested => AppMsg::ToggleNotifications,
+                SidebarOutput::OpenGnomeContacts => AppMsg::LaunchGnomeContacts,
                 SidebarOutput::OutboxSelected => AppMsg::ShowOutbox,
                 SidebarOutput::FolderSelected { account_id, folder_id, name, path } => {
                     AppMsg::FolderSelected { account_id, folder_id, name, path }
@@ -1402,8 +1469,13 @@ impl SimpleComponent for AppModel {
                         AppMsg::MessageSelected { message, thread, solo }
                     }
                     MessageListOutput::SelectionKeys(keys) => AppMsg::SelectionKeys(keys),
+                    MessageListOutput::DeleteThread { messages } => {
+                        AppMsg::DeleteThread(messages)
+                    }
                     MessageListOutput::CountChanged(text) => AppMsg::ListCount(text),
-                    MessageListOutput::Activated(m) => AppMsg::OpenMessageWindow(m),
+                    MessageListOutput::Activated { message, thread } => {
+                        AppMsg::OpenMessageWindow { message, thread }
+                    }
                     MessageListOutput::Action { action, message } => {
                         AppMsg::RowAction { action, message }
                     }
@@ -1419,7 +1491,9 @@ impl SimpleComponent for AppModel {
                 .launch(())
                 .forward(sender.input_sender(), |out| match out {
                     MessageViewOutput::AllowSender(addr) => AppMsg::AllowSender(addr),
-                    MessageViewOutput::OpenWindow(m) => AppMsg::OpenMessageWindow(*m),
+                    MessageViewOutput::OpenWindow(m) => {
+                        AppMsg::OpenMessageWindow { message: *m, thread: Vec::new() }
+                    }
                     MessageViewOutput::CardAction { action, message } => {
                         AppMsg::CardAction { action, message }
                     }
@@ -1428,6 +1502,7 @@ impl SimpleComponent for AppModel {
                         AppMsg::ThreadMessageSeen { account_id, id }
                     }
                     MessageViewOutput::SelectCards(keys) => AppMsg::SelectCards(keys),
+                    MessageViewOutput::ComposeTo(addr) => AppMsg::ComposeTo(addr),
                 });
 
         // The drawer owns a Paned whose top pane is the reader body, so hand it
@@ -1452,6 +1527,43 @@ impl SimpleComponent for AppModel {
                     }
                 });
 
+        // Built here (not in the model literal) because the contacts page
+        // mounts it over its detail pane at launch.
+        let contacts_compose_revealer = {
+            let r = gtk::Revealer::new();
+            r.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+            r.set_transition_duration(300);
+            r.set_reveal_child(false);
+            r.set_can_target(false);
+            r
+        };
+        let contacts_page =
+            ContactsPage::builder()
+                .launch(contacts_compose_revealer.clone())
+                .forward(sender.input_sender(), |out| match out {
+                    ContactsPageOutput::Compose(email) => AppMsg::ComposeTo(email),
+                    ContactsPageOutput::ToggleSidebar => AppMsg::ToggleSidebar,
+                    ContactsPageOutput::SaveContact { book_uid, vcard } => {
+                        AppMsg::SaveContact { book_uid, vcard }
+                    }
+                    ContactsPageOutput::CreateContact { vcard } => {
+                        AppMsg::CreateContact(vcard)
+                    }
+                    ContactsPageOutput::DeleteContact { book_uid, uid } => {
+                        AppMsg::DeleteContact { book_uid, uid }
+                    }
+                    ContactsPageOutput::ShowPhoto { name, data } => {
+                        // The lightbox routes by extension — a bare contact
+                        // name sent the JPEG down the PDF path, where poppler
+                        // hung the UI trying to parse it. Name it by content.
+                        let name = format!("{name}.{}", crate::models::image_ext(&data));
+                        AppMsg::ShowLightbox {
+                            items: vec![crate::models::Attachment { name, data }],
+                            start: 0,
+                        }
+                    }
+                });
+
         let notifications = NotificationCenter::builder().launch(()).forward(
             sender.input_sender(),
             |out| match out {
@@ -1459,16 +1571,29 @@ impl SimpleComponent for AppModel {
             },
         );
 
+        // Sectioned: settings / printing / window & help / quit.
         let menu = gtk::gio::Menu::new();
-        menu.append(Some("Accounts"), Some("win.accounts"));
-        menu.append(Some("Preferences"), Some("win.preferences"));
-        menu.append(Some("Print Preview…"), Some("win.print-preview"));
-        menu.append(Some("Print Message…"), Some("win.print"));
-        menu.append(Some("Reveal Status Bar"), Some("win.status-bar"));
-        menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
-        menu.append(Some(format!("About {}", crate::APP_NAME).as_str()), Some("win.about"));
-        // Last, where a Quit item belongs.
-        menu.append(Some("Quit"), Some("app.quit"));
+        {
+            let settings = gtk::gio::Menu::new();
+            settings.append(Some("Accounts & Preferences"), Some("win.accounts"));
+            menu.append_section(None, &settings);
+
+            let printing = gtk::gio::Menu::new();
+            printing.append(Some("Print Preview…"), Some("win.print-preview"));
+            printing.append(Some("Print Message…"), Some("win.print"));
+            menu.append_section(None, &printing);
+
+            let help = gtk::gio::Menu::new();
+            help.append(Some("Reveal Status Bar"), Some("win.status-bar"));
+            help.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
+            help.append(Some(format!("About {}", crate::APP_NAME).as_str()), Some("win.about"));
+            menu.append_section(None, &help);
+
+            // Last, where a Quit item belongs.
+            let quit = gtk::gio::Menu::new();
+            quit.append(Some("Quit"), Some("app.quit"));
+            menu.append_section(None, &quit);
+        }
 
         let mut model = AppModel {
             workers: HashMap::new(),
@@ -1486,6 +1611,7 @@ impl SimpleComponent for AppModel {
                 r.set_reveal_child(false);
                 r
             },
+            contacts_compose_revealer,
             next_compose_id: 1,
             menu,
             accounts: Vec::new(),
@@ -1517,6 +1643,7 @@ impl SimpleComponent for AppModel {
             attachment_cache: HashMap::new(),
             unified: false,
             unified_by_account: HashMap::new(),
+            unified_boot_requested: HashSet::new(),
             message_cache: HashMap::new(),
             indexed_folders: HashSet::new(),
             body_cache: HashMap::new(),
@@ -1527,8 +1654,6 @@ impl SimpleComponent for AppModel {
             list_selection: Vec::new(),
             undo_stack: Vec::new(),
             bulk_pending: 0,
-            pending_bulk: None,
-            pending_purge: None,
             related_id_seq: u32::MAX,
             related_ids: HashMap::new(),
             folder_unread: HashMap::new(),
@@ -1536,6 +1661,19 @@ impl SimpleComponent for AppModel {
             app_title: None,
             sidebar_menu: None,
             sidebar_header: None,
+            sidebar_refresh: {
+                let b = gtk::Button::new();
+                b.set_tooltip_text(Some("Refresh"));
+                b.add_css_class("flat");
+                b.set_valign(gtk::Align::Center);
+                b
+            },
+            sidebar_refresh_stack: {
+                let s = gtk::Stack::new();
+                s.set_transition_type(gtk::StackTransitionType::Crossfade);
+                s
+            },
+            sidebar_refresh_spinner: gtk::Spinner::new(),
             sidebar_collapsed: icon_only,
             sidebar_anim: None,
             auto_rail: false,
@@ -1564,6 +1702,7 @@ impl SimpleComponent for AppModel {
             notification_content: config::load_notification_content(),
             show_attachments,
             show_contacts,
+            settings_open_accounts: config::load_settings_open_accounts(),
             list_count: String::new(),
             preview_lines: config::load_preview_lines(),
             shortcuts_win: None,
@@ -1583,8 +1722,12 @@ impl SimpleComponent for AppModel {
             thread_cache_order: Vec::new(),
             thread_key: None,
             threads_expanded: config::load_threads_expanded(),
+            thread_expansion: config::load_thread_expansion(),
+            confirm_thread_delete: config::load_confirm_thread_delete(),
+            selection_from_cards: false,
             card_actions_hover: config::load_card_actions_hover(),
             card_actions_auto: config::load_card_actions_auto(),
+            list_palette: config::load_list_palette(),
             list_palette_hover: config::load_list_palette_hover(),
             compose_inline: config::load_compose_inline(),
             message_theme: config::load_message_theme(),
@@ -1598,10 +1741,13 @@ impl SimpleComponent for AppModel {
             attachment_drawer,
             gallery,
             showing_gallery: false,
+            contacts_page,
+            showing_contacts: false,
             showing_outbox: false,
             outbox_by_account: HashMap::new(),
             gallery_by_account: HashMap::new(),
         };
+        model.prime_from_cache();
         model.spawn_workers(&sender);
         // Refresh visible sender circles when the GNOME Contacts photo index
         // changes (first load finishing, or an EDS/CardDAV sync).
@@ -1653,6 +1799,12 @@ impl SimpleComponent for AppModel {
         model
             .message_list
             .emit(MessageListInput::SetThreading(model.threading));
+        model
+            .message_list
+            .emit(MessageListInput::SetThreadExpansion(model.thread_expansion));
+        model
+            .message_list
+            .emit(MessageListInput::SetListPalette(model.list_palette));
         model
             .message_list
             .emit(MessageListInput::SetThreadsExpanded(model.threads_expanded));
@@ -1716,10 +1868,26 @@ impl SimpleComponent for AppModel {
             let title = gtk::Label::new(Some("Attachments"));
             title.add_css_class("pane-title");
             gallery_hb.set_title_widget(Some(&title));
+            // Leftmost, same spot as the message list header's: the sidebar
+            // collapse/expand toggle.
+            let sidebar_btn =
+                gtk::Button::from_icon_name("co.hyprlab.Vireo-sidebar-show-symbolic");
+            sidebar_btn.set_tooltip_text(Some("Toggle sidebar"));
+            sidebar_btn.add_css_class("flat");
+            let s = sender.input_sender().clone();
+            sidebar_btn.connect_clicked(move |_| {
+                let _ = s.send(AppMsg::ToggleSidebar);
+            });
+            gallery_hb.pack_start(&sidebar_btn);
             gallery_tv.add_top_bar(&gallery_hb);
             gallery_tv.set_content(Some(model.gallery.widget()));
             widgets.content_stack.add_named(&gallery_tv, Some("gallery"));
 
+            // The contacts view brings its own per-pane headers (so its
+            // divider runs to the very top, like the mail panes').
+            widgets
+                .content_stack
+                .add_named(model.contacts_page.widget(), Some("contacts"));
         }
         // Desktop-notification click actions: raise the window (error alerts) and
         // raise + open a specific message (new-mail alerts). Registered here rather
@@ -1785,6 +1953,10 @@ impl SimpleComponent for AppModel {
             let s = sender.clone();
             let guard = model.peek_transition.clone();
             widgets.sidebar_split.connect_show_sidebar_notify(move |split| {
+                tracing::info!(
+                    "peek: show-sidebar notify shown={} collapsed={} guarded={}",
+                    split.shows_sidebar(), split.is_collapsed(), guard.get()
+                );
                 // Only a *user* dismissal (scrim click / swipe) counts — our
                 // own open/close transitions notify too, and collapsing the
                 // split auto-hides the sidebar mid-open.
@@ -1853,6 +2025,30 @@ impl SimpleComponent for AppModel {
         model.app_title = Some(widgets.app_title.clone());
         model.sidebar_header = Some(widgets.sidebar_header.clone());
         model.sidebar_menu = Some(widgets.sidebar_menu.clone());
+        // The header Refresh's icon/spinner faces, and its click.
+        {
+            let icon = gtk::Image::from_icon_name("co.hyprlab.Vireo-view-refresh-symbolic");
+            model.sidebar_refresh_stack.add_named(&icon, Some("icon"));
+            model
+                .sidebar_refresh_stack
+                .add_named(&model.sidebar_refresh_spinner, Some("spinner"));
+            model.sidebar_refresh_stack.set_visible_child_name("icon");
+            model.sidebar_refresh.set_child(Some(&model.sidebar_refresh_stack));
+            let s = sender.input_sender().clone();
+            model.sidebar_refresh.connect_clicked(move |_| {
+                let _ = s.send(AppMsg::Refresh);
+            });
+            // Long-press slides the status bar down — the place to see what
+            // the spinner is spinning about. Claiming the sequence keeps the
+            // release from also firing the button's click (a refresh).
+            let long = gtk::GestureLongPress::new();
+            let s = sender.input_sender().clone();
+            long.connect_pressed(move |gesture, _, _| {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                let _ = s.send(AppMsg::ToggleNotifications);
+            });
+            model.sidebar_refresh.add_controller(long);
+        }
         if model.sidebar_collapsed {
             widgets.sidebar_split.set_min_sidebar_width(SIDEBAR_RAIL_WIDTH);
             widgets.sidebar_split.set_max_sidebar_width(SIDEBAR_RAIL_WIDTH);
@@ -1860,6 +2056,7 @@ impl SimpleComponent for AppModel {
                 &widgets.sidebar_header,
                 &widgets.app_title,
                 &widgets.sidebar_menu,
+                &model.sidebar_refresh,
                 true,
             );
         }
@@ -1918,7 +2115,7 @@ impl SimpleComponent for AppModel {
         let mut group = RelmActionGroup::<WindowActionGroup>::new();
         let accounts_sender = sender.clone();
         group.add_action(RelmAction::<AccountsAction>::new_stateless(move |_| {
-            accounts_sender.input(AppMsg::OpenAccounts);
+            accounts_sender.input(AppMsg::OpenSettings);
         }));
         let prefs_sender = sender.clone();
         group.add_action(RelmAction::<PreferencesAction>::new_stateless(move |_| {
@@ -1956,6 +2153,8 @@ impl SimpleComponent for AppModel {
         relm4::main_application().set_accelerators_for_action::<PrintAction>(&["<Ctrl>p"]);
         relm4::main_application()
             .set_accelerators_for_action::<PrintPreviewAction>(&["<Ctrl><Shift>p"]);
+        relm4::main_application()
+            .set_accelerators_for_action::<StatusBarAction>(&["<Ctrl><Shift>s"]);
         relm4::main_application().set_accelerators_for_action::<ShortcutsAction>(&[
             "<Ctrl>question",
             "<Ctrl><Shift>question",
@@ -2082,6 +2281,42 @@ impl SimpleComponent for AppModel {
             widgets.lightbox_picture.add_controller(click);
         }
 
+        // Screenshot showcase (VIREO_DEMO + VIREO_SHOWCASE=/path.png): stage
+        // the demo the way the marketing shots want it — first row (the demo
+        // conversation, expanded via the threads_expanded preference) selected,
+        // one mid-thread card highlighted — then render the window to a PNG.
+        // Timers leave room for the WebViews to load and settle between steps.
+        if demo_mode() {
+            if let Some(shot) = std::env::var("VIREO_SHOWCASE").ok() {
+                // VIREO_SHOWCASE_STAGE=0 skips the staging (capture-only, for
+                // testing arbitrary states); VIREO_SHOWCASE_DELAY overrides the
+                // capture time (seconds, default 9).
+                let stage = std::env::var("VIREO_SHOWCASE_STAGE").as_deref() != Ok("0");
+                let delay: u32 = std::env::var("VIREO_SHOWCASE_DELAY")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(9);
+                if stage {
+                    let list = model.message_list.sender().clone();
+                    gtk::glib::timeout_add_seconds_local_once(3, move || {
+                        let _ = list.send(MessageListInput::MoveSelection(1));
+                    });
+                    let view = model.message_view.sender().clone();
+                    gtk::glib::timeout_add_seconds_local_once(6, move || {
+                        let _ = view.send(crate::ui::message_view::MessageViewInput::CardClicked {
+                            account_id: 1,
+                            id: 2,
+                            mode: crate::ui::message_view::SelectMode::Plain,
+                        });
+                    });
+                }
+                let win = root.clone();
+                gtk::glib::timeout_add_seconds_local_once(delay, move || {
+                    showcase_capture(win.upcast_ref::<gtk::Widget>(), &shot);
+                });
+            }
+        }
+
         // The list header's sort menu (moved out of the message list's own
         // toolbar): a stateful radio action feeding the list's SetSort.
         {
@@ -2128,6 +2363,7 @@ impl SimpleComponent for AppModel {
                 // server request is ever aimed at it.
                 self.showing_outbox = true;
                 self.showing_gallery = false;
+                self.showing_contacts = false;
                 self.unified = false;
                 self.selected = None;
                 self.current = None;
@@ -2185,6 +2421,7 @@ impl SimpleComponent for AppModel {
                 self.close_sidebar_peek();
                 self.showing_outbox = false;
                 self.showing_gallery = true;
+                self.showing_contacts = false;
                 self.gallery_by_account.clear();
                 // Clear first, then flag loading — SetItems resets the loading
                 // flag, so the other order cancels the spinner it just showed.
@@ -2212,6 +2449,7 @@ impl SimpleComponent for AppModel {
 
             AppMsg::OpenAttachmentMessage { account_id, folder_path, uid } => {
                 self.showing_gallery = false;
+                self.showing_contacts = false;
                 self.showing_outbox = false;
                 if let Some(folder) = self
                     .folders
@@ -2229,6 +2467,7 @@ impl SimpleComponent for AppModel {
             AppMsg::UnifiedSelected => {
                 self.close_sidebar_peek();
                 self.showing_gallery = false;
+                self.showing_contacts = false;
                 self.showing_outbox = false;
                 self.unified = true;
                 self.selected = None;
@@ -2349,6 +2588,10 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::SidebarCollapsed(collapsed) => {
+                tracing::info!(
+                    "peek: sidebar reports collapsed={collapsed} (peek={} auto_rail={} rail_active={})",
+                    self.sidebar_peek, self.auto_rail, self.rail_active
+                );
                 // The sidebar component has already switched its own rows; this
                 // is the app-side reaction (split widths, header, persistence).
                 // At a width that can host the full sidebar, the arrow inside a
@@ -2376,6 +2619,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::AutoRail(on) => {
+                tracing::info!("peek: auto-rail {on} (peek={})", self.sidebar_peek);
                 self.auto_rail = on;
                 if !on && self.sidebar_peek {
                     // Widened with the overlay open: fold it back before the
@@ -2398,10 +2642,50 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ToggleSidebar => {
+                tracing::info!(
+                    "peek: toggle button (peek={} auto_rail={} rail_active={})",
+                    self.sidebar_peek, self.auto_rail, self.rail_active
+                );
+                // Self-healing: with no peek open, the split should always be
+                // un-collapsed and showing (rail or side-by-side). If it ended
+                // hidden — a lost race in the peek machinery left users with no
+                // sidebar and a dead button until relaunch (seen on 1.17.1) —
+                // the button's job is to bring the sidebar back, not to feed
+                // a toggle into state that already lost the plot: repair to
+                // the rail first, then toggle normally from there.
+                if !self.sidebar_peek {
+                    if let Some(split) = self.sidebar_split.clone() {
+                        if split.is_collapsed() || !split.shows_sidebar() {
+                            tracing::info!(
+                                "peek: toggle found split hidden (collapsed={} shown={}) — repairing",
+                                split.is_collapsed(),
+                                split.shows_sidebar()
+                            );
+                            // A pending end-of-close restore would stomp the
+                            // peek this press is about to open.
+                            if let Some(timer) = self.peek_close_timer.borrow_mut().take() {
+                                timer.remove();
+                            }
+                            self.rail_active = true;
+                            self.sidebar.emit(SidebarInput::SetCollapsed(true));
+                            self.compact_sidebar_header(true);
+                            self.peek_transition.set(true);
+                            split.set_min_sidebar_width(SIDEBAR_RAIL_WIDTH);
+                            split.set_max_sidebar_width(SIDEBAR_RAIL_WIDTH);
+                            split.set_collapsed(false);
+                            split.set_show_sidebar(true);
+                            self.peek_transition.set(false);
+                            if let Some(g) = self.peek_rail_ghost.as_ref() {
+                                g.set_visible(false);
+                            }
+                        }
+                    }
+                }
                 self.sidebar.emit(SidebarInput::ToggleCollapsed);
             }
 
             AppMsg::SidebarPeekDismissed => {
+                tracing::info!("peek: dismissed (peek={})", self.sidebar_peek);
                 if self.sidebar_peek {
                     self.rail_active = true;
                     self.set_sidebar_peek(false, true, true);
@@ -2758,12 +3042,12 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::OpenMessageWindow(m) => {
+            AppMsg::OpenMessageWindow { message: m, thread } => {
                 // Drafts open in the editor rather than a read-only window.
                 if self.is_drafts_folder(m.account_id, m.folder_id) {
                     self.open_draft(m, &sender);
                 } else {
-                    self.open_message_window(m, &sender);
+                    self.open_message_window(m, thread, &sender);
                 }
             }
 
@@ -2817,6 +3101,17 @@ impl SimpleComponent for AppModel {
                     self.message_list.emit(MessageListInput::Bulk(BulkAction::Delete));
                     return;
                 }
+                // A lone list-row selection over an open conversation may be
+                // its thread head, which stands for the whole thread — the
+                // list resolves that (DeleteThread) or falls back to a plain
+                // bulk delete. A picked card is always just that message.
+                if !self.selection_from_cards
+                    && self.list_selection.len() == 1
+                    && self.current_thread.len() > 1
+                {
+                    self.message_list.emit(MessageListInput::ResolveDelete);
+                    return;
+                }
                 if let Some(m) = self.reply_target() {
                     // In the Outbox, deleting means giving up on sending it —
                     // there is no server-side copy to move to Trash.
@@ -2850,20 +3145,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::PurgeMessages(messages) => {
-                if messages.len() >= BULK_SPINNER_MIN {
-                    self.message_list.emit(MessageListInput::SetBusy(Some(format!(
-                        "Deleting {} messages…",
-                        messages.len()
-                    ))));
-                    self.pending_purge = Some(messages);
-                    let s = sender.clone();
-                    gtk::glib::timeout_add_local_once(
-                        std::time::Duration::from_millis(16),
-                        move || s.input(AppMsg::BulkApply),
-                    );
-                } else {
-                    self.purge_messages(messages);
-                }
+                self.purge_messages(messages);
             }
 
             AppMsg::CardAction { action, message } => {
@@ -2981,42 +3263,20 @@ impl SimpleComponent for AppModel {
                             self.delete_messages(messages, &sender);
                             return;
                         }
-                        if messages.len() >= BULK_SPINNER_MIN {
-                            self.message_list.emit(MessageListInput::SetBusy(Some(
-                                bulk_busy_label(action, messages.len()),
-                            )));
-                            self.pending_bulk = Some((action, messages));
-                            let s = sender.clone();
-                            gtk::glib::timeout_add_local_once(
-                                std::time::Duration::from_millis(16),
-                                move || s.input(AppMsg::BulkApply),
-                            );
-                        } else {
-                            self.apply_bulk_move(action, messages);
-                        }
+                        // The apply is one batched widget update, so no overlay
+                        // needed at any size: rows vanish at once, the server
+                        // work runs invisibly in the workers, and the refresh
+                        // spinner + status bar carry the progress story.
+                        self.apply_bulk_move(action, messages);
                     }
-                }
-            }
-
-            AppMsg::BulkApply => {
-                if let Some(messages) = self.pending_purge.take() {
-                    self.purge_messages(messages);
-                }
-                if let Some((action, messages)) = self.pending_bulk.take() {
-                    self.apply_bulk_move(action, messages);
-                }
-                // The optimistic removal is done; keep the spinner up until the
-                // server-side work finishes (BulkComplete). If nothing was sent,
-                // clear it now.
-                if self.bulk_pending == 0 {
-                    self.message_list.emit(MessageListInput::SetBusy(None));
                 }
             }
 
             AppMsg::BulkComplete => {
                 self.bulk_pending = self.bulk_pending.saturating_sub(1);
-                if self.bulk_pending == 0 {
-                    self.message_list.emit(MessageListInput::SetBusy(None));
+                self.update_busy_indicator();
+                if self.bulk_pending == 0 && self.busy.is_empty() {
+                    self.notifications.emit(NotifyInput::SetStatus(String::new()));
                 }
             }
 
@@ -3042,6 +3302,12 @@ impl SimpleComponent for AppModel {
                             }
                         }
                     }
+                }
+                // Only the visible folder (and the IDLE-watched inbox) re-synced
+                // above; every other folder's unread chip would drift until it
+                // was selected. Have each account re-check them all.
+                for w in self.workers.values() {
+                    let _ = w.send(MailRequest::RefreshUnread);
                 }
             }
 
@@ -3390,21 +3656,21 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::SetShowAttachments(on) => {
-                if self.show_attachments != on {
-                    self.show_attachments = on;
+            AppMsg::SetAttachmentsRow(show) => {
+                if self.show_attachments != show {
+                    self.show_attachments = show;
                     self.save_settings();
-                    self.sidebar.emit(SidebarInput::SetShowAttachments(on));
+                    self.sidebar.emit(SidebarInput::SetAttachmentsRow(show));
                 }
             }
 
             AppMsg::ListCount(text) => self.list_count = text,
 
-            AppMsg::SetShowContacts(on) => {
-                if self.show_contacts != on {
-                    self.show_contacts = on;
+            AppMsg::SetContactsRow(show) => {
+                if self.show_contacts != show {
+                    self.show_contacts = show;
                     self.save_settings();
-                    self.sidebar.emit(SidebarInput::SetShowContacts(on));
+                    self.sidebar.emit(SidebarInput::SetContactsRow(show));
                 }
             }
 
@@ -3414,6 +3680,36 @@ impl SimpleComponent for AppModel {
                     self.save_settings();
                     self.message_list.emit(MessageListInput::SetThreading(on));
                 }
+            }
+
+            AppMsg::SetThreadExpansion(on) => {
+                if self.thread_expansion != on {
+                    self.thread_expansion = on;
+                    self.save_settings();
+                    self.message_list.emit(MessageListInput::SetThreadExpansion(on));
+                }
+            }
+
+            AppMsg::SetConfirmThreadDelete(on) => {
+                if self.confirm_thread_delete != on {
+                    self.confirm_thread_delete = on;
+                    self.save_settings();
+                }
+            }
+
+            AppMsg::DeleteThread(messages) => {
+                if messages.is_empty() {
+                    return;
+                }
+                if self.confirm_thread_delete {
+                    self.confirm_delete_thread(messages, &sender);
+                } else {
+                    self.delete_messages(messages, &sender);
+                }
+            }
+
+            AppMsg::DeleteThreadConfirmed(messages) => {
+                self.delete_messages(messages, &sender);
             }
 
             AppMsg::SetCardActionsMode { hover_toggle, hover_auto } => {
@@ -3442,6 +3738,14 @@ impl SimpleComponent for AppModel {
                     self.message_list.emit(MessageListInput::SetPaletteCollapse(secs));
                     // The message cards' palette shares the same timeout.
                     self.message_view.emit(MessageViewInput::SetPaletteCollapse(secs));
+                }
+            }
+
+            AppMsg::SetListPalette(on) => {
+                if self.list_palette != on {
+                    self.list_palette = on;
+                    self.save_settings();
+                    self.message_list.emit(MessageListInput::SetListPalette(on));
                 }
             }
 
@@ -3491,6 +3795,11 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ComposeTo(addr) => {
+                // The contacts view hosts its own compose slot (the composer
+                // slides down over the contact card); from the gallery there is
+                // no slot, so bring the mail panes back first — the composer
+                // would otherwise open invisibly behind the stack.
+                self.showing_gallery = false;
                 let account = self
                     .current
                     .as_ref()
@@ -3500,7 +3809,13 @@ impl SimpleComponent for AppModel {
                     to: addr,
                     ..Default::default()
                 };
-                self.open_compose(account, prefill, &sender);
+                // Same preference as "New Message": slide down over the
+                // reader, unless composing is set to open in a window.
+                if self.compose_inline {
+                    self.open_inline_reply(account, prefill, &sender);
+                } else {
+                    self.open_compose(account, prefill, &sender);
+                }
             }
 
             AppMsg::SendMessage(out) => {
@@ -3567,9 +3882,9 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::OpenAccounts => self.open_accounts_window(&sender, false),
+            AppMsg::OpenAccounts => self.open_settings_window(&sender, true, false),
 
-            AppMsg::AddFirstAccount => self.open_accounts_window(&sender, true),
+            AppMsg::AddFirstAccount => self.open_settings_window(&sender, true, true),
 
             AppMsg::AccountSaved { original_email, account } => {
                 let new_email = account.email.clone();
@@ -3761,92 +4076,32 @@ impl SimpleComponent for AppModel {
                 self.arm_auto_fetch(&sender);
             }
 
-            AppMsg::CloseAccounts => self.accounts_win = None,
-
-            AppMsg::OpenPreferences => {
-                // Already open? Bring it forward instead of opening another.
-                if let Some(p) = self.prefs.as_ref().filter(|p| p.widget().is_visible()) {
-                    p.widget().present();
-                    return;
-                }
-                let init = PrefInit {
-                    allowed_senders: self.allowed_senders.clone(),
-                    auto_remote_content: self.auto_remote_content,
-                    show_remote_banner: self.show_remote_banner,
-                    gravatar: self.gravatar,
-                    avatars: self.avatars,
-                    sender_logos: self.sender_logos,
-                    date_style: self.date_style,
-                    clock_style: self.clock_style,
-                    fetch_interval_secs: self.fetch_interval_secs,
-                    push: self.push,
-                    blacklist: self.blacklist.clone(),
-                    palette_collapse_secs: self.palette_collapse_secs,
-                    threading: self.threading,
-                    threads_expanded: self.threads_expanded,
-                    message_theme: self.message_theme,
-                    notifications: self.notifications_enabled,
-                    notification_content: self.notification_content,
-                    show_attachments: self.show_attachments,
-                    show_contacts: self.show_contacts,
-                    sidebar_hover_expand: self.sidebar_hover_expand,
-                    card_actions_hover: self.card_actions_hover,
-                    card_actions_auto: self.card_actions_auto,
-                    list_palette_hover: self.list_palette_hover,
-                    compose_inline: self.compose_inline,
-                    app_theme: self.app_theme,
-                    preview_lines: self.preview_lines,
-                    single_key_shortcuts: self.single_key.get(),
-                    run_in_background: self.run_in_background.get(),
-                    autostart: self.autostart,
-                };
-                let prefs = Preferences::builder()
-                    .transient_for(&self.window)
-                    .launch(init)
-                    .forward(sender.input_sender(), |out| match out {
-                        PrefOutput::AddSender(addr) => AppMsg::AddSender(addr),
-                        PrefOutput::RemoveSender(addr) => AppMsg::RemoveSender(addr),
-                        PrefOutput::AddBlacklist(addr) => AppMsg::AddBlacklist(addr),
-                        PrefOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
-                        PrefOutput::SetAutoRemoteContent(on) => AppMsg::SetAutoRemoteContent(on),
-                        PrefOutput::SetShowRemoteBanner(on) => AppMsg::SetShowRemoteBanner(on),
-                        PrefOutput::SetGravatar(on) => AppMsg::SetGravatar(on),
-                        PrefOutput::SetAvatars(on) => AppMsg::SetAvatars(on),
-                        PrefOutput::SetSenderLogos(on) => AppMsg::SetSenderLogos(on),
-                        PrefOutput::SetDateStyle(style) => AppMsg::SetDateStyle(style),
-                        PrefOutput::SetClockStyle(style) => AppMsg::SetClockStyle(style),
-                        PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
-                        PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
-                        PrefOutput::SetCardActionsMode { hover_toggle, hover_auto } => {
-                            AppMsg::SetCardActionsMode { hover_toggle, hover_auto }
-                        }
-                        PrefOutput::SetListPaletteHover(on) => AppMsg::SetListPaletteHover(on),
-                        PrefOutput::SetComposeInline(on) => AppMsg::SetComposeInline(on),
-                        PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
-                        PrefOutput::SetPush(on) => AppMsg::SetPush(on),
-                        PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
-                        PrefOutput::SetNotificationContent(on) => {
-                            AppMsg::SetNotificationContent(on)
-                        }
-                        PrefOutput::SetShowAttachments(on) => AppMsg::SetShowAttachments(on),
-                        PrefOutput::SetShowContacts(on) => AppMsg::SetShowContacts(on),
-                        PrefOutput::SetSidebarHoverExpand(on) => {
-                            AppMsg::SetSidebarHoverExpand(on)
-                        }
-                        PrefOutput::SetAppTheme(theme) => AppMsg::SetAppTheme(theme),
-                        PrefOutput::SetPreviewLines(n) => AppMsg::SetPreviewLines(n),
-                        PrefOutput::SetSingleKey(on) => AppMsg::SetSingleKey(on),
-                        PrefOutput::SetRunInBackground(on) => AppMsg::SetRunInBackground(on),
-                        PrefOutput::SetAutostart(on) => AppMsg::SetAutostart(on),
-                        PrefOutput::SetPaletteCollapse(secs) => AppMsg::SetPaletteCollapse(secs),
-                        PrefOutput::SetMessageTheme(t) => AppMsg::SetMessageTheme(t),
-                        PrefOutput::Closed => AppMsg::ClosePreferences,
-                    });
-                prefs.widget().present();
-                self.prefs = Some(prefs);
+            AppMsg::OpenSettings => {
+                let on_accounts = self.settings_open_accounts;
+                self.open_settings_window(&sender, on_accounts, false);
             }
 
-            AppMsg::ClosePreferences => self.prefs = None,
+            AppMsg::OpenPreferences => self.open_settings_window(&sender, false, false),
+
+            AppMsg::SetSettingsOpenAccounts(on) => {
+                if self.settings_open_accounts != on {
+                    self.settings_open_accounts = on;
+                    self.save_settings();
+                }
+            }
+
+            // Closing the combined Accounts & Preferences window drops both
+            // panels' components.
+            AppMsg::ClosePreferences => {
+                self.prefs = None;
+                self.accounts_win = None;
+            }
+
+            AppMsg::SettingsEditorOpen(open) => {
+                if let Some(p) = &self.prefs {
+                    p.emit(PrefInput::EditorOpen(open));
+                }
+            }
 
             AppMsg::SetAccount(account) => {
                 if let Some(existing) = self.accounts.iter_mut().find(|a| a.id == account.id) {
@@ -3914,11 +4169,39 @@ impl SimpleComponent for AppModel {
                 } else {
                     self.rebuild_sidebar();
                 }
+                // Launch with "All Inboxes" already selected: UnifiedSelected
+                // fired before any folder list existed, so its inbox requests
+                // went nowhere and the list sat empty until the user visited a
+                // folder by hand. The first time an account's folders arrive
+                // while the unified view is up, ask for its inbox — the cache
+                // priming already painted its slice, and this is what brings
+                // in whatever changed since the app last ran.
+                if self.unified && self.unified_boot_requested.insert(account_id) {
+                    if let Some(inbox) = self.inbox_of(account_id) {
+                        let (folder_id, path) = (inbox.id, inbox.path.clone());
+                        self.send_to(account_id, MailRequest::LoadMessages { folder_id, path });
+                    }
+                }
             }
 
             AppMsg::FolderUnread { account_id, folder_id, unread } => {
                 self.folder_unread.insert((account_id, folder_id), unread);
                 self.push_unread_counts();
+            }
+
+            AppMsg::FolderUnreadByPath { account_id, path, unread } => {
+                // Resolve against the current list; a path the app no longer
+                // knows (folder deleted/renamed under a live watcher) is
+                // dropped rather than guessed at.
+                let id = self
+                    .folders
+                    .get(&account_id)
+                    .and_then(|fs| fs.iter().find(|f| f.path == path))
+                    .map(|f| f.id);
+                if let Some(folder_id) = id {
+                    self.folder_unread.insert((account_id, folder_id), unread);
+                    self.push_unread_counts();
+                }
             }
 
             AppMsg::Messages { account_id, folder_id, messages } => {
@@ -4122,9 +4405,15 @@ impl SimpleComponent for AppModel {
                     let current = self.current.clone();
                     self.show_message(current, false);
                 }
-                // Re-render any popped-out window showing this message.
-                if let Some(p) = self.popouts.get(&(account_id, message_id)) {
-                    p.controller.emit(MessageWindowInput::SetBody(body));
+                // Re-render any popped-out window showing this message — a
+                // conversation window may hold it as any member of its thread,
+                // so every popout gets the offer (non-members ignore it).
+                for p in self.popouts.values() {
+                    p.controller.emit(MessageWindowInput::SetBody {
+                        account_id,
+                        id: message_id,
+                        body: body.clone(),
+                    });
                 }
             }
 
@@ -4150,11 +4439,13 @@ impl SimpleComponent for AppModel {
 
             AppMsg::SelectionKeys(keys) => {
                 self.list_selection = keys.clone();
+                self.selection_from_cards = false;
                 self.message_view.emit(MessageViewInput::SetSelectedCards(keys));
             }
 
             AppMsg::SelectCards(keys) => {
                 self.list_selection = keys.clone();
+                self.selection_from_cards = !keys.is_empty();
                 // Reading is click-driven: scrolling past a conversation
                 // message no longer marks it, so an arriving reply stays
                 // unread until the user actually clicks its card. A single
@@ -4362,8 +4653,12 @@ impl SimpleComponent for AppModel {
                 } else {
                     self.busy.insert(account_id);
                 }
-                self.sidebar.emit(SidebarInput::SetBusy(!self.busy.is_empty()));
-                self.notifications.emit(NotifyInput::SetStatus(text));
+                self.update_busy_indicator();
+                // A sync going quiet must not blank the status while background
+                // bulk operations are still reporting there.
+                if !text.is_empty() || self.bulk_pending == 0 {
+                    self.notifications.emit(NotifyInput::SetStatus(text));
+                }
             }
 
             AppMsg::Error { account_id, text, connectivity } => {
@@ -4385,7 +4680,76 @@ impl SimpleComponent for AppModel {
             AppMsg::NotifyCount(n) => self.notify_count = n,
             AppMsg::ToggleNotifications => self.notifications.emit(NotifyInput::TogglePanel),
 
-            AppMsg::OpenContacts => self.show_contacts_window(&sender),
+            AppMsg::OpenContacts => {
+                self.close_sidebar_peek();
+                self.showing_outbox = false;
+                self.showing_gallery = false;
+                self.showing_contacts = true;
+                // Read EDS off the UI thread (SQLite + photo decoding); the
+                // page shows its loading face until the list lands.
+                self.contacts_page.emit(ContactsPageInput::SetLoading);
+                let s = sender.clone();
+                std::thread::spawn(move || {
+                    let contacts = if demo_mode() {
+                        crate::contacts::demo_contacts()
+                    } else {
+                        crate::contacts::read_contact_details()
+                    };
+                    s.input(AppMsg::ContactsLoaded(contacts));
+                });
+            }
+
+            AppMsg::ContactsLoaded(contacts) => {
+                self.contacts_page.emit(ContactsPageInput::SetContacts(contacts));
+            }
+
+            AppMsg::LaunchGnomeContacts => crate::ui::contacts_browser::launch_gnome_contacts(),
+
+            AppMsg::SaveContact { book_uid, vcard } => {
+                let s = sender.clone();
+                std::thread::spawn(move || {
+                    let result = crate::contacts::modify_contact(&book_uid, &vcard);
+                    s.input(AppMsg::ContactWriteDone(result.err()));
+                });
+            }
+
+            AppMsg::CreateContact(vcard) => {
+                let s = sender.clone();
+                std::thread::spawn(move || {
+                    let result = match crate::contacts::writable_books().first() {
+                        Some(book) => crate::contacts::create_contact(&book.uid, &vcard),
+                        None => Err("No address book available".to_string()),
+                    };
+                    s.input(AppMsg::ContactWriteDone(result.err()));
+                });
+            }
+
+            AppMsg::DeleteContact { book_uid, uid } => {
+                let s = sender.clone();
+                std::thread::spawn(move || {
+                    let result = crate::contacts::delete_contact(&book_uid, &uid);
+                    s.input(AppMsg::ContactWriteDone(result.err()));
+                });
+            }
+
+            AppMsg::ContactWriteDone(err) => {
+                if let Some(e) = err {
+                    self.notifications.emit(NotifyInput::Push {
+                        text: format!("Could not update contact: {e}"),
+                        error: true,
+                        connectivity: false,
+                    });
+                }
+                // Success or not, re-read so the card shows what EDS holds.
+                // A short pause lets EDS flush the write to its SQLite cache
+                // (that is what the read goes through).
+                let s = sender.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let contacts = crate::contacts::read_contact_details();
+                    s.input(AppMsg::ContactsLoaded(contacts));
+                });
+            }
         }
     }
 }
@@ -4432,13 +4796,17 @@ impl AppModel {
             self.palette_collapse_secs,
             self.threading,
             self.threads_expanded,
+            self.thread_expansion,
+            self.confirm_thread_delete,
             self.message_theme,
             self.notifications_enabled,
             self.notification_content,
             self.show_attachments,
             self.show_contacts,
+            self.settings_open_accounts,
             self.card_actions_hover,
             self.card_actions_auto,
+            self.list_palette,
             self.list_palette_hover,
             self.compose_inline,
             self.preview_lines,
@@ -4690,6 +5058,39 @@ impl AppModel {
 
     /// Spawn one worker per configured account (or a single mock worker when no
     /// account is configured).
+    /// Paint the mail panes straight from the disk cache, before any worker
+    /// has spoken: every enabled account's folder list and inbox slice is
+    /// loaded synchronously at startup, so "All Inboxes" (the launch view) is
+    /// full the instant the window appears. The workers' own cache-first
+    /// loads and syncs then replace each slice with whatever changed since
+    /// the app last ran.
+    fn prime_from_cache(&mut self) {
+        let Ok(cache) = crate::cache::Cache::open() else { return };
+        for (i, c) in self.config.iter().enumerate() {
+            if !c.enabled {
+                continue;
+            }
+            let account_id = (i + 1) as u32;
+            let folders = cache.load_folders(account_id);
+            if folders.is_empty() {
+                continue;
+            }
+            if let Some(inbox) = folders.iter().find(|f| f.kind == FolderKind::Inbox) {
+                let messages = cache.load_messages(account_id, &inbox.path, inbox.id);
+                if !messages.is_empty() {
+                    self.message_cache.insert((account_id, inbox.id), messages.clone());
+                    self.unified_by_account.insert(account_id, messages);
+                }
+            }
+            for f in &folders {
+                if f.unread > 0 {
+                    self.folder_unread.insert((account_id, f.id), f.unread);
+                }
+            }
+            self.folders.insert(account_id, folders);
+        }
+    }
+
     fn spawn_workers(&mut self, sender: &ComponentSender<Self>) {
         self.workers.clear();
         // account_id is the config index + 1 (a load-bearing invariant), so we keep
@@ -4745,7 +5146,7 @@ impl AppModel {
         self.attachment_cache.clear();
         self.current = None;
         self.busy.clear();
-        self.sidebar.emit(SidebarInput::SetBusy(false));
+        self.update_busy_indicator();
         self.show_message(None, false);
         self.message_list.emit(MessageListInput::SetLoading);
         self.rebuild_sidebar();
@@ -4764,6 +5165,24 @@ impl AppModel {
                     .map(|a| a.accent.clone())
             })
             .unwrap_or_else(|| "#3584e4".to_string())
+    }
+
+    /// Spin the header's Refresh while any account syncs (the rail's own
+    /// refresh button mirrors this via `SidebarInput::SetBusy`).
+    fn set_header_refresh_busy(&self, busy: bool) {
+        self.sidebar_refresh_spinner.set_spinning(busy);
+        self.sidebar_refresh_stack
+            .set_visible_child_name(if busy { "spinner" } else { "icon" });
+    }
+
+    /// Spin the refresh button (header and rail) while anything is happening
+    /// in the background — an account sync, or bulk moves/deletions still
+    /// being applied on the server. The at-a-glance "working on something"
+    /// signal; the status bar has the words.
+    fn update_busy_indicator(&self) {
+        let busy = !self.busy.is_empty() || self.bulk_pending > 0;
+        self.sidebar.emit(SidebarInput::SetBusy(busy));
+        self.set_header_refresh_busy(busy);
     }
 
     /// Custom avatar emoji for an account, if set.
@@ -4920,6 +5339,7 @@ impl AppModel {
     /// sidebar, persists the expanded state. The sidebar just railed its rows
     /// on that click — expand them back, drop the overlay, and save.
     fn pin_sidebar_from_peek(&mut self) {
+        tracing::info!("peek: pinned to side-by-side");
         let Some(split) = self.sidebar_split.clone() else { return };
         if let Some(timer) = self.peek_close_timer.borrow_mut().take() {
             timer.remove();
@@ -4957,7 +5377,7 @@ impl AppModel {
             self.app_title.as_ref(),
             self.sidebar_menu.as_ref(),
         ) {
-            set_sidebar_header_compact(header, title, menu, compact);
+            set_sidebar_header_compact(header, title, menu, &self.sidebar_refresh, compact);
         }
     }
 
@@ -4969,7 +5389,7 @@ impl AppModel {
             self.app_title.as_ref(),
             self.sidebar_menu.as_ref(),
         ) {
-            set_sidebar_header_peek(header, title, menu);
+            set_sidebar_header_peek(header, title, menu, &self.sidebar_refresh);
         }
     }
 
@@ -4980,6 +5400,10 @@ impl AppModel {
     /// button has already done that itself, an outside dismissal has not.
     fn set_sidebar_peek(&mut self, open: bool, sync_rows: bool, animate: bool) {
         let Some(split) = self.sidebar_split.clone() else { return };
+        tracing::info!(
+            "peek: set open={open} sync_rows={sync_rows} animate={animate} (was peek={}, split collapsed={} shown={})",
+            self.sidebar_peek, split.is_collapsed(), split.shows_sidebar()
+        );
         // A reopen or re-close supersedes any pending end-of-close restore.
         if let Some(timer) = self.peek_close_timer.borrow_mut().take() {
             timer.remove();
@@ -5040,9 +5464,11 @@ impl AppModel {
                 let header = self.sidebar_header.clone();
                 let title = self.app_title.clone();
                 let menu = self.sidebar_menu.clone();
+                let refresh = self.sidebar_refresh.clone();
                 let close_timer = self.peek_close_timer.clone();
                 let ghost = self.peek_rail_ghost.clone();
                 move || {
+                    tracing::info!("peek: restore (rail back, sync_rows={sync_rows})");
                     close_timer.borrow_mut().take();
                     if sync_rows {
                         let _ = sidebar_sender.send(SidebarInput::SetCollapsed(true));
@@ -5050,7 +5476,7 @@ impl AppModel {
                     if let (Some(h), Some(t), Some(m)) =
                         (header.as_ref(), title.as_ref(), menu.as_ref())
                     {
-                        set_sidebar_header_compact(h, t, m, true);
+                        set_sidebar_header_compact(h, t, m, &refresh, true);
                     }
                     guard.set(true);
                     split.set_min_sidebar_width(SIDEBAR_RAIL_WIDTH);
@@ -5176,7 +5602,10 @@ impl AppModel {
         // single-account — its default selection then landed on that account's
         // inbox (possibly inside a collapsed section, so nothing visibly
         // highlighted) instead of the "All Inboxes" the app should open with.
-        let show_unified = self.config.iter().filter(|c| c.enabled).count() > 1;
+        let show_unified = self.config.iter().filter(|c| c.enabled).count() > 1
+            // The demo has no config-file accounts, but its two mock accounts
+            // deserve the same All Inboxes opening as a real multi-account setup.
+            || (demo_mode() && self.accounts.len() > 1);
         let unified_unread = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
         self.sidebar.emit(SidebarInput::SetContents {
             sections,
@@ -5474,6 +5903,7 @@ impl AppModel {
     /// sidebar selection and the "open message from notification" flow.
     fn select_folder(&mut self, account_id: u32, folder_id: u32, _name: String, path: String) {
         self.showing_gallery = false;
+        self.showing_contacts = false;
         self.showing_outbox = false;
         // Mirror the selection in the sidebar. Navigation that starts in the
         // sidebar hits its already-selected guard; navigation from anywhere
@@ -5625,8 +6055,15 @@ impl AppModel {
             .collect()
     }
 
-    /// Pop a message out into its own standalone window with a dedicated reader.
-    fn open_message_window(&mut self, m: Message, sender: &ComponentSender<Self>) {
+    /// Pop a message out into its own standalone window with a dedicated
+    /// reader. `thread` is the whole conversation when `m` heads one (the
+    /// window then shows every card); empty for a single message.
+    fn open_message_window(
+        &mut self,
+        m: Message,
+        thread: Vec<Message>,
+        sender: &ComponentSender<Self>,
+    ) {
         let key = (m.account_id, m.id);
         // Already open? Just bring it forward.
         if let Some(p) = self.popouts.get(&key) {
@@ -5690,9 +6127,39 @@ impl AppModel {
             }
         }
 
+        // The conversation for the window: the assembled cache when this
+        // thread has been opened before (cross-folder members and bodies
+        // included), else what the list handed over. Members still missing
+        // bodies get them fetched; the replies land via SetBody below.
+        let mut thread = if thread.len() > 1 {
+            self.thread_cache.get(&key).cloned().unwrap_or(thread)
+        } else {
+            thread
+        };
+        for member in &mut thread {
+            let mkey = (member.account_id, member.id);
+            if mkey == key {
+                member.body = display.body.clone();
+                member.unread = false;
+                continue;
+            }
+            if member.body.is_empty() {
+                if let Some(body) = self.body_cache.get(&mkey) {
+                    member.body = body.clone();
+                } else if let Some(path) = self.resolve_folder_path(member) {
+                    self.send_to(member.account_id, MailRequest::LoadBody {
+                        message_id: member.id,
+                        path,
+                        uid: member.uid,
+                    });
+                }
+            }
+        }
+
         let allow_remote = self.remote_allowed(&display);
         let init = MessageWindowInit {
             message: display,
+            thread,
             account_name: Some(self.account_name(account_id)),
             account_color: Some(self.account_color(account_id)),
             allow_remote,
@@ -5716,6 +6183,7 @@ impl AppModel {
                 MessageWindowOutput::OpenAttachment(att) => AppMsg::OpenAttachmentItem(att),
                 MessageWindowOutput::SaveAllAttachments(items) => AppMsg::SaveAttachmentItems(items),
                 MessageWindowOutput::AllowSender(addr) => AppMsg::AllowSender(addr),
+                MessageWindowOutput::ComposeTo(addr) => AppMsg::ComposeTo(addr),
                 MessageWindowOutput::Closed => AppMsg::PopoutClosed(key),
             });
 
@@ -6032,6 +6500,27 @@ impl AppModel {
     }
 
     /// Open (or replace) the reader's inline reply/forward drop-down pane.
+    /// The revealer the inline composer should slide down in: the reader
+    /// pane's, or — while the contacts view is up — the contact card's.
+    fn compose_slot(&self) -> &gtk::Revealer {
+        if self.showing_contacts {
+            &self.contacts_compose_revealer
+        } else {
+            &self.reader_compose_revealer
+        }
+    }
+
+    /// Hide and empty both inline-composer slots (only one ever holds it).
+    fn clear_compose_slots(&self) {
+        for r in [&self.reader_compose_revealer, &self.contacts_compose_revealer] {
+            r.set_reveal_child(false);
+            // Without this the hidden, pane-covering revealer keeps
+            // swallowing every click and scroll over the pane beneath.
+            r.set_can_target(false);
+            r.set_child(None::<&gtk::Widget>);
+        }
+    }
+
     fn open_inline_reply(
         &mut self,
         account_id: u32,
@@ -6047,13 +6536,14 @@ impl AppModel {
         // ⋯ overflow is managed by hand, so hide it by hand.
         self.reader_overflow_btn.set_visible(false);
         // Fill the pane and paint an opaque surface: the composer covers the
-        // reader completely, rather than dropping down as a partial panel.
+        // pane completely, rather than dropping down as a partial panel.
         widget.set_vexpand(true);
         widget.set_hexpand(true);
         widget.add_css_class("inline-compose-surface");
-        self.reader_compose_revealer.set_child(Some(widget));
-        self.reader_compose_revealer.set_can_target(true);
-        self.reader_compose_revealer.set_reveal_child(true);
+        let slot = self.compose_slot();
+        slot.set_child(Some(widget));
+        slot.set_can_target(true);
+        slot.set_reveal_child(true);
         controller.emit(ComposeInput::FocusEditor);
         self.reader_compose = Some(ReaderCompose { id, controller, window: None });
     }
@@ -6070,9 +6560,7 @@ impl AppModel {
                 self.composers.push(ComposeHost { id: r.id, controller: r.controller, window });
             }
             None => {
-                self.reader_compose_revealer.set_reveal_child(false);
-                self.reader_compose_revealer.set_can_target(false);
-                self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
+                self.clear_compose_slots();
                 self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 r.controller.emit(ComposeInput::SaveDraftIfDirty);
                 self.draining_composers.push((r.id, r.controller));
@@ -6094,9 +6582,7 @@ impl AppModel {
         match r.window.take() {
             None => {
                 // inline → window: unparent from the revealer, then host in a window.
-                self.reader_compose_revealer.set_reveal_child(false);
-                self.reader_compose_revealer.set_can_target(false);
-                self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
+                self.clear_compose_slots();
                 self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 let window = self.compose_window_host(&widget, id, sender);
                 r.window = Some(window);
@@ -6110,9 +6596,10 @@ impl AppModel {
                 widget.set_hexpand(true);
                 widget.add_css_class("inline-compose-surface");
                 self.reader_overflow_btn.set_visible(false);
-                self.reader_compose_revealer.set_child(Some(&widget));
-                self.reader_compose_revealer.set_can_target(true);
-                self.reader_compose_revealer.set_reveal_child(true);
+                let slot = self.compose_slot();
+                slot.set_child(Some(&widget));
+                slot.set_can_target(true);
+                slot.set_reveal_child(true);
                 r.controller.emit(ComposeInput::SetWindowed(false));
             }
         }
@@ -6136,8 +6623,8 @@ impl AppModel {
                     window.destroy();
                 }
                 None => {
-                    self.reader_compose_revealer.set_reveal_child(false);
-                    self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
+                    self.clear_compose_slots();
+                    self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 }
             }
             return;
@@ -6238,6 +6725,34 @@ impl AppModel {
 
     /// Confirm erasing messages that are already in Trash — there's no undo, so
     /// this always asks first.
+    /// Ask before deleting a whole conversation (a selected thread head). Can
+    /// be turned off in Preferences (`confirm_thread_delete`).
+    fn confirm_delete_thread(&self, messages: Vec<Message>, sender: &ComponentSender<Self>) {
+        let n = messages.len();
+        let heading = "Delete this conversation?".to_string();
+        let body = format!(
+            "All {n} messages in this conversation will be deleted. \
+             You can turn this warning off in Preferences."
+        );
+        let dialog =
+            adw::MessageDialog::new(Some(&self.window), Some(&heading), Some(body.as_str()));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("delete", "Delete Conversation");
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        let s = sender.clone();
+        let messages = std::cell::RefCell::new(Some(messages));
+        dialog.connect_response(None, move |_, resp| {
+            if resp == "delete" {
+                if let Some(msgs) = messages.borrow_mut().take() {
+                    s.input(AppMsg::DeleteThreadConfirmed(msgs));
+                }
+            }
+        });
+        dialog.present();
+    }
+
     fn confirm_purge(&self, messages: Vec<Message>, sender: &ComponentSender<Self>) {
         let n = messages.len();
         let heading = if n == 1 {
@@ -6281,9 +6796,17 @@ impl AppModel {
             removed_ids.push(m.id);
         }
         self.bulk_pending += groups.len();
+        if !groups.is_empty() {
+            self.notifications.emit(NotifyInput::SetStatus(format!(
+                "Erasing {} message{} on the server…",
+                removed_ids.len(),
+                if removed_ids.len() == 1 { "" } else { "s" },
+            )));
+        }
         for ((account_id, path), uids) in groups {
             self.send_to(account_id, MailRequest::PurgeMessages { path, uids });
         }
+        self.update_busy_indicator();
         self.message_list.emit(MessageListInput::RemoveMany(removed_ids));
         self.push_unread_counts();
     }
@@ -6915,14 +7438,6 @@ impl AppModel {
         }
     }
 
-    /// Modal contacts browser: pick a contact to start a new message to them.
-    fn show_contacts_window(&self, sender: &ComponentSender<Self>) {
-        let input = sender.input_sender().clone();
-        crate::ui::contacts_browser::present(&self.window, move |contact| {
-            let _ = input.send(AppMsg::ComposeTo(contact.email));
-        });
-    }
-
     /// Dialog to add an email to GNOME Contacts (choosing the address book).
     fn show_add_contact_dialog(&self, name: &str, email: &str, sender: &ComponentSender<Self>) {
         let books = crate::contacts::writable_books();
@@ -6988,15 +7503,24 @@ impl AppModel {
         dialog.present();
     }
 
-    /// Confirm and remove an account (drops its keyring password too).
-    /// Open (or focus) the accounts window. When `add_new`, jump straight to the
-    /// "add account" form — used by the empty-state "Add first account" button.
-    fn open_accounts_window(&mut self, sender: &ComponentSender<Self>, add_new: bool) {
-        // Already open? Bring it forward instead of opening another.
-        if let Some(w) = self.accounts_win.as_ref().filter(|w| w.widget().is_visible()) {
-            w.widget().present();
+    /// Open (or focus) the combined Accounts & Preferences window on the
+    /// requested panel. When `add_new`, jump straight to the "add account"
+    /// form — used by the empty-state "Add first account" button.
+    fn open_settings_window(
+        &mut self,
+        sender: &ComponentSender<Self>,
+        on_accounts: bool,
+        add_new: bool,
+    ) {
+        // Already open? Bring it forward and switch panels instead of
+        // opening another.
+        if let Some(p) = self.prefs.as_ref().filter(|p| p.widget().is_visible()) {
+            p.emit(PrefInput::ShowAccounts(on_accounts));
+            p.widget().present();
             if add_new {
-                w.emit(crate::ui::accounts::AccountsInput::AddAccount);
+                if let Some(a) = &self.accounts_win {
+                    a.emit(crate::ui::accounts::AccountsInput::AddAccount);
+                }
             }
             return;
         }
@@ -7033,8 +7557,8 @@ impl AppModel {
                 }
             }
         }
-        let win = AccountsWindow::builder()
-            .transient_for(&self.window)
+        // The accounts panel component (embedded behind the "Accounts" tab).
+        let accounts = AccountsWindow::builder()
             .launch(accounts)
             .forward(sender.input_sender(), |out| match out {
                 AccountsOutput::Saved { original_email, account } => {
@@ -7046,15 +7570,107 @@ impl AppModel {
                     AppMsg::AccountEnabledChanged { email, enabled }
                 }
                 AccountsOutput::ImportGoa(account) => AppMsg::ImportGoaAccount(account),
-                AccountsOutput::Closed => AppMsg::CloseAccounts,
+                AccountsOutput::EditorOpen(open) => AppMsg::SettingsEditorOpen(open),
             });
         if add_new {
-            win.emit(crate::ui::accounts::AccountsInput::AddAccount);
+            accounts.emit(crate::ui::accounts::AccountsInput::AddAccount);
         }
-        win.widget().present();
-        self.accounts_win = Some(win);
+
+        // The host window: the preferences component, carrying the accounts
+        // panel behind its other tab.
+        let init = PrefInit {
+            allowed_senders: self.allowed_senders.clone(),
+            auto_remote_content: self.auto_remote_content,
+            show_remote_banner: self.show_remote_banner,
+            gravatar: self.gravatar,
+            avatars: self.avatars,
+            sender_logos: self.sender_logos,
+            date_style: self.date_style,
+            clock_style: self.clock_style,
+            fetch_interval_secs: self.fetch_interval_secs,
+            push: self.push,
+            blacklist: self.blacklist.clone(),
+            palette_collapse_secs: self.palette_collapse_secs,
+            threading: self.threading,
+            threads_expanded: self.threads_expanded,
+            thread_expansion: self.thread_expansion,
+            confirm_thread_delete: self.confirm_thread_delete,
+            message_theme: self.message_theme,
+            notifications: self.notifications_enabled,
+            notification_content: self.notification_content,
+            show_attachments: self.show_attachments,
+            show_contacts: self.show_contacts,
+            settings_open_accounts: self.settings_open_accounts,
+            sidebar_hover_expand: self.sidebar_hover_expand,
+            card_actions_hover: self.card_actions_hover,
+            card_actions_auto: self.card_actions_auto,
+            list_palette: self.list_palette,
+            list_palette_hover: self.list_palette_hover,
+            compose_inline: self.compose_inline,
+            app_theme: self.app_theme,
+            preview_lines: self.preview_lines,
+            single_key_shortcuts: self.single_key.get(),
+            run_in_background: self.run_in_background.get(),
+            autostart: self.autostart,
+            accounts_panel: accounts.widget().clone().upcast::<gtk::Widget>(),
+            start_on_accounts: on_accounts,
+        };
+        let prefs = Preferences::builder()
+            .transient_for(&self.window)
+            .launch(init)
+            .forward(sender.input_sender(), |out| match out {
+                PrefOutput::AddSender(addr) => AppMsg::AddSender(addr),
+                PrefOutput::RemoveSender(addr) => AppMsg::RemoveSender(addr),
+                PrefOutput::AddBlacklist(addr) => AppMsg::AddBlacklist(addr),
+                PrefOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
+                PrefOutput::SetAutoRemoteContent(on) => AppMsg::SetAutoRemoteContent(on),
+                PrefOutput::SetShowRemoteBanner(on) => AppMsg::SetShowRemoteBanner(on),
+                PrefOutput::SetGravatar(on) => AppMsg::SetGravatar(on),
+                PrefOutput::SetAvatars(on) => AppMsg::SetAvatars(on),
+                PrefOutput::SetSenderLogos(on) => AppMsg::SetSenderLogos(on),
+                PrefOutput::SetDateStyle(style) => AppMsg::SetDateStyle(style),
+                PrefOutput::SetClockStyle(style) => AppMsg::SetClockStyle(style),
+                PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
+                PrefOutput::SetThreadExpansion(on) => AppMsg::SetThreadExpansion(on),
+                PrefOutput::SetConfirmThreadDelete(on) => {
+                    AppMsg::SetConfirmThreadDelete(on)
+                }
+                PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
+                PrefOutput::SetCardActionsMode { hover_toggle, hover_auto } => {
+                    AppMsg::SetCardActionsMode { hover_toggle, hover_auto }
+                }
+                PrefOutput::SetListPalette(on) => AppMsg::SetListPalette(on),
+                PrefOutput::SetListPaletteHover(on) => AppMsg::SetListPaletteHover(on),
+                PrefOutput::SetComposeInline(on) => AppMsg::SetComposeInline(on),
+                PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
+                PrefOutput::SetPush(on) => AppMsg::SetPush(on),
+                PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
+                PrefOutput::SetNotificationContent(on) => {
+                    AppMsg::SetNotificationContent(on)
+                }
+                PrefOutput::SetAttachmentsRow(show) => AppMsg::SetAttachmentsRow(show),
+                PrefOutput::SetContactsRow(show) => AppMsg::SetContactsRow(show),
+                PrefOutput::SetSidebarHoverExpand(on) => {
+                    AppMsg::SetSidebarHoverExpand(on)
+                }
+                PrefOutput::SetAppTheme(theme) => AppMsg::SetAppTheme(theme),
+                PrefOutput::SetSettingsOpenAccounts(on) => {
+                    AppMsg::SetSettingsOpenAccounts(on)
+                }
+                PrefOutput::SetPreviewLines(n) => AppMsg::SetPreviewLines(n),
+                PrefOutput::SetSingleKey(on) => AppMsg::SetSingleKey(on),
+                PrefOutput::SetRunInBackground(on) => AppMsg::SetRunInBackground(on),
+                PrefOutput::SetAutostart(on) => AppMsg::SetAutostart(on),
+                PrefOutput::SetPaletteCollapse(secs) => AppMsg::SetPaletteCollapse(secs),
+                PrefOutput::SetMessageTheme(t) => AppMsg::SetMessageTheme(t),
+                PrefOutput::Closed => AppMsg::ClosePreferences,
+            });
+        prefs.widget().present();
+        self.accounts_win = Some(accounts);
+        self.prefs = Some(prefs);
     }
 
+    /// Confirm and remove an account (drops its keyring password too).
     fn confirm_remove_account(&self, account_id: u32, sender: &ComponentSender<Self>) {
         let Some(email) = self.email_of(account_id) else {
             return;
@@ -7439,10 +8055,19 @@ impl AppModel {
             });
         }
         self.bulk_pending += groups.len();
+        if !groups.is_empty() {
+            self.notifications.emit(NotifyInput::SetStatus(format!(
+                "Moving {} message{} to {} on the server…",
+                removed_ids.len(),
+                if removed_ids.len() == 1 { "" } else { "s" },
+                kind_label(kind),
+            )));
+        }
         for ((account_id, src), (dest, uids, message_ids)) in groups {
             self.push_undo(account_id, &dest, &src, message_ids);
             self.send_to(account_id, MailRequest::MoveMessages { path: src, uids, dest });
         }
+        self.update_busy_indicator();
         self.message_list.emit(MessageListInput::RemoveMany(removed_ids));
         self.push_unread_counts();
     }
@@ -7878,6 +8503,7 @@ const SHORTCUT_HELP: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Z", "Undo the last move or delete"),
             ("Ctrl+P", "Print the message you are reading"),
             ("Ctrl+Shift+P", "Preview it as a PDF first"),
+            ("Ctrl+Shift+S", "Reveal the status bar (also: long-press Refresh)"),
             ("Ctrl+W", "Close the window (background sync keeps running)"),
             ("Ctrl+Q", "Quit Vireo entirely"),
             ("?", "This list"),
@@ -7935,6 +8561,35 @@ fn demo_mode() -> bool {
     std::env::var_os("VIREO_DEMO").is_some()
 }
 
+/// Render the window's widget tree to a PNG at 2x (crisp text for marketing
+/// shots). Content only — the compositor's shadow/frame is not part of the
+/// tree, which is exactly what the site and store screenshots want.
+fn showcase_capture(win: &gtk::Widget, path: &str) {
+    let (w, h) = (win.width(), win.height());
+    if w == 0 || h == 0 {
+        tracing::error!("showcase: window not realized");
+        return;
+    }
+    let paintable = gtk::WidgetPaintable::new(Some(win));
+    let snapshot = gtk::Snapshot::new();
+    snapshot.scale(2.0, 2.0);
+    gtk::prelude::PaintableExt::snapshot(&paintable, &snapshot, w as f64, h as f64);
+    let Some(node) = snapshot.to_node() else {
+        tracing::error!("showcase: nothing to render");
+        return;
+    };
+    let Some(renderer) = win.native().and_then(|n| n.renderer()) else {
+        tracing::error!("showcase: no renderer");
+        return;
+    };
+    let rect = gtk::graphene::Rect::new(0.0, 0.0, (w * 2) as f32, (h * 2) as f32);
+    let texture = renderer.render_texture(&node, Some(&rect));
+    match texture.save_to_png(path) {
+        Ok(()) => tracing::info!("showcase: saved {path}"),
+        Err(e) => tracing::error!("showcase: could not save {path}: {e}"),
+    }
+}
+
 /// What [`reconcile_goa`] changed: accounts dropped outright (their GOA account
 /// is gone), and whether any account was paused or resumed because its Mail
 /// service was toggled in GNOME Settings.
@@ -7977,17 +8632,6 @@ fn reconcile_goa(config: &mut Vec<AccountConfig>, live: &crate::goa::GoaLiveStat
     outcome
 }
 
-/// Label for the spinner shown while a large bulk action is applied.
-fn bulk_busy_label(action: BulkAction, n: usize) -> String {
-    let verb = match action {
-        BulkAction::Archive => "Archiving",
-        BulkAction::Delete => "Deleting",
-        BulkAction::Spam => "Moving to Spam",
-        BulkAction::MarkRead | BulkAction::MarkUnread | BulkAction::Flag => "Updating",
-    };
-    format!("{verb} {n} messages…")
-}
-
 /// Trim the sidebar header in the icon-only rail so it no longer forces a minimum
 /// width wider than the rail: hide the (redundant) window-control buttons and tag
 /// the header so its Compose/Menu buttons shrink to fit (see `.rail-header` in the
@@ -7997,6 +8641,7 @@ fn set_sidebar_header_compact(
     header: &adw::HeaderBar,
     title: &gtk::Label,
     menu: &gtk::MenuButton,
+    refresh: &gtk::Button,
     compact: bool,
 ) {
     header.set_show_start_title_buttons(!compact);
@@ -8004,8 +8649,13 @@ fn set_sidebar_header_compact(
     // The menu is always in exactly one of three spots — packed end
     // (expanded), the title slot (rail), or packed start (peek) — and
     // HeaderBar::remove detaches it from any of them, so transitions are
-    // free to start from whichever state is current.
+    // free to start from whichever state is current. Refresh is either packed
+    // start (expanded / peek) or unparented (rail, which stacks its own
+    // refresh under the menu instead) — only remove it while it is a child.
     header.remove(menu);
+    if refresh.parent().is_some() {
+        header.remove(refresh);
+    }
     menu.set_margin_start(0);
     // In the rail there is no title to show, so the menu button takes the title
     // slot — the only position a header bar centres — instead of hugging the
@@ -8018,6 +8668,7 @@ fn set_sidebar_header_compact(
         header.remove_css_class("rail-header");
         header.set_title_widget(Some(title));
         header.pack_end(menu);
+        header.pack_start(refresh);
     }
     title.set_visible(!compact);
 }
@@ -8027,13 +8678,24 @@ fn set_sidebar_header_compact(
 /// (start side, centred) instead of jumping to the panel's far end — a cursor
 /// heading for it on the rail keeps finding it in the floating panel. Window
 /// controls stay hidden, matching the rail the peek floats out of.
-fn set_sidebar_header_peek(header: &adw::HeaderBar, title: &gtk::Label, menu: &gtk::MenuButton) {
+fn set_sidebar_header_peek(
+    header: &adw::HeaderBar,
+    title: &gtk::Label,
+    menu: &gtk::MenuButton,
+    refresh: &gtk::Button,
+) {
     header.set_show_start_title_buttons(false);
     header.set_show_end_title_buttons(false);
     header.remove(menu);
+    if refresh.parent().is_some() {
+        header.remove(refresh);
+    }
     header.remove_css_class("rail-header");
     header.set_title_widget(Some(title));
+    // Menu first so its rail-centring margin holds; Refresh follows it, where
+    // the expanded header's top-left slot would put it.
     header.pack_start(menu);
+    header.pack_start(refresh);
     // Centre the button over the rail's width, compensating the header's own
     // start padding, so it sits where the rail drew it.
     let w = menu.width().max(34);
@@ -8105,6 +8767,9 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
         WorkerEvent::BackfillDone { folder_id } => AppMsg::BackfillDone { account_id, folder_id },
         WorkerEvent::FolderUnread { folder_id, unread } => {
             AppMsg::FolderUnread { account_id, folder_id, unread }
+        }
+        WorkerEvent::FolderUnreadByPath { path, unread } => {
+            AppMsg::FolderUnreadByPath { account_id, path, unread }
         }
         WorkerEvent::RefsRepaired { folder_id } => {
             AppMsg::RefsRepaired { account_id, folder_id }

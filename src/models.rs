@@ -332,6 +332,18 @@ pub fn is_image_name(name: &str) -> bool {
         .any(|ext| lower.ends_with(ext))
 }
 
+/// The file extension matching an image's magic bytes ("jpg" when unsure —
+/// for content that is known to be an image but arrived without a name).
+pub fn image_ext(data: &[u8]) -> &'static str {
+    match data {
+        [0x89, b'P', b'N', b'G', ..] => "png",
+        [b'G', b'I', b'F', b'8', ..] => "gif",
+        [b'B', b'M', ..] => "bmp",
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => "webp",
+        _ => "jpg",
+    }
+}
+
 /// One attachment for the gallery: metadata plus the source message context.
 /// `data` is loaded eagerly for small files (so the preview/open is instant) and
 /// `None` for large ones (fetched on demand when opened).

@@ -133,9 +133,10 @@ pub enum AttachmentDrawerInput {
     ToggleSortOrder,
     /// Open an attachment in its default application.
     Open(usize),
-    /// Double-click on a cell/row (display order): preview images and PDFs in
-    /// the lightbox, open anything else in its default app.
-    DoubleClick(usize),
+    /// Activate a cell/row (display order) — double-click, or Space/Enter on
+    /// the highlighted one: preview images and PDFs in the lightbox, open
+    /// anything else in its default app.
+    Activate(usize),
     /// Save an attachment to disk (file chooser).
     Download(usize),
     /// Save every attachment into a chosen folder ("Save All" header button).
@@ -314,7 +315,9 @@ impl SimpleComponent for AttachmentDrawer {
                     #[local_ref]
                     flow -> gtk::FlowBox {
                         set_orientation: gtk::Orientation::Horizontal,
-                        set_selection_mode: gtk::SelectionMode::None,
+                        // Single-click highlights an attachment; Space or Enter
+                        // then previews it, Nautilus-style (issue #37).
+                        set_selection_mode: gtk::SelectionMode::Single,
                         set_activate_on_single_click: true,
                         set_homogeneous: false,
                         set_valign: gtk::Align::Start,
@@ -342,6 +345,25 @@ impl SimpleComponent for AttachmentDrawer {
     ) -> ComponentParts<Self> {
         let flow = gtk::FlowBox::default();
         let scroller = gtk::ScrolledWindow::default();
+
+        // Space (or Enter) previews the highlighted attachment — the keyboard
+        // side of the single-click-then-preview flow (issue #37).
+        {
+            let key = gtk::EventControllerKey::new();
+            let s = sender.clone();
+            let flow_ref = flow.clone();
+            key.connect_key_pressed(move |_, keyval, _, _| {
+                use gtk::gdk::Key;
+                if matches!(keyval, Key::space | Key::KP_Space | Key::Return | Key::KP_Enter) {
+                    if let Some(child) = flow_ref.selected_children().first() {
+                        s.input(AttachmentDrawerInput::Activate(child.index() as usize));
+                        return gtk::glib::Propagation::Stop;
+                    }
+                }
+                gtk::glib::Propagation::Proceed
+            });
+            flow.add_controller(key);
+        }
 
         let model = AttachmentDrawer {
             items: Vec::new(),
@@ -430,7 +452,7 @@ impl SimpleComponent for AttachmentDrawer {
                     self.save_attachment(&att);
                 }
             }
-            AttachmentDrawerInput::DoubleClick(i) => {
+            AttachmentDrawerInput::Activate(i) => {
                 // Single clicks do nothing at all (a first click must never
                 // steal the second — a modal lightbox on click one made the
                 // double-click unreachable). Double-click previews images and
@@ -781,7 +803,7 @@ fn add_double_click_open(
     let s = sender.clone();
     dbl.connect_pressed(move |_, n, _, _| {
         if n == 2 {
-            s.input(AttachmentDrawerInput::DoubleClick(index));
+            s.input(AttachmentDrawerInput::Activate(index));
         }
     });
     child.add_controller(dbl);

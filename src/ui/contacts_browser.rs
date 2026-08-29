@@ -1,5 +1,6 @@
-//! A reusable modal that browses GNOME Contacts: search, pick a contact (the
-//! caller decides what to do with it), or open the full GNOME Contacts app.
+//! A reusable modal that browses GNOME Contacts to *pick* one — used by the
+//! composer's address-book button. (General browsing lives in the in-app
+//! contacts view, `ui/contacts_page.rs`, shown in the main content area.)
 
 use adw::prelude::*;
 
@@ -103,6 +104,24 @@ pub fn present(parent: &impl IsA<gtk::Window>, on_choose: impl Fn(Contact) + 'st
     toolbar.set_content(Some(&content));
     win.set_content(Some(&toolbar));
     win.present();
+}
+
+/// Open GNOME Contacts showing one contact. Best effort: outside a sandbox
+/// `gnome-contacts -i <uid>` selects the individual; the Flatpak D-Bus path
+/// can only raise the app.
+pub fn launch_gnome_contacts_for(uid: &str) {
+    if crate::platform::is_flatpak() || uid.is_empty() {
+        launch_gnome_contacts();
+        return;
+    }
+    let uid: String = uid.chars().filter(|c| !c.is_whitespace() && *c != '\'').collect();
+    if let Ok(app) = gtk::gio::AppInfo::create_from_commandline(
+        format!("gnome-contacts -i '{uid}'"),
+        Some("Contacts"),
+        gtk::gio::AppInfoCreateFlags::NONE,
+    ) {
+        let _ = app.launch(&[], gtk::gio::AppLaunchContext::NONE);
+    }
 }
 
 /// Launch the GNOME Contacts application via the desktop session.

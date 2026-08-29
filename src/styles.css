@@ -14,6 +14,15 @@ row.compose-row {
   color: white;
   padding-top: 2px;
   padding-bottom: 2px;
+  /* The pill hugs its text now, so give it a button's breathing room. */
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+/* The icon-only rail centres a lone icon — no text to pad around. */
+.rail-collapsed row.compose-row {
+  padding-left: 0;
+  padding-right: 0;
 }
 
 row.compose-row:hover {
@@ -156,6 +165,26 @@ headerbar.rail-header {
   padding: 0;
 }
 
+/* All Inboxes: its disclosure chevron lines up with the account headers'
+   below it. The account chevron's right edge sits at 6px (list margin) +
+   12px (header padding); here the row keeps no padding of its own, the
+   inner .folder-row provides the 12px, and the chevron button shrinks to
+   exactly its 16px icon. */
+.unified-row {
+  padding-right: 0;
+}
+.unified-row .folder-row {
+  padding-right: 12px;
+}
+/* A generous hit target without moving the icon: the button grows to 32px
+   and the negative end margin slides its extra width into the row padding,
+   keeping the centred 16px icon exactly in the chevron column. */
+.unified-row .chevron-btn {
+  min-width: 32px;
+  min-height: 32px;
+  margin-right: -8px;
+}
+
 /* Draggable account rows in the Accounts window. */
 .account-list-row {
   padding: 14px 12px;
@@ -199,6 +228,12 @@ headerbar.rail-header {
    actually hides it rather than blending with it. */
 .inline-compose-surface {
   background-color: @window_bg_color;
+}
+
+/* A set star (reader toolbar, list palette, popout): the flagged state is
+   colour alone — the glyph stays the same as every other icon. */
+button.star-active {
+  color: #e5a50a;
 }
 
 /* Compose attachment chips. */
@@ -273,6 +308,32 @@ headerbar.rail-header {
   opacity: 0.6;
 }
 
+/* ---- Contacts view ---- */
+
+/* Selected contact: the full accent treatment the message list's selection
+   gets — accent ground, everything on it white at full strength. */
+.contacts-listbox > row:selected,
+.contacts-listbox > row:selected:hover,
+.contacts-listbox > row:selected:active {
+  background-color: @accent_bg_color;
+}
+
+/* Scoped to the row's own header box: a context-menu popover anchored to the
+   row is also its descendant, and a bare `label` selector painted the menu's
+   text white-on-white. */
+.contacts-listbox > row:selected box.header label {
+  color: white;
+  opacity: 1;
+}
+
+/* Faint rule above the pinned Contacts/Attachments footer, just enough to
+   set the utility rows apart from the account list scrolling above. */
+.footer-separator {
+  min-height: 1px;
+  margin: 4px 12px;
+  opacity: 0.5;
+}
+
 /* Collapsible "Folders" (custom folders) section header. */
 .folders-toggle {
   margin: 0 6px;
@@ -310,14 +371,6 @@ headerbar.rail-header {
   margin-top: -4px;
   margin-right: -14px;
   box-shadow: 0 0 0 2px @sidebar_bg_color;
-}
-
-/* Spinner card overlaid on the message list while a large bulk action runs. */
-.bulk-busy {
-  background: alpha(@window_bg_color, 0.9);
-  border-radius: 14px;
-  padding: 22px 30px;
-  box-shadow: 0 2px 12px alpha(black, 0.25);
 }
 
 /* ---- Message list ---- */
@@ -397,7 +450,7 @@ headerbar.rail-header {
      always did — only the highlight's shape changed. */
   margin: 2px 0;
   border-radius: 12px;
-  padding: 8px 6px 8px 10px;
+  padding: 8px 8px 8px 10px;
 }
 
 /* Selected rows: every text element fully white at full strength, in both
@@ -431,6 +484,13 @@ headerbar.rail-header {
    8px of box spacing plus this margin to the sender's name. */
 .message-row.no-avatar {
   padding-left: 6px;
+}
+
+/* With the Actions Palette line off, its vertical room goes back to the pill
+   as breathing space; with it on, the padding stays as it always was. */
+.message-row.no-palette {
+  padding-top: 13px;
+  padding-bottom: 13px;
 }
 
 .message-row.no-avatar .unread-dot {
@@ -1062,4 +1122,12 @@ headerbar.rail-header {
 }
 .tree-expander-icon.open {
   -gtk-icon-transform: rotate(90deg);
+}
+
+/* A highlighted attachment in the drawer (single click; Space previews it,
+   issue #37): a soft accent wash that keeps the thumbnail legible, rounded to
+   match the cells. */
+.attachment-drawer-flow flowboxchild:selected {
+  background-color: alpha(@accent_bg_color, 0.18);
+  border-radius: 10px;
 }

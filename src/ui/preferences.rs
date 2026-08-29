@@ -25,10 +25,16 @@ pub struct PrefInit {
     pub palette_collapse_secs: u64,
     pub threading: bool,
     pub threads_expanded: bool,
+    /// Conversation rows may expand into their members in the message list.
+    pub thread_expansion: bool,
+    /// Deleting a whole selected conversation asks for confirmation.
+    pub confirm_thread_delete: bool,
     /// Conversation card actions hide until the card is hovered.
     pub card_actions_hover: bool,
     /// With the ⋯ toggle off: card actions appear automatically on hover.
     pub card_actions_auto: bool,
+    /// The list rows carry an Actions Palette line at all.
+    pub list_palette: bool,
     /// The list's Actions Palette opens on row hover (no ⋯ click).
     pub list_palette_hover: bool,
     /// "New message" composes inline over the reading pane (vs a window).
@@ -44,7 +50,15 @@ pub struct PrefInit {
     pub single_key_shortcuts: bool,
     pub run_in_background: bool,
     pub autostart: bool,
+    /// The accounts panel (built by the AccountsWindow component), shown
+    /// behind the window's "Accounts" tab.
+    pub accounts_panel: gtk::Widget,
+    /// Open showing the Accounts tab instead of Preferences.
+    pub start_on_accounts: bool,
+    /// The persisted "this window opens to" choice (true = Accounts).
+    pub settings_open_accounts: bool,
 }
+
 
 /// App-chrome appearance options, in combo order.
 const APP_THEMES: &[(&str, AppTheme)] = &[
@@ -133,6 +147,20 @@ pub struct Preferences {
     /// Mirrors the notifications switch, so the "show sender and subject" row
     /// below it can grey out when nothing is being posted at all.
     notifications: bool,
+    /// Mirrors the threading switch, so the "threaded message list" row below
+    /// it can grey out when conversations aren't grouped at all.
+    threading: bool,
+    /// Mirrors the expandable-conversations switch — "expand by default" only
+    /// means anything while conversations can expand in the list at all.
+    thread_expansion: bool,
+    /// Mirrors the list-palette switch, so the hover row under it can grey
+    /// out when there is no palette to open.
+    list_palette: bool,
+    /// The Accounts/Preferences panel stack, for tab switching from update().
+    panels_stack: Option<adw::ViewStack>,
+    /// The shared header bar (view switcher); hidden while the accounts
+    /// editor subpage is open, whose own header takes over.
+    host_header: Option<adw::HeaderBar>,
 }
 
 #[derive(Debug)]
@@ -150,15 +178,18 @@ pub enum PrefInput {
     ChangeClockStyle(u32),
     ToggleThreading(bool),
     ToggleThreadsExpanded(bool),
+    ToggleThreadExpansion(bool),
+    ToggleConfirmThreadDelete(bool),
     ChangeCardActionsMode(u32),
+    ToggleListPalette(bool),
     ToggleListPaletteHover(bool),
     ToggleComposeInline(bool),
     ChangeFetchInterval(u32),
     TogglePush(bool),
     ToggleNotifications(bool),
     ToggleNotificationContent(bool),
-    ToggleShowAttachments(bool),
-    ToggleShowContacts(bool),
+    ToggleAttachmentsRow(bool),
+    ToggleContactsRow(bool),
     ToggleSidebarHoverExpand(bool),
     ChangePreviewLines(u32),
     ToggleSingleKey(bool),
@@ -167,6 +198,12 @@ pub enum PrefInput {
     ChangePaletteCollapse(u64),
     ChangeMessageTheme(u32),
     ChangeAppTheme(u32),
+    ChangeSettingsOpen(u32),
+    /// Switch the window to the Accounts panel (true) or Preferences (false).
+    ShowAccounts(bool),
+    /// The accounts editor subpage opened/closed — hide/show the shared
+    /// header so the editor's own header takes over the window.
+    EditorOpen(bool),
 }
 
 #[derive(Debug)]
@@ -184,17 +221,22 @@ pub enum PrefOutput {
     SetClockStyle(ClockStyle),
     SetThreading(bool),
     SetThreadsExpanded(bool),
+    SetThreadExpansion(bool),
+    SetConfirmThreadDelete(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
+    SetListPalette(bool),
     SetListPaletteHover(bool),
     SetComposeInline(bool),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
     SetNotificationContent(bool),
-    SetShowAttachments(bool),
-    SetShowContacts(bool),
+    SetAttachmentsRow(bool),
+    SetContactsRow(bool),
     SetSidebarHoverExpand(bool),
     SetAppTheme(AppTheme),
+    /// The "this window opens to" choice changed (true = Accounts).
+    SetSettingsOpenAccounts(bool),
     SetPreviewLines(u32),
     SetSingleKey(bool),
     SetRunInBackground(bool),
@@ -214,11 +256,11 @@ impl Component for Preferences {
     view! {
         adw::Window {
             set_modal: false,
-            set_default_width: 500,
+            set_default_width: 564,
             // Remembered vertical size (tall by default) — resizing sticks
             // across restarts via the save on close below.
             set_default_height: crate::config::load_prefs_height(),
-            set_title: Some("Settings"),
+            set_title: Some("Accounts & Preferences"),
 
             connect_close_request[sender] => move |w| {
                 crate::config::save_prefs_height(w.height());
@@ -226,14 +268,33 @@ impl Component for Preferences {
                 gtk::glib::Propagation::Proceed
             },
 
+            // One window, two views: Accounts and Preferences, switched by a
+            // view switcher (GNOME HIG) in the shared header bar. The
+            // accounts panel (with its own sub-navigation) is built by the
+            // AccountsWindow component and handed in via PrefInit; while its
+            // editor subpage is open the shared header hides, so the editor's
+            // own back/Save header takes over the window.
             #[wrap(Some)]
             set_content = &adw::ToolbarView {
-                add_top_bar = &adw::HeaderBar {},
+                #[name = "host_header"]
+                add_top_bar = &adw::HeaderBar {
+                    #[wrap(Some)]
+                    #[name = "switcher"]
+                    set_title_widget = &adw::ViewSwitcher {
+                        set_policy: adw::ViewSwitcherPolicy::Wide,
+                    },
+                },
 
                 #[wrap(Some)]
-                set_content = &adw::PreferencesPage {
+                #[name = "panels_stack"]
+                set_content = &adw::ViewStack {
+                    #[name = "accounts_slot"]
+                    add_titled[Some("accounts"), "Accounts"] = &adw::Bin {},
+
+                    #[name = "prefs_page"]
+                    add_titled[Some("preferences"), "Preferences"] = &adw::PreferencesPage {
                     add = &adw::PreferencesGroup {
-                        set_title: "Mail",
+                        set_title: "General",
 
                         #[name = "fetch_row"]
                         adw::ComboRow {
@@ -251,6 +312,10 @@ impl Component for Preferences {
                                 sender.input(PrefInput::TogglePush(row.is_active()));
                             },
                         },
+                    },
+
+                    add = &adw::PreferencesGroup {
+                        set_title: "Notifications",
 
                         #[name = "notifications_row"]
                         adw::SwitchRow {
@@ -271,22 +336,28 @@ impl Component for Preferences {
                                 sender.input(PrefInput::ToggleNotificationContent(row.is_active()));
                             },
                         },
+                    },
+
+                    add = &adw::PreferencesGroup {
+                        set_title: "Sidebar",
 
                         #[name = "show_attachments_row"]
                         adw::SwitchRow {
                             set_title: "Attachments in the sidebar",
-                            set_subtitle: "Show a shortcut for browsing every account's attachments.",
+                            set_subtitle: "A shortcut for browsing every account's attachments, \
+                                           pinned at the bottom of the sidebar.",
                             connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleShowAttachments(row.is_active()));
+                                sender.input(PrefInput::ToggleAttachmentsRow(row.is_active()));
                             },
                         },
 
                         #[name = "show_contacts_row"]
                         adw::SwitchRow {
                             set_title: "Contacts in the sidebar",
-                            set_subtitle: "Show a shortcut that opens your contacts.",
+                            set_subtitle: "A shortcut that opens your contacts, pinned at the \
+                                           bottom of the sidebar.",
                             connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleShowContacts(row.is_active()));
+                                sender.input(PrefInput::ToggleContactsRow(row.is_active()));
                             },
                         },
 
@@ -306,12 +377,173 @@ impl Component for Preferences {
                     add = &adw::PreferencesGroup {
                         set_title: "Message List",
 
+                        #[name = "avatars_row"]
+                        adw::SwitchRow {
+                            set_title: "Sender circles",
+                            set_subtitle: "The coloured circle of initials beside each message, in \
+                                           the list and above the message. Turning it off gives \
+                                           the sender and subject more room.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleAvatars(row.is_active()));
+                            },
+                        },
+
+                        #[name = "preview_lines_row"]
+                        adw::ComboRow {
+                            set_title: "Preview lines",
+                            set_subtitle: "How much of each message to show under its subject. \
+                                           Off also stops previews being downloaded.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangePreviewLines(row.selected()));
+                            },
+                        },
+
+                        #[name = "card_actions_row"]
+                        adw::ComboRow {
+                            set_title: "Message card actions",
+                            set_subtitle: "How each message's action icons show in the \
+                                           reader, single or threaded.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeCardActionsMode(row.selected()));
+                            },
+                        },
+
+                        #[name = "list_palette_row"]
+                        adw::SwitchRow {
+                            set_title: "Actions Palette in the message list",
+                            set_subtitle: "The \u{22ef} action row under each message summary. \
+                                           Turning it off returns its space to the row; \
+                                           messages are still acted on from their cards and \
+                                           the right-click menu.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleListPalette(row.is_active()));
+                            },
+                        },
+
+                        #[name = "list_palette_hover_row"]
+                        adw::SwitchRow {
+                            #[watch]
+                            set_sensitive: model.list_palette,
+                            set_title: "Open the Actions Palette on hover",
+                            set_subtitle: "The message list's \u{22ef} palette slides open \
+                                           by itself while the pointer rests on a row.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleListPaletteHover(row.is_active()));
+                            },
+                        },
+
+                        #[name = "palette_collapse_row"]
+                        adw::SpinRow {
+                            set_title: "Actions Palette timeout",
+                            set_subtitle: "Seconds an actions palette stays open after the \
+                                           cursor leaves it — the list's and the message \
+                                           cards' alike.",
+                            connect_value_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangePaletteCollapse(row.value() as u64));
+                            },
+                        },
+                    },
+
+                    add = &adw::PreferencesGroup {
+                        set_title: "Conversations",
+
                         #[name = "threading_row"]
                         adw::SwitchRow {
                             set_title: "Group messages by conversation",
                             set_subtitle: "Collapse replies into a single threaded conversation.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleThreading(row.is_active()));
+                            },
+                        },
+
+                        #[name = "thread_expansion_row"]
+                        adw::SwitchRow {
+                            #[watch]
+                            set_sensitive: model.threading,
+                            set_title: "Expandable conversations",
+                            set_subtitle: "Allow a conversation to expand/collapse its messages \
+                                           in the list. When off, the row keeps its count chip \
+                                           but the messages are displayed only as cards in the \
+                                           reading pane.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleThreadExpansion(row.is_active()));
+                            },
+                        },
+
+                        #[name = "threads_expanded_row"]
+                        adw::SwitchRow {
+                            #[watch]
+                            set_sensitive: model.threading && model.thread_expansion,
+                            set_title: "Expand conversations by default",
+                            set_subtitle: "Show every message of a conversation in the list. \
+                                           When off, conversations start collapsed to their \
+                                           newest message.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleThreadsExpanded(row.is_active()));
+                            },
+                        },
+
+                        #[name = "confirm_thread_delete_row"]
+                        adw::SwitchRow {
+                            set_title: "Confirm conversation deletion",
+                            set_subtitle: "Warn before deleting when a whole conversation is \
+                                           selected, since every message in the thread goes \
+                                           with it.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleConfirmThreadDelete(row.is_active()));
+                            },
+                        },
+                    },
+
+                    add = &adw::PreferencesGroup {
+                        set_title: "Reading",
+
+                        #[name = "message_theme_row"]
+                        adw::ComboRow {
+                            set_title: "Message appearance",
+                            set_subtitle: "Theme for email content only, not the app itself.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeMessageTheme(row.selected()));
+                            },
+                        },
+                    },
+
+                    add = &adw::PreferencesGroup {
+                        set_title: "Composing",
+
+                        #[name = "compose_inline_row"]
+                        adw::SwitchRow {
+                            set_title: "Compose in the main window",
+                            set_subtitle: "New message slides down over the reading pane, \
+                                           like a reply — pop it out to a window from its \
+                                           header. Off = open a separate window directly.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleComposeInline(row.is_active()));
+                            },
+                        },
+                    },
+
+                    add = &adw::PreferencesGroup {
+                        // Rendered as Pango markup — a bare "&" breaks it.
+                        set_title: "System &amp; Appearance",
+
+                        #[name = "app_theme_row"]
+                        adw::ComboRow {
+                            set_title: "Style",
+                            set_subtitle: "The app itself. Message content has its own \
+                                           setting under Reading.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeAppTheme(row.selected()));
+                            },
+                        },
+
+                        #[name = "settings_open_row"]
+                        adw::ComboRow {
+                            set_title: "This window opens to",
+                            set_subtitle: "The view shown first when Accounts &amp; Preferences \
+                                           is opened from the menu.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeSettingsOpen(row.selected()));
                             },
                         },
 
@@ -345,94 +577,6 @@ impl Component for Preferences {
                                 sender.input(PrefInput::ToggleSingleKey(row.is_active()));
                             },
                         },
-
-                        #[name = "avatars_row"]
-                        adw::SwitchRow {
-                            set_title: "Sender circles",
-                            set_subtitle: "The coloured circle of initials beside each message, in \
-                                           the list and above the message. Turning it off gives \
-                                           the sender and subject more room.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleAvatars(row.is_active()));
-                            },
-                        },
-
-                        #[name = "preview_lines_row"]
-                        adw::ComboRow {
-                            set_title: "Preview lines",
-                            set_subtitle: "How much of each message to show under its subject. \
-                                           Off also stops previews being downloaded.",
-                            connect_selected_notify[sender] => move |row| {
-                                sender.input(PrefInput::ChangePreviewLines(row.selected()));
-                            },
-                        },
-
-                        #[name = "threads_expanded_row"]
-                        adw::SwitchRow {
-                            set_title: "Expand conversations by default",
-                            set_subtitle: "Show every message of a conversation in the list. \
-                                           When off, conversations start collapsed to their \
-                                           newest message.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleThreadsExpanded(row.is_active()));
-                            },
-                        },
-
-                        #[name = "compose_inline_row"]
-                        adw::SwitchRow {
-                            set_title: "Compose in the main window",
-                            set_subtitle: "New message slides down over the reading pane, \
-                                           like a reply — pop it out to a window from its \
-                                           header. Off = open a separate window directly.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleComposeInline(row.is_active()));
-                            },
-                        },
-
-                        #[name = "card_actions_row"]
-                        adw::ComboRow {
-                            set_title: "Message card actions",
-                            set_subtitle: "How each message's action icons show in the \
-                                           reader, single or threaded.",
-                            connect_selected_notify[sender] => move |row| {
-                                sender.input(PrefInput::ChangeCardActionsMode(row.selected()));
-                            },
-                        },
-
-                        #[name = "list_palette_hover_row"]
-                        adw::SwitchRow {
-                            set_title: "Open the Actions Palette on hover",
-                            set_subtitle: "The message list's \u{22ef} palette slides open \
-                                           by itself while the pointer rests on a row.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleListPaletteHover(row.is_active()));
-                            },
-                        },
-
-                        #[name = "palette_collapse_row"]
-                        adw::SpinRow {
-                            set_title: "Actions Palette timeout",
-                            set_subtitle: "Seconds an actions palette stays open after the \
-                                           cursor leaves it — the list's and the message \
-                                           cards' alike.",
-                            connect_value_notify[sender] => move |row| {
-                                sender.input(PrefInput::ChangePaletteCollapse(row.value() as u64));
-                            },
-                        },
-                    },
-
-                    add = &adw::PreferencesGroup {
-                        set_title: "Appearance",
-
-                        #[name = "app_theme_row"]
-                        adw::ComboRow {
-                            set_title: "Style",
-                            set_subtitle: "The app itself. Message content has its own \
-                                           setting under Reading.",
-                            connect_selected_notify[sender] => move |row| {
-                                sender.input(PrefInput::ChangeAppTheme(row.selected()));
-                            },
-                        },
                     },
 
                     add = &adw::PreferencesGroup {
@@ -456,19 +600,6 @@ impl Component for Preferences {
                             set_title: "Clock",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeClockStyle(row.selected()));
-                            },
-                        },
-                    },
-
-                    add = &adw::PreferencesGroup {
-                        set_title: "Reading",
-
-                        #[name = "message_theme_row"]
-                        adw::ComboRow {
-                            set_title: "Message appearance",
-                            set_subtitle: "Theme for email content only, not the app itself.",
-                            connect_selected_notify[sender] => move |row| {
-                                sender.input(PrefInput::ChangeMessageTheme(row.selected()));
                             },
                         },
                     },
@@ -608,6 +739,7 @@ impl Component for Preferences {
                         },
                     },
                 },
+                },
             },
         }
     }
@@ -634,6 +766,11 @@ impl Component for Preferences {
             blacklist,
             blacklist_addrs: Vec::new(),
             notifications: init.notifications,
+            threading: init.threading,
+            thread_expansion: init.thread_expansion,
+            list_palette: init.list_palette,
+            panels_stack: None,
+            host_header: None,
         };
 
         {
@@ -693,6 +830,8 @@ impl Component for Preferences {
         widgets.single_key_row.set_active(init.single_key_shortcuts);
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
+        widgets.thread_expansion_row.set_active(init.thread_expansion);
+        widgets.confirm_thread_delete_row.set_active(init.confirm_thread_delete);
         widgets.card_actions_row.set_model(Some(&gtk::StringList::new(&[
             "Hidden behind a \u{22ef} toggle",
             "Shown while hovering",
@@ -705,6 +844,7 @@ impl Component for Preferences {
         } else {
             2
         });
+        widgets.list_palette_row.set_active(init.list_palette);
         widgets.list_palette_hover_row.set_active(init.list_palette_hover);
         widgets.compose_inline_row.set_active(init.compose_inline);
 
@@ -756,6 +896,33 @@ impl Component for Preferences {
         let adj = gtk::Adjustment::new(init.palette_collapse_secs as f64, 1.0, 30.0, 1.0, 5.0, 0.0);
         widgets.palette_collapse_row.set_adjustment(Some(&adj));
 
+        widgets
+            .settings_open_row
+            .set_model(Some(&gtk::StringList::new(&["Preferences", "Accounts"])));
+        widgets
+            .settings_open_row
+            .set_selected(if init.settings_open_accounts { 1 } else { 0 });
+
+        // The view switcher drives the panel stack; the pages carry icons so
+        // the switcher shows the standard icon-and-label tabs.
+        widgets.switcher.set_stack(Some(&widgets.panels_stack));
+        widgets.accounts_slot.set_child(Some(&init.accounts_panel));
+        widgets
+            .panels_stack
+            .page(&widgets.accounts_slot)
+            .set_icon_name(Some("co.hyprlab.Vireo-avatar-default-symbolic"));
+        widgets
+            .panels_stack
+            .page(&widgets.prefs_page)
+            .set_icon_name(Some("co.hyprlab.Vireo-applications-system-symbolic"));
+        widgets.panels_stack.set_visible_child_name(if init.start_on_accounts {
+            "accounts"
+        } else {
+            "preferences"
+        });
+        model.panels_stack = Some(widgets.panels_stack.clone());
+        model.host_header = Some(widgets.host_header.clone());
+
         ComponentParts { model, widgets }
     }
 
@@ -784,7 +951,15 @@ impl Component for Preferences {
                 let _ = sender.output(PrefOutput::SetAutoRemoteContent(on));
             }
             PrefInput::ToggleThreading(on) => {
+                self.threading = on;
                 let _ = sender.output(PrefOutput::SetThreading(on));
+            }
+            PrefInput::ToggleThreadExpansion(on) => {
+                self.thread_expansion = on;
+                let _ = sender.output(PrefOutput::SetThreadExpansion(on));
+            }
+            PrefInput::ToggleConfirmThreadDelete(on) => {
+                let _ = sender.output(PrefOutput::SetConfirmThreadDelete(on));
             }
             PrefInput::ToggleThreadsExpanded(on) => {
                 let _ = sender.output(PrefOutput::SetThreadsExpanded(on));
@@ -799,6 +974,10 @@ impl Component for Preferences {
                     hover_toggle,
                     hover_auto,
                 });
+            }
+            PrefInput::ToggleListPalette(on) => {
+                self.list_palette = on;
+                let _ = sender.output(PrefOutput::SetListPalette(on));
             }
             PrefInput::ToggleListPaletteHover(on) => {
                 let _ = sender.output(PrefOutput::SetListPaletteHover(on));
@@ -823,11 +1002,11 @@ impl Component for Preferences {
             PrefInput::ToggleNotificationContent(on) => {
                 let _ = sender.output(PrefOutput::SetNotificationContent(on));
             }
-            PrefInput::ToggleShowAttachments(on) => {
-                let _ = sender.output(PrefOutput::SetShowAttachments(on));
+            PrefInput::ToggleAttachmentsRow(on) => {
+                let _ = sender.output(PrefOutput::SetAttachmentsRow(on));
             }
-            PrefInput::ToggleShowContacts(on) => {
-                let _ = sender.output(PrefOutput::SetShowContacts(on));
+            PrefInput::ToggleContactsRow(on) => {
+                let _ = sender.output(PrefOutput::SetContactsRow(on));
             }
             PrefInput::ToggleSidebarHoverExpand(on) => {
                 let _ = sender.output(PrefOutput::SetSidebarHoverExpand(on));
@@ -855,6 +1034,19 @@ impl Component for Preferences {
                     .map(|(_, t)| *t)
                     .unwrap_or_default();
                 let _ = sender.output(PrefOutput::SetAppTheme(theme));
+            }
+            PrefInput::ChangeSettingsOpen(index) => {
+                let _ = sender.output(PrefOutput::SetSettingsOpenAccounts(index == 1));
+            }
+            PrefInput::ShowAccounts(accounts) => {
+                if let Some(stack) = &self.panels_stack {
+                    stack.set_visible_child_name(if accounts { "accounts" } else { "preferences" });
+                }
+            }
+            PrefInput::EditorOpen(open) => {
+                if let Some(header) = &self.host_header {
+                    header.set_visible(!open);
+                }
             }
             PrefInput::ChangeMessageTheme(index) => {
                 let theme = MESSAGE_THEMES

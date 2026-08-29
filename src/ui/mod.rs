@@ -3,6 +3,7 @@ pub mod attachment_drawer;
 pub mod attachments_gallery;
 pub mod compose;
 pub mod contacts_browser;
+pub mod contacts_page;
 pub mod context_menu;
 pub mod message_list;
 pub mod message_view;

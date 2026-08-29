@@ -632,6 +632,15 @@ struct PrivacyFile {
     /// (collapsed to their newest message by default).
     #[serde(default)]
     threads_expanded: bool,
+    /// Whether a conversation row can expand into its member rows in the
+    /// message list. Off: the row keeps its count chip and chevron, but the
+    /// thread itself opens only in the reading pane's cards.
+    #[serde(default = "default_thread_expansion")]
+    thread_expansion: bool,
+    /// Whether deleting a whole selected conversation asks for confirmation
+    /// first.
+    #[serde(default = "default_confirm_thread_delete")]
+    confirm_thread_delete: bool,
     /// How email content is themed (independent of the app UI theme).
     #[serde(default)]
     message_theme: MessageTheme,
@@ -643,14 +652,18 @@ struct PrivacyFile {
     /// on the lock screen, so turning it off is worth offering.
     #[serde(default = "default_notification_content")]
     notification_content: bool,
-    /// Whether the sidebar shows the "Attachments" row (the gallery of every
-    /// account's attachments).
+    /// Whether the sidebar's pinned footer shows the "Attachments" row (the
+    /// gallery of every account's attachments).
     #[serde(default = "default_show_attachments")]
     show_attachments: bool,
-    /// Whether the sidebar shows the "Contacts" shortcut row (below
-    /// Attachments); it opens the app-wide contacts browser.
+    /// Whether the sidebar's pinned footer shows the "Contacts" shortcut row
+    /// (above Attachments); it opens the app-wide contacts browser.
     #[serde(default = "default_show_contacts")]
     show_contacts: bool,
+    /// Whether the combined Accounts & Preferences window opens showing the
+    /// Accounts view instead of Preferences (the default).
+    #[serde(default)]
+    settings_open_accounts: bool,
     /// Whether a conversation card's action icons stay hidden until the card
     /// is hovered (expanded via their ⋯ toggle). Off = always shown, unless
     /// `card_actions_auto` shows them automatically on hover.
@@ -660,6 +673,10 @@ struct PrivacyFile {
     /// card is hovered (rather than always).
     #[serde(default = "default_card_actions_auto")]
     card_actions_auto: bool,
+    /// Whether the message list rows carry an Actions Palette at all. Off
+    /// removes the ⋯ line entirely, returning its space to the row.
+    #[serde(default = "default_list_palette")]
+    list_palette: bool,
     /// Whether the message list's Actions Palette opens on row hover, without
     /// needing the ⋯ click.
     #[serde(default)]
@@ -705,6 +722,18 @@ fn default_push() -> bool {
 }
 
 fn default_threading() -> bool {
+    true
+}
+
+fn default_thread_expansion() -> bool {
+    true
+}
+
+fn default_confirm_thread_delete() -> bool {
+    true
+}
+
+fn default_list_palette() -> bool {
     true
 }
 
@@ -769,13 +798,17 @@ impl Default for PrivacyFile {
             palette_collapse_secs: default_palette_collapse(),
             threading: default_threading(),
             threads_expanded: false,
+            thread_expansion: default_thread_expansion(),
+            confirm_thread_delete: default_confirm_thread_delete(),
             message_theme: MessageTheme::default(),
             notifications: default_notifications(),
             notification_content: default_notification_content(),
             show_attachments: default_show_attachments(),
             show_contacts: default_show_contacts(),
+            settings_open_accounts: false,
             card_actions_hover: default_card_actions_hover(),
             card_actions_auto: default_card_actions_auto(),
+            list_palette: default_list_palette(),
             list_palette_hover: false,
             compose_inline: default_compose_inline(),
             sidebar_hover_expand: false,
@@ -867,6 +900,16 @@ pub fn load_threads_expanded() -> bool {
     load_privacy().threads_expanded
 }
 
+/// Whether conversation rows can expand into their members in the list.
+pub fn load_thread_expansion() -> bool {
+    load_privacy().thread_expansion
+}
+
+/// Whether deleting a whole selected conversation asks for confirmation.
+pub fn load_confirm_thread_delete() -> bool {
+    load_privacy().confirm_thread_delete
+}
+
 /// How email message content is themed.
 pub fn load_message_theme() -> MessageTheme {
     load_privacy().message_theme
@@ -891,6 +934,11 @@ pub fn load_show_contacts() -> bool {
     load_privacy().show_contacts
 }
 
+/// Whether the settings window opens on the Accounts view (vs Preferences).
+pub fn load_settings_open_accounts() -> bool {
+    load_privacy().settings_open_accounts
+}
+
 /// Whether conversation card actions hide until hovered.
 pub fn load_card_actions_hover() -> bool {
     load_privacy().card_actions_hover
@@ -899,6 +947,11 @@ pub fn load_card_actions_hover() -> bool {
 /// With the ⋯ toggle off: whether card actions appear automatically on hover.
 pub fn load_card_actions_auto() -> bool {
     load_privacy().card_actions_auto
+}
+
+/// Whether the message list rows carry an Actions Palette at all.
+pub fn load_list_palette() -> bool {
+    load_privacy().list_palette
 }
 
 /// Whether the list's Actions Palette opens on row hover (no ⋯ click).
@@ -957,13 +1010,17 @@ pub fn save_privacy(
     palette_collapse_secs: u64,
     threading: bool,
     threads_expanded: bool,
+    thread_expansion: bool,
+    confirm_thread_delete: bool,
     message_theme: MessageTheme,
     notifications: bool,
     notification_content: bool,
     show_attachments: bool,
     show_contacts: bool,
+    settings_open_accounts: bool,
     card_actions_hover: bool,
     card_actions_auto: bool,
+    list_palette: bool,
     list_palette_hover: bool,
     compose_inline: bool,
     preview_lines: u32,
@@ -994,13 +1051,17 @@ pub fn save_privacy(
         palette_collapse_secs,
         threading,
         threads_expanded,
+        thread_expansion,
+        confirm_thread_delete,
         message_theme,
         notifications,
         notification_content,
         show_attachments,
         show_contacts,
+        settings_open_accounts,
         card_actions_hover,
         card_actions_auto,
+        list_palette,
         list_palette_hover,
         compose_inline,
         preview_lines,
@@ -1186,11 +1247,13 @@ struct StateFile {
     /// Message-list pane width in px (#28 — it reset every launch).
     #[serde(default = "default_list_pane_width")]
     list_pane_width: i32,
+    /// Contacts view: the contact-list pane's width in px.
+    #[serde(default = "default_contacts_pane_width")]
+    contacts_pane_width: i32,
     /// Auxiliary window heights, remembering the user's vertical resizes.
+    /// (`prefs_height` covers the combined Accounts & Preferences window.)
     #[serde(default = "default_aux_height")]
     prefs_height: i32,
-    #[serde(default = "default_aux_height")]
-    accounts_height: i32,
     #[serde(default = "default_about_height")]
     about_height: i32,
 }
@@ -1205,6 +1268,10 @@ fn default_about_height() -> i32 {
 
 fn default_list_pane_width() -> i32 {
     350
+}
+
+fn default_contacts_pane_width() -> i32 {
+    280
 }
 
 fn default_drawer_height() -> i32 {
@@ -1357,16 +1424,6 @@ pub fn save_prefs_height(height: i32) {
     save_state(&s);
 }
 
-pub fn load_accounts_height() -> i32 {
-    load_state().accounts_height.clamp(400, 4000)
-}
-
-pub fn save_accounts_height(height: i32) {
-    let mut s = load_state();
-    s.accounts_height = height.clamp(400, 4000);
-    save_state(&s);
-}
-
 pub fn load_about_height() -> i32 {
     load_state().about_height.clamp(400, 4000)
 }
@@ -1386,6 +1443,17 @@ pub fn load_list_pane_width() -> i32 {
 pub fn save_list_pane_width(width: i32) {
     let mut s = load_state();
     s.list_pane_width = width.clamp(324, 4000);
+    save_state(&s);
+}
+
+/// The contacts view's remembered list-pane width (280 is also its floor).
+pub fn load_contacts_pane_width() -> i32 {
+    load_state().contacts_pane_width.clamp(280, 4000)
+}
+
+pub fn save_contacts_pane_width(width: i32) {
+    let mut s = load_state();
+    s.contacts_pane_width = width.clamp(280, 4000);
     save_state(&s);
 }
 

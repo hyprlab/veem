@@ -43,6 +43,9 @@ pub struct RowInit {
     pub palette_collapse_secs: std::rc::Rc<std::cell::Cell<u64>>,
     /// Shared "open the palette on row hover" flag (read live on each hover).
     pub palette_hover: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Whether the row carries the Actions Palette line at all (preference);
+    /// off returns its reserved space to the row.
+    pub show_palette: bool,
     /// Number of messages in this conversation (only set on a thread head; 1 for
     /// a standalone message).
     pub thread_count: usize,
@@ -156,6 +159,8 @@ pub struct MessageRow {
     palette_collapse_secs: std::rc::Rc<std::cell::Cell<u64>>,
     /// Shared "open the palette on row hover" flag (read live per hover).
     palette_hover: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Whether this row shows the Actions Palette line at all (preference).
+    show_palette: bool,
     /// Conversation size (only meaningful on a thread head).
     thread_count: usize,
     /// Nested reply under a thread head.
@@ -416,13 +421,17 @@ impl FactoryComponent for MessageRow {
                     // 0 lines: previews are off, so the row gives them no space.
                     set_visible: self.preview_lines > 0,
                     set_label: &self.msg.preview,
-                    set_halign: gtk::Align::Start,
+                    // Fill (not Start): the layout width then matches the
+                    // allocation exactly, so the ellipsis lands right where the
+                    // text is cut instead of stranded at a stale layout edge.
+                    set_halign: gtk::Align::Fill,
                     set_hexpand: true,
                     set_xalign: 0.0,
-                    // `lines` only means anything once wrapping is on; at one line
-                    // it changes nothing, since the text is ellipsized before it
-                    // can reach a second.
-                    set_wrap: true,
+                    // A single preview line never wraps: wrap + `lines` +
+                    // ellipsize is the combination that detaches the "…" from
+                    // the text; a plain ellipsized line keeps it attached and
+                    // tracks the pane width continuously.
+                    set_wrap: self.preview_lines > 1,
                     set_wrap_mode: gtk::pango::WrapMode::WordChar,
                     set_ellipsize: gtk::pango::EllipsizeMode::End,
                     // A ceiling, not a reservation: a short message keeps a short
@@ -441,6 +450,9 @@ impl FactoryComponent for MessageRow {
                     set_halign: gtk::Align::Start,
                     set_valign: gtk::Align::Center,
                     add_css_class: "actions-line",
+                    // Preference: no palette at all — the line (and the space
+                    // it reserves under the preview) goes away entirely.
+                    set_visible: self.show_palette,
 
                     // Actions toggle (⋯). Clicking it opens/closes the palette but
                     // does NOT select or open the message (it's a button, so the
@@ -493,16 +505,16 @@ impl FactoryComponent for MessageRow {
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Forward)),
                             },
                             gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
                                 #[watch]
-                                set_icon_name: if self.msg.starred { "co.hyprlab.Vireo-starred-symbolic" } else { "co.hyprlab.Vireo-non-starred-symbolic" },
+                                set_css_classes: if self.msg.starred { &["flat", "star-active"] } else { &["flat"] },
                                 #[watch]
                                 set_tooltip_text: Some(if self.msg.starred { "Remove star" } else { "Star" }),
-                                add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleStar)),
                             },
                             gtk::Button {
                                 #[watch]
-                                set_icon_name: if self.msg.unread { "co.hyprlab.Vireo-mail-read-symbolic" } else { "co.hyprlab.Vireo-mail-unread-symbolic" },
+                                set_icon_name: if self.msg.unread { "co.hyprlab.Vireo-mail-unread-symbolic" } else { "co.hyprlab.Vireo-mail-read-symbolic" },
                                 #[watch]
                                 set_tooltip_text: Some(if self.msg.unread { "Mark as read" } else { "Mark as unread" }),
                                 add_css_class: "flat",
@@ -546,6 +558,7 @@ impl FactoryComponent for MessageRow {
             ring_class,
             palette_collapse_secs,
             palette_hover,
+            show_palette,
             thread_count,
             is_thread_child,
             thread_expanded,
@@ -569,6 +582,7 @@ impl FactoryComponent for MessageRow {
             collapse_timer: None,
             palette_collapse_secs,
             palette_hover,
+            show_palette,
             thread_count,
             is_thread_child,
             thread_expanded,
@@ -832,11 +846,17 @@ impl MessageRow {
     /// circle clear of the list's edge would leave the dot lopsided — sitting
     /// twice as far from the edge as from the text beside it.
     fn content_css(&self) -> Vec<&'static str> {
-        if self.avatars {
+        let mut v = if self.avatars {
             vec!["message-row"]
         } else {
             vec!["message-row", "no-avatar"]
+        };
+        // Without the palette line the pill gets extra breathing room instead
+        // (see `.message-row.no-palette` in the stylesheet).
+        if !self.show_palette {
+            v.push("no-palette");
         }
+        v
     }
 
     /// Row classes: unread highlight plus a `thread-child` indent for replies.
@@ -1088,6 +1108,9 @@ pub struct MessageList {
     /// Whether the folder's background index is fully loaded. When false, more
     /// rows may still stream in, so hitting the bottom shows a loading spinner.
     index_complete: bool,
+    /// Whether a SetMessages has arrived since the last SetLoading — gates the
+    /// empty-folder placeholder so it never flashes during a folder switch.
+    loaded: bool,
     /// The list's scroller, kept so expand/collapse can preserve scroll position.
     scroller: Option<gtk::ScrolledWindow>,
     /// Current sort order for the list.
@@ -1096,9 +1119,12 @@ pub struct MessageList {
     last_count: String,
     /// Group messages into conversation threads (user preference).
     threading: bool,
-    /// When `Some`, a spinner + this message overlays the list — shown while a
-    /// large bulk action (archive/delete/spam) is applied.
-    busy: Option<String>,
+    /// Whether a conversation row may expand into its member rows. Off: the
+    /// row keeps its count chip and chevron, but never opens — the thread is
+    /// read through the reader's cards instead.
+    thread_expansion: bool,
+    /// Whether rows carry the Actions Palette line at all (preference).
+    list_palette: bool,
 }
 
 /// How the message list is ordered.
@@ -1153,6 +1179,15 @@ pub enum MessageListInput {
     AppendMessages { messages: Vec<Message> },
     SetLoading,
     SetThreading(bool),
+    /// Whether conversation rows may expand into their members in the list
+    /// (the row keeps its chip and chevron either way).
+    SetThreadExpansion(bool),
+    /// Whether rows carry the Actions Palette line at all.
+    SetListPalette(bool),
+    /// Resolve what deleting the current selection means: a lone selected row
+    /// that heads a conversation stands for the whole thread (output
+    /// `DeleteThread`); anything else is an ordinary `Bulk` delete.
+    ResolveDelete,
     /// Reply headers from the account's other folders, so a conversation joined
     /// through a message that isn't on screen still groups.
     SetThreadLinks(Vec<(u32, String, String)>),
@@ -1222,8 +1257,6 @@ pub enum MessageListInput {
     /// Remove many messages in a single batch (bulk archive/delete/spam), so the
     /// list updates in one render pass instead of one per message.
     RemoveMany(Vec<u32>),
-    /// Show (`Some(message)`) or hide (`None`) the busy spinner over the list.
-    SetBusy(Option<String>),
     /// Secondary-click at (x, y) in the list: open the context menu.
     ContextMenu { x: f64, y: f64 },
     /// Set the Actions Palette auto-collapse delay (seconds).
@@ -1260,12 +1293,17 @@ pub enum MessageListOutput {
     SelectionKeys(Vec<(u32, u32)>),
     /// The header-bar count ("N" / "N of M") changed — app.rs shows it.
     CountChanged(String),
-    /// A row was double-clicked: open the message in its own window.
-    Activated(Message),
+    /// A row was double-clicked: open it in its own window. `thread` is the
+    /// whole conversation when the row heads one (same shape as `Selected`),
+    /// so the window shows every card — otherwise just `[message]`.
+    Activated { message: Message, thread: Vec<Message> },
     /// A context-menu action chosen for a specific message.
     Action { action: RowAction, message: Box<Message> },
     /// A bulk action chosen for every currently-selected message.
     Bulk { action: BulkAction, messages: Vec<Message> },
+    /// Delete requested on a lone selected row that heads a whole conversation:
+    /// every member of the thread, for the app to confirm and delete.
+    DeleteThread { messages: Vec<Message> },
     /// The viewed message was removed and no row remains to advance to, so the
     /// reader should clear.
     SelectionCleared,
@@ -1472,28 +1510,20 @@ impl SimpleComponent for MessageList {
                             add_css_class: "dim-label",
                         },
                     },
-                },
-                },
 
-                add_overlay = &gtk::Box {
-                    add_css_class: "bulk-busy",
-                    set_halign: gtk::Align::Center,
-                    set_valign: gtk::Align::Center,
-                    set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 12,
-                    #[watch]
-                    set_visible: model.busy.is_some(),
-
-                    gtk::Spinner {
-                        set_spinning: true,
-                        set_width_request: 32,
-                        set_height_request: 32,
-                    },
-                    gtk::Label {
+                    // Placeholder when the folder has loaded and holds nothing.
+                    adw::StatusPage {
+                        set_icon_name: Some("co.hyprlab.Vireo-mail-inbox-symbolic"),
+                        set_title: "No Messages",
+                        set_description: Some("There's nothing here right now."),
+                        set_vexpand: true,
+                        add_css_class: "compact",
                         #[watch]
-                        set_label: model.busy.as_deref().unwrap_or(""),
+                        set_visible: model.is_empty_state(),
                     },
                 },
+                },
+
             },
         }
     }
@@ -1531,6 +1561,7 @@ impl SimpleComponent for MessageList {
             total_matches: 0,
             render_limit: RENDER_CAP,
             index_complete: true,
+            loaded: false,
             query: String::new(),
             gravatar: false,
             avatars: true,
@@ -1560,8 +1591,9 @@ impl SimpleComponent for MessageList {
             sort: SortOrder::DateNewest,
             last_count: String::new(),
             threading: true,
+            thread_expansion: true,
+            list_palette: true,
 
-            busy: None,
         };
 
         let row_box = model.rows.widget();
@@ -1581,7 +1613,9 @@ impl SimpleComponent for MessageList {
         let ks = sender.clone();
         key.connect_key_pressed(move |_, keyval, _, _| {
             if matches!(keyval, gtk::gdk::Key::Delete | gtk::gdk::Key::BackSpace) {
-                ks.input(MessageListInput::Bulk(BulkAction::Delete));
+                // ResolveDelete, not a straight Bulk: a lone thread-head row
+                // stands for its whole conversation (confirmed by the app).
+                ks.input(MessageListInput::ResolveDelete);
                 gtk::glib::Propagation::Stop
             } else {
                 gtk::glib::Propagation::Proceed
@@ -1630,6 +1664,7 @@ impl SimpleComponent for MessageList {
         match msg {
             MessageListInput::SetMessages { messages } => {
                 self.all = messages;
+                self.loaded = true;
                 // Keep any active search query: this also fires for a background
                 // re-sync of the folder you're viewing, which shouldn't drop your
                 // search. Folder switches clear the query via `ResetPaging` first.
@@ -1660,6 +1695,7 @@ impl SimpleComponent for MessageList {
             }
             MessageListInput::SetLoading => {
                 self.all.clear();
+                self.loaded = false;
                 self.clear_search();
                 self.render_limit = RENDER_CAP;
                 self.rebuild();
@@ -1697,6 +1733,56 @@ impl SimpleComponent for MessageList {
                     self.threading = on;
                     self.rebuild();
                 }
+            }
+            MessageListInput::SetThreadExpansion(on) => {
+                if self.thread_expansion != on {
+                    self.thread_expansion = on;
+                    // Turning expansion off folds every open thread (the
+                    // `expanded` computation ignores the stored toggles while
+                    // off); turning it on restores them.
+                    self.rebuild();
+                }
+            }
+            MessageListInput::SetListPalette(on) => {
+                if self.list_palette != on {
+                    self.list_palette = on;
+                    self.rebuild();
+                }
+            }
+            MessageListInput::ResolveDelete => {
+                // A lone selected row that heads a multi-message conversation
+                // stands for the whole thread: hand every member to the app
+                // (which confirms before deleting). Anything else — multiple
+                // rows, a reply row, a plain message — is an ordinary bulk
+                // delete of exactly what is selected.
+                let selected: Vec<Message> = self
+                    .rows
+                    .widget()
+                    .selected_rows()
+                    .iter()
+                    .filter_map(|r| self.shown.get(r.index() as usize).cloned())
+                    .collect();
+                if let [m] = selected.as_slice() {
+                    let key = (m.account_id, m.id);
+                    if let Some(tkey) = self.msg_thread.get(&key) {
+                        let members = self.thread_members.get(tkey).cloned().unwrap_or_default();
+                        if members.len() > 1 && members.first() == Some(&key) {
+                            let messages: Vec<Message> = members
+                                .iter()
+                                .filter_map(|mk| {
+                                    self.active_source()
+                                        .iter()
+                                        .find(|x| (x.account_id, x.id) == *mk)
+                                        .cloned()
+                                })
+                                .collect();
+                            let _ = sender
+                                .output(MessageListOutput::DeleteThread { messages });
+                            return;
+                        }
+                    }
+                }
+                sender.input(MessageListInput::Bulk(BulkAction::Delete));
             }
             MessageListInput::SetThreadsExpanded(on) => {
                 if self.default_expanded != on {
@@ -1815,7 +1901,7 @@ impl SimpleComponent for MessageList {
                     .filter(|k| !self.shown.iter().any(|m| (m.account_id, m.id) == **k))
                     .filter_map(|k| self.msg_thread.get(k).cloned())
                     .collect();
-                if !hidden.is_empty() {
+                if !hidden.is_empty() && self.thread_expansion {
                     for thread_key in hidden {
                         // `expanded_threads` records the departure from the
                         // default, so which way to move it depends on that.
@@ -1981,6 +2067,11 @@ impl SimpleComponent for MessageList {
                 }
             }
             MessageListInput::ToggleThread(key) => {
+                // Expansion disabled: the chevron stays but does nothing — the
+                // conversation is read through the reader's cards.
+                if !self.thread_expansion {
+                    return;
+                }
                 if !self.expanded_threads.remove(&key) {
                     self.expanded_threads.insert(key);
                 }
@@ -1989,7 +2080,11 @@ impl SimpleComponent for MessageList {
             }
             MessageListInput::RowActivated(index) => {
                 if let Some(m) = self.shown.get(index as usize) {
-                    let _ = sender.output(MessageListOutput::Activated(m.clone()));
+                    let (thread, _solo) = self.conversation_for(m);
+                    let _ = sender.output(MessageListOutput::Activated {
+                        message: m.clone(),
+                        thread,
+                    });
                 }
             }
             MessageListInput::MarkRead(id) => {
@@ -2091,6 +2186,15 @@ impl SimpleComponent for MessageList {
                 }
                 self.publish_drag_keys();
                 self.selection_count = self.selected_ids.len();
+                // Backfill the rendered window: a bulk removal can empty it
+                // while `all` still holds messages beyond the render cap (a
+                // folder larger than one page). Re-derive `shown` so what
+                // remains appears immediately, instead of the list sitting
+                // empty until the server finishes the move and pushes fresh
+                // messages.
+                if self.shown.len() < self.render_limit && self.all.len() > self.shown.len() {
+                    self.rebuild_preserving_scroll();
+                }
                 if was_viewed {
                     match first_removed {
                         Some(idx) if !self.shown.is_empty() => {
@@ -2102,9 +2206,6 @@ impl SimpleComponent for MessageList {
                         }
                     }
                 }
-            }
-            MessageListInput::SetBusy(text) => {
-                self.busy = text;
             }
             MessageListInput::RowAction { action, message } => {
                 let _ = sender.output(MessageListOutput::Action { action, message });
@@ -2267,6 +2368,13 @@ impl MessageList {
         self.render_limit > self.total_matches && !self.index_complete
     }
 
+    /// Whether to show the empty-folder placeholder: the folder has loaded,
+    /// nothing is in it, no search is filtering it, and no more rows are on
+    /// their way (the loading indicator covers that state instead).
+    fn is_empty_state(&self) -> bool {
+        self.loaded && self.shown.is_empty() && self.query.is_empty() && self.index_complete
+    }
+
     /// A full rebuild that keeps the current scroll offset (a plain rebuild jumps
     /// to the top). Used when growing the list beneath the user.
     fn rebuild_preserving_scroll(&mut self) {
@@ -2426,7 +2534,11 @@ impl MessageList {
             msgs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then(a.uid.cmp(&b.uid)));
             let count = msgs.len();
             // `expanded_threads` stores toggles away from the default state.
-            let expanded = count > 1 && (self.expanded_threads.contains(key) != self.default_expanded);
+            // With expansion disabled no thread ever opens in the list; the
+            // stored toggles survive for when it is re-enabled.
+            let expanded = count > 1
+                && self.thread_expansion
+                && (self.expanded_threads.contains(key) != self.default_expanded);
             // The head stays marked unread while ANY message in its
             // conversation is unread — hidden replies included.
             let any_unread = count > 1 && msgs.iter().any(|m| m.unread);
@@ -2501,6 +2613,7 @@ impl MessageList {
                     ring_class,
                     palette_collapse_secs: self.palette_collapse_secs.clone(),
                     palette_hover: self.palette_hover.clone(),
+                    show_palette: self.list_palette,
                     thread_count: meta.count,
                     is_thread_child: meta.is_child,
                     thread_expanded: meta.expanded,
