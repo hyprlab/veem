@@ -292,7 +292,7 @@ impl Component for Preferences {
                     add_titled[Some("accounts"), "Accounts"] = &adw::Bin {},
 
                     #[name = "prefs_page"]
-                    add_titled[Some("preferences"), "Preferences"] = &adw::PreferencesPage {
+                    add_titled[Some("preferences"), "Settings"] = &adw::PreferencesPage {
                     add = &adw::PreferencesGroup {
                         set_title: "General",
 
@@ -898,7 +898,7 @@ impl Component for Preferences {
 
         widgets
             .settings_open_row
-            .set_model(Some(&gtk::StringList::new(&["Preferences", "Accounts"])));
+            .set_model(Some(&gtk::StringList::new(&["Settings", "Accounts"])));
         widgets
             .settings_open_row
             .set_selected(if init.settings_open_accounts { 1 } else { 0 });

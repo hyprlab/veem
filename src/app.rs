@@ -4907,7 +4907,7 @@ impl AppModel {
 
         if !self.single_key.get() {
             let off = gtk::Label::new(Some(
-                "Single-key shortcuts are switched off. Turn them on in Preferences → Message List.",
+                "Single-key shortcuts are switched off. Turn them on in Settings → System & Appearance.",
             ));
             off.add_css_class("dim-label");
             off.set_wrap(true);
