@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use gtk::prelude::*;
 use relm4::prelude::*;
 
-use crate::config::SidebarItemPos;
 use crate::models::{Account, Folder, FolderKind};
 use crate::ui::context_menu::{show_context_menu, MenuEntry};
 
@@ -50,10 +49,6 @@ pub struct SidebarInit {
     pub show_attachments: bool,
     /// Whether the "Contacts" row is shown.
     pub show_contacts: bool,
-    /// Where the "Attachments" row sits (pinned top block, or below accounts).
-    pub attachments_position: SidebarItemPos,
-    /// Where the "Contacts" row sits.
-    pub contacts_position: SidebarItemPos,
 }
 
 /// What is currently selected in the sidebar.
@@ -114,14 +109,10 @@ pub struct Sidebar {
     selected: Sel,
     /// Icon-only mode: hide all text, show just icons and account pills.
     collapsed: bool,
-    /// Whether the "Attachments" row is shown.
+    /// Whether the "Attachments" row is shown (in the pinned footer).
     show_attachments: bool,
-    /// Whether the "Contacts" row is shown.
+    /// Whether the "Contacts" row is shown (in the pinned footer).
     show_contacts: bool,
-    /// Where the "Attachments" row sits (pinned top block, or below accounts).
-    attachments_position: SidebarItemPos,
-    /// Where the "Contacts" row sits.
-    contacts_position: SidebarItemPos,
     /// How many messages are waiting in the Outbox across all accounts. The row
     /// only exists while this is non-zero — an empty Outbox is the normal state
     /// and does not deserve permanent furniture.
@@ -182,11 +173,10 @@ pub enum SidebarInput {
     /// parents toggle their sub-tree without needing the caret.
     FolderRowActivated { account_id: u32, index: i32 },
     ToggleCollapsed,
-    /// Show/hide the "Attachments" row and place it (pinned top, or below the
-    /// accounts). `position` is kept current even while hidden.
-    SetAttachmentsRow { show: bool, position: SidebarItemPos },
-    /// Show/hide and place the "Contacts" row.
-    SetContactsRow { show: bool, position: SidebarItemPos },
+    /// Show/hide the "Attachments" row in the pinned footer.
+    SetAttachmentsRow(bool),
+    /// Show/hide the "Contacts" row in the pinned footer.
+    SetContactsRow(bool),
     /// Whether any account is syncing — spins the refresh button.
     SetBusy(bool),
     /// How many messages are waiting to be sent; 0 hides the Outbox row.
@@ -277,9 +267,10 @@ impl Component for Sidebar {
             gtk::Overlay {
                 set_vexpand: true,
 
-                // The top block (compose bar, All Inboxes, Attachments,
-                // Contacts) is pinned above the scroller so it never scrolls
-                // away; only the per-account sections below scroll.
+                // The top block (compose bar, All Inboxes) is pinned above
+                // the scroller so it never scrolls away; only the per-account
+                // sections below scroll. Contacts/Attachments pin below it,
+                // in the footer.
                 #[wrap(Some)]
                 set_child = &gtk::Box {
                     set_orientation: gtk::Orientation::Vertical,
@@ -302,6 +293,14 @@ impl Component for Sidebar {
                         gtk::Box {
                             set_orientation: gtk::Orientation::Vertical,
                         },
+                    },
+
+                    // Pinned footer, below the scroller: the Contacts and
+                    // Attachments rows stay put against the sidebar's bottom
+                    // edge no matter how tall the account list above grows.
+                    #[name = "footer_box"]
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
                     },
                 },
 
@@ -358,8 +357,6 @@ impl Component for Sidebar {
             collapsed: init.collapsed,
             show_attachments: init.show_attachments,
             show_contacts: init.show_contacts,
-            attachments_position: init.attachments_position,
-            contacts_position: init.contacts_position,
             outbox_count: 0,
             unified_unread: 0,
             folder_badges: HashMap::new(),
@@ -415,7 +412,12 @@ impl Component for Sidebar {
                 self.sections = sections;
                 self.show_unified = show_unified;
                 self.unified_unread = unified_unread;
-                self.rebuild_normal(&widgets.pinned_box, &widgets.normal_box, &sender);
+                self.rebuild_normal(
+                    &widgets.pinned_box,
+                    &widgets.normal_box,
+                    &widgets.footer_box,
+                    &sender,
+                );
                 self.restore_selection();
             }
 
@@ -467,7 +469,12 @@ impl Component for Sidebar {
                     if count == 0 && self.selected == Sel::Outbox {
                         self.selected = Sel::None;
                     }
-                    self.rebuild_normal(&widgets.pinned_box, &widgets.normal_box, &sender);
+                    self.rebuild_normal(
+                        &widgets.pinned_box,
+                        &widgets.normal_box,
+                        &widgets.footer_box,
+                        &sender,
+                    );
                     self.restore_selection();
                 } else if let Some(list) = &self.outbox_list {
                     if let Some(row) = list.row_at_index(0) {
@@ -599,22 +606,30 @@ impl Component for Sidebar {
                 }
             }
 
-            SidebarInput::SetAttachmentsRow { show, position } => {
+            SidebarInput::SetAttachmentsRow(show) => {
                 self.show_attachments = show;
-                self.attachments_position = position;
                 // The row is about to disappear from under the selection; fall
                 // back the same way an emptied selection does.
                 if !show && self.selected == Sel::Attachments {
                     self.selected = Sel::None;
                 }
-                self.rebuild_normal(&widgets.pinned_box, &widgets.normal_box, &sender);
+                self.rebuild_normal(
+                    &widgets.pinned_box,
+                    &widgets.normal_box,
+                    &widgets.footer_box,
+                    &sender,
+                );
                 self.restore_selection();
             }
 
-            SidebarInput::SetContactsRow { show, position } => {
+            SidebarInput::SetContactsRow(show) => {
                 self.show_contacts = show;
-                self.contacts_position = position;
-                self.rebuild_normal(&widgets.pinned_box, &widgets.normal_box, &sender);
+                self.rebuild_normal(
+                    &widgets.pinned_box,
+                    &widgets.normal_box,
+                    &widgets.footer_box,
+                    &sender,
+                );
                 self.restore_selection();
             }
 
@@ -636,14 +651,24 @@ impl Component for Sidebar {
                 // persisted preference.
                 if self.collapsed != collapsed {
                     self.collapsed = collapsed;
-                    self.rebuild_normal(&widgets.pinned_box, &widgets.normal_box, &sender);
+                    self.rebuild_normal(
+                        &widgets.pinned_box,
+                        &widgets.normal_box,
+                        &widgets.footer_box,
+                        &sender,
+                    );
                     self.restore_selection();
                 }
             }
 
             SidebarInput::ToggleCollapsed => {
                 self.collapsed = !self.collapsed;
-                self.rebuild_normal(&widgets.pinned_box, &widgets.normal_box, &sender);
+                self.rebuild_normal(
+                    &widgets.pinned_box,
+                    &widgets.normal_box,
+                    &widgets.footer_box,
+                    &sender,
+                );
                 self.restore_selection();
                 let _ = sender.output(SidebarOutput::CollapsedChanged(self.collapsed));
             }
@@ -843,6 +868,7 @@ impl Sidebar {
         &mut self,
         pinned: &gtk::Box,
         container: &gtk::Box,
+        footer: &gtk::Box,
         sender: &ComponentSender<Self>,
     ) {
         // Keep the scroll offset: rebuilding otherwise snaps the sidebar to
@@ -857,8 +883,8 @@ impl Sidebar {
         // shimmer for a frame. The snapshot covers the rebuild and lifts a
         // few frames later, once the fresh tree has painted beneath it —
         // identical pixels, so the crossover is invisible. The snapshot is of
-        // the overlay's whole child (pinned block + scroller), matching the
-        // area the freeze-frame Picture stretches over.
+        // the overlay's whole child (pinned block + scroller + footer),
+        // matching the area the freeze-frame Picture stretches over.
         if let (Some(freeze), Some(area)) = (self.freeze_frame.clone(), pinned.parent()) {
             if container.first_child().is_some() || pinned.first_child().is_some() {
                 use gtk::gdk::prelude::PaintableExt;
@@ -887,12 +913,17 @@ impl Sidebar {
         while let Some(child) = container.first_child() {
             container.remove(&child);
         }
+        while let Some(child) = footer.first_child() {
+            footer.remove(&child);
+        }
         if self.collapsed {
             pinned.add_css_class("rail-collapsed");
             container.add_css_class("rail-collapsed");
+            footer.add_css_class("rail-collapsed");
         } else {
             pinned.remove_css_class("rail-collapsed");
             container.remove_css_class("rail-collapsed");
+            footer.remove_css_class("rail-collapsed");
         }
         self.revealers.clear();
         self.chevrons.clear();
@@ -1225,50 +1256,14 @@ impl Sidebar {
             }
         }
 
-        // Attachments/Contacts rows the user placed below the accounts: built
-        // here (same code as the pinned placement) but appended to the
-        // scrollable container only after the account sections.
-        let mut below_accounts: Vec<gtk::ListBox> = Vec::new();
-
-        // "Attachments" row — a gallery of every inbox attachment. Sits under the
-        // All Inboxes block and above the per-account sections, or below the
-        // accounts when so configured.
-        if self.show_attachments {
-            let list = gtk::ListBox::new();
-            list.set_selection_mode(gtk::SelectionMode::Single);
-            list.add_css_class("navigation-sidebar");
-
-            let row = gtk::ListBoxRow::new();
-            let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            hbox.add_css_class("folder-row");
-            let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-attachment-symbolic");
-            img.add_css_class("folder-icon");
-            if self.collapsed {
-                hbox.set_halign(gtk::Align::Center);
-                row.set_tooltip_text(Some("Attachments"));
-                hbox.append(&img);
-            } else {
-                hbox.append(&img);
-                let label = gtk::Label::new(Some("Attachments"));
-                label.set_hexpand(true);
-                label.set_halign(gtk::Align::Start);
-                label.add_css_class("account-name");
-                hbox.append(&label);
-            }
-            row.set_child(Some(&hbox));
-            list.append(&row);
-
-            let s = sender.clone();
-            list.connect_row_selected(move |_, row| {
-                if row.is_some() {
-                    s.input(SidebarInput::AttachmentsRowSelected);
-                }
-            });
-            match self.attachments_position {
-                SidebarItemPos::Top => pinned.append(&list),
-                SidebarItemPos::BelowAccounts => below_accounts.push(list.clone()),
-            }
-            self.attachments_list = Some(list);
+        // Contacts and Attachments live in the pinned footer against the
+        // sidebar's bottom edge — they keep out of the way of the account
+        // list and never scroll off. A faint rule sets them apart from
+        // whatever the scroller above ends on.
+        if self.show_contacts || self.show_attachments {
+            let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
+            sep.add_css_class("footer-separator");
+            footer.append(&sep);
         }
 
         // "Contacts" row — opens the app-wide contacts browser. A launcher, not
@@ -1307,10 +1302,44 @@ impl Sidebar {
                     list.unselect_all();
                 }
             });
-            match self.contacts_position {
-                SidebarItemPos::Top => pinned.append(&list),
-                SidebarItemPos::BelowAccounts => below_accounts.push(list),
+            footer.append(&list);
+        }
+
+        // "Attachments" row — a gallery of every inbox attachment. The very
+        // last row in the sidebar, below Contacts.
+        if self.show_attachments {
+            let list = gtk::ListBox::new();
+            list.set_selection_mode(gtk::SelectionMode::Single);
+            list.add_css_class("navigation-sidebar");
+
+            let row = gtk::ListBoxRow::new();
+            let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            hbox.add_css_class("folder-row");
+            let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-attachment-symbolic");
+            img.add_css_class("folder-icon");
+            if self.collapsed {
+                hbox.set_halign(gtk::Align::Center);
+                row.set_tooltip_text(Some("Attachments"));
+                hbox.append(&img);
+            } else {
+                hbox.append(&img);
+                let label = gtk::Label::new(Some("Attachments"));
+                label.set_hexpand(true);
+                label.set_halign(gtk::Align::Start);
+                label.add_css_class("account-name");
+                hbox.append(&label);
             }
+            row.set_child(Some(&hbox));
+            list.append(&row);
+
+            let s = sender.clone();
+            list.connect_row_selected(move |_, row| {
+                if row.is_some() {
+                    s.input(SidebarInput::AttachmentsRowSelected);
+                }
+            });
+            footer.append(&list);
+            self.attachments_list = Some(list);
         }
 
         // "Outbox" row — only while something is waiting to be sent. It sits
@@ -1741,11 +1770,6 @@ impl Sidebar {
             self.custom_folder_lists.insert(id, custom_list);
             self.custom_revealers.insert(id, custom_revealer);
             self.custom_chevrons.insert(id, custom_chevron);
-        }
-
-        // Shortcut rows placed below the accounts, in the scrollable section.
-        for list in below_accounts {
-            container.append(&list);
         }
 
         // Per-account avatar colours (background + readable text).

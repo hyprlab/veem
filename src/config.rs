@@ -524,17 +524,6 @@ fn delete_key(key: &str) {
 // Privacy settings (remote-content allowlist)
 // ---------------------------------------------------------------------------
 
-/// Where a sidebar shortcut row (Attachments, Contacts) is placed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SidebarItemPos {
-    /// Pinned in the fixed block above the accounts.
-    #[default]
-    Top,
-    /// In the scrollable section, below the account list.
-    BelowAccounts,
-}
-
 /// The app's own theme: follow the system, or force light/dark regardless.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -663,21 +652,14 @@ struct PrivacyFile {
     /// on the lock screen, so turning it off is worth offering.
     #[serde(default = "default_notification_content")]
     notification_content: bool,
-    /// Whether the sidebar shows the "Attachments" row (the gallery of every
-    /// account's attachments).
+    /// Whether the sidebar's pinned footer shows the "Attachments" row (the
+    /// gallery of every account's attachments).
     #[serde(default = "default_show_attachments")]
     show_attachments: bool,
-    /// Whether the sidebar shows the "Contacts" shortcut row (below
-    /// Attachments); it opens the app-wide contacts browser.
+    /// Whether the sidebar's pinned footer shows the "Contacts" shortcut row
+    /// (above Attachments); it opens the app-wide contacts browser.
     #[serde(default = "default_show_contacts")]
     show_contacts: bool,
-    /// Where the "Attachments" row sits: pinned above the accounts (default)
-    /// or in the scrollable section below them.
-    #[serde(default)]
-    attachments_position: SidebarItemPos,
-    /// Where the "Contacts" row sits (same choices as Attachments).
-    #[serde(default)]
-    contacts_position: SidebarItemPos,
     /// Whether a conversation card's action icons stay hidden until the card
     /// is hovered (expanded via their ⋯ toggle). Off = always shown, unless
     /// `card_actions_auto` shows them automatically on hover.
@@ -819,8 +801,6 @@ impl Default for PrivacyFile {
             notification_content: default_notification_content(),
             show_attachments: default_show_attachments(),
             show_contacts: default_show_contacts(),
-            attachments_position: SidebarItemPos::default(),
-            contacts_position: SidebarItemPos::default(),
             card_actions_hover: default_card_actions_hover(),
             card_actions_auto: default_card_actions_auto(),
             list_palette: default_list_palette(),
@@ -949,14 +929,6 @@ pub fn load_show_contacts() -> bool {
     load_privacy().show_contacts
 }
 
-pub fn load_attachments_position() -> SidebarItemPos {
-    load_privacy().attachments_position
-}
-
-pub fn load_contacts_position() -> SidebarItemPos {
-    load_privacy().contacts_position
-}
-
 /// Whether conversation card actions hide until hovered.
 pub fn load_card_actions_hover() -> bool {
     load_privacy().card_actions_hover
@@ -1035,8 +1007,6 @@ pub fn save_privacy(
     notification_content: bool,
     show_attachments: bool,
     show_contacts: bool,
-    attachments_position: SidebarItemPos,
-    contacts_position: SidebarItemPos,
     card_actions_hover: bool,
     card_actions_auto: bool,
     list_palette: bool,
@@ -1077,8 +1047,6 @@ pub fn save_privacy(
         notification_content,
         show_attachments,
         show_contacts,
-        attachments_position,
-        contacts_position,
         card_actions_hover,
         card_actions_auto,
         list_palette,

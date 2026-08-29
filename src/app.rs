@@ -297,14 +297,10 @@ pub struct AppModel {
     notifications_enabled: bool,
     /// Whether new-mail notifications may name the sender and subject.
     notification_content: bool,
-    /// Whether the sidebar shows the "Attachments" row.
+    /// Whether the sidebar's footer shows the "Attachments" row.
     show_attachments: bool,
-    /// Whether the sidebar shows the "Contacts" shortcut row.
+    /// Whether the sidebar's footer shows the "Contacts" shortcut row.
     show_contacts: bool,
-    /// Where the sidebar's "Attachments" row sits (pinned top, below accounts).
-    attachments_position: config::SidebarItemPos,
-    /// Where the sidebar's "Contacts" row sits.
-    contacts_position: config::SidebarItemPos,
     /// The list header's count text ("N" / "N of M"), from the message list.
     list_count: String,
     /// Lines of preview text per message-list row (1–3).
@@ -610,8 +606,8 @@ pub enum AppMsg {
     SetPush(bool),
     SetNotifications(bool),
     SetNotificationContent(bool),
-    SetAttachmentsRow { show: bool, position: config::SidebarItemPos },
-    SetContactsRow { show: bool, position: config::SidebarItemPos },
+    SetAttachmentsRow(bool),
+    SetContactsRow(bool),
     /// The message list's visible-count text changed.
     ListCount(String),
     /// Preference: hovering the narrow-window rail floats the sidebar out.
@@ -1406,15 +1402,11 @@ impl SimpleComponent for AppModel {
 
         let show_attachments = config::load_show_attachments();
         let show_contacts = config::load_show_contacts();
-        let attachments_position = config::load_attachments_position();
-        let contacts_position = config::load_contacts_position();
         let sidebar = Sidebar::builder()
             .launch(SidebarInit {
                 collapsed: icon_only,
                 show_attachments,
                 show_contacts,
-                attachments_position,
-                contacts_position,
             })
             .forward(sender.input_sender(), |out| match out {
                 SidebarOutput::UnifiedSelected => AppMsg::UnifiedSelected,
@@ -1633,8 +1625,6 @@ impl SimpleComponent for AppModel {
             notification_content: config::load_notification_content(),
             show_attachments,
             show_contacts,
-            attachments_position,
-            contacts_position,
             list_count: String::new(),
             preview_lines: config::load_preview_lines(),
             shortcuts_win: None,
@@ -3588,26 +3578,21 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::SetAttachmentsRow { show, position } => {
-                // Hiding keeps the stored position, so re-showing restores it.
-                let position = if show { position } else { self.attachments_position };
-                if self.show_attachments != show || self.attachments_position != position {
+            AppMsg::SetAttachmentsRow(show) => {
+                if self.show_attachments != show {
                     self.show_attachments = show;
-                    self.attachments_position = position;
                     self.save_settings();
-                    self.sidebar.emit(SidebarInput::SetAttachmentsRow { show, position });
+                    self.sidebar.emit(SidebarInput::SetAttachmentsRow(show));
                 }
             }
 
             AppMsg::ListCount(text) => self.list_count = text,
 
-            AppMsg::SetContactsRow { show, position } => {
-                let position = if show { position } else { self.contacts_position };
-                if self.show_contacts != show || self.contacts_position != position {
+            AppMsg::SetContactsRow(show) => {
+                if self.show_contacts != show {
                     self.show_contacts = show;
-                    self.contacts_position = position;
                     self.save_settings();
-                    self.sidebar.emit(SidebarInput::SetContactsRow { show, position });
+                    self.sidebar.emit(SidebarInput::SetContactsRow(show));
                 }
             }
 
@@ -4038,8 +4023,6 @@ impl SimpleComponent for AppModel {
                     notification_content: self.notification_content,
                     show_attachments: self.show_attachments,
                     show_contacts: self.show_contacts,
-                    attachments_position: self.attachments_position,
-                    contacts_position: self.contacts_position,
                     sidebar_hover_expand: self.sidebar_hover_expand,
                     card_actions_hover: self.card_actions_hover,
                     card_actions_auto: self.card_actions_auto,
@@ -4085,12 +4068,8 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetNotificationContent(on) => {
                             AppMsg::SetNotificationContent(on)
                         }
-                        PrefOutput::SetAttachmentsRow { show, position } => {
-                            AppMsg::SetAttachmentsRow { show, position }
-                        }
-                        PrefOutput::SetContactsRow { show, position } => {
-                            AppMsg::SetContactsRow { show, position }
-                        }
+                        PrefOutput::SetAttachmentsRow(show) => AppMsg::SetAttachmentsRow(show),
+                        PrefOutput::SetContactsRow(show) => AppMsg::SetContactsRow(show),
                         PrefOutput::SetSidebarHoverExpand(on) => {
                             AppMsg::SetSidebarHoverExpand(on)
                         }
@@ -4724,8 +4703,6 @@ impl AppModel {
             self.notification_content,
             self.show_attachments,
             self.show_contacts,
-            self.attachments_position,
-            self.contacts_position,
             self.card_actions_hover,
             self.card_actions_auto,
             self.list_palette,

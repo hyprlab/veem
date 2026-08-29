@@ -288,6 +288,14 @@ button.star-active {
   opacity: 0.6;
 }
 
+/* Faint rule above the pinned Contacts/Attachments footer, just enough to
+   set the utility rows apart from the account list scrolling above. */
+.footer-separator {
+  min-height: 1px;
+  margin: 4px 12px;
+  opacity: 0.5;
+}
+
 /* Collapsible "Folders" (custom folders) section header. */
 .folders-toggle {
   margin: 0 6px;
