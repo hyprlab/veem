@@ -1549,6 +1549,10 @@ impl SimpleComponent for AppModel {
                     ContactsPageOutput::DeleteContact { book_uid, uid } => {
                         AppMsg::DeleteContact { book_uid, uid }
                     }
+                    ContactsPageOutput::ShowPhoto { name, data } => AppMsg::ShowLightbox {
+                        items: vec![crate::models::Attachment { name, data }],
+                        start: 0,
+                    },
                 });
 
         let notifications = NotificationCenter::builder().launch(()).forward(

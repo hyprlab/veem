@@ -76,6 +76,8 @@ pub enum ContactsPageInput {
     OpenInGnome(usize),
     DeleteRequest(usize),
     DeleteConfirmed(usize),
+    /// The card's photo was clicked: expand it in the app lightbox.
+    OpenPhoto { name: String, data: Vec<u8> },
 }
 
 #[derive(Debug)]
@@ -90,6 +92,8 @@ pub enum ContactsPageOutput {
     CreateContact { vcard: String },
     /// Delete, already confirmed by the user.
     DeleteContact { book_uid: String, uid: String },
+    /// Show the contact's photo in the app lightbox.
+    ShowPhoto { name: String, data: Vec<u8> },
 }
 
 #[relm4::component(pub)]
@@ -550,6 +554,10 @@ impl Component for ContactsPage {
                 dialog.present();
             }
 
+            ContactsPageInput::OpenPhoto { name, data } => {
+                let _ = sender.output(ContactsPageOutput::ShowPhoto { name, data });
+            }
+
             ContactsPageInput::DeleteConfirmed(idx) => {
                 if idx >= self.contacts.len() {
                     return;
@@ -704,8 +712,28 @@ impl ContactsPage {
 
         // ---- identity header: photo, name, who they are ----
         let avatar = avatar_for(c, 96);
-        avatar.set_halign(gtk::Align::Center);
-        detail.append(&avatar);
+        if let Some(photo) = &c.photo {
+            // A real photo expands to the lightbox on click.
+            let btn = gtk::Button::new();
+            btn.set_child(Some(&avatar));
+            btn.add_css_class("flat");
+            btn.add_css_class("circular");
+            btn.set_halign(gtk::Align::Center);
+            btn.set_tooltip_text(Some("View photo"));
+            let s = sender.input_sender().clone();
+            let name = c.name.clone();
+            let data = photo.clone();
+            btn.connect_clicked(move |_| {
+                let _ = s.send(ContactsPageInput::OpenPhoto {
+                    name: name.clone(),
+                    data: data.clone(),
+                });
+            });
+            detail.append(&btn);
+        } else {
+            avatar.set_halign(gtk::Align::Center);
+            detail.append(&avatar);
+        }
 
         let name = gtk::Label::new(Some(&c.name));
         name.add_css_class("title-1");
