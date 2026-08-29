@@ -1,5 +1,67 @@
 # Changelog
 
+## 1.18.0b — 2026-08-29
+
+- **Contacts move into the app.** The sidebar's Contacts row now opens a
+  full view in the content area (like the attachments gallery): a
+  searchable, sortable list (first/last name or email, live count,
+  resizable pane with a 280px floor, accent-coloured selection) beside a
+  full contact card — photo (expandable to the lightbox), name, title ·
+  organization, labelled emails (compose or copy), phones, postal
+  addresses, websites, birthday, notes, and which address book the entry
+  lives in ("Google — a@gmail.com", "CardDAV — j@mac.com", "On This
+  Computer"). Contacts can be edited, created (+) and deleted (with
+  confirmation) right here — writes go through EDS D-Bus, so GNOME
+  Contacts and CardDAV stay in sync; edits patch the stored vCard so
+  unedited properties survive. Composing from a contact slides the
+  composer down over the card. GNOME Contacts stays one click away
+  (header button, or right-click on the sidebar row / a contact).
+- **Contacts correctness.** Book liveness comes from the EDS source
+  registry, so address books removed or contacts-disabled in GOA vanish
+  instead of haunting the list; iCloud photos render (the vCard parser
+  now survives quoted parameter values); deletes leave the list
+  immediately (tombstoned against stale cache re-reads).
+- **One settings window.** Accounts and Preferences share a window
+  behind an AdwViewSwitcher (GNOME HIG); a preference chooses which view
+  opens first (Preferences by default). Preferences regrouped into
+  focused sections (General, Notifications, Sidebar, Message List,
+  Conversations, Reading, Composing, System & Appearance, Date and
+  Time); a GOA account's editor hides the GNOME-owned connection fields
+  entirely; the accounts-list chip reads "GNOME Online Account".
+- **Bulk actions stop blocking.** The "Deleting N messages…" overlay is
+  gone: rows leave the list instantly, server work runs invisibly in the
+  workers, and further actions never wait. The refresh spinner spins
+  while anything runs in the background; the status bar narrates
+  ("Moving 200 messages to Trash on the server…") without revealing
+  itself, and gains two new routes in: long-press the refresh button, or
+  Ctrl+Shift+S. Bulk removals backfill the rendered window, so what
+  remains appears immediately.
+- **All Inboxes is instant.** Launch paints folders, unread counts and
+  every inbox slice straight from the disk cache before any worker
+  starts; each account's catch-up sync lands behind it. (Also fixes the
+  launch-order race that left the unified list empty.)
+- **Empty folders say so.** A proper "No Messages" status page — and the
+  "Loading more…" spinner no longer sticks forever on Graph/POP3 folders
+  (their backends never reported the index complete).
+- **Sidebar.** Contacts and Attachments pin to the bottom edge in a
+  fixed footer with a faint separator (from @thecalamityjoe87's PR #80,
+  issue #78); the All Inboxes chevron lines up with the account
+  chevrons and gets a 32px hit target; account section headers honour
+  the configured account label; the burger menu gains section breaks;
+  the attachments gallery header gets the sidebar toggle.
+- **Conversations & reader** (from the post-1.17.1 batch): opening a
+  conversation lands on its first unread; thread-wide delete with an
+  optional confirmation; Ctrl+A selects the visible cards; conversation
+  popout windows stay threaded; the inline composer no longer flashes
+  dark on open; header polish (pinned palette corner, address links,
+  honest previews, full-strength icons); Space previews the highlighted
+  attachment (issue #37).
+- **Under the hood:** per-folder IMAP IDLE watchers keep subfolder
+  unread chips near-instant on a one-hour activity lease, with
+  minute-by-minute verification that distrusts stale STATUS; the
+  compact-mode sidebar peek instruments itself and self-heals; demo mode
+  gains a sample address book for screenshots.
+
 ## 1.17.2b — 2026-08-28
 
 - Beta-channel build matching stable 1.17.1 (see below) — Microsoft 365

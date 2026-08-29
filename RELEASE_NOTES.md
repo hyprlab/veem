@@ -2,6 +2,22 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.18.0b
+
+A big one for the beta channel: contacts become a real part of Vireo, settings become one window, and bulk mail operations stop making you wait.
+
+**Contacts, without leaving your mail.** The sidebar's Contacts row now opens a full view right in the app: search, sort (first name, last name, or email) and browse everyone from GNOME Contacts, with a full card for each person — their photo (click to expand), every email with compose and copy at hand, phone numbers, addresses, websites, birthday, notes, and which account the entry belongs to. You can edit contacts, add new ones, and delete them (with a confirmation) without opening GNOME Contacts — changes sync back through Evolution Data Server, so CardDAV accounts pick them up. And when you do want the full app, it's one click (or a right-click) away. Address books you remove or disable in GNOME Online Accounts now disappear here too, and iCloud contact photos finally show up.
+
+**One settings window.** Accounts and Preferences live together now, switched with a standard GNOME view switcher. Preferences opens first (there's a preference to choose), and every option has been regrouped into focused sections so things are where you'd look for them.
+
+**Delete 200 messages without waiting.** Bulk actions apply instantly in the list and finish quietly in the background — nothing blocks, and the rest of the folder fills in right away. The refresh spinner tells you work is still running; the status bar (burger menu, long-press on Refresh, or Ctrl+Shift+S) tells you exactly what. Emptied folders now show a proper "No Messages" page instead of a stuck spinner.
+
+**An inbox the moment you launch.** All Inboxes paints from the local cache instantly at startup, then catches up with the server behind the scenes.
+
+**Sidebar and conversations.** Contacts and Attachments pin to the sidebar's bottom edge (thanks to Isaac's PR #80); conversations open on their first unread message, support thread-wide delete and Ctrl+A, and pop out into threaded windows; subfolder unread counts update near-instantly thanks to per-folder IMAP watchers.
+
+
+
 ## What's new in 1.17.2b
 
 The beta channel catches up with stable **1.17.1** — everything listed
