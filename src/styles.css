@@ -288,6 +288,21 @@ button.star-active {
   opacity: 0.6;
 }
 
+/* ---- Contacts view ---- */
+
+/* Selected contact: the full accent treatment the message list's selection
+   gets — accent ground, everything on it white at full strength. */
+.contacts-listbox > row:selected,
+.contacts-listbox > row:selected:hover,
+.contacts-listbox > row:selected:active {
+  background-color: @accent_bg_color;
+}
+
+.contacts-listbox > row:selected label {
+  color: white;
+  opacity: 1;
+}
+
 /* Faint rule above the pinned Contacts/Attachments footer, just enough to
    set the utility rows apart from the account list scrolling above. */
 .footer-separator {

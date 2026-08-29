@@ -1,13 +1,18 @@
 //! In-app Contacts view, shown in the main content area (like the attachments
-//! gallery): a searchable list of every GNOME Contacts entry on the left, the
-//! selected contact's full card on the right. Reading is straight from EDS, so
-//! it shows what GNOME Contacts shows; anything Vireo can't do (editing,
-//! linking, new books) is one click away via "Open GNOME Contacts".
+//! gallery): a searchable, sortable list of every GNOME Contacts entry beside
+//! the selected contact's full card, with editing, creation and deletion done
+//! right here (writes go through EDS, so GNOME Contacts and CardDAV stay in
+//! sync). Anything Vireo doesn't do — linking, photos, address books — is one
+//! click away via "Open GNOME Contacts".
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use adw::prelude::*;
 use relm4::prelude::*;
 
-use crate::contacts::{ContactDetails, Labeled};
+use crate::contacts::{ContactDetails, ContactEdit, Labeled};
+use crate::ui::context_menu::{show_context_menu, MenuEntry};
 
 /// How the contact list is ordered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,16 +22,32 @@ pub enum ContactSort {
     Email,
 }
 
+/// Live handles into the open editor form.
+struct Editor {
+    name: adw::EntryRow,
+    nickname: adw::EntryRow,
+    org: adw::EntryRow,
+    title: adw::EntryRow,
+    note: gtk::TextView,
+    emails: Rc<RefCell<Vec<(adw::EntryRow, String)>>>,
+    phones: Rc<RefCell<Vec<(adw::EntryRow, String)>>>,
+    urls: Rc<RefCell<Vec<(adw::EntryRow, String)>>>,
+}
+
 pub struct ContactsPage {
     contacts: Vec<ContactDetails>,
     query: String,
     sort: ContactSort,
     /// Index into `contacts` of the contact shown in the detail pane.
     selected: Option<usize>,
-    /// Filtered list-row order → index into `contacts`.
+    /// Filtered + sorted list-row order → index into `contacts`.
     row_map: Vec<usize>,
     /// A load is underway (the page was just opened).
     loading: bool,
+    /// The editor form, while open. `editing_target` is the contact being
+    /// edited, `None` for a brand-new one.
+    editor: Option<Editor>,
+    editing_target: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -40,6 +61,16 @@ pub enum ContactsPageInput {
     RowSelected(i32),
     Compose(String),
     OpenUrl(String),
+    /// Edit the selected contact / a specific one (context menu).
+    Edit,
+    EditIndex(usize),
+    /// The header's "+": a blank editor for a new contact.
+    NewContact,
+    CancelEdit,
+    SaveEdit,
+    OpenInGnome(usize),
+    DeleteRequest(usize),
+    DeleteConfirmed(usize),
 }
 
 #[derive(Debug)]
@@ -48,6 +79,12 @@ pub enum ContactsPageOutput {
     Compose(String),
     /// The header's sidebar button (same spot as the message list's).
     ToggleSidebar,
+    /// Persist an edit: the patched vCard back to its book.
+    SaveContact { book_uid: String, vcard: String },
+    /// Create a brand-new contact (the app picks the book).
+    CreateContact { vcard: String },
+    /// Delete, already confirmed by the user.
+    DeleteContact { book_uid: String, uid: String },
 }
 
 #[relm4::component(pub)]
@@ -87,6 +124,12 @@ impl Component for ContactsPage {
                             crate::ui::contacts_browser::launch_gnome_contacts();
                         },
                     },
+                    pack_end = &gtk::Button {
+                        set_icon_name: "co.hyprlab.Vireo-list-add-symbolic",
+                        set_tooltip_text: Some("New contact"),
+                        add_css_class: "flat",
+                        connect_clicked => ContactsPageInput::NewContact,
+                    },
                 },
 
                 #[wrap(Some)]
@@ -104,11 +147,40 @@ impl Component for ContactsPage {
             },
 
             // Each pane carries its own header (like the mail view), so the
-            // divider between them runs the full height of the window.
-            add_named[Some("browser")] = &gtk::Box {
+            // divider between them runs the full height of the window; the
+            // paned handle lets the list grow, with its launch width as the
+            // floor.
+            add_named[Some("browser")] = &gtk::Paned {
                 set_orientation: gtk::Orientation::Horizontal,
+                set_wide_handle: false,
+                set_position: crate::config::load_contacts_pane_width(),
+                set_resize_start_child: false,
+                set_shrink_start_child: false,
+                set_resize_end_child: true,
+                set_shrink_end_child: false,
+                // Remember the width the user drags to. Debounced: one write
+                // once the drag settles (see the mail view's list pane).
+                connect_position_notify[
+                    pending = std::rc::Rc::new(std::cell::RefCell::new(
+                        None::<gtk::glib::SourceId>,
+                    ))
+                ] => move |p| {
+                    let pos = p.position();
+                    if let Some(id) = pending.borrow_mut().take() {
+                        id.remove();
+                    }
+                    let armed = pending.clone();
+                    *pending.borrow_mut() = Some(gtk::glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(600),
+                        move || {
+                            *armed.borrow_mut() = None;
+                            crate::config::save_contacts_pane_width(pos);
+                        },
+                    ));
+                },
 
-                adw::ToolbarView {
+                #[wrap(Some)]
+                set_start_child = &adw::ToolbarView {
                     add_top_bar = &adw::HeaderBar {
                         add_css_class: "flat",
                         // Left pane: no window controls (the detail pane's
@@ -129,9 +201,16 @@ impl Component for ContactsPage {
                                 let _ = sender.output(ContactsPageOutput::ToggleSidebar);
                             },
                         },
-                        // pack_end packs right-to-left: GNOME Contacts at the
-                        // far right, then sort, then the count — the same
-                        // count-and-sort pair the message list's header has.
+                        // pack_end packs right-to-left: sort at the far right
+                        // (matching the message list), then the GNOME Contacts
+                        // launcher, then "+", then the count.
+                        #[name = "sort_btn"]
+                        pack_end = &gtk::MenuButton {
+                            set_icon_name: "co.hyprlab.Vireo-view-sort-descending-symbolic",
+                            set_tooltip_text: Some("Sort contacts"),
+                            set_valign: gtk::Align::Center,
+                            add_css_class: "flat",
+                        },
                         pack_end = &gtk::Button {
                             set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
                             set_tooltip_text: Some("Open GNOME Contacts"),
@@ -140,12 +219,11 @@ impl Component for ContactsPage {
                                 crate::ui::contacts_browser::launch_gnome_contacts();
                             },
                         },
-                        #[name = "sort_btn"]
-                        pack_end = &gtk::MenuButton {
-                            set_icon_name: "co.hyprlab.Vireo-view-sort-descending-symbolic",
-                            set_tooltip_text: Some("Sort contacts"),
-                            set_valign: gtk::Align::Center,
+                        pack_end = &gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-list-add-symbolic",
+                            set_tooltip_text: Some("New contact"),
                             add_css_class: "flat",
+                            connect_clicked => ContactsPageInput::NewContact,
                         },
                         #[name = "count_label"]
                         pack_end = &gtk::Label {
@@ -178,6 +256,7 @@ impl Component for ContactsPage {
                             #[name = "list"]
                             gtk::ListBox {
                                 add_css_class: "navigation-sidebar",
+                                add_css_class: "contacts-listbox",
                                 set_selection_mode: gtk::SelectionMode::Single,
                                 connect_row_selected[sender] => move |_, row| {
                                     if let Some(row) = row {
@@ -189,11 +268,8 @@ impl Component for ContactsPage {
                     },
                 },
 
-                gtk::Separator {
-                    set_orientation: gtk::Orientation::Vertical,
-                },
-
-                adw::ToolbarView {
+                #[wrap(Some)]
+                set_end_child = &adw::ToolbarView {
                     set_hexpand: true,
 
                     add_top_bar = &adw::HeaderBar {
@@ -244,6 +320,8 @@ impl Component for ContactsPage {
             selected: None,
             row_map: Vec::new(),
             loading: true,
+            editor: None,
+            editing_target: None,
         };
         let widgets = view_output!();
 
@@ -309,6 +387,8 @@ impl Component for ContactsPage {
                     .map(|c| (c.name.clone(), c.primary_email().map(str::to_string)));
                 self.contacts = contacts;
                 self.loading = false;
+                self.editor = None;
+                self.editing_target = None;
                 self.selected = keep.and_then(|(name, email)| {
                     self.contacts.iter().position(|c| {
                         c.name == name && c.primary_email().map(str::to_string) == email
@@ -331,9 +411,12 @@ impl Component for ContactsPage {
 
             ContactsPageInput::RowSelected(row) => {
                 let Some(&idx) = self.row_map.get(row as usize) else { return };
-                if self.selected == Some(idx) {
+                if self.selected == Some(idx) && self.editor.is_none() {
                     return;
                 }
+                // Moving away abandons an open editor.
+                self.editor = None;
+                self.editing_target = None;
                 self.selected = Some(idx);
                 self.render_detail(widgets, &sender);
             }
@@ -349,6 +432,106 @@ impl Component for ContactsPage {
                     &full,
                     gtk::gio::AppLaunchContext::NONE,
                 );
+            }
+
+            ContactsPageInput::Edit => {
+                if self.selected.is_some() {
+                    self.editing_target = self.selected;
+                    self.render_editor(widgets, &sender);
+                }
+            }
+
+            ContactsPageInput::EditIndex(idx) => {
+                if idx < self.contacts.len() {
+                    self.selected = Some(idx);
+                    self.select_row_for(widgets, idx);
+                    self.editing_target = Some(idx);
+                    self.render_editor(widgets, &sender);
+                }
+            }
+
+            ContactsPageInput::NewContact => {
+                self.editing_target = None;
+                widgets.page_stack.set_visible_child_name("browser");
+                self.render_editor(widgets, &sender);
+            }
+
+            ContactsPageInput::CancelEdit => {
+                self.editor = None;
+                self.editing_target = None;
+                if self.contacts.is_empty() {
+                    widgets.page_stack.set_visible_child_name("none");
+                }
+                self.render_detail(widgets, &sender);
+            }
+
+            ContactsPageInput::SaveEdit => {
+                let Some(editor) = &self.editor else { return };
+                let edit = collect_edit(editor);
+                if edit.name.is_empty() && edit.emails.is_empty() {
+                    return; // nothing worth saving
+                }
+                match self.editing_target.and_then(|i| self.contacts.get(i)) {
+                    Some(c) => {
+                        let vcard = crate::contacts::patched_vcard(&c.raw_vcard, &edit);
+                        let _ = sender.output(ContactsPageOutput::SaveContact {
+                            book_uid: c.book_uid.clone(),
+                            vcard,
+                        });
+                    }
+                    None => {
+                        let vcard = crate::contacts::new_vcard(&edit);
+                        let _ = sender.output(ContactsPageOutput::CreateContact { vcard });
+                    }
+                }
+                // The app re-reads EDS and pushes SetContacts; until then the
+                // card shows the pre-edit state rather than a half-saved one.
+                self.editor = None;
+                self.editing_target = None;
+                self.render_detail(widgets, &sender);
+            }
+
+            ContactsPageInput::OpenInGnome(idx) => {
+                if let Some(c) = self.contacts.get(idx) {
+                    crate::ui::contacts_browser::launch_gnome_contacts_for(&c.eds_uid);
+                }
+            }
+
+            ContactsPageInput::DeleteRequest(idx) => {
+                let Some(c) = self.contacts.get(idx) else { return };
+                let win = widgets.page_stack.root().and_downcast::<gtk::Window>();
+                let dialog = adw::MessageDialog::new(
+                    win.as_ref(),
+                    Some("Delete Contact?"),
+                    Some(&format!(
+                        "{} is removed from your address book — and, for a synced \
+                         book, from the server too.",
+                        c.name
+                    )),
+                );
+                dialog.add_response("cancel", "Cancel");
+                dialog.add_response("delete", "Delete");
+                dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+                dialog.set_default_response(Some("cancel"));
+                dialog.set_close_response("cancel");
+                let s = sender.input_sender().clone();
+                dialog.connect_response(None, move |_, resp| {
+                    if resp == "delete" {
+                        let _ = s.send(ContactsPageInput::DeleteConfirmed(idx));
+                    }
+                });
+                dialog.present();
+            }
+
+            ContactsPageInput::DeleteConfirmed(idx) => {
+                if let Some(c) = self.contacts.get(idx) {
+                    if !c.eds_uid.is_empty() {
+                        let _ = sender.output(ContactsPageOutput::DeleteContact {
+                            book_uid: c.book_uid.clone(),
+                            uid: c.eds_uid.clone(),
+                        });
+                    }
+                }
             }
         }
     }
@@ -368,8 +551,17 @@ impl ContactsPage {
             || c.phones.iter().any(|p| p.value.to_lowercase().contains(q))
     }
 
-    /// Rebuild the list from `contacts` + `query`, keep (or default) the
-    /// selection, and render its detail card.
+    /// Move the list selection to the row showing contact `idx` (if visible).
+    fn select_row_for(&self, widgets: &ContactsPageWidgets, idx: usize) {
+        if let Some(pos) = self.row_map.iter().position(|&i| i == idx) {
+            if let Some(row) = widgets.list.row_at_index(pos as i32) {
+                widgets.list.select_row(Some(&row));
+            }
+        }
+    }
+
+    /// Rebuild the list from `contacts` + `query` + `sort`, keep (or default)
+    /// the selection, and render its detail card.
     fn rebuild(&mut self, widgets: &ContactsPageWidgets, sender: &ComponentSender<Self>) {
         widgets
             .page_stack
@@ -412,6 +604,37 @@ impl ContactsPage {
             }
             row.set_activatable(true);
             row.add_prefix(&avatar_for(c, 34));
+
+            // Right-click: the quick actions on this entry.
+            let right_click = gtk::GestureClick::new();
+            right_click.set_button(3);
+            let s = sender.input_sender().clone();
+            right_click.connect_pressed(move |gesture, _, x, y| {
+                let Some(widget) = gesture.widget() else { return };
+                let (se, sd, sg) = (s.clone(), s.clone(), s.clone());
+                show_context_menu(
+                    &widget,
+                    x,
+                    y,
+                    vec![
+                        vec![
+                            MenuEntry::new("Edit", move || {
+                                let _ = se.send(ContactsPageInput::EditIndex(idx));
+                            })
+                            .icon("co.hyprlab.Vireo-document-edit-symbolic"),
+                            MenuEntry::new("Open in GNOME Contacts", move || {
+                                let _ = sg.send(ContactsPageInput::OpenInGnome(idx));
+                            })
+                            .icon("co.hyprlab.Vireo-adw-external-link-symbolic"),
+                        ],
+                        vec![MenuEntry::new("Delete…", move || {
+                            let _ = sd.send(ContactsPageInput::DeleteRequest(idx));
+                        })
+                        .icon("co.hyprlab.Vireo-user-trash-symbolic")],
+                    ],
+                );
+            });
+            row.add_controller(right_click);
             widgets.list.append(&row);
         }
 
@@ -433,7 +656,8 @@ impl ContactsPage {
     }
 
     /// Fill the right-hand pane with the selected contact's card.
-    fn render_detail(&self, widgets: &ContactsPageWidgets, sender: &ComponentSender<Self>) {
+    fn render_detail(&mut self, widgets: &ContactsPageWidgets, sender: &ComponentSender<Self>) {
+        self.editor = None;
         let detail = &widgets.detail_box;
         while let Some(child) = detail.first_child() {
             detail.remove(&child);
@@ -441,6 +665,17 @@ impl ContactsPage {
         let Some(c) = self.selected.and_then(|i| self.contacts.get(i)) else {
             return;
         };
+
+        // ---- action row: edit, aligned with the card's top ----
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        actions.set_halign(gtk::Align::End);
+        let edit = flat_button("co.hyprlab.Vireo-document-edit-symbolic", "Edit contact");
+        let s = sender.input_sender().clone();
+        edit.connect_clicked(move |_| {
+            let _ = s.send(ContactsPageInput::Edit);
+        });
+        actions.append(&edit);
+        detail.append(&actions);
 
         // ---- identity header: photo, name, who they are ----
         let avatar = avatar_for(c, 96);
@@ -543,6 +778,10 @@ impl ContactsPage {
         if !c.note.is_empty() {
             extras.push(Labeled { label: "Note".into(), value: c.note.clone() });
         }
+        // Where this entry lives — the local book or a synced account.
+        if !c.book_name.is_empty() {
+            extras.push(Labeled { label: "Address Book".into(), value: c.book_name.clone() });
+        }
         if !extras.is_empty() {
             let list = group(detail, "Details");
             for x in &extras {
@@ -554,6 +793,205 @@ impl ContactsPage {
             }
         }
     }
+
+    /// Replace the detail pane with the editor form for `editing_target`
+    /// (blank for a new contact).
+    fn render_editor(&mut self, widgets: &ContactsPageWidgets, sender: &ComponentSender<Self>) {
+        let detail = &widgets.detail_box;
+        while let Some(child) = detail.first_child() {
+            detail.remove(&child);
+        }
+        let blank = ContactDetails::default();
+        let c = self
+            .editing_target
+            .and_then(|i| self.contacts.get(i))
+            .unwrap_or(&blank);
+
+        // ---- Cancel / Save bar ----
+        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let cancel = gtk::Button::with_label("Cancel");
+        let s = sender.input_sender().clone();
+        cancel.connect_clicked(move |_| {
+            let _ = s.send(ContactsPageInput::CancelEdit);
+        });
+        let save = gtk::Button::with_label("Save");
+        save.add_css_class("suggested-action");
+        let s = sender.input_sender().clone();
+        save.connect_clicked(move |_| {
+            let _ = s.send(ContactsPageInput::SaveEdit);
+        });
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        bar.append(&cancel);
+        bar.append(&spacer);
+        bar.append(&save);
+        detail.append(&bar);
+
+        let heading = gtk::Label::new(Some(if self.editing_target.is_some() {
+            "Edit Contact"
+        } else {
+            "New Contact"
+        }));
+        heading.add_css_class("title-2");
+        heading.set_margin_top(10);
+        detail.append(&heading);
+
+        // ---- identity fields ----
+        let identity = group(detail, "Identity");
+        let name = entry_row("Name", &c.name);
+        let nickname = entry_row("Nickname", &c.nickname);
+        let org = entry_row("Organization", &c.org);
+        let title = entry_row("Title", &c.title);
+        identity.append(&name);
+        identity.append(&nickname);
+        identity.append(&org);
+        identity.append(&title);
+
+        // ---- repeating value groups ----
+        let emails = editable_values(
+            detail,
+            "Email",
+            "Add email",
+            &c.emails.iter().map(|l| (l.value.clone(), l.label.clone())).collect::<Vec<_>>(),
+        );
+        let phones = editable_values(
+            detail,
+            "Phone",
+            "Add phone",
+            &c.phones.iter().map(|l| (l.value.clone(), l.label.clone())).collect::<Vec<_>>(),
+        );
+        let urls = editable_values(
+            detail,
+            "Website",
+            "Add website",
+            &c.urls.iter().map(|u| (u.clone(), String::new())).collect::<Vec<_>>(),
+        );
+
+        // ---- note ----
+        let note_list = group(detail, "Note");
+        let note = gtk::TextView::new();
+        note.set_wrap_mode(gtk::WrapMode::WordChar);
+        note.buffer().set_text(&c.note);
+        note.set_top_margin(8);
+        note.set_bottom_margin(8);
+        note.set_left_margin(10);
+        note.set_right_margin(10);
+        note.set_height_request(72);
+        let note_row = gtk::ListBoxRow::new();
+        note_row.set_activatable(false);
+        note_row.set_child(Some(&note));
+        note_list.append(&note_row);
+
+        self.editor = Some(Editor { name, nickname, org, title, note, emails, phones, urls });
+    }
+}
+
+/// Read the editor form back into a `ContactEdit`.
+fn collect_edit(e: &Editor) -> ContactEdit {
+    let values = |rows: &Rc<RefCell<Vec<(adw::EntryRow, String)>>>| -> Vec<Labeled> {
+        rows.borrow()
+            .iter()
+            .filter_map(|(entry, label)| {
+                let value = entry.text().trim().to_string();
+                (!value.is_empty()).then(|| Labeled { label: label.clone(), value })
+            })
+            .collect()
+    };
+    let buffer = e.note.buffer();
+    ContactEdit {
+        name: e.name.text().trim().to_string(),
+        nickname: e.nickname.text().trim().to_string(),
+        org: e.org.text().trim().to_string(),
+        title: e.title.text().trim().to_string(),
+        note: buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .trim()
+            .to_string(),
+        emails: values(&e.emails),
+        phones: values(&e.phones),
+        urls: values(&e.urls).into_iter().map(|l| l.value).collect(),
+    }
+}
+
+/// A titled group of editable value rows with a remove button each and an
+/// "add" row at the bottom. Returns the live handle used at save time.
+fn editable_values(
+    detail: &gtk::Box,
+    title: &str,
+    add_label: &str,
+    initial: &[(String, String)],
+) -> Rc<RefCell<Vec<(adw::EntryRow, String)>>> {
+    let list = group(detail, title);
+    let rows: Rc<RefCell<Vec<(adw::EntryRow, String)>>> = Rc::new(RefCell::new(Vec::new()));
+
+    // The "add" row sits last; value rows are inserted above it.
+    let add_row = gtk::ListBoxRow::new();
+    add_row.set_activatable(true);
+    let add_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    add_box.set_margin_top(10);
+    add_box.set_margin_bottom(10);
+    add_box.set_margin_start(12);
+    let plus = gtk::Image::from_icon_name("co.hyprlab.Vireo-list-add-symbolic");
+    plus.add_css_class("dim-label");
+    let label = gtk::Label::new(Some(add_label));
+    label.add_css_class("dim-label");
+    add_box.append(&plus);
+    add_box.append(&label);
+    add_row.set_child(Some(&add_box));
+
+    let field = title.to_string();
+    let add_value = {
+        let list = list.clone();
+        let rows = rows.clone();
+        let add_row = add_row.clone();
+        move |value: &str, label: String, grab: bool| {
+            let entry = adw::EntryRow::new();
+            entry.set_title(&if label.is_empty() { field.clone() } else { label.clone() });
+            entry.set_text(value);
+            let remove = gtk::Button::from_icon_name("co.hyprlab.Vireo-user-trash-symbolic");
+            remove.set_tooltip_text(Some("Remove"));
+            remove.set_valign(gtk::Align::Center);
+            remove.add_css_class("flat");
+            {
+                let list = list.clone();
+                let rows = rows.clone();
+                let entry = entry.clone();
+                remove.connect_clicked(move |_| {
+                    rows.borrow_mut().retain(|(e, _)| e != &entry);
+                    list.remove(&entry);
+                });
+            }
+            entry.add_suffix(&remove);
+            // Insert above the trailing "add" row.
+            list.insert(&entry, add_row.index());
+            rows.borrow_mut().push((entry.clone(), label));
+            if grab {
+                entry.grab_focus();
+            }
+        }
+    };
+
+    for (value, label) in initial {
+        add_value(value, label.clone(), false);
+    }
+    {
+        let add_value = add_value.clone();
+        let add_row = add_row.clone();
+        list.connect_row_activated(move |_, row| {
+            if row == &add_row {
+                add_value("", String::new(), true);
+            }
+        });
+    }
+    list.append(&add_row);
+    rows
+}
+
+fn entry_row(title: &str, value: &str) -> adw::EntryRow {
+    let row = adw::EntryRow::new();
+    row.set_title(title);
+    row.set_text(value);
+    row
 }
 
 /// The contact's avatar: their GNOME Contacts photo when they have one, the

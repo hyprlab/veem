@@ -882,6 +882,15 @@ pub struct ContactDetails {
     pub addresses: Vec<Labeled>,
     pub urls: Vec<String>,
     pub photo: Option<Vec<u8>>,
+    /// EDS source UID of the book this contact came from — where edits go.
+    pub book_uid: String,
+    /// That book's display name ("On This Computer", the CardDAV account…).
+    pub book_name: String,
+    /// The contact's own EDS UID (for deletion and deep links).
+    pub eds_uid: String,
+    /// The stored vCard, verbatim; edits patch this so unknown properties
+    /// (PHOTO, UID, X-…) survive the round trip.
+    pub raw_vcard: String,
 }
 
 impl ContactDetails {
@@ -897,14 +906,38 @@ impl ContactDetails {
 pub fn read_contact_details() -> Vec<ContactDetails> {
     let mut out: Vec<ContactDetails> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
+    // Walk the book directories directly (like `writable_books`) so each
+    // contact remembers which book it belongs to.
     if let Some(dir) = data_dir() {
-        for db in find_dbs(&dir, "contacts.db") {
-            read_detail_db(&db, "SELECT vcard FROM folder_id", &mut out, &mut seen);
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let db = entry.path().join("contacts.db");
+            if !db.is_file() {
+                continue;
+            }
+            let folder = entry.file_name().to_string_lossy().to_string();
+            let uid = if folder == "system" { "system-address-book".to_string() } else { folder };
+            let name =
+                source_display_name(&uid).unwrap_or_else(|| "On This Computer".to_string());
+            read_detail_db(&db, "SELECT vcard FROM folder_id", &uid, &name, &mut out, &mut seen);
         }
     }
     if let Some(dir) = cache_dir() {
-        for db in find_dbs(&dir, "cache.db") {
-            read_detail_db(&db, "SELECT ECacheOBJ FROM ECacheObjects", &mut out, &mut seen);
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let db = entry.path().join("cache.db");
+            if !db.is_file() {
+                continue;
+            }
+            let uid = entry.file_name().to_string_lossy().to_string();
+            let name =
+                source_display_name(&uid).unwrap_or_else(|| "CardDAV Address Book".to_string());
+            read_detail_db(
+                &db,
+                "SELECT ECacheOBJ FROM ECacheObjects",
+                &uid,
+                &name,
+                &mut out,
+                &mut seen,
+            );
         }
     }
     out.sort_by_key(|c| c.name.to_lowercase());
@@ -914,6 +947,8 @@ pub fn read_contact_details() -> Vec<ContactDetails> {
 fn read_detail_db(
     path: &std::path::Path,
     query: &str,
+    book_uid: &str,
+    book_name: &str,
     out: &mut Vec<ContactDetails>,
     seen: &mut HashSet<String>,
 ) {
@@ -934,7 +969,10 @@ fn read_detail_db(
     let rows = stmt.query_map([], |row| row.get::<_, String>(0));
     if let Ok(rows) = rows {
         for vcard in rows.flatten() {
-            let Some(c) = parse_vcard_details(&vcard) else { continue };
+            let Some(mut c) = parse_vcard_details(&vcard) else { continue };
+            c.book_uid = book_uid.to_string();
+            c.book_name = book_name.to_string();
+            c.raw_vcard = vcard;
             // The same person can live in several books; the first email is
             // as stable an identity as vCards offer.
             let key = c
@@ -1014,6 +1052,7 @@ fn parse_vcard_details(vcard: &str) -> Option<ContactDetails> {
         }
         match name.as_str() {
             "X-EVOLUTION-LIST" if value.eq_ignore_ascii_case("true") => return None,
+            "UID" if c.eds_uid.is_empty() => c.eds_uid = value,
             "FN" => c.name = value,
             "NICKNAME" if c.nickname.is_empty() => c.nickname = value,
             "ORG" => {
@@ -1061,6 +1100,160 @@ fn parse_vcard_details(vcard: &str) -> Option<ContactDetails> {
     }
     c.photo = vcard_photo(vcard);
     Some(c)
+}
+
+// ---------------------------------------------------------------------------
+// In-app editing (vCard patching + EDS writes)
+// ---------------------------------------------------------------------------
+
+/// The fields the in-app contact editor can change.
+#[derive(Debug, Clone, Default)]
+pub struct ContactEdit {
+    pub name: String,
+    pub nickname: String,
+    pub org: String,
+    pub title: String,
+    pub note: String,
+    pub emails: Vec<Labeled>,
+    pub phones: Vec<Labeled>,
+    pub urls: Vec<String>,
+}
+
+/// Escape a value for a vCard text property.
+fn escape_vcard_value(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            ',' => out.push_str("\\,"),
+            ';' => out.push_str("\\;"),
+            '\n' => out.push_str("\\n"),
+            '\r' => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The TYPE parameter matching an editor label ("" for none).
+fn type_param_for(label: &str) -> &'static str {
+    match label {
+        "Home" => ";TYPE=HOME",
+        "Work" => ";TYPE=WORK",
+        "Mobile" => ";TYPE=CELL",
+        "Fax" => ";TYPE=FAX",
+        _ => "",
+    }
+}
+
+/// Rewrite a stored vCard with the editor's values. Only the editable
+/// properties are replaced — everything else (UID, PHOTO, ADR, REV, X-…)
+/// passes through untouched, so nothing GNOME Contacts manages is lost.
+pub fn patched_vcard(original: &str, e: &ContactEdit) -> String {
+    const REPLACED: [&str; 9] =
+        ["FN", "N", "NICKNAME", "ORG", "TITLE", "NOTE", "EMAIL", "TEL", "URL"];
+    let mut out: Vec<String> = Vec::new();
+    let mut skipping = false;
+    for raw in original.lines() {
+        let line = raw.trim_end_matches('\r');
+        // Folded continuation lines belong to the previous property.
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if !skipping {
+                out.push(line.to_string());
+            }
+            continue;
+        }
+        if line.eq_ignore_ascii_case("END:VCARD") {
+            break;
+        }
+        let prop = line
+            .split([':', ';'])
+            .next()
+            .unwrap_or("")
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        skipping = REPLACED.contains(&prop.as_str());
+        if !skipping {
+            out.push(line.to_string());
+        }
+    }
+
+    let name = e.name.trim();
+    out.push(format!("FN:{}", escape_vcard_value(name)));
+    // Structured name: last word as the family name — the same heuristic an
+    // address book's "sort by surname" uses.
+    let mut words: Vec<&str> = name.split_whitespace().collect();
+    let family = if words.len() > 1 { words.pop().unwrap_or("") } else { "" };
+    out.push(format!(
+        "N:{};{};;;",
+        escape_vcard_value(family),
+        escape_vcard_value(&words.join(" "))
+    ));
+    if !e.nickname.trim().is_empty() {
+        out.push(format!("NICKNAME:{}", escape_vcard_value(e.nickname.trim())));
+    }
+    if !e.org.trim().is_empty() {
+        out.push(format!("ORG:{};", escape_vcard_value(e.org.trim())));
+    }
+    if !e.title.trim().is_empty() {
+        out.push(format!("TITLE:{}", escape_vcard_value(e.title.trim())));
+    }
+    if !e.note.trim().is_empty() {
+        out.push(format!("NOTE:{}", escape_vcard_value(e.note.trim())));
+    }
+    for email in &e.emails {
+        out.push(format!(
+            "EMAIL{}:{}",
+            type_param_for(&email.label),
+            escape_vcard_value(&email.value)
+        ));
+    }
+    for phone in &e.phones {
+        out.push(format!(
+            "TEL{}:{}",
+            type_param_for(&phone.label),
+            escape_vcard_value(&phone.value)
+        ));
+    }
+    for url in &e.urls {
+        out.push(format!("URL:{}", escape_vcard_value(url)));
+    }
+    out.push("END:VCARD".to_string());
+    out.join("\r\n") + "\r\n"
+}
+
+/// A brand-new contact's vCard from the editor's values.
+pub fn new_vcard(e: &ContactEdit) -> String {
+    patched_vcard("BEGIN:VCARD\r\nVERSION:3.0\r\nEND:VCARD\r\n", e)
+}
+
+/// Write a modified vCard back to its book through EDS.
+pub fn modify_contact(book_uid: &str, vcard: &str) -> Result<(), String> {
+    let dest = factory_dest().ok_or("Evolution Data Server is not available")?;
+    let conn = zbus::blocking::Connection::session().map_err(|e| e.to_string())?;
+    let (bus, path) = open_book(&conn, &dest, book_uid)?;
+    book_call(&conn, &bus, &path, "ModifyContacts", &(vec![vcard.to_string()], 0u32))?;
+    Ok(())
+}
+
+/// Create a contact from a full vCard through EDS.
+pub fn create_contact(book_uid: &str, vcard: &str) -> Result<(), String> {
+    let dest = factory_dest().ok_or("Evolution Data Server is not available")?;
+    let conn = zbus::blocking::Connection::session().map_err(|e| e.to_string())?;
+    let (bus, path) = open_book(&conn, &dest, book_uid)?;
+    book_call(&conn, &bus, &path, "CreateContacts", &(vec![vcard.to_string()], 0u32))?;
+    Ok(())
+}
+
+/// Delete a contact (by its EDS UID) from its book.
+pub fn delete_contact(book_uid: &str, uid: &str) -> Result<(), String> {
+    let dest = factory_dest().ok_or("Evolution Data Server is not available")?;
+    let conn = zbus::blocking::Connection::session().map_err(|e| e.to_string())?;
+    let (bus, path) = open_book(&conn, &dest, book_uid)?;
+    book_call(&conn, &bus, &path, "RemoveContacts", &(vec![uid.to_string()], 0u32))?;
+    Ok(())
 }
 
 #[cfg(test)]

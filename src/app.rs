@@ -703,6 +703,12 @@ pub enum AppMsg {
     ContactsLoaded(Vec<crate::contacts::ContactDetails>),
     /// Right-click on the sidebar's Contacts row: the external app.
     LaunchGnomeContacts,
+    /// Contact editor writes (run on a background thread against EDS).
+    SaveContact { book_uid: String, vcard: String },
+    CreateContact(String),
+    DeleteContact { book_uid: String, uid: String },
+    /// A contact write finished (`Some` = the error to show).
+    ContactWriteDone(Option<String>),
 }
 
 #[relm4::component(pub)]
@@ -1521,6 +1527,15 @@ impl SimpleComponent for AppModel {
                 .forward(sender.input_sender(), |out| match out {
                     ContactsPageOutput::Compose(email) => AppMsg::ComposeTo(email),
                     ContactsPageOutput::ToggleSidebar => AppMsg::ToggleSidebar,
+                    ContactsPageOutput::SaveContact { book_uid, vcard } => {
+                        AppMsg::SaveContact { book_uid, vcard }
+                    }
+                    ContactsPageOutput::CreateContact { vcard } => {
+                        AppMsg::CreateContact(vcard)
+                    }
+                    ContactsPageOutput::DeleteContact { book_uid, uid } => {
+                        AppMsg::DeleteContact { book_uid, uid }
+                    }
                 });
 
         let notifications = NotificationCenter::builder().launch(()).forward(
@@ -3726,6 +3741,11 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ComposeTo(addr) => {
+                // The inline composer lives in the mail panes — composing from
+                // the contacts view (or gallery) must bring those back first,
+                // or it would open invisibly behind the stack.
+                self.showing_gallery = false;
+                self.showing_contacts = false;
                 let account = self
                     .current
                     .as_ref()
@@ -4613,6 +4633,52 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::LaunchGnomeContacts => crate::ui::contacts_browser::launch_gnome_contacts(),
+
+            AppMsg::SaveContact { book_uid, vcard } => {
+                let s = sender.clone();
+                std::thread::spawn(move || {
+                    let result = crate::contacts::modify_contact(&book_uid, &vcard);
+                    s.input(AppMsg::ContactWriteDone(result.err()));
+                });
+            }
+
+            AppMsg::CreateContact(vcard) => {
+                let s = sender.clone();
+                std::thread::spawn(move || {
+                    let result = match crate::contacts::writable_books().first() {
+                        Some(book) => crate::contacts::create_contact(&book.uid, &vcard),
+                        None => Err("No address book available".to_string()),
+                    };
+                    s.input(AppMsg::ContactWriteDone(result.err()));
+                });
+            }
+
+            AppMsg::DeleteContact { book_uid, uid } => {
+                let s = sender.clone();
+                std::thread::spawn(move || {
+                    let result = crate::contacts::delete_contact(&book_uid, &uid);
+                    s.input(AppMsg::ContactWriteDone(result.err()));
+                });
+            }
+
+            AppMsg::ContactWriteDone(err) => {
+                if let Some(e) = err {
+                    self.notifications.emit(NotifyInput::Push {
+                        text: format!("Could not update contact: {e}"),
+                        error: true,
+                        connectivity: false,
+                    });
+                }
+                // Success or not, re-read so the card shows what EDS holds.
+                // A short pause lets EDS flush the write to its SQLite cache
+                // (that is what the read goes through).
+                let s = sender.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let contacts = crate::contacts::read_contact_details();
+                    s.input(AppMsg::ContactsLoaded(contacts));
+                });
+            }
         }
     }
 }

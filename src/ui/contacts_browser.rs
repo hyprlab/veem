@@ -106,6 +106,24 @@ pub fn present(parent: &impl IsA<gtk::Window>, on_choose: impl Fn(Contact) + 'st
     win.present();
 }
 
+/// Open GNOME Contacts showing one contact. Best effort: outside a sandbox
+/// `gnome-contacts -i <uid>` selects the individual; the Flatpak D-Bus path
+/// can only raise the app.
+pub fn launch_gnome_contacts_for(uid: &str) {
+    if crate::platform::is_flatpak() || uid.is_empty() {
+        launch_gnome_contacts();
+        return;
+    }
+    let uid: String = uid.chars().filter(|c| !c.is_whitespace() && *c != '\'').collect();
+    if let Ok(app) = gtk::gio::AppInfo::create_from_commandline(
+        format!("gnome-contacts -i '{uid}'"),
+        Some("Contacts"),
+        gtk::gio::AppInfoCreateFlags::NONE,
+    ) {
+        let _ = app.launch(&[], gtk::gio::AppLaunchContext::NONE);
+    }
+}
+
 /// Launch the GNOME Contacts application via the desktop session.
 pub fn launch_gnome_contacts() {
     // Inside a Flatpak sandbox `gnome-contacts` isn't on the path, so a plain
