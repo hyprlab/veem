@@ -1094,10 +1094,11 @@ impl Sidebar {
             });
 
             if !self.collapsed {
-                // Full width, like the rows below it (community preference,
-                // beta 1.18.0b feedback); the icon+label stay centred inside.
+                // Hexpand still claims the bar's width; Center then gives the
+                // list its natural (text-hugging) width within it, while
+                // narrow sidebars can still squeeze it (the label ellipsizes).
                 list.set_hexpand(true);
-                list.set_halign(gtk::Align::Fill);
+                list.set_halign(gtk::Align::Center);
             }
             bar.append(&list);
             pinned.append(&bar);

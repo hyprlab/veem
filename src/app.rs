@@ -1819,11 +1819,6 @@ impl SimpleComponent for AppModel {
         // The app-wide theme choice must be in force before the first frame.
         apply_app_theme(model.app_theme);
         let widgets = view_output!();
-        // Beta builds wear libadwaita's development stripes on their header
-        // bars — the GNOME convention for nightly/devel profiles.
-        if cfg!(feature = "beta") {
-            root.add_css_class("devel");
-        }
         // Collapse the reader header's actions into the overflow menu when the
         // pane can no longer fit the full row — squeezing it further must never
         // push the window controls off the right edge.

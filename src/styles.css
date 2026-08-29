@@ -14,6 +14,9 @@ row.compose-row {
   color: white;
   padding-top: 2px;
   padding-bottom: 2px;
+  /* The pill hugs its text, so give it a button's breathing room. */
+  padding-left: 16px;
+  padding-right: 16px;
 }
 
 /* The icon-only rail centres a lone icon — no text to pad around. */
