@@ -914,7 +914,18 @@ impl Component for AccountsWindow {
             }
 
             AccountsInput::ProviderChanged => {
-                self.apply_provider(widgets);
+                // Editing a GOA account: the provider dropdown is hidden and the
+                // connection section deliberately not shown — but filling the
+                // editor sets the dropdown, whose notify lands here right after
+                // EditAccount and would undo that. GNOME owns those fields;
+                // leave them hidden.
+                let editing_goa = self
+                    .editing
+                    .and_then(|i| self.accounts.get(i))
+                    .is_some_and(|a| a.goa_id.is_some());
+                if !editing_goa {
+                    self.apply_provider(widgets);
+                }
             }
 
             AccountsInput::OAuthSignIn => {
@@ -1538,7 +1549,8 @@ impl AccountsWindow {
             // Source badge: is this account from GNOME Online Accounts, or added
             // directly in Vireo?
             let from_goa = acc.goa_id.is_some();
-            let badge = gtk::Label::new(Some(if from_goa { "Online Account" } else { "Vireo" }));
+            let badge =
+                gtk::Label::new(Some(if from_goa { "GNOME Online Account" } else { "Vireo" }));
             badge.set_valign(gtk::Align::Center);
             badge.add_css_class("account-source-badge");
             if from_goa {
