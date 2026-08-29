@@ -256,7 +256,7 @@ impl Component for Preferences {
     view! {
         adw::Window {
             set_modal: false,
-            set_default_width: 500,
+            set_default_width: 564,
             // Remembered vertical size (tall by default) — resizing sticks
             // across restarts via the save on close below.
             set_default_height: crate::config::load_prefs_height(),
