@@ -199,6 +199,9 @@ pub struct AppModel {
     unified: bool,
     /// account_id → that account's latest inbox messages (for the unified view).
     unified_by_account: HashMap<u32, Vec<Message>>,
+    /// Accounts whose inbox has been requested for the unified view since
+    /// launch (the cache-primed slices still need their catch-up sync).
+    unified_boot_requested: HashSet<u32>,
     /// (account_id, folder_id) → last-seen message list, shown instantly on
     /// revisit while a fresh sync runs in the background.
     message_cache: HashMap<(u32, u32), Vec<Message>>,
@@ -1640,6 +1643,7 @@ impl SimpleComponent for AppModel {
             attachment_cache: HashMap::new(),
             unified: false,
             unified_by_account: HashMap::new(),
+            unified_boot_requested: HashSet::new(),
             message_cache: HashMap::new(),
             indexed_folders: HashSet::new(),
             body_cache: HashMap::new(),
@@ -1743,6 +1747,7 @@ impl SimpleComponent for AppModel {
             outbox_by_account: HashMap::new(),
             gallery_by_account: HashMap::new(),
         };
+        model.prime_from_cache();
         model.spawn_workers(&sender);
         // Refresh visible sender circles when the GNOME Contacts photo index
         // changes (first load finishing, or an EDS/CardDAV sync).
@@ -4167,10 +4172,11 @@ impl SimpleComponent for AppModel {
                 // Launch with "All Inboxes" already selected: UnifiedSelected
                 // fired before any folder list existed, so its inbox requests
                 // went nowhere and the list sat empty until the user visited a
-                // folder by hand. The moment an account's folders arrive while
-                // the unified view is up and that account has contributed
-                // nothing yet, ask for its inbox.
-                if self.unified && !self.unified_by_account.contains_key(&account_id) {
+                // folder by hand. The first time an account's folders arrive
+                // while the unified view is up, ask for its inbox — the cache
+                // priming already painted its slice, and this is what brings
+                // in whatever changed since the app last ran.
+                if self.unified && self.unified_boot_requested.insert(account_id) {
                     if let Some(inbox) = self.inbox_of(account_id) {
                         let (folder_id, path) = (inbox.id, inbox.path.clone());
                         self.send_to(account_id, MailRequest::LoadMessages { folder_id, path });
@@ -5048,6 +5054,39 @@ impl AppModel {
 
     /// Spawn one worker per configured account (or a single mock worker when no
     /// account is configured).
+    /// Paint the mail panes straight from the disk cache, before any worker
+    /// has spoken: every enabled account's folder list and inbox slice is
+    /// loaded synchronously at startup, so "All Inboxes" (the launch view) is
+    /// full the instant the window appears. The workers' own cache-first
+    /// loads and syncs then replace each slice with whatever changed since
+    /// the app last ran.
+    fn prime_from_cache(&mut self) {
+        let Ok(cache) = crate::cache::Cache::open() else { return };
+        for (i, c) in self.config.iter().enumerate() {
+            if !c.enabled {
+                continue;
+            }
+            let account_id = (i + 1) as u32;
+            let folders = cache.load_folders(account_id);
+            if folders.is_empty() {
+                continue;
+            }
+            if let Some(inbox) = folders.iter().find(|f| f.kind == FolderKind::Inbox) {
+                let messages = cache.load_messages(account_id, &inbox.path, inbox.id);
+                if !messages.is_empty() {
+                    self.message_cache.insert((account_id, inbox.id), messages.clone());
+                    self.unified_by_account.insert(account_id, messages);
+                }
+            }
+            for f in &folders {
+                if f.unread > 0 {
+                    self.folder_unread.insert((account_id, f.id), f.unread);
+                }
+            }
+            self.folders.insert(account_id, folders);
+        }
+    }
+
     fn spawn_workers(&mut self, sender: &ComponentSender<Self>) {
         self.workers.clear();
         // account_id is the config index + 1 (a load-bearing invariant), so we keep
