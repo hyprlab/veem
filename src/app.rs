@@ -352,6 +352,16 @@ pub struct AppModel {
     thread_key: Option<(u32, u32)>,
     /// Whether conversation threads start expanded in the message list.
     threads_expanded: bool,
+    /// Whether conversation rows may expand into their members in the list
+    /// (the row keeps its chip and chevron either way).
+    thread_expansion: bool,
+    /// Whether deleting a whole selected conversation asks for confirmation.
+    confirm_thread_delete: bool,
+    /// Whether the current `list_selection` came from card clicks in the
+    /// reader (as opposed to rows picked in the list). A lone list-row
+    /// selection over an open conversation stands for the whole thread when
+    /// deleting; a lone picked card never does.
+    selection_from_cards: bool,
     /// Conversation card actions hide until hovered (preference).
     card_actions_hover: bool,
     /// With the ⋯ toggle off: card actions appear automatically on hover.
@@ -499,7 +509,7 @@ pub enum AppMsg {
     /// removed), so the reader should clear.
     ClearReader,
     /// Double-click: open the message in its own standalone window.
-    OpenMessageWindow(Message),
+    OpenMessageWindow { message: Message, thread: Vec<Message> },
     /// A popped-out message window was closed (remove it from the map).
     PopoutClosed((u32, u32)),
     /// Add a contact from a popout window's sender.
@@ -580,6 +590,13 @@ pub enum AppMsg {
     SetDateStyle(crate::config::DateStyle),
     SetClockStyle(crate::config::ClockStyle),
     SetThreading(bool),
+    SetThreadExpansion(bool),
+    SetConfirmThreadDelete(bool),
+    /// Delete requested on a whole conversation (a lone selected thread-head
+    /// row): confirm (per preference), then delete every member.
+    DeleteThread(Vec<Message>),
+    /// The thread-delete dialog was confirmed.
+    DeleteThreadConfirmed(Vec<Message>),
     SetThreadsExpanded(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
     SetListPaletteHover(bool),
@@ -1425,8 +1442,13 @@ impl SimpleComponent for AppModel {
                         AppMsg::MessageSelected { message, thread, solo }
                     }
                     MessageListOutput::SelectionKeys(keys) => AppMsg::SelectionKeys(keys),
+                    MessageListOutput::DeleteThread { messages } => {
+                        AppMsg::DeleteThread(messages)
+                    }
                     MessageListOutput::CountChanged(text) => AppMsg::ListCount(text),
-                    MessageListOutput::Activated(m) => AppMsg::OpenMessageWindow(m),
+                    MessageListOutput::Activated { message, thread } => {
+                        AppMsg::OpenMessageWindow { message, thread }
+                    }
                     MessageListOutput::Action { action, message } => {
                         AppMsg::RowAction { action, message }
                     }
@@ -1442,7 +1464,9 @@ impl SimpleComponent for AppModel {
                 .launch(())
                 .forward(sender.input_sender(), |out| match out {
                     MessageViewOutput::AllowSender(addr) => AppMsg::AllowSender(addr),
-                    MessageViewOutput::OpenWindow(m) => AppMsg::OpenMessageWindow(*m),
+                    MessageViewOutput::OpenWindow(m) => {
+                        AppMsg::OpenMessageWindow { message: *m, thread: Vec::new() }
+                    }
                     MessageViewOutput::CardAction { action, message } => {
                         AppMsg::CardAction { action, message }
                     }
@@ -1621,6 +1645,9 @@ impl SimpleComponent for AppModel {
             thread_cache_order: Vec::new(),
             thread_key: None,
             threads_expanded: config::load_threads_expanded(),
+            thread_expansion: config::load_thread_expansion(),
+            confirm_thread_delete: config::load_confirm_thread_delete(),
+            selection_from_cards: false,
             card_actions_hover: config::load_card_actions_hover(),
             card_actions_auto: config::load_card_actions_auto(),
             list_palette_hover: config::load_list_palette_hover(),
@@ -1691,6 +1718,9 @@ impl SimpleComponent for AppModel {
         model
             .message_list
             .emit(MessageListInput::SetThreading(model.threading));
+        model
+            .message_list
+            .emit(MessageListInput::SetThreadExpansion(model.thread_expansion));
         model
             .message_list
             .emit(MessageListInput::SetThreadsExpanded(model.threads_expanded));
@@ -2896,12 +2926,12 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::OpenMessageWindow(m) => {
+            AppMsg::OpenMessageWindow { message: m, thread } => {
                 // Drafts open in the editor rather than a read-only window.
                 if self.is_drafts_folder(m.account_id, m.folder_id) {
                     self.open_draft(m, &sender);
                 } else {
-                    self.open_message_window(m, &sender);
+                    self.open_message_window(m, thread, &sender);
                 }
             }
 
@@ -2953,6 +2983,17 @@ impl SimpleComponent for AppModel {
                 // whole selection, exactly as the bulk bar's Delete would.
                 if self.list_selection.len() > 1 {
                     self.message_list.emit(MessageListInput::Bulk(BulkAction::Delete));
+                    return;
+                }
+                // A lone list-row selection over an open conversation may be
+                // its thread head, which stands for the whole thread — the
+                // list resolves that (DeleteThread) or falls back to a plain
+                // bulk delete. A picked card is always just that message.
+                if !self.selection_from_cards
+                    && self.list_selection.len() == 1
+                    && self.current_thread.len() > 1
+                {
+                    self.message_list.emit(MessageListInput::ResolveDelete);
                     return;
                 }
                 if let Some(m) = self.reply_target() {
@@ -3565,6 +3606,36 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetThreadExpansion(on) => {
+                if self.thread_expansion != on {
+                    self.thread_expansion = on;
+                    self.save_settings();
+                    self.message_list.emit(MessageListInput::SetThreadExpansion(on));
+                }
+            }
+
+            AppMsg::SetConfirmThreadDelete(on) => {
+                if self.confirm_thread_delete != on {
+                    self.confirm_thread_delete = on;
+                    self.save_settings();
+                }
+            }
+
+            AppMsg::DeleteThread(messages) => {
+                if messages.is_empty() {
+                    return;
+                }
+                if self.confirm_thread_delete {
+                    self.confirm_delete_thread(messages, &sender);
+                } else {
+                    self.delete_messages(messages, &sender);
+                }
+            }
+
+            AppMsg::DeleteThreadConfirmed(messages) => {
+                self.delete_messages(messages, &sender);
+            }
+
             AppMsg::SetCardActionsMode { hover_toggle, hover_auto } => {
                 if self.card_actions_hover != hover_toggle
                     || self.card_actions_auto != hover_auto
@@ -3933,6 +4004,8 @@ impl SimpleComponent for AppModel {
                     palette_collapse_secs: self.palette_collapse_secs,
                     threading: self.threading,
                     threads_expanded: self.threads_expanded,
+                    thread_expansion: self.thread_expansion,
+                    confirm_thread_delete: self.confirm_thread_delete,
                     message_theme: self.message_theme,
                     notifications: self.notifications_enabled,
                     notification_content: self.notification_content,
@@ -3967,6 +4040,10 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetDateStyle(style) => AppMsg::SetDateStyle(style),
                         PrefOutput::SetClockStyle(style) => AppMsg::SetClockStyle(style),
                         PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
+                        PrefOutput::SetThreadExpansion(on) => AppMsg::SetThreadExpansion(on),
+                        PrefOutput::SetConfirmThreadDelete(on) => {
+                            AppMsg::SetConfirmThreadDelete(on)
+                        }
                         PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
                         PrefOutput::SetCardActionsMode { hover_toggle, hover_auto } => {
                             AppMsg::SetCardActionsMode { hover_toggle, hover_auto }
@@ -4292,9 +4369,15 @@ impl SimpleComponent for AppModel {
                     let current = self.current.clone();
                     self.show_message(current, false);
                 }
-                // Re-render any popped-out window showing this message.
-                if let Some(p) = self.popouts.get(&(account_id, message_id)) {
-                    p.controller.emit(MessageWindowInput::SetBody(body));
+                // Re-render any popped-out window showing this message — a
+                // conversation window may hold it as any member of its thread,
+                // so every popout gets the offer (non-members ignore it).
+                for p in self.popouts.values() {
+                    p.controller.emit(MessageWindowInput::SetBody {
+                        account_id,
+                        id: message_id,
+                        body: body.clone(),
+                    });
                 }
             }
 
@@ -4320,11 +4403,13 @@ impl SimpleComponent for AppModel {
 
             AppMsg::SelectionKeys(keys) => {
                 self.list_selection = keys.clone();
+                self.selection_from_cards = false;
                 self.message_view.emit(MessageViewInput::SetSelectedCards(keys));
             }
 
             AppMsg::SelectCards(keys) => {
                 self.list_selection = keys.clone();
+                self.selection_from_cards = !keys.is_empty();
                 // Reading is click-driven: scrolling past a conversation
                 // message no longer marks it, so an arriving reply stays
                 // unread until the user actually clicks its card. A single
@@ -4603,6 +4688,8 @@ impl AppModel {
             self.palette_collapse_secs,
             self.threading,
             self.threads_expanded,
+            self.thread_expansion,
+            self.confirm_thread_delete,
             self.message_theme,
             self.notifications_enabled,
             self.notification_content,
@@ -5817,8 +5904,15 @@ impl AppModel {
             .collect()
     }
 
-    /// Pop a message out into its own standalone window with a dedicated reader.
-    fn open_message_window(&mut self, m: Message, sender: &ComponentSender<Self>) {
+    /// Pop a message out into its own standalone window with a dedicated
+    /// reader. `thread` is the whole conversation when `m` heads one (the
+    /// window then shows every card); empty for a single message.
+    fn open_message_window(
+        &mut self,
+        m: Message,
+        thread: Vec<Message>,
+        sender: &ComponentSender<Self>,
+    ) {
         let key = (m.account_id, m.id);
         // Already open? Just bring it forward.
         if let Some(p) = self.popouts.get(&key) {
@@ -5882,9 +5976,39 @@ impl AppModel {
             }
         }
 
+        // The conversation for the window: the assembled cache when this
+        // thread has been opened before (cross-folder members and bodies
+        // included), else what the list handed over. Members still missing
+        // bodies get them fetched; the replies land via SetBody below.
+        let mut thread = if thread.len() > 1 {
+            self.thread_cache.get(&key).cloned().unwrap_or(thread)
+        } else {
+            thread
+        };
+        for member in &mut thread {
+            let mkey = (member.account_id, member.id);
+            if mkey == key {
+                member.body = display.body.clone();
+                member.unread = false;
+                continue;
+            }
+            if member.body.is_empty() {
+                if let Some(body) = self.body_cache.get(&mkey) {
+                    member.body = body.clone();
+                } else if let Some(path) = self.resolve_folder_path(member) {
+                    self.send_to(member.account_id, MailRequest::LoadBody {
+                        message_id: member.id,
+                        path,
+                        uid: member.uid,
+                    });
+                }
+            }
+        }
+
         let allow_remote = self.remote_allowed(&display);
         let init = MessageWindowInit {
             message: display,
+            thread,
             account_name: Some(self.account_name(account_id)),
             account_color: Some(self.account_color(account_id)),
             allow_remote,
@@ -6329,7 +6453,11 @@ impl AppModel {
                 }
                 None => {
                     self.reader_compose_revealer.set_reveal_child(false);
+                    // Without this the hidden, pane-covering revealer keeps
+                    // swallowing every click and scroll over the reader.
+                    self.reader_compose_revealer.set_can_target(false);
                     self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
+                    self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 }
             }
             return;
@@ -6430,6 +6558,34 @@ impl AppModel {
 
     /// Confirm erasing messages that are already in Trash — there's no undo, so
     /// this always asks first.
+    /// Ask before deleting a whole conversation (a selected thread head). Can
+    /// be turned off in Preferences (`confirm_thread_delete`).
+    fn confirm_delete_thread(&self, messages: Vec<Message>, sender: &ComponentSender<Self>) {
+        let n = messages.len();
+        let heading = "Delete this conversation?".to_string();
+        let body = format!(
+            "All {n} messages in this conversation will be deleted. \
+             You can turn this warning off in Preferences."
+        );
+        let dialog =
+            adw::MessageDialog::new(Some(&self.window), Some(&heading), Some(body.as_str()));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("delete", "Delete Conversation");
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        let s = sender.clone();
+        let messages = std::cell::RefCell::new(Some(messages));
+        dialog.connect_response(None, move |_, resp| {
+            if resp == "delete" {
+                if let Some(msgs) = messages.borrow_mut().take() {
+                    s.input(AppMsg::DeleteThreadConfirmed(msgs));
+                }
+            }
+        });
+        dialog.present();
+    }
+
     fn confirm_purge(&self, messages: Vec<Message>, sender: &ComponentSender<Self>) {
         let n = messages.len();
         let heading = if n == 1 {

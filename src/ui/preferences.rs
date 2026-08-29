@@ -25,6 +25,10 @@ pub struct PrefInit {
     pub palette_collapse_secs: u64,
     pub threading: bool,
     pub threads_expanded: bool,
+    /// Conversation rows may expand into their members in the message list.
+    pub thread_expansion: bool,
+    /// Deleting a whole selected conversation asks for confirmation.
+    pub confirm_thread_delete: bool,
     /// Conversation card actions hide until the card is hovered.
     pub card_actions_hover: bool,
     /// With the ⋯ toggle off: card actions appear automatically on hover.
@@ -156,6 +160,9 @@ pub struct Preferences {
     /// Mirrors the notifications switch, so the "show sender and subject" row
     /// below it can grey out when nothing is being posted at all.
     notifications: bool,
+    /// Mirrors the threading switch, so the "threaded message list" row below
+    /// it can grey out when conversations aren't grouped at all.
+    threading: bool,
 }
 
 #[derive(Debug)]
@@ -173,6 +180,8 @@ pub enum PrefInput {
     ChangeClockStyle(u32),
     ToggleThreading(bool),
     ToggleThreadsExpanded(bool),
+    ToggleThreadExpansion(bool),
+    ToggleConfirmThreadDelete(bool),
     ChangeCardActionsMode(u32),
     ToggleListPaletteHover(bool),
     ToggleComposeInline(bool),
@@ -207,6 +216,8 @@ pub enum PrefOutput {
     SetClockStyle(ClockStyle),
     SetThreading(bool),
     SetThreadsExpanded(bool),
+    SetThreadExpansion(bool),
+    SetConfirmThreadDelete(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
     SetListPaletteHover(bool),
     SetComposeInline(bool),
@@ -338,6 +349,31 @@ impl Component for Preferences {
                             set_subtitle: "Collapse replies into a single threaded conversation.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleThreading(row.is_active()));
+                            },
+                        },
+
+                        #[name = "thread_expansion_row"]
+                        adw::SwitchRow {
+                            #[watch]
+                            set_sensitive: model.threading,
+                            set_title: "Expandable conversations",
+                            set_subtitle: "Allow a conversation to expand/collapse its messages \
+                                           in the list. When off, the row keeps its count chip \
+                                           but the messages are displayed only as cards in the \
+                                           reading pane.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleThreadExpansion(row.is_active()));
+                            },
+                        },
+
+                        #[name = "confirm_thread_delete_row"]
+                        adw::SwitchRow {
+                            set_title: "Confirm conversation deletion",
+                            set_subtitle: "Warn before deleting when a whole conversation is \
+                                           selected, since every message in the thread goes \
+                                           with it.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleConfirmThreadDelete(row.is_active()));
                             },
                         },
 
@@ -660,6 +696,7 @@ impl Component for Preferences {
             blacklist,
             blacklist_addrs: Vec::new(),
             notifications: init.notifications,
+            threading: init.threading,
         };
 
         {
@@ -731,6 +768,8 @@ impl Component for Preferences {
         widgets.single_key_row.set_active(init.single_key_shortcuts);
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
+        widgets.thread_expansion_row.set_active(init.thread_expansion);
+        widgets.confirm_thread_delete_row.set_active(init.confirm_thread_delete);
         widgets.card_actions_row.set_model(Some(&gtk::StringList::new(&[
             "Hidden behind a \u{22ef} toggle",
             "Shown while hovering",
@@ -822,7 +861,14 @@ impl Component for Preferences {
                 let _ = sender.output(PrefOutput::SetAutoRemoteContent(on));
             }
             PrefInput::ToggleThreading(on) => {
+                self.threading = on;
                 let _ = sender.output(PrefOutput::SetThreading(on));
+            }
+            PrefInput::ToggleThreadExpansion(on) => {
+                let _ = sender.output(PrefOutput::SetThreadExpansion(on));
+            }
+            PrefInput::ToggleConfirmThreadDelete(on) => {
+                let _ = sender.output(PrefOutput::SetConfirmThreadDelete(on));
             }
             PrefInput::ToggleThreadsExpanded(on) => {
                 let _ = sender.output(PrefOutput::SetThreadsExpanded(on));

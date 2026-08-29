@@ -169,6 +169,8 @@ pub enum MessageViewInput {
     ClearCards,
     /// A card was clicked, with whatever modifier was held.
     CardClicked { account_id: u32, id: u32, mode: SelectMode },
+    /// Ctrl+A in the conversation — select every card.
+    SelectAllCards,
     /// Which messages the list has selected. Drawn as an accent outline on the
     /// matching cards, applied to the live document rather than by rendering it
     /// again — a re-render would lose the reader's scroll position.
@@ -510,6 +512,7 @@ impl Component for MessageView {
                     // has settled, so there is something worth revealing.
                     "ready" => open_sender.input(MessageViewInput::Rendered),
                     "desel" => open_sender.input(MessageViewInput::ClearCards),
+                    "selall" => open_sender.input(MessageViewInput::SelectAllCards),
                     "sel" => {
                         let mode = match extra {
                             Some("t") => SelectMode::Toggle,
@@ -810,6 +813,18 @@ impl Component for MessageView {
                 self.selected_cards = keys.clone();
                 self.apply_card_selection();
                 let _ = sender.output(MessageViewOutput::SelectCards(keys));
+            }
+            MessageViewInput::SelectAllCards => {
+                if self.thread.len() <= 1 {
+                    return;
+                }
+                let keys: Vec<(u32, u32)> =
+                    self.thread.iter().map(|m| (m.account_id, m.id)).collect();
+                if self.selected_cards != keys {
+                    self.selected_cards = keys.clone();
+                    self.apply_card_selection();
+                    let _ = sender.output(MessageViewOutput::SelectCards(keys));
+                }
             }
             MessageViewInput::SetSelectedCards(keys) => {
                 // The list mirrors every selection change here — including the
@@ -2794,6 +2809,9 @@ setTimeout(function(){f.classList.remove('anim');s(f);},280);});}catch(_){}}\
 function init(f){quote(f);s(f);try{var d=f.contentDocument;if(d){if(window.ResizeObserver&&d.body){new ResizeObserver(function(){s(f);}).observe(d.body);}\
 if(f.dataset.key&&!f._c){f._c=1;d.addEventListener('click',function(e){\
 if(e.target&&e.target.closest&&e.target.closest('a'))return;pick(f.dataset.key,e);});}\
+if(!f._u){f._u=1;['wheel','touchstart','mousedown','keydown'].forEach(function(ev){\
+d.addEventListener(ev,function(){follow=null;hold=null;},{passive:true,capture:true});});\
+d.addEventListener('keydown',selAll,true);}\
 var im=d.images||[];for(var i=0;i<im.length;i++){if(!im[i].complete){im[i].addEventListener('load',function(){s(f);});im[i].addEventListener('error',function(){s(f);});}}}}catch(_){}\
 setTimeout(function(){s(f);},250);setTimeout(function(){s(f);},1000);}\
 function all(){return document.querySelectorAll('iframe.vireo-frame');}\
@@ -2808,7 +2826,7 @@ if(el){hold={el:el,off:parseInt(a[2],10)||0};\
 if(el.querySelector('.vireo-dot'))follow=el;\
 setTimeout(pin,0);}}return;}\
 var ds=document.querySelectorAll('.vireo-msg .vireo-dot');\
-var d=ds.length?ds[ds.length-1]:null;\
+var d=ds.length?ds[0]:null;\
 if(d){var m=d.closest('.vireo-msg');\
 if(m)setTimeout(function(){try{follow=m;m.scrollIntoView({block:'start'});}catch(_){}},0);}}\
 if(!pend)ready();\
@@ -2866,6 +2884,11 @@ if(best&&best.dataset.key){try{window.webkit.messageHandlers.vireo.postMessage(\
 window.addEventListener('scroll',function(){clearTimeout(_st);\
 _st=setTimeout(reportPos,120);},{passive:true});\
 var follow=null,hold=null;\
+function selAll(e){if(!(e.ctrlKey||e.metaKey)||e.altKey||(e.key!=='a'&&e.key!=='A'))return;\
+if(!document.body||!document.body.classList.contains('vireo-conv'))return;\
+e.preventDefault();e.stopPropagation();\
+try{window.webkit.messageHandlers.vireo.postMessage('selall:0:0');}catch(_){}}\
+window.addEventListener('keydown',selAll,true);\
 function chase(){if(!follow)return;try{follow.scrollIntoView({block:'start'});}catch(_){}}\
 function pin(){if(follow||!hold)return;try{var r=hold.el.getBoundingClientRect();\
 var d=Math.round(r.top+hold.off);if(d)window.scrollBy(0,d);}catch(_){}}\

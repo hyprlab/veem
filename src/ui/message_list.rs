@@ -1096,6 +1096,10 @@ pub struct MessageList {
     last_count: String,
     /// Group messages into conversation threads (user preference).
     threading: bool,
+    /// Whether a conversation row may expand into its member rows. Off: the
+    /// row keeps its count chip and chevron, but never opens — the thread is
+    /// read through the reader's cards instead.
+    thread_expansion: bool,
     /// When `Some`, a spinner + this message overlays the list — shown while a
     /// large bulk action (archive/delete/spam) is applied.
     busy: Option<String>,
@@ -1153,6 +1157,13 @@ pub enum MessageListInput {
     AppendMessages { messages: Vec<Message> },
     SetLoading,
     SetThreading(bool),
+    /// Whether conversation rows may expand into their members in the list
+    /// (the row keeps its chip and chevron either way).
+    SetThreadExpansion(bool),
+    /// Resolve what deleting the current selection means: a lone selected row
+    /// that heads a conversation stands for the whole thread (output
+    /// `DeleteThread`); anything else is an ordinary `Bulk` delete.
+    ResolveDelete,
     /// Reply headers from the account's other folders, so a conversation joined
     /// through a message that isn't on screen still groups.
     SetThreadLinks(Vec<(u32, String, String)>),
@@ -1260,12 +1271,17 @@ pub enum MessageListOutput {
     SelectionKeys(Vec<(u32, u32)>),
     /// The header-bar count ("N" / "N of M") changed — app.rs shows it.
     CountChanged(String),
-    /// A row was double-clicked: open the message in its own window.
-    Activated(Message),
+    /// A row was double-clicked: open it in its own window. `thread` is the
+    /// whole conversation when the row heads one (same shape as `Selected`),
+    /// so the window shows every card — otherwise just `[message]`.
+    Activated { message: Message, thread: Vec<Message> },
     /// A context-menu action chosen for a specific message.
     Action { action: RowAction, message: Box<Message> },
     /// A bulk action chosen for every currently-selected message.
     Bulk { action: BulkAction, messages: Vec<Message> },
+    /// Delete requested on a lone selected row that heads a whole conversation:
+    /// every member of the thread, for the app to confirm and delete.
+    DeleteThread { messages: Vec<Message> },
     /// The viewed message was removed and no row remains to advance to, so the
     /// reader should clear.
     SelectionCleared,
@@ -1560,6 +1576,7 @@ impl SimpleComponent for MessageList {
             sort: SortOrder::DateNewest,
             last_count: String::new(),
             threading: true,
+            thread_expansion: true,
 
             busy: None,
         };
@@ -1581,7 +1598,9 @@ impl SimpleComponent for MessageList {
         let ks = sender.clone();
         key.connect_key_pressed(move |_, keyval, _, _| {
             if matches!(keyval, gtk::gdk::Key::Delete | gtk::gdk::Key::BackSpace) {
-                ks.input(MessageListInput::Bulk(BulkAction::Delete));
+                // ResolveDelete, not a straight Bulk: a lone thread-head row
+                // stands for its whole conversation (confirmed by the app).
+                ks.input(MessageListInput::ResolveDelete);
                 gtk::glib::Propagation::Stop
             } else {
                 gtk::glib::Propagation::Proceed
@@ -1697,6 +1716,50 @@ impl SimpleComponent for MessageList {
                     self.threading = on;
                     self.rebuild();
                 }
+            }
+            MessageListInput::SetThreadExpansion(on) => {
+                if self.thread_expansion != on {
+                    self.thread_expansion = on;
+                    // Turning expansion off folds every open thread (the
+                    // `expanded` computation ignores the stored toggles while
+                    // off); turning it on restores them.
+                    self.rebuild();
+                }
+            }
+            MessageListInput::ResolveDelete => {
+                // A lone selected row that heads a multi-message conversation
+                // stands for the whole thread: hand every member to the app
+                // (which confirms before deleting). Anything else — multiple
+                // rows, a reply row, a plain message — is an ordinary bulk
+                // delete of exactly what is selected.
+                let selected: Vec<Message> = self
+                    .rows
+                    .widget()
+                    .selected_rows()
+                    .iter()
+                    .filter_map(|r| self.shown.get(r.index() as usize).cloned())
+                    .collect();
+                if let [m] = selected.as_slice() {
+                    let key = (m.account_id, m.id);
+                    if let Some(tkey) = self.msg_thread.get(&key) {
+                        let members = self.thread_members.get(tkey).cloned().unwrap_or_default();
+                        if members.len() > 1 && members.first() == Some(&key) {
+                            let messages: Vec<Message> = members
+                                .iter()
+                                .filter_map(|mk| {
+                                    self.active_source()
+                                        .iter()
+                                        .find(|x| (x.account_id, x.id) == *mk)
+                                        .cloned()
+                                })
+                                .collect();
+                            let _ = sender
+                                .output(MessageListOutput::DeleteThread { messages });
+                            return;
+                        }
+                    }
+                }
+                sender.input(MessageListInput::Bulk(BulkAction::Delete));
             }
             MessageListInput::SetThreadsExpanded(on) => {
                 if self.default_expanded != on {
@@ -1815,7 +1878,7 @@ impl SimpleComponent for MessageList {
                     .filter(|k| !self.shown.iter().any(|m| (m.account_id, m.id) == **k))
                     .filter_map(|k| self.msg_thread.get(k).cloned())
                     .collect();
-                if !hidden.is_empty() {
+                if !hidden.is_empty() && self.thread_expansion {
                     for thread_key in hidden {
                         // `expanded_threads` records the departure from the
                         // default, so which way to move it depends on that.
@@ -1981,6 +2044,11 @@ impl SimpleComponent for MessageList {
                 }
             }
             MessageListInput::ToggleThread(key) => {
+                // Expansion disabled: the chevron stays but does nothing — the
+                // conversation is read through the reader's cards.
+                if !self.thread_expansion {
+                    return;
+                }
                 if !self.expanded_threads.remove(&key) {
                     self.expanded_threads.insert(key);
                 }
@@ -1989,7 +2057,11 @@ impl SimpleComponent for MessageList {
             }
             MessageListInput::RowActivated(index) => {
                 if let Some(m) = self.shown.get(index as usize) {
-                    let _ = sender.output(MessageListOutput::Activated(m.clone()));
+                    let (thread, _solo) = self.conversation_for(m);
+                    let _ = sender.output(MessageListOutput::Activated {
+                        message: m.clone(),
+                        thread,
+                    });
                 }
             }
             MessageListInput::MarkRead(id) => {
@@ -2426,7 +2498,11 @@ impl MessageList {
             msgs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then(a.uid.cmp(&b.uid)));
             let count = msgs.len();
             // `expanded_threads` stores toggles away from the default state.
-            let expanded = count > 1 && (self.expanded_threads.contains(key) != self.default_expanded);
+            // With expansion disabled no thread ever opens in the list; the
+            // stored toggles survive for when it is re-enabled.
+            let expanded = count > 1
+                && self.thread_expansion
+                && (self.expanded_threads.contains(key) != self.default_expanded);
             // The head stays marked unread while ANY message in its
             // conversation is unread — hidden replies included.
             let any_unread = count > 1 && msgs.iter().any(|m| m.unread);

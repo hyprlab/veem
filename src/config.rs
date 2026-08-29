@@ -643,6 +643,15 @@ struct PrivacyFile {
     /// (collapsed to their newest message by default).
     #[serde(default)]
     threads_expanded: bool,
+    /// Whether a conversation row can expand into its member rows in the
+    /// message list. Off: the row keeps its count chip and chevron, but the
+    /// thread itself opens only in the reading pane's cards.
+    #[serde(default = "default_thread_expansion")]
+    thread_expansion: bool,
+    /// Whether deleting a whole selected conversation asks for confirmation
+    /// first.
+    #[serde(default = "default_confirm_thread_delete")]
+    confirm_thread_delete: bool,
     /// How email content is themed (independent of the app UI theme).
     #[serde(default)]
     message_theme: MessageTheme,
@@ -726,6 +735,14 @@ fn default_threading() -> bool {
     true
 }
 
+fn default_thread_expansion() -> bool {
+    true
+}
+
+fn default_confirm_thread_delete() -> bool {
+    true
+}
+
 fn default_show_remote_banner() -> bool {
     true
 }
@@ -787,6 +804,8 @@ impl Default for PrivacyFile {
             palette_collapse_secs: default_palette_collapse(),
             threading: default_threading(),
             threads_expanded: false,
+            thread_expansion: default_thread_expansion(),
+            confirm_thread_delete: default_confirm_thread_delete(),
             message_theme: MessageTheme::default(),
             notifications: default_notifications(),
             notification_content: default_notification_content(),
@@ -887,6 +906,16 @@ pub fn load_threads_expanded() -> bool {
     load_privacy().threads_expanded
 }
 
+/// Whether conversation rows can expand into their members in the list.
+pub fn load_thread_expansion() -> bool {
+    load_privacy().thread_expansion
+}
+
+/// Whether deleting a whole selected conversation asks for confirmation.
+pub fn load_confirm_thread_delete() -> bool {
+    load_privacy().confirm_thread_delete
+}
+
 /// How email message content is themed.
 pub fn load_message_theme() -> MessageTheme {
     load_privacy().message_theme
@@ -985,6 +1014,8 @@ pub fn save_privacy(
     palette_collapse_secs: u64,
     threading: bool,
     threads_expanded: bool,
+    thread_expansion: bool,
+    confirm_thread_delete: bool,
     message_theme: MessageTheme,
     notifications: bool,
     notification_content: bool,
@@ -1024,6 +1055,8 @@ pub fn save_privacy(
         palette_collapse_secs,
         threading,
         threads_expanded,
+        thread_expansion,
+        confirm_thread_delete,
         message_theme,
         notifications,
         notification_content,
