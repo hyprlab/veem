@@ -2194,6 +2194,15 @@ impl SimpleComponent for MessageList {
                 }
                 self.publish_drag_keys();
                 self.selection_count = self.selected_ids.len();
+                // Backfill the rendered window: a bulk removal can empty it
+                // while `all` still holds messages beyond the render cap (a
+                // folder larger than one page). Re-derive `shown` so what
+                // remains appears immediately, instead of the list sitting
+                // empty until the server finishes the move and pushes fresh
+                // messages.
+                if self.shown.len() < self.render_limit && self.all.len() > self.shown.len() {
+                    self.rebuild_preserving_scroll();
+                }
                 if was_viewed {
                     match first_removed {
                         Some(idx) if !self.shown.is_empty() => {
