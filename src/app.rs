@@ -354,6 +354,8 @@ pub struct AppModel {
     thread_key: Option<(u32, u32)>,
     /// Whether conversation threads start expanded in the message list.
     threads_expanded: bool,
+    /// Reading pane shows conversations newest-message-first.
+    thread_newest_first: bool,
     /// Whether conversation rows may expand into their members in the list
     /// (the row keeps its chip and chevron either way).
     thread_expansion: bool,
@@ -599,6 +601,7 @@ pub enum AppMsg {
     /// The thread-delete dialog was confirmed.
     DeleteThreadConfirmed(Vec<Message>),
     SetThreadsExpanded(bool),
+    SetThreadNewestFirst(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
     SetListPalette(bool),
     SetListPaletteHover(bool),
@@ -1722,6 +1725,7 @@ impl SimpleComponent for AppModel {
             thread_cache_order: Vec::new(),
             thread_key: None,
             threads_expanded: config::load_threads_expanded(),
+            thread_newest_first: config::load_thread_newest_first(),
             thread_expansion: config::load_thread_expansion(),
             confirm_thread_delete: config::load_confirm_thread_delete(),
             selection_from_cards: false,
@@ -3047,6 +3051,11 @@ impl SimpleComponent for AppModel {
                 if self.is_drafts_folder(m.account_id, m.folder_id) {
                     self.open_draft(m, &sender);
                 } else {
+                    // Popouts follow the reading pane's display order (#70).
+                    let mut thread = thread;
+                    if self.thread_newest_first {
+                        thread.reverse();
+                    }
                     self.open_message_window(m, thread, &sender);
                 }
             }
@@ -3728,6 +3737,17 @@ impl SimpleComponent for AppModel {
                     self.threads_expanded = on;
                     self.save_settings();
                     self.message_list.emit(MessageListInput::SetThreadsExpanded(on));
+                }
+            }
+
+            AppMsg::SetThreadNewestFirst(on) => {
+                if self.thread_newest_first != on {
+                    self.thread_newest_first = on;
+                    self.save_settings();
+                    // Re-render an open conversation in the new order.
+                    if self.current_thread.len() > 1 {
+                        self.show_thread();
+                    }
                 }
             }
 
@@ -4797,6 +4817,7 @@ impl AppModel {
             self.threading,
             self.threads_expanded,
             self.thread_expansion,
+            self.thread_newest_first,
             self.confirm_thread_delete,
             self.message_theme,
             self.notifications_enabled,
@@ -6021,8 +6042,15 @@ impl AppModel {
         } else {
             primary.body.is_empty()
         };
+        // Display order is a preference (#70): newest first flips the stored
+        // chronological order for rendering only — stepping (w/b) and the
+        // related-message bookkeeping stay chronological.
+        let mut thread = self.current_thread.clone();
+        if self.thread_newest_first {
+            thread.reverse();
+        }
         self.message_view.emit(MessageViewInput::Show {
-            thread: self.current_thread.clone(),
+            thread,
             allow_remote,
             account_name: Some(self.account_name(account_id)),
             account_color: Some(self.account_color(account_id)),
@@ -7596,6 +7624,7 @@ impl AppModel {
             palette_collapse_secs: self.palette_collapse_secs,
             threading: self.threading,
             threads_expanded: self.threads_expanded,
+            thread_newest_first: self.thread_newest_first,
             thread_expansion: self.thread_expansion,
             confirm_thread_delete: self.confirm_thread_delete,
             message_theme: self.message_theme,
@@ -7639,6 +7668,7 @@ impl AppModel {
                     AppMsg::SetConfirmThreadDelete(on)
                 }
                 PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
+                PrefOutput::SetThreadNewestFirst(on) => AppMsg::SetThreadNewestFirst(on),
                 PrefOutput::SetCardActionsMode { hover_toggle, hover_auto } => {
                     AppMsg::SetCardActionsMode { hover_toggle, hover_auto }
                 }

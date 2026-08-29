@@ -102,6 +102,16 @@ holds a single architecture; the repo above holds both.)
 sudo dnf install ./vireo-*.x86_64.rpm
 ```
 
+**Gentoo** — a community-maintained ebuild lives in
+[bennypowers' overlay](https://github.com/bennypowers/gentoo-overlay)
+(thanks @bennypowers):
+
+```sh
+eselect repository enable bennypowers
+emaint sync -r bennypowers
+emerge -av mail-client/vireo
+```
+
 Arch, Debian/Ubuntu and Snap packages were discontinued after 1.7.0 — use the
 Flatpak (it works on every distribution) or build from source.
 

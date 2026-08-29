@@ -232,6 +232,8 @@ pub struct OutgoingMessage {
     pub to: String,
     pub cc: String,
     pub bcc: String,
+    /// Reply-To addresses (comma-separated); empty for none (#58).
+    pub reply_to: String,
     pub subject: String,
     /// Plain-text body (always present; the `text/plain` alternative).
     pub body: String,
@@ -2741,6 +2743,12 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
         builder = builder.header(lettre::message::header::InReplyTo::from(
             bracketed(&msg.in_reply_to),
         ));
+    }
+    // Reply-To (#58): answers go where the sender asked, not to From.
+    for addr in msg.reply_to.split(',') {
+        if let Ok(mbox) = addr.trim().parse() {
+            builder = builder.reply_to(mbox);
+        }
     }
     // Graph accounts thread by a synthetic "graph-conv:<id>" token (there is no
     // cheap way to read the real References header over the API) — that token is
@@ -7523,6 +7531,7 @@ mod tests {
             to: String::new(),
             cc: String::new(),
             bcc: String::new(),
+            reply_to: String::new(),
             subject: "Subject".into(),
             body: "Body".into(),
             html: String::new(),
@@ -7536,6 +7545,18 @@ mod tests {
 
     /// A reply with no In-Reply-To/References is a new conversation to every
     /// client that receives it — including Vireo's own threading.
+    #[test]
+    fn reply_to_header_reaches_the_wire() {
+        let mut msg = sample_outgoing();
+        msg.to = "someone@example.com".into();
+        msg.reply_to = "list@example.org, Other <other@example.net>".into();
+        let email = build_email(&sample_account(), &msg).expect("builds");
+        let raw = String::from_utf8_lossy(&email.formatted()).to_string();
+        assert!(raw.contains("Reply-To:"), "Reply-To must be present: {raw}");
+        assert!(raw.contains("list@example.org"), "{raw}");
+        assert!(raw.contains("other@example.net"), "{raw}");
+    }
+
     #[test]
     fn a_reply_carries_its_threading_headers() {
         let mut msg = sample_outgoing();

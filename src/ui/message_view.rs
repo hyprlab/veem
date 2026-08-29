@@ -1163,7 +1163,7 @@ impl MessageView {
                        <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
                          <div class=\"vireo-hdr-line\">\
-                           {ava}{dot}<span class=\"vireo-from\">{from}</span>{addr}\
+                           {ava}{dot}<span class=\"vireo-from\">{from}</span>{addr}{to_line}\
                            <span class=\"vireo-hdr-meta\">{folder}{rcpt_toggle}\
                              <span class=\"vireo-date\">{date}</span></span>\
                            {acts_toggle}{acts}\
@@ -1276,6 +1276,7 @@ impl MessageView {
                         )
                     },
                     date = escape_text(&m.datetime_full()),
+                    to_line = primary_to_html(m),
                     // Everyone the message went to, tucked behind a small chip so
                     // a card's header stays one line tall until asked. Escaped
                     // like the sender: recipient headers are attacker-controlled.
@@ -1474,6 +1475,9 @@ impl MessageView {
                body:not(.vireo-conv) .vireo-addr.clipped:hover::after{{\
                  background:{chrome};}}\
                .vireo-date{{opacity:0.55;font-size:0.85em;flex:none;white-space:nowrap;}}\
+               .vireo-to-line{{opacity:0.5;font-size:0.85em;white-space:nowrap;\
+                 overflow:hidden;text-overflow:ellipsis;max-width:16em;\
+                 align-self:center;}}\
                .vireo-dot{{width:8px;height:8px;border-radius:50%;background:#3584e4;\
                  flex:none;align-self:center;}}\
                .vireo-end{{height:1px;}}\
@@ -1988,6 +1992,25 @@ fn recipient_count(m: &Message) -> usize {
 /// The collapsible To/Cc block inside a conversation card's header. Starts
 /// hidden; the header's recipients chip toggles it. Empty when the message
 /// names no recipients at all.
+/// A dim "to <first recipient>" inline in the header, so mail auto-forwarded
+/// from another address shows at a glance which address it arrived through
+/// (issue #40). The full recipient list stays behind the chip.
+fn primary_to_html(m: &Message) -> String {
+    let first = split_addr_list(m.to.trim())
+        .into_iter()
+        .map(|e| e.trim().to_string())
+        .find(|e| !e.is_empty());
+    let Some(entry) = first else { return String::new() };
+    let mail = entry
+        .rfind('<')
+        .and_then(|s| entry[s + 1..].find('>').map(|e2| entry[s + 1..s + 1 + e2].to_string()))
+        .unwrap_or_else(|| entry.clone());
+    format!(
+        "<span class=\"vireo-to-line\">to {}</span>",
+        escape_text(mail.trim())
+    )
+}
+
 fn recipients_html(m: &Message) -> String {
     let mut lines = String::new();
     for (label, list) in [("To", m.to.trim()), ("Cc", m.cc.trim())] {

@@ -660,6 +660,9 @@ struct PrivacyFile {
     /// thread itself opens only in the reading pane's cards.
     #[serde(default = "default_thread_expansion")]
     thread_expansion: bool,
+    /// Whether the reading pane shows a conversation newest-message-first.
+    #[serde(default)]
+    thread_newest_first: bool,
     /// Whether deleting a whole selected conversation asks for confirmation
     /// first.
     #[serde(default = "default_confirm_thread_delete")]
@@ -822,6 +825,7 @@ impl Default for PrivacyFile {
             threading: default_threading(),
             threads_expanded: false,
             thread_expansion: default_thread_expansion(),
+            thread_newest_first: false,
             confirm_thread_delete: default_confirm_thread_delete(),
             message_theme: MessageTheme::default(),
             notifications: default_notifications(),
@@ -924,6 +928,10 @@ pub fn load_threads_expanded() -> bool {
 }
 
 /// Whether conversation rows can expand into their members in the list.
+pub fn load_thread_newest_first() -> bool {
+    load_privacy().thread_newest_first
+}
+
 pub fn load_thread_expansion() -> bool {
     load_privacy().thread_expansion
 }
@@ -1034,6 +1042,7 @@ pub fn save_privacy(
     threading: bool,
     threads_expanded: bool,
     thread_expansion: bool,
+    thread_newest_first: bool,
     confirm_thread_delete: bool,
     message_theme: MessageTheme,
     notifications: bool,
@@ -1075,6 +1084,7 @@ pub fn save_privacy(
         threading,
         threads_expanded,
         thread_expansion,
+        thread_newest_first,
         confirm_thread_delete,
         message_theme,
         notifications,
