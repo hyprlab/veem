@@ -165,6 +165,22 @@ headerbar.rail-header {
   padding: 0;
 }
 
+/* All Inboxes: its disclosure chevron lines up with the account headers'
+   below it. The account chevron's right edge sits at 6px (list margin) +
+   12px (header padding); here the row keeps no padding of its own, the
+   inner .folder-row provides the 12px, and the chevron button shrinks to
+   exactly its 16px icon. */
+.unified-row {
+  padding-right: 0;
+}
+.unified-row .folder-row {
+  padding-right: 12px;
+}
+.unified-row .chevron-btn {
+  min-width: 16px;
+  min-height: 16px;
+}
+
 /* Draggable account rows in the Accounts window. */
 .account-list-row {
   padding: 14px 12px;

@@ -1108,6 +1108,9 @@ impl Sidebar {
             list.add_css_class("navigation-sidebar");
 
             let row = gtk::ListBoxRow::new();
+            // Tagged so the disclosure chevron can be lined up with the
+            // account headers' (see styles.css).
+            row.add_css_class("unified-row");
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
             hbox.add_css_class("folder-row");
             let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-inbox-symbolic");
@@ -1438,7 +1441,13 @@ impl Sidebar {
             header.add_css_class("account-header");
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
 
-            let name_str = if section.account.name.trim().is_empty() {
+            // A configured label wins (same as the All Inboxes sub-rows);
+            // otherwise the account's name, then its address.
+            let name_str = if !section.account.label.trim().is_empty()
+                && section.account.label != section.account.email
+            {
+                section.account.label.clone()
+            } else if section.account.name.trim().is_empty() {
                 section.account.email.clone()
             } else {
                 section.account.name.clone()

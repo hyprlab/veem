@@ -1568,15 +1568,29 @@ impl SimpleComponent for AppModel {
             },
         );
 
+        // Sectioned: settings / printing / window & help / quit.
         let menu = gtk::gio::Menu::new();
-        menu.append(Some("Accounts & Preferences"), Some("win.accounts"));
-        menu.append(Some("Print Preview…"), Some("win.print-preview"));
-        menu.append(Some("Print Message…"), Some("win.print"));
-        menu.append(Some("Reveal Status Bar"), Some("win.status-bar"));
-        menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
-        menu.append(Some(format!("About {}", crate::APP_NAME).as_str()), Some("win.about"));
-        // Last, where a Quit item belongs.
-        menu.append(Some("Quit"), Some("app.quit"));
+        {
+            let settings = gtk::gio::Menu::new();
+            settings.append(Some("Accounts & Preferences"), Some("win.accounts"));
+            menu.append_section(None, &settings);
+
+            let printing = gtk::gio::Menu::new();
+            printing.append(Some("Print Preview…"), Some("win.print-preview"));
+            printing.append(Some("Print Message…"), Some("win.print"));
+            menu.append_section(None, &printing);
+
+            let help = gtk::gio::Menu::new();
+            help.append(Some("Reveal Status Bar"), Some("win.status-bar"));
+            help.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
+            help.append(Some(format!("About {}", crate::APP_NAME).as_str()), Some("win.about"));
+            menu.append_section(None, &help);
+
+            // Last, where a Quit item belongs.
+            let quit = gtk::gio::Menu::new();
+            quit.append(Some("Quit"), Some("app.quit"));
+            menu.append_section(None, &quit);
+        }
 
         let mut model = AppModel {
             workers: HashMap::new(),
@@ -1849,6 +1863,17 @@ impl SimpleComponent for AppModel {
             let title = gtk::Label::new(Some("Attachments"));
             title.add_css_class("pane-title");
             gallery_hb.set_title_widget(Some(&title));
+            // Leftmost, same spot as the message list header's: the sidebar
+            // collapse/expand toggle.
+            let sidebar_btn =
+                gtk::Button::from_icon_name("co.hyprlab.Vireo-sidebar-show-symbolic");
+            sidebar_btn.set_tooltip_text(Some("Toggle sidebar"));
+            sidebar_btn.add_css_class("flat");
+            let s = sender.input_sender().clone();
+            sidebar_btn.connect_clicked(move |_| {
+                let _ = s.send(AppMsg::ToggleSidebar);
+            });
+            gallery_hb.pack_start(&sidebar_btn);
             gallery_tv.add_top_bar(&gallery_hb);
             gallery_tv.set_content(Some(model.gallery.widget()));
             widgets.content_stack.add_named(&gallery_tv, Some("gallery"));
