@@ -49,10 +49,28 @@ fn write_private(path: &std::path::Path, contents: &str) -> std::io::Result<()> 
 fn shared_base(own: fn() -> Option<PathBuf>, sub: &str) -> Option<PathBuf> {
     if cfg!(feature = "beta")
         && std::env::var("FLATPAK_ID").is_ok_and(|id| id == "co.hyprlab.Vireo.Beta")
+        && stable_data_present()
     {
         return Some(dirs::home_dir()?.join(".var/app/co.hyprlab.Vireo").join(sub));
     }
     own()
+}
+
+/// Whether the stable app's flatpak directory is actually reachable. Flatpak
+/// silently SKIPS a `--filesystem` grant whose host path doesn't exist, which
+/// left `~/.var/app/co.hyprlab.Vireo` pointing at the sandbox's throwaway
+/// tmpfs on beta-only installs — accounts "saved" there and vanished on quit
+/// (issue #83). Share only when the real directory is mounted; a beta without
+/// stable keeps its own persistent home instead. Decided once at first use,
+/// so our own writes creating the path on the tmpfs mid-session can't flip it.
+fn stable_data_present() -> bool {
+    use std::sync::OnceLock;
+    static PRESENT: OnceLock<bool> = OnceLock::new();
+    *PRESENT.get_or_init(|| {
+        dirs::home_dir()
+            .map(|h| h.join(".var/app/co.hyprlab.Vireo").is_dir())
+            .unwrap_or(false)
+    })
 }
 
 pub fn config_base() -> Option<PathBuf> {

@@ -7362,6 +7362,9 @@ impl AppModel {
         }
         self.folder_unread.insert((account_id, folder_id), 0);
         self.send_to(account_id, MailRequest::MarkAllRead { folder_id, path });
+        // Everything here is read now — the account's new-mail notification
+        // included (issue #41).
+        crate::notify::withdraw_mail(account_id);
         self.refresh_list_display();
         self.push_unread_counts();
     }
@@ -7944,6 +7947,12 @@ impl AppModel {
             return;
         };
         self.send_to(m.account_id, MailRequest::SetSeen { path, uid: m.uid, seen: read });
+        if read {
+            // The mail was read (or marked read) in the app — the desktop
+            // notification for this account's new mail is answered, clear it
+            // instead of leaving it stranded in the panel (issue #41).
+            crate::notify::withdraw_mail(m.account_id);
+        }
         self.message_list
             .emit(MessageListInput::SetRead { id: m.id, read });
         self.set_cached_unread(m.account_id, m.id, !read);
@@ -8908,18 +8917,64 @@ fn forward_prefill(m: &Message) -> ComposePrefill {
     } else {
         format!("Fwd: {}", m.subject)
     };
-    let text = message_text(&m.body);
     let header = format!(
         "---------- Forwarded message ----------\nFrom: {} <{}>\nDate: {}\nSubject: {}",
         m.from_name, m.from_addr, m.date, m.subject
     );
+    // Forward the body with its formatting, sanitized (issue #52): the
+    // original HTML is attacker-controlled, so it goes through ammonia —
+    // scripts, event handlers, styles and dangerous URLs are stripped; the
+    // structure (tables, links, headings, images) survives, so a forwarded
+    // invoice still looks like the invoice. Plain-text bodies keep the old
+    // escaped-text path.
+    let body_html = if m.body.contains('<') {
+        quote_block_html(&header, &sanitize_forward_html(&m.body))
+    } else {
+        quote_block(&header, &message_text(&m.body))
+    };
     ComposePrefill {
         to: String::new(),
         cc: String::new(),
         subject,
-        body_html: quote_block(&header, &text),
+        body_html,
         ..Default::default()
     }
+}
+
+/// Sanitize untrusted message HTML for the editable composer. Ammonia's
+/// (conservative) defaults, widened with the structural tags and presentation
+/// attributes mail bodies lean on — tables above all. No style attributes, no
+/// scripts/handlers ever, URLs limited to http/https/mailto.
+fn sanitize_forward_html(html: &str) -> String {
+    use std::collections::HashSet;
+    let mut b = ammonia::Builder::default();
+    b.add_tags(["table", "thead", "tbody", "tfoot", "tr", "td", "th", "font", "center", "u"])
+        .add_tag_attributes("table", ["width", "border", "cellpadding", "cellspacing", "align", "bgcolor"])
+        .add_tag_attributes("td", ["width", "height", "align", "valign", "colspan", "rowspan", "bgcolor"])
+        .add_tag_attributes("th", ["width", "height", "align", "valign", "colspan", "rowspan", "bgcolor"])
+        .add_tag_attributes("tr", ["align", "valign", "bgcolor"])
+        .add_tag_attributes("font", ["face", "size", "color"])
+        .add_tag_attributes("p", ["align"])
+        .add_tag_attributes("div", ["align"])
+        .add_tags(["img"])
+        .add_tag_attributes("img", ["src", "width", "height", "alt"])
+        .url_schemes(HashSet::from(["http", "https", "mailto"]));
+    b.clean(html).to_string()
+}
+
+/// Like [`quote_block`], but the quoted body is already-sanitized HTML.
+fn quote_block_html(attribution: &str, inner_html: &str) -> String {
+    let esc = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('\n', "<br>")
+    };
+    format!(
+        "<p class=\"vireo-quote-attr\">{}</p><blockquote>{}</blockquote>",
+        esc(attribution),
+        inner_html
+    )
 }
 
 /// Build the HTML quoted block (attribution line + blockquote) for a reply or
@@ -9149,6 +9204,37 @@ fn next_after_vanish(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn forward_sanitizer_strips_active_content() {
+        use super::sanitize_forward_html;
+        let dirty = r#"<table><tr><td onclick="evil()">Total: <b>$40</b></td></tr></table>
+            <script>steal()</script>
+            <img src="javascript:alert(1)">
+            <a href="https://example.com" onmouseover="x()">pay</a>
+            <div style="background:url(https://tracker.example/p.gif)">hi</div>"#;
+        let clean = sanitize_forward_html(dirty);
+        assert!(!clean.contains("script"), "{clean}");
+        assert!(!clean.contains("onclick") && !clean.contains("onmouseover"), "{clean}");
+        assert!(!clean.contains("javascript:"), "{clean}");
+        assert!(!clean.contains("style"), "{clean}");
+        // The structure and safe pieces survive.
+        assert!(clean.contains("<table>") && clean.contains("<b>$40</b>"), "{clean}");
+        assert!(clean.contains(r#"<a href="https://example.com""#), "{clean}");
+    }
+
+    #[test]
+    fn forward_sanitizer_keeps_presentation_attributes() {
+        use super::sanitize_forward_html;
+        let html = r##"<table width="600" border="0"><tr><td align="right" bgcolor="#eeeeee">
+            <font color="#333333" size="2">Invoice</font></td></tr></table>
+            <img src="https://example.com/logo.png" width="120" alt="logo">"##;
+        let clean = sanitize_forward_html(html);
+        for keep in ["width=\"600\"", "align=\"right\"", "bgcolor=\"#eeeeee\"",
+                     "color=\"#333333\"", "src=\"https://example.com/logo.png\""] {
+            assert!(clean.contains(keep), "missing {keep} in {clean}");
+        }
+    }
+
     #[test]
     fn identities_split_into_name_and_address() {
         use super::split_identity;
