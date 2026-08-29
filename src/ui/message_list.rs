@@ -53,6 +53,9 @@ pub struct RowInit {
     pub is_thread_child: bool,
     /// Whether this thread head is currently expanded.
     pub thread_expanded: bool,
+    /// Whether conversations can expand in the list at all (preference) —
+    /// off hides the chip's caret, since clicking can't open anything.
+    pub thread_expandable: bool,
     /// The conversation key, set on a thread head so its chevron can toggle it.
     pub thread_key: Option<(u32, String)>,
     /// The newest member's display time (thread heads only): shown in place of
@@ -167,6 +170,7 @@ pub struct MessageRow {
     is_thread_child: bool,
     /// Whether this head's conversation is expanded.
     thread_expanded: bool,
+    thread_expandable: bool,
     /// Sent-folder rows name the recipient, not the sender (#27).
     show_recipient: bool,
     /// Conversation key for the head's expand/collapse toggle.
@@ -397,6 +401,9 @@ impl FactoryComponent for MessageRow {
                                 set_label: &self.thread_count.to_string(),
                             },
                             gtk::Image {
+                                // No caret when expansion is off — the chip is
+                                // just a count then, not a toggle.
+                                set_visible: self.thread_expandable,
                                 set_icon_name: Some(if self.thread_expanded {
                                     "co.hyprlab.Vireo-pan-down-symbolic"
                                 } else {
@@ -562,6 +569,7 @@ impl FactoryComponent for MessageRow {
             thread_count,
             is_thread_child,
             thread_expanded,
+            thread_expandable,
             thread_key,
             thread_date,
             thread_unread,
@@ -586,6 +594,7 @@ impl FactoryComponent for MessageRow {
             thread_count,
             is_thread_child,
             thread_expanded,
+            thread_expandable,
             thread_key,
             thread_date,
             thread_unread,
@@ -1512,12 +1521,13 @@ impl SimpleComponent for MessageList {
                     },
 
                     // Placeholder when the folder has loaded and holds nothing.
+                    // Same full-size AdwStatusPage styling as the reader's
+                    // "No message selected", so the two placeholders match.
                     adw::StatusPage {
                         set_icon_name: Some("co.hyprlab.Vireo-mail-inbox-symbolic"),
                         set_title: "No Messages",
                         set_description: Some("There's nothing here right now."),
                         set_vexpand: true,
-                        add_css_class: "compact",
                         #[watch]
                         set_visible: model.is_empty_state(),
                     },
@@ -2139,6 +2149,10 @@ impl SimpleComponent for MessageList {
                     self.shown.remove(idx);
                     self.rows.guard().remove(idx);
                     self.publish_drag_keys();
+                    // The surgical removal skips the rebuild that normally
+                    // recomputes these — keep the header count honest.
+                    self.total_matches = self.total_matches.saturating_sub(1);
+                    self.rendered_count = self.shown.len();
                 }
 
                 if was_viewed {
@@ -2173,6 +2187,7 @@ impl SimpleComponent for MessageList {
                 // Remove all matching rows in one guarded batch (a single widget
                 // update) instead of one render cycle per message. Walk back-to-front
                 // so indices stay valid.
+                let shown_before = self.shown.len();
                 {
                     let mut guard = self.rows.guard();
                     let mut idx = self.shown.len();
@@ -2186,6 +2201,11 @@ impl SimpleComponent for MessageList {
                 }
                 self.publish_drag_keys();
                 self.selection_count = self.selected_ids.len();
+                // Keep the header count honest when no rebuild follows (the
+                // backfill below recomputes these itself when it runs).
+                self.total_matches =
+                    self.total_matches.saturating_sub(shown_before - self.shown.len());
+                self.rendered_count = self.shown.len();
                 // Backfill the rendered window: a bulk removal can empty it
                 // while `all` still holds messages beyond the render cap (a
                 // folder larger than one page). Re-derive `shown` so what
@@ -2617,6 +2637,7 @@ impl MessageList {
                     thread_count: meta.count,
                     is_thread_child: meta.is_child,
                     thread_expanded: meta.expanded,
+                    thread_expandable: self.thread_expansion,
                     thread_key: meta.key,
                     thread_date: meta.latest,
                     thread_unread: meta.unread,

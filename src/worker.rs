@@ -5672,13 +5672,68 @@ fn bytes_to_string(b: &[u8]) -> String {
 /// Apple Mail and Thunderbird do.
 pub(crate) fn decode_header(raw: &[u8]) -> String {
     use rfc2047_decoder::{Decoder, RecoverStrategy};
-    match Decoder::new()
-        .too_long_encoded_word_strategy(RecoverStrategy::Decode)
-        .decode(raw)
-    {
-        Ok(s) => s,
-        Err(_) => String::from_utf8_lossy(raw).into_owned(),
+    let decode = |bytes: &[u8]| -> Option<String> {
+        Decoder::new()
+            .too_long_encoded_word_strategy(RecoverStrategy::Decode)
+            .decode(bytes)
+            .ok()
+    };
+    let first = decode(raw).unwrap_or_else(|| String::from_utf8_lossy(raw).into_owned());
+    if !first.contains("=?") {
+        return first;
     }
+    // Still carrying raw encoded words — some senders put literal spaces
+    // inside them ("…_DPD ?="), which the decoder refuses. Repair and retry.
+    repair_spaces_in_encoded_words(&first)
+        .and_then(|fixed| decode(fixed.as_bytes()))
+        .filter(|s| !s.contains("=?"))
+        .unwrap_or(first)
+}
+
+/// Map illegal raw spaces inside RFC 2047 encoded words to their legal
+/// spelling (`_` for Q encoding, dropped for B), so the word decodes instead
+/// of showing as `=?UTF-8?Q?…?=` gibberish. `None` when nothing needed it.
+fn repair_spaces_in_encoded_words(s: &str) -> Option<String> {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    let mut repaired = false;
+    while let Some(start) = rest.find("=?") {
+        let (head, tail) = rest.split_at(start);
+        out.push_str(head);
+        let Some(end) = tail.find("?=") else {
+            out.push_str(tail);
+            rest = "";
+            break;
+        };
+        let word = &tail[..end + 2];
+        let parts: Vec<&str> = word.split('?').collect();
+        // "=?charset?enc?text?=" splits to ["=", cs, enc, text…, "="].
+        if parts.len() >= 5 && word.contains(' ') {
+            let charset = parts[1];
+            let enc = parts[2];
+            let text = word[..word.len() - 2].splitn(4, '?').nth(3).unwrap_or("");
+            let fixed = if enc.eq_ignore_ascii_case("q") {
+                text.replace(' ', "_")
+            } else {
+                text.replace(' ', "")
+            };
+            if fixed != text {
+                repaired = true;
+            }
+            out.push_str("=?");
+            out.push_str(charset);
+            out.push('?');
+            out.push_str(enc);
+            out.push('?');
+            out.push_str(&fixed);
+            out.push_str("?=");
+        } else {
+            out.push_str(word);
+        }
+        rest = &tail[end + 2..];
+    }
+    out.push_str(rest);
+    repaired.then_some(out)
 }
 
 /// Compact date label from a unix timestamp (same style as [`format_date`]).
@@ -8046,6 +8101,16 @@ mod tests {
         assert!(!starttls("127.0.0.1", 993));
         assert!(!starttls("imap.gmail.com", 993));
         assert!(!starttls("imap.example.com", 1993));
+    }
+
+    #[test]
+    fn decode_header_repairs_interior_spaces() {
+        // DPD's complaints department sends its display name with a literal
+        // trailing space INSIDE the encoded word — illegal, and the decoder
+        // used to give up and show the raw `=?UTF-8?Q?…?=` (beta 1.18.0b
+        // feedback from p-mitana).
+        let raw = b"=?UTF-8?Q?Dzia=C5=82_Reklamacji_DPD ?=";
+        assert_eq!(decode_header(raw).trim_end(), "Dzia\u{142} Reklamacji DPD");
     }
 
     #[test]
