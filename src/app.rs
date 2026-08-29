@@ -1549,10 +1549,16 @@ impl SimpleComponent for AppModel {
                     ContactsPageOutput::DeleteContact { book_uid, uid } => {
                         AppMsg::DeleteContact { book_uid, uid }
                     }
-                    ContactsPageOutput::ShowPhoto { name, data } => AppMsg::ShowLightbox {
-                        items: vec![crate::models::Attachment { name, data }],
-                        start: 0,
-                    },
+                    ContactsPageOutput::ShowPhoto { name, data } => {
+                        // The lightbox routes by extension — a bare contact
+                        // name sent the JPEG down the PDF path, where poppler
+                        // hung the UI trying to parse it. Name it by content.
+                        let name = format!("{name}.{}", crate::models::image_ext(&data));
+                        AppMsg::ShowLightbox {
+                            items: vec![crate::models::Attachment { name, data }],
+                            start: 0,
+                        }
+                    }
                 });
 
         let notifications = NotificationCenter::builder().launch(()).forward(
