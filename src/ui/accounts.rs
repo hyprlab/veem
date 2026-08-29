@@ -1,6 +1,7 @@
-//! Accounts window: manage all mail accounts (add / edit / remove / reorder).
+//! Accounts panel: manage all mail accounts (add / edit / remove / reorder).
 //!
-//! A standalone window (opened from the main menu, separate from Preferences).
+//! Not a window of its own: the panel is embedded behind the "Accounts" tab
+//! of the combined Accounts & Preferences window (see `ui/preferences.rs`).
 //! It uses an `AdwNavigationView` with two pages: a list of accounts (drag rows
 //! to set the sidebar order) and a reusable editor form pushed on top.
 
@@ -192,7 +193,8 @@ pub enum AccountsOutput {
     EnabledChanged { email: String, enabled: bool },
     /// Import a GNOME Online Account into Vireo (with its credentials).
     ImportGoa(Box<AccountConfig>),
-    Closed,
+    /// The header tabs asked for the Preferences panel.
+    ShowPreferences,
 }
 
 /// Whether a GOA account's mail runs over the Microsoft Graph API: the
@@ -240,23 +242,10 @@ impl Component for AccountsWindow {
     type CommandOutput = AccountsCmd;
 
     view! {
-        adw::Window {
-            set_modal: false,
-            set_default_width: 480,
-            // Remembered vertical size (tall by default) — resizing sticks
-            // across restarts via the save on close below.
-            set_default_height: crate::config::load_accounts_height(),
-            set_title: Some("Accounts"),
-
-            connect_close_request[sender] => move |w| {
-                crate::config::save_accounts_height(w.height());
-                let _ = sender.output(AccountsOutput::Closed);
-                gtk::glib::Propagation::Proceed
-            },
-
+        adw::Bin {
             #[wrap(Some)]
             #[name = "nav"]
-            set_content = &adw::NavigationView {
+            set_child = &adw::NavigationView {
 
                 // ---- list page ----
                 add = &adw::NavigationPage {
@@ -265,6 +254,9 @@ impl Component for AccountsWindow {
 
                     #[wrap(Some)]
                     set_child = &adw::ToolbarView {
+                        // Title widget (the Accounts/Preferences tabs) is set
+                        // in init — it needs the output sender.
+                        #[name = "list_header"]
                         add_top_bar = &adw::HeaderBar {},
 
                         #[wrap(Some)]
@@ -695,6 +687,15 @@ impl Component for AccountsWindow {
         let es = sender.clone();
         widgets.email_row.connect_changed(move |_| es.input(AccountsInput::EmailChanged));
 
+        // The Accounts/Preferences tabs in the list page's header (Accounts
+        // side selected); the editor subpage keeps its own plain header.
+        widgets.list_header.set_title_widget(Some(&crate::ui::preferences::settings_tabs(true, {
+            let s = sender.output_sender().clone();
+            move || {
+                let _ = s.send(AccountsOutput::ShowPreferences);
+            }
+        })));
+
         ComponentParts { model, widgets }
     }
 
@@ -1089,8 +1090,11 @@ impl Component for AccountsWindow {
                          the keyring. Mail on the server is not affected."
                     )
                 };
+                // The panel is embedded — dialogs parent to whatever window
+                // it currently sits in (the combined settings window).
+                let host = root.root().and_downcast::<gtk::Window>();
                 let dialog =
-                    adw::MessageDialog::new(Some(root), Some("Remove Account?"), Some(&body));
+                    adw::MessageDialog::new(host.as_ref(), Some("Remove Account?"), Some(&body));
                 dialog.add_response("cancel", "Cancel");
                 dialog.add_response("remove", "Remove");
                 dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
@@ -1358,18 +1362,19 @@ impl AccountsWindow {
     /// Open the modal alias editor (#34), prefilled from `alias`.
     fn open_alias_dialog(
         &mut self,
-        root: &adw::Window,
+        root: &adw::Bin,
         alias: &AliasConfig,
         sender: &ComponentSender<Self>,
     ) {
         self.close_alias_dialog();
 
         let window = adw::Window::builder()
-            .transient_for(root)
             .modal(true)
             .default_width(440)
             .title(if self.alias_editing.is_some() { "Edit Alias" } else { "Add Alias" })
             .build();
+        // Parent to whatever window the embedded panel currently sits in.
+        window.set_transient_for(root.root().and_downcast::<gtk::Window>().as_ref());
 
         let cancel = gtk::Button::with_label("Cancel");
         let save = gtk::Button::with_label("Save");

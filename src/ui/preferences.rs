@@ -50,6 +50,33 @@ pub struct PrefInit {
     pub single_key_shortcuts: bool,
     pub run_in_background: bool,
     pub autostart: bool,
+    /// The accounts panel (built by the AccountsWindow component), shown
+    /// behind the window's "Accounts" tab.
+    pub accounts_panel: gtk::Widget,
+    /// Open showing the Accounts tab instead of Preferences.
+    pub start_on_accounts: bool,
+}
+
+/// The linked Accounts/Preferences tab pair for the combined settings
+/// window's header bars. Each panel carries its own pair with its side
+/// pre-selected; clicking the other side calls `switch`, and the panel swap
+/// brings in that panel's own header, so the states here never change.
+pub fn settings_tabs<F: Fn() + 'static>(accounts_active: bool, switch: F) -> gtk::Box {
+    let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    tabs.add_css_class("linked");
+    let accounts = gtk::ToggleButton::with_label("Accounts");
+    let prefs = gtk::ToggleButton::with_label("Preferences");
+    prefs.set_group(Some(&accounts));
+    if accounts_active {
+        accounts.set_active(true);
+        prefs.connect_clicked(move |_| switch());
+    } else {
+        prefs.set_active(true);
+        accounts.connect_clicked(move |_| switch());
+    }
+    tabs.append(&accounts);
+    tabs.append(&prefs);
+    tabs
 }
 
 /// App-chrome appearance options, in combo order.
@@ -142,9 +169,14 @@ pub struct Preferences {
     /// Mirrors the threading switch, so the "threaded message list" row below
     /// it can grey out when conversations aren't grouped at all.
     threading: bool,
+    /// Mirrors the expandable-conversations switch — "expand by default" only
+    /// means anything while conversations can expand in the list at all.
+    thread_expansion: bool,
     /// Mirrors the list-palette switch, so the hover row under it can grey
     /// out when there is no palette to open.
     list_palette: bool,
+    /// The Accounts/Preferences panel stack, for tab switching from update().
+    panels_stack: Option<gtk::Stack>,
 }
 
 #[derive(Debug)]
@@ -182,6 +214,8 @@ pub enum PrefInput {
     ChangePaletteCollapse(u64),
     ChangeMessageTheme(u32),
     ChangeAppTheme(u32),
+    /// Switch the window to the Accounts panel (true) or Preferences (false).
+    ShowAccounts(bool),
 }
 
 #[derive(Debug)]
@@ -236,7 +270,7 @@ impl Component for Preferences {
             // Remembered vertical size (tall by default) — resizing sticks
             // across restarts via the save on close below.
             set_default_height: crate::config::load_prefs_height(),
-            set_title: Some("Settings"),
+            set_title: Some("Accounts & Preferences"),
 
             connect_close_request[sender] => move |w| {
                 crate::config::save_prefs_height(w.height());
@@ -244,8 +278,20 @@ impl Component for Preferences {
                 gtk::glib::Propagation::Proceed
             },
 
+            // One window, two panels: Accounts and Preferences, switched by
+            // the tab toggle each panel carries in its own header bar. The
+            // accounts panel (with its own sub-navigation) is built by the
+            // AccountsWindow component and handed in via PrefInit.
             #[wrap(Some)]
-            set_content = &adw::ToolbarView {
+            #[name = "panels_stack"]
+            set_content = &gtk::Stack {
+                set_transition_type: gtk::StackTransitionType::Crossfade,
+
+                #[name = "accounts_slot"]
+                add_named[Some("accounts")] = &adw::Bin {},
+
+                add_named[Some("preferences")] = &adw::ToolbarView {
+                #[name = "prefs_header"]
                 add_top_bar = &adw::HeaderBar {},
 
                 #[wrap(Some)]
@@ -349,6 +395,19 @@ impl Component for Preferences {
                             },
                         },
 
+                        #[name = "threads_expanded_row"]
+                        adw::SwitchRow {
+                            #[watch]
+                            set_sensitive: model.threading && model.thread_expansion,
+                            set_title: "Expand conversations by default",
+                            set_subtitle: "Show every message of a conversation in the list. \
+                                           When off, conversations start collapsed to their \
+                                           newest message.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleThreadsExpanded(row.is_active()));
+                            },
+                        },
+
                         #[name = "confirm_thread_delete_row"]
                         adw::SwitchRow {
                             set_title: "Confirm conversation deletion",
@@ -409,17 +468,6 @@ impl Component for Preferences {
                                            Off also stops previews being downloaded.",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangePreviewLines(row.selected()));
-                            },
-                        },
-
-                        #[name = "threads_expanded_row"]
-                        adw::SwitchRow {
-                            set_title: "Expand conversations by default",
-                            set_subtitle: "Show every message of a conversation in the list. \
-                                           When off, conversations start collapsed to their \
-                                           newest message.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleThreadsExpanded(row.is_active()));
                             },
                         },
 
@@ -667,6 +715,7 @@ impl Component for Preferences {
                         },
                     },
                 },
+                },
             },
         }
     }
@@ -694,7 +743,9 @@ impl Component for Preferences {
             blacklist_addrs: Vec::new(),
             notifications: init.notifications,
             threading: init.threading,
+            thread_expansion: init.thread_expansion,
             list_palette: init.list_palette,
+            panels_stack: None,
         };
 
         {
@@ -820,6 +871,22 @@ impl Component for Preferences {
         let adj = gtk::Adjustment::new(init.palette_collapse_secs as f64, 1.0, 30.0, 1.0, 5.0, 0.0);
         widgets.palette_collapse_row.set_adjustment(Some(&adj));
 
+        // The Accounts/Preferences tabs in this panel's header (Preferences
+        // side selected), and the accounts panel behind the other tab.
+        widgets.prefs_header.set_title_widget(Some(&settings_tabs(false, {
+            let s = sender.input_sender().clone();
+            move || {
+                let _ = s.send(PrefInput::ShowAccounts(true));
+            }
+        })));
+        widgets.accounts_slot.set_child(Some(&init.accounts_panel));
+        widgets.panels_stack.set_visible_child_name(if init.start_on_accounts {
+            "accounts"
+        } else {
+            "preferences"
+        });
+        model.panels_stack = Some(widgets.panels_stack.clone());
+
         ComponentParts { model, widgets }
     }
 
@@ -852,6 +919,7 @@ impl Component for Preferences {
                 let _ = sender.output(PrefOutput::SetThreading(on));
             }
             PrefInput::ToggleThreadExpansion(on) => {
+                self.thread_expansion = on;
                 let _ = sender.output(PrefOutput::SetThreadExpansion(on));
             }
             PrefInput::ToggleConfirmThreadDelete(on) => {
@@ -930,6 +998,11 @@ impl Component for Preferences {
                     .map(|(_, t)| *t)
                     .unwrap_or_default();
                 let _ = sender.output(PrefOutput::SetAppTheme(theme));
+            }
+            PrefInput::ShowAccounts(accounts) => {
+                if let Some(stack) = &self.panels_stack {
+                    stack.set_visible_child_name(if accounts { "accounts" } else { "preferences" });
+                }
             }
             PrefInput::ChangeMessageTheme(index) => {
                 let theme = MESSAGE_THEMES

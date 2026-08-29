@@ -89,7 +89,7 @@ use crate::ui::message_window::{
     MessageWindow, MessageWindowInit, MessageWindowInput, MessageWindowOutput,
 };
 use crate::ui::notifications::{NotificationCenter, NotifyInput, NotifyOutput};
-use crate::ui::preferences::{PrefInit, PrefOutput, Preferences};
+use crate::ui::preferences::{PrefInit, PrefInput, PrefOutput, Preferences};
 use crate::ui::sidebar::{
     CtxAction, SectionData, Sidebar, SidebarInit, SidebarInput, SidebarOutput,
 };
@@ -665,7 +665,6 @@ pub enum AppMsg {
     /// The system resumed from sleep — worker IMAP sockets are stale, so
     /// reconnect every account and reload the visible folder.
     SystemResumed,
-    CloseAccounts,
     OpenPreferences,
     ClosePreferences,
     // Worker events (each carries the account it came from)
@@ -1508,8 +1507,7 @@ impl SimpleComponent for AppModel {
         );
 
         let menu = gtk::gio::Menu::new();
-        menu.append(Some("Accounts"), Some("win.accounts"));
-        menu.append(Some("Preferences"), Some("win.preferences"));
+        menu.append(Some("Accounts & Preferences"), Some("win.accounts"));
         menu.append(Some("Print Preview…"), Some("win.print-preview"));
         menu.append(Some("Print Message…"), Some("win.print"));
         menu.append(Some("Reveal Status Bar"), Some("win.status-bar"));
@@ -3799,9 +3797,9 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::OpenAccounts => self.open_accounts_window(&sender, false),
+            AppMsg::OpenAccounts => self.open_settings_window(&sender, true, false),
 
-            AppMsg::AddFirstAccount => self.open_accounts_window(&sender, true),
+            AppMsg::AddFirstAccount => self.open_settings_window(&sender, true, true),
 
             AppMsg::AccountSaved { original_email, account } => {
                 let new_email = account.email.clone();
@@ -3993,100 +3991,14 @@ impl SimpleComponent for AppModel {
                 self.arm_auto_fetch(&sender);
             }
 
-            AppMsg::CloseAccounts => self.accounts_win = None,
+            AppMsg::OpenPreferences => self.open_settings_window(&sender, false, false),
 
-            AppMsg::OpenPreferences => {
-                // Already open? Bring it forward instead of opening another.
-                if let Some(p) = self.prefs.as_ref().filter(|p| p.widget().is_visible()) {
-                    p.widget().present();
-                    return;
-                }
-                let init = PrefInit {
-                    allowed_senders: self.allowed_senders.clone(),
-                    auto_remote_content: self.auto_remote_content,
-                    show_remote_banner: self.show_remote_banner,
-                    gravatar: self.gravatar,
-                    avatars: self.avatars,
-                    sender_logos: self.sender_logos,
-                    date_style: self.date_style,
-                    clock_style: self.clock_style,
-                    fetch_interval_secs: self.fetch_interval_secs,
-                    push: self.push,
-                    blacklist: self.blacklist.clone(),
-                    palette_collapse_secs: self.palette_collapse_secs,
-                    threading: self.threading,
-                    threads_expanded: self.threads_expanded,
-                    thread_expansion: self.thread_expansion,
-                    confirm_thread_delete: self.confirm_thread_delete,
-                    message_theme: self.message_theme,
-                    notifications: self.notifications_enabled,
-                    notification_content: self.notification_content,
-                    show_attachments: self.show_attachments,
-                    show_contacts: self.show_contacts,
-                    sidebar_hover_expand: self.sidebar_hover_expand,
-                    card_actions_hover: self.card_actions_hover,
-                    card_actions_auto: self.card_actions_auto,
-                    list_palette: self.list_palette,
-                    list_palette_hover: self.list_palette_hover,
-                    compose_inline: self.compose_inline,
-                    app_theme: self.app_theme,
-                    preview_lines: self.preview_lines,
-                    single_key_shortcuts: self.single_key.get(),
-                    run_in_background: self.run_in_background.get(),
-                    autostart: self.autostart,
-                };
-                let prefs = Preferences::builder()
-                    .transient_for(&self.window)
-                    .launch(init)
-                    .forward(sender.input_sender(), |out| match out {
-                        PrefOutput::AddSender(addr) => AppMsg::AddSender(addr),
-                        PrefOutput::RemoveSender(addr) => AppMsg::RemoveSender(addr),
-                        PrefOutput::AddBlacklist(addr) => AppMsg::AddBlacklist(addr),
-                        PrefOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
-                        PrefOutput::SetAutoRemoteContent(on) => AppMsg::SetAutoRemoteContent(on),
-                        PrefOutput::SetShowRemoteBanner(on) => AppMsg::SetShowRemoteBanner(on),
-                        PrefOutput::SetGravatar(on) => AppMsg::SetGravatar(on),
-                        PrefOutput::SetAvatars(on) => AppMsg::SetAvatars(on),
-                        PrefOutput::SetSenderLogos(on) => AppMsg::SetSenderLogos(on),
-                        PrefOutput::SetDateStyle(style) => AppMsg::SetDateStyle(style),
-                        PrefOutput::SetClockStyle(style) => AppMsg::SetClockStyle(style),
-                        PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
-                        PrefOutput::SetThreadExpansion(on) => AppMsg::SetThreadExpansion(on),
-                        PrefOutput::SetConfirmThreadDelete(on) => {
-                            AppMsg::SetConfirmThreadDelete(on)
-                        }
-                        PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
-                        PrefOutput::SetCardActionsMode { hover_toggle, hover_auto } => {
-                            AppMsg::SetCardActionsMode { hover_toggle, hover_auto }
-                        }
-                        PrefOutput::SetListPalette(on) => AppMsg::SetListPalette(on),
-                        PrefOutput::SetListPaletteHover(on) => AppMsg::SetListPaletteHover(on),
-                        PrefOutput::SetComposeInline(on) => AppMsg::SetComposeInline(on),
-                        PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
-                        PrefOutput::SetPush(on) => AppMsg::SetPush(on),
-                        PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
-                        PrefOutput::SetNotificationContent(on) => {
-                            AppMsg::SetNotificationContent(on)
-                        }
-                        PrefOutput::SetAttachmentsRow(show) => AppMsg::SetAttachmentsRow(show),
-                        PrefOutput::SetContactsRow(show) => AppMsg::SetContactsRow(show),
-                        PrefOutput::SetSidebarHoverExpand(on) => {
-                            AppMsg::SetSidebarHoverExpand(on)
-                        }
-                        PrefOutput::SetAppTheme(theme) => AppMsg::SetAppTheme(theme),
-                        PrefOutput::SetPreviewLines(n) => AppMsg::SetPreviewLines(n),
-                        PrefOutput::SetSingleKey(on) => AppMsg::SetSingleKey(on),
-                        PrefOutput::SetRunInBackground(on) => AppMsg::SetRunInBackground(on),
-                        PrefOutput::SetAutostart(on) => AppMsg::SetAutostart(on),
-                        PrefOutput::SetPaletteCollapse(secs) => AppMsg::SetPaletteCollapse(secs),
-                        PrefOutput::SetMessageTheme(t) => AppMsg::SetMessageTheme(t),
-                        PrefOutput::Closed => AppMsg::ClosePreferences,
-                    });
-                prefs.widget().present();
-                self.prefs = Some(prefs);
+            // Closing the combined Accounts & Preferences window drops both
+            // panels' components.
+            AppMsg::ClosePreferences => {
+                self.prefs = None;
+                self.accounts_win = None;
             }
-
-            AppMsg::ClosePreferences => self.prefs = None,
 
             AppMsg::SetAccount(account) => {
                 if let Some(existing) = self.accounts.iter_mut().find(|a| a.id == account.id) {
@@ -7344,15 +7256,24 @@ impl AppModel {
         dialog.present();
     }
 
-    /// Confirm and remove an account (drops its keyring password too).
-    /// Open (or focus) the accounts window. When `add_new`, jump straight to the
-    /// "add account" form — used by the empty-state "Add first account" button.
-    fn open_accounts_window(&mut self, sender: &ComponentSender<Self>, add_new: bool) {
-        // Already open? Bring it forward instead of opening another.
-        if let Some(w) = self.accounts_win.as_ref().filter(|w| w.widget().is_visible()) {
-            w.widget().present();
+    /// Open (or focus) the combined Accounts & Preferences window on the
+    /// requested panel. When `add_new`, jump straight to the "add account"
+    /// form — used by the empty-state "Add first account" button.
+    fn open_settings_window(
+        &mut self,
+        sender: &ComponentSender<Self>,
+        on_accounts: bool,
+        add_new: bool,
+    ) {
+        // Already open? Bring it forward and switch panels instead of
+        // opening another.
+        if let Some(p) = self.prefs.as_ref().filter(|p| p.widget().is_visible()) {
+            p.emit(PrefInput::ShowAccounts(on_accounts));
+            p.widget().present();
             if add_new {
-                w.emit(crate::ui::accounts::AccountsInput::AddAccount);
+                if let Some(a) = &self.accounts_win {
+                    a.emit(crate::ui::accounts::AccountsInput::AddAccount);
+                }
             }
             return;
         }
@@ -7389,8 +7310,8 @@ impl AppModel {
                 }
             }
         }
-        let win = AccountsWindow::builder()
-            .transient_for(&self.window)
+        // The accounts panel component (embedded behind the "Accounts" tab).
+        let accounts = AccountsWindow::builder()
             .launch(accounts)
             .forward(sender.input_sender(), |out| match out {
                 AccountsOutput::Saved { original_email, account } => {
@@ -7402,15 +7323,103 @@ impl AppModel {
                     AppMsg::AccountEnabledChanged { email, enabled }
                 }
                 AccountsOutput::ImportGoa(account) => AppMsg::ImportGoaAccount(account),
-                AccountsOutput::Closed => AppMsg::CloseAccounts,
+                AccountsOutput::ShowPreferences => AppMsg::OpenPreferences,
             });
         if add_new {
-            win.emit(crate::ui::accounts::AccountsInput::AddAccount);
+            accounts.emit(crate::ui::accounts::AccountsInput::AddAccount);
         }
-        win.widget().present();
-        self.accounts_win = Some(win);
+
+        // The host window: the preferences component, carrying the accounts
+        // panel behind its other tab.
+        let init = PrefInit {
+            allowed_senders: self.allowed_senders.clone(),
+            auto_remote_content: self.auto_remote_content,
+            show_remote_banner: self.show_remote_banner,
+            gravatar: self.gravatar,
+            avatars: self.avatars,
+            sender_logos: self.sender_logos,
+            date_style: self.date_style,
+            clock_style: self.clock_style,
+            fetch_interval_secs: self.fetch_interval_secs,
+            push: self.push,
+            blacklist: self.blacklist.clone(),
+            palette_collapse_secs: self.palette_collapse_secs,
+            threading: self.threading,
+            threads_expanded: self.threads_expanded,
+            thread_expansion: self.thread_expansion,
+            confirm_thread_delete: self.confirm_thread_delete,
+            message_theme: self.message_theme,
+            notifications: self.notifications_enabled,
+            notification_content: self.notification_content,
+            show_attachments: self.show_attachments,
+            show_contacts: self.show_contacts,
+            sidebar_hover_expand: self.sidebar_hover_expand,
+            card_actions_hover: self.card_actions_hover,
+            card_actions_auto: self.card_actions_auto,
+            list_palette: self.list_palette,
+            list_palette_hover: self.list_palette_hover,
+            compose_inline: self.compose_inline,
+            app_theme: self.app_theme,
+            preview_lines: self.preview_lines,
+            single_key_shortcuts: self.single_key.get(),
+            run_in_background: self.run_in_background.get(),
+            autostart: self.autostart,
+            accounts_panel: accounts.widget().clone().upcast::<gtk::Widget>(),
+            start_on_accounts: on_accounts,
+        };
+        let prefs = Preferences::builder()
+            .transient_for(&self.window)
+            .launch(init)
+            .forward(sender.input_sender(), |out| match out {
+                PrefOutput::AddSender(addr) => AppMsg::AddSender(addr),
+                PrefOutput::RemoveSender(addr) => AppMsg::RemoveSender(addr),
+                PrefOutput::AddBlacklist(addr) => AppMsg::AddBlacklist(addr),
+                PrefOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
+                PrefOutput::SetAutoRemoteContent(on) => AppMsg::SetAutoRemoteContent(on),
+                PrefOutput::SetShowRemoteBanner(on) => AppMsg::SetShowRemoteBanner(on),
+                PrefOutput::SetGravatar(on) => AppMsg::SetGravatar(on),
+                PrefOutput::SetAvatars(on) => AppMsg::SetAvatars(on),
+                PrefOutput::SetSenderLogos(on) => AppMsg::SetSenderLogos(on),
+                PrefOutput::SetDateStyle(style) => AppMsg::SetDateStyle(style),
+                PrefOutput::SetClockStyle(style) => AppMsg::SetClockStyle(style),
+                PrefOutput::SetThreading(on) => AppMsg::SetThreading(on),
+                PrefOutput::SetThreadExpansion(on) => AppMsg::SetThreadExpansion(on),
+                PrefOutput::SetConfirmThreadDelete(on) => {
+                    AppMsg::SetConfirmThreadDelete(on)
+                }
+                PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
+                PrefOutput::SetCardActionsMode { hover_toggle, hover_auto } => {
+                    AppMsg::SetCardActionsMode { hover_toggle, hover_auto }
+                }
+                PrefOutput::SetListPalette(on) => AppMsg::SetListPalette(on),
+                PrefOutput::SetListPaletteHover(on) => AppMsg::SetListPaletteHover(on),
+                PrefOutput::SetComposeInline(on) => AppMsg::SetComposeInline(on),
+                PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
+                PrefOutput::SetPush(on) => AppMsg::SetPush(on),
+                PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
+                PrefOutput::SetNotificationContent(on) => {
+                    AppMsg::SetNotificationContent(on)
+                }
+                PrefOutput::SetAttachmentsRow(show) => AppMsg::SetAttachmentsRow(show),
+                PrefOutput::SetContactsRow(show) => AppMsg::SetContactsRow(show),
+                PrefOutput::SetSidebarHoverExpand(on) => {
+                    AppMsg::SetSidebarHoverExpand(on)
+                }
+                PrefOutput::SetAppTheme(theme) => AppMsg::SetAppTheme(theme),
+                PrefOutput::SetPreviewLines(n) => AppMsg::SetPreviewLines(n),
+                PrefOutput::SetSingleKey(on) => AppMsg::SetSingleKey(on),
+                PrefOutput::SetRunInBackground(on) => AppMsg::SetRunInBackground(on),
+                PrefOutput::SetAutostart(on) => AppMsg::SetAutostart(on),
+                PrefOutput::SetPaletteCollapse(secs) => AppMsg::SetPaletteCollapse(secs),
+                PrefOutput::SetMessageTheme(t) => AppMsg::SetMessageTheme(t),
+                PrefOutput::Closed => AppMsg::ClosePreferences,
+            });
+        prefs.widget().present();
+        self.accounts_win = Some(accounts);
+        self.prefs = Some(prefs);
     }
 
+    /// Confirm and remove an account (drops its keyring password too).
     fn confirm_remove_account(&self, account_id: u32, sender: &ComponentSender<Self>) {
         let Some(email) = self.email_of(account_id) else {
             return;
