@@ -4690,7 +4690,11 @@ impl SimpleComponent for AppModel {
                 self.contacts_page.emit(ContactsPageInput::SetLoading);
                 let s = sender.clone();
                 std::thread::spawn(move || {
-                    let contacts = crate::contacts::read_contact_details();
+                    let contacts = if demo_mode() {
+                        crate::contacts::demo_contacts()
+                    } else {
+                        crate::contacts::read_contact_details()
+                    };
                     s.input(AppMsg::ContactsLoaded(contacts));
                 });
             }

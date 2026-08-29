@@ -1304,6 +1304,82 @@ fn parse_vcard_details(vcard: &str) -> Option<ContactDetails> {
     Some(c)
 }
 
+/// Sample contacts for demo mode (VIREO_DEMO): the people from the demo
+/// mailbox, fleshed out so the contacts view has something to show off.
+/// No book/EDS identity — demo entries are display-only.
+pub fn demo_contacts() -> Vec<ContactDetails> {
+    let l = |label: &str, value: &str| Labeled { label: label.into(), value: value.into() };
+    let contact = |name: &str, book: &str| ContactDetails {
+        name: name.into(),
+        book_name: book.into(),
+        ..ContactDetails::default()
+    };
+    vec![
+        ContactDetails {
+            nickname: "Soph".into(),
+            org: "Studio.dev".into(),
+            title: "Design Lead".into(),
+            birthday: "March 4, 1991".into(),
+            note: "Prefers Figma links over attachments. Out on Fridays.".into(),
+            emails: vec![l("Work", "sophie@studio.dev"), l("Home", "sophie.t@example.com")],
+            phones: vec![l("Mobile", "+1 (415) 555-0114")],
+            addresses: vec![l("Work", "2261 Market St, San Francisco, CA 94114")],
+            urls: vec!["sophie.design".into()],
+            ..contact("Sophie Turner", "CardDAV — jason@vireo.hyprlab.co")
+        },
+        ContactDetails {
+            org: "Studio.dev".into(),
+            title: "Engineering Manager".into(),
+            emails: vec![l("Work", "marcus@studio.dev")],
+            phones: vec![l("Mobile", "+1 (415) 555-0187"), l("Work", "+1 (415) 555-0100")],
+            ..contact("Marcus Chen", "CardDAV — jason@vireo.hyprlab.co")
+        },
+        ContactDetails {
+            org: "Studio.dev".into(),
+            title: "Product Designer".into(),
+            birthday: "November 19".into(),
+            emails: vec![l("Work", "priya@studio.dev")],
+            phones: vec![l("Mobile", "+1 (628) 555-0163")],
+            ..contact("Priya Sharma", "Google — jason.m@gmail.com")
+        },
+        ContactDetails {
+            title: "Illustrator".into(),
+            note: "Freelance — invoices go to the studio address.".into(),
+            emails: vec![l("", "emma@example.com")],
+            urls: vec!["emmawright.art".into()],
+            ..contact("Emma Wright", "Google — jason.m@gmail.com")
+        },
+        ContactDetails {
+            org: "GNOME Foundation".into(),
+            emails: vec![l("Work", "lena@gnome.org")],
+            addresses: vec![l("Work", "21 Orinda Way, Orinda, CA 94563")],
+            ..contact("Lena Fischer", "On This Computer")
+        },
+        ContactDetails {
+            org: "Ferrous Type".into(),
+            title: "Founder".into(),
+            emails: vec![l("Work", "diego@ferroustype.com"), l("Home", "d.alvarez@example.com")],
+            phones: vec![l("Mobile", "+34 612 555 021")],
+            urls: vec!["ferroustype.com".into()],
+            ..contact("Diego Álvarez", "CardDAV — jason@vireo.hyprlab.co")
+        },
+        ContactDetails {
+            emails: vec![l("Home", "tom.okafor@example.com")],
+            phones: vec![l("Mobile", "+44 7700 900 214")],
+            birthday: "July 30, 1988".into(),
+            ..contact("Tom Okafor", "On This Computer")
+        },
+        ContactDetails {
+            org: "Kim & Partners".into(),
+            title: "Attorney".into(),
+            emails: vec![l("Work", "grace@kimpartners.example")],
+            phones: vec![l("Work", "+1 (212) 555-0170")],
+            addresses: vec![l("Work", "425 Lexington Ave, New York, NY 10017")],
+            ..contact("Grace Kim", "CardDAV — jason@vireo.hyprlab.co")
+        },
+    ]
+}
+
 // ---------------------------------------------------------------------------
 // In-app editing (vCard patching + EDS writes)
 // ---------------------------------------------------------------------------
