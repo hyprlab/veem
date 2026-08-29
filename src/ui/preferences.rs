@@ -416,27 +416,6 @@ impl Component for Preferences {
                             },
                         },
 
-                        #[name = "background_row"]
-                        adw::SwitchRow {
-                            set_title: "Keep running in the background",
-                            set_subtitle: "Closing the window hides it instead of quitting, so new \
-                                           mail still arrives. Vireo then appears under Background \
-                                           Apps in the system menu, where it can be quit.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleRunInBackground(row.is_active()));
-                            },
-                        },
-
-                        #[name = "autostart_row"]
-                        adw::SwitchRow {
-                            set_title: "Start at login",
-                            set_subtitle: "Start checking for mail when you log in. Vireo starts \
-                                           without a window and waits in the system menu.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleAutostart(row.is_active()));
-                            },
-                        },
-
                         #[name = "single_key_row"]
                         adw::SwitchRow {
                             set_title: "Single-key shortcuts",
@@ -526,7 +505,7 @@ impl Component for Preferences {
                     },
 
                     add = &adw::PreferencesGroup {
-                        set_title: "Appearance",
+                        set_title: "System & Appearance",
 
                         #[name = "app_theme_row"]
                         adw::ComboRow {
@@ -545,6 +524,27 @@ impl Component for Preferences {
                                            is opened from the menu.",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeSettingsOpen(row.selected()));
+                            },
+                        },
+
+                        #[name = "background_row"]
+                        adw::SwitchRow {
+                            set_title: "Keep running in the background",
+                            set_subtitle: "Closing the window hides it instead of quitting, so new \
+                                           mail still arrives. Vireo then appears under Background \
+                                           Apps in the system menu, where it can be quit.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleRunInBackground(row.is_active()));
+                            },
+                        },
+
+                        #[name = "autostart_row"]
+                        adw::SwitchRow {
+                            set_title: "Start at login",
+                            set_subtitle: "Start checking for mail when you log in. Vireo starts \
+                                           without a window and waits in the system menu.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleAutostart(row.is_active()));
                             },
                         },
                     },
