@@ -687,6 +687,10 @@ struct PrivacyFile {
     /// card is hovered (rather than always).
     #[serde(default = "default_card_actions_auto")]
     card_actions_auto: bool,
+    /// Whether the message list rows carry an Actions Palette at all. Off
+    /// removes the ⋯ line entirely, returning its space to the row.
+    #[serde(default = "default_list_palette")]
+    list_palette: bool,
     /// Whether the message list's Actions Palette opens on row hover, without
     /// needing the ⋯ click.
     #[serde(default)]
@@ -740,6 +744,10 @@ fn default_thread_expansion() -> bool {
 }
 
 fn default_confirm_thread_delete() -> bool {
+    true
+}
+
+fn default_list_palette() -> bool {
     true
 }
 
@@ -815,6 +823,7 @@ impl Default for PrivacyFile {
             contacts_position: SidebarItemPos::default(),
             card_actions_hover: default_card_actions_hover(),
             card_actions_auto: default_card_actions_auto(),
+            list_palette: default_list_palette(),
             list_palette_hover: false,
             compose_inline: default_compose_inline(),
             sidebar_hover_expand: false,
@@ -958,6 +967,11 @@ pub fn load_card_actions_auto() -> bool {
     load_privacy().card_actions_auto
 }
 
+/// Whether the message list rows carry an Actions Palette at all.
+pub fn load_list_palette() -> bool {
+    load_privacy().list_palette
+}
+
 /// Whether the list's Actions Palette opens on row hover (no ⋯ click).
 pub fn load_list_palette_hover() -> bool {
     load_privacy().list_palette_hover
@@ -1025,6 +1039,7 @@ pub fn save_privacy(
     contacts_position: SidebarItemPos,
     card_actions_hover: bool,
     card_actions_auto: bool,
+    list_palette: bool,
     list_palette_hover: bool,
     compose_inline: bool,
     preview_lines: u32,
@@ -1066,6 +1081,7 @@ pub fn save_privacy(
         contacts_position,
         card_actions_hover,
         card_actions_auto,
+        list_palette,
         list_palette_hover,
         compose_inline,
         preview_lines,

@@ -33,6 +33,8 @@ pub struct PrefInit {
     pub card_actions_hover: bool,
     /// With the ⋯ toggle off: card actions appear automatically on hover.
     pub card_actions_auto: bool,
+    /// The list rows carry an Actions Palette line at all.
+    pub list_palette: bool,
     /// The list's Actions Palette opens on row hover (no ⋯ click).
     pub list_palette_hover: bool,
     /// "New message" composes inline over the reading pane (vs a window).
@@ -163,6 +165,9 @@ pub struct Preferences {
     /// Mirrors the threading switch, so the "threaded message list" row below
     /// it can grey out when conversations aren't grouped at all.
     threading: bool,
+    /// Mirrors the list-palette switch, so the hover row under it can grey
+    /// out when there is no palette to open.
+    list_palette: bool,
 }
 
 #[derive(Debug)]
@@ -183,6 +188,7 @@ pub enum PrefInput {
     ToggleThreadExpansion(bool),
     ToggleConfirmThreadDelete(bool),
     ChangeCardActionsMode(u32),
+    ToggleListPalette(bool),
     ToggleListPaletteHover(bool),
     ToggleComposeInline(bool),
     ChangeFetchInterval(u32),
@@ -219,6 +225,7 @@ pub enum PrefOutput {
     SetThreadExpansion(bool),
     SetConfirmThreadDelete(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
+    SetListPalette(bool),
     SetListPaletteHover(bool),
     SetComposeInline(bool),
     SetFetchInterval(u64),
@@ -461,8 +468,22 @@ impl Component for Preferences {
                             },
                         },
 
+                        #[name = "list_palette_row"]
+                        adw::SwitchRow {
+                            set_title: "Actions Palette in the message list",
+                            set_subtitle: "The \u{22ef} action row under each message summary. \
+                                           Turning it off returns its space to the row; \
+                                           messages are still acted on from their cards and \
+                                           the right-click menu.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleListPalette(row.is_active()));
+                            },
+                        },
+
                         #[name = "list_palette_hover_row"]
                         adw::SwitchRow {
+                            #[watch]
+                            set_sensitive: model.list_palette,
                             set_title: "Open the Actions Palette on hover",
                             set_subtitle: "The message list's \u{22ef} palette slides open \
                                            by itself while the pointer rests on a row.",
@@ -697,6 +718,7 @@ impl Component for Preferences {
             blacklist_addrs: Vec::new(),
             notifications: init.notifications,
             threading: init.threading,
+            list_palette: init.list_palette,
         };
 
         {
@@ -782,6 +804,7 @@ impl Component for Preferences {
         } else {
             2
         });
+        widgets.list_palette_row.set_active(init.list_palette);
         widgets.list_palette_hover_row.set_active(init.list_palette_hover);
         widgets.compose_inline_row.set_active(init.compose_inline);
 
@@ -883,6 +906,10 @@ impl Component for Preferences {
                     hover_toggle,
                     hover_auto,
                 });
+            }
+            PrefInput::ToggleListPalette(on) => {
+                self.list_palette = on;
+                let _ = sender.output(PrefOutput::SetListPalette(on));
             }
             PrefInput::ToggleListPaletteHover(on) => {
                 let _ = sender.output(PrefOutput::SetListPaletteHover(on));

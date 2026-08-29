@@ -1013,9 +1013,10 @@ impl Sidebar {
             } else {
                 hbox.set_halign(gtk::Align::Center);
                 hbox.set_spacing(6);
-                let plus = gtk::Image::from_icon_name("co.hyprlab.Vireo-list-add-symbolic");
-                plus.add_css_class("folder-icon");
-                hbox.append(&plus);
+                let icon =
+                    gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-message-new-symbolic");
+                icon.add_css_class("folder-icon");
+                hbox.append(&icon);
                 let label = gtk::Label::new(Some("New Message"));
                 label.add_css_class("account-name");
                 // The pill must be able to shrink with the sidebar (down to its

@@ -210,6 +210,12 @@ headerbar.rail-header {
   background-color: @window_bg_color;
 }
 
+/* A set star (reader toolbar, list palette, popout): the flagged state is
+   colour alone — the glyph stays the same as every other icon. */
+button.star-active {
+  color: #e5a50a;
+}
+
 /* Compose attachment chips. */
 .attach-chip {
   padding: 3px 4px 3px 10px;
@@ -406,7 +412,7 @@ headerbar.rail-header {
      always did — only the highlight's shape changed. */
   margin: 2px 0;
   border-radius: 12px;
-  padding: 8px 6px 8px 10px;
+  padding: 8px 8px 8px 10px;
 }
 
 /* Selected rows: every text element fully white at full strength, in both
@@ -440,6 +446,13 @@ headerbar.rail-header {
    8px of box spacing plus this margin to the sender's name. */
 .message-row.no-avatar {
   padding-left: 6px;
+}
+
+/* With the Actions Palette line off, its vertical room goes back to the pill
+   as breathing space; with it on, the padding stays as it always was. */
+.message-row.no-palette {
+  padding-top: 13px;
+  padding-bottom: 13px;
 }
 
 .message-row.no-avatar .unread-dot {

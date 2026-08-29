@@ -89,6 +89,8 @@ pub enum MessageWindowInput {
     CardAction { action: RowAction, message: Box<Message> },
     /// A card's "Add sender to Contacts" — for that card's message.
     ContactFor(Box<Message>),
+    /// An email address in a card header was clicked — compose to it.
+    ComposeTo(String),
 }
 
 #[derive(Debug)]
@@ -105,6 +107,8 @@ pub enum MessageWindowOutput {
     SaveAllAttachments(Vec<Attachment>),
     /// Persist a remote-content allowlist entry.
     AllowSender(String),
+    /// An email address in a card header was clicked — compose to it.
+    ComposeTo(String),
     /// The window was closed.
     Closed,
 }
@@ -164,12 +168,12 @@ impl Component for MessageWindow {
                     },
                     pack_start = &gtk::Button {
                         set_tooltip_text: Some("Flag"),
-                        add_css_class: "flat",
+                        set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
                         #[watch]
-                        set_icon_name: if model.msg.starred {
-                            "co.hyprlab.Vireo-starred-symbolic"
+                        set_css_classes: if model.msg.starred {
+                            &["flat", "star-active"]
                         } else {
-                            "co.hyprlab.Vireo-non-starred-symbolic"
+                            &["flat"]
                         },
                         connect_clicked => MessageWindowInput::ToggleStar,
                     },
@@ -259,6 +263,7 @@ impl Component for MessageWindow {
                 MessageViewOutput::ContactSender(m) => MessageWindowInput::ContactFor(m),
                 MessageViewOutput::MarkSeen { .. } => MessageWindowInput::Ignore,
                 MessageViewOutput::SelectCards(_) => MessageWindowInput::Ignore,
+                MessageViewOutput::ComposeTo(addr) => MessageWindowInput::ComposeTo(addr),
             });
         // Apply the message-content theme before the first render.
         view.emit(MessageViewInput::SetContentTheme(init.content_dark));
@@ -405,6 +410,9 @@ impl Component for MessageWindow {
                     name: m.from_name.clone(),
                     email: m.from_addr.clone(),
                 });
+            }
+            MessageWindowInput::ComposeTo(addr) => {
+                let _ = sender.output(MessageWindowOutput::ComposeTo(addr));
             }
         }
     }

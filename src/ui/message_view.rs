@@ -171,6 +171,8 @@ pub enum MessageViewInput {
     CardClicked { account_id: u32, id: u32, mode: SelectMode },
     /// Ctrl+A in the conversation — select every card.
     SelectAllCards,
+    /// An email address in a card header was clicked — compose to it.
+    ComposeTo(String),
     /// Which messages the list has selected. Drawn as an accent outline on the
     /// matching cards, applied to the live document rather than by rendering it
     /// again — a re-render would lose the reader's scroll position.
@@ -237,6 +239,8 @@ pub enum MessageViewOutput {
     },
     /// A card's "Add sender to Contacts" button — add this message's sender.
     ContactSender(Box<Message>),
+    /// An email address in a card header was clicked — open a composer to it.
+    ComposeTo(String),
 }
 
 #[relm4::component(pub)]
@@ -513,6 +517,21 @@ impl Component for MessageView {
                     "ready" => open_sender.input(MessageViewInput::Rendered),
                     "desel" => open_sender.input(MessageViewInput::ClearCards),
                     "selall" => open_sender.input(MessageViewInput::SelectAllCards),
+                    // An address was clicked (or "New Message" picked from its
+                    // little menu) — compose to it. `extra` is the bare address.
+                    "composeto" => {
+                        if let Some(addr) = extra.map(str::trim).filter(|a| !a.is_empty()) {
+                            open_sender.input(MessageViewInput::ComposeTo(addr.to_string()));
+                        }
+                    }
+                    // "Copy Address" from the address menu.
+                    "copyaddr" => {
+                        if let Some(addr) = extra.map(str::trim).filter(|a| !a.is_empty()) {
+                            if let Some(display) = gtk::gdk::Display::default() {
+                                display.clipboard().set_text(addr);
+                            }
+                        }
+                    }
                     "sel" => {
                         let mode = match extra {
                             Some("t") => SelectMode::Toggle,
@@ -825,6 +844,9 @@ impl Component for MessageView {
                     self.apply_card_selection();
                     let _ = sender.output(MessageViewOutput::SelectCards(keys));
                 }
+            }
+            MessageViewInput::ComposeTo(addr) => {
+                let _ = sender.output(MessageViewOutput::ComposeTo(addr));
             }
             MessageViewInput::SetSelectedCards(keys) => {
                 // The list mirrors every selection change here — including the
@@ -1140,9 +1162,12 @@ impl MessageView {
                     "<section class=\"vireo-msg{sel}\" data-key=\"{aid}:{id}\">\
                        <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
-                         {ava}{dot}<span class=\"vireo-from\">{from}</span>{addr}{folder}{rcpt_toggle}\
-                         <span class=\"vireo-date\">{date}</span>\
-                         {acts_toggle}{acts}{rcpt}\
+                         <div class=\"vireo-hdr-line\">\
+                           {ava}{dot}<span class=\"vireo-from\">{from}</span>{addr}\
+                           <span class=\"vireo-hdr-meta\">{folder}{rcpt_toggle}\
+                             <span class=\"vireo-date\">{date}</span></span>\
+                           {acts_toggle}{acts}\
+                         </div>{rcpt}\
                        </header>{body}</section>",
                     aid = m.account_id,
                     id = m.id,
@@ -1172,13 +1197,25 @@ impl MessageView {
                             card_action_button(key, "reply", "mail-reply-sender-symbolic", "Reply to this message"),
                             card_action_button(key, "replyall", "mail-reply-all-symbolic", "Reply to everyone on this message"),
                             card_action_button(key, "forward", "mail-forward-symbolic", "Forward this message"),
+                            // State-showing icon (unread envelope while unread);
+                            // the tooltip names the action.
                             if m.unread {
-                                card_action_button(key, "toggleread", "mail-read-symbolic", "Mark as Read")
+                                card_action_button(key, "toggleread", "mail-unread-symbolic", "Mark as Read")
                             } else {
-                                card_action_button(key, "toggleread", "mail-unread-symbolic", "Mark as Unread")
+                                card_action_button(key, "toggleread", "mail-read-symbolic", "Mark as Unread")
                             },
                             card_action_button(key, "contact", "contact-new-symbolic", "Add sender to Contacts"),
-                            card_action_button(key, "star", "non-starred-symbolic", "Flag this message"),
+                            // The star keeps one glyph; the flagged state is
+                            // colour alone (`.on`, toggled optimistically on
+                            // click too).
+                            format!(
+                                "<button type=\"button\" class=\"vireo-act{on}\" data-act=\"star\" \
+                                 data-key=\"{aid}:{id}\" title=\"Flag this message\">{svg}</button>",
+                                on = if m.starred { " on" } else { "" },
+                                aid = key.0,
+                                id = key.1,
+                                svg = inline_icon_svg("non-starred-symbolic"),
+                            ),
                             card_action_button(key, "spam", "mail-mark-junk-symbolic", "Mark as Spam"),
                             card_action_button(key, "archive", "mail-archive-symbolic", "Archive this message"),
                             card_action_button(key, "delete", "user-trash-symbolic", "Delete this message"),
@@ -1227,7 +1264,16 @@ impl MessageView {
                     addr = if m.from_addr.is_empty() {
                         String::new()
                     } else {
-                        format!("<span class=\"vireo-addr\">&lt;{}&gt;</span>", escape_text(&m.from_addr))
+                        // `data-addr` feeds the hover reveal's ::after overlay;
+                        // `data-mail` (the bare address) drives click-to-compose
+                        // and the copy menu. Fully entity-escaped (&<>"), so an
+                        // attacker-controlled address can't smuggle markup
+                        // through the attributes.
+                        format!(
+                            "<span class=\"vireo-addr vireo-mail\" data-mail=\"{0}\" \
+                             data-addr=\"&lt;{0}&gt;\">&lt;{0}&gt;</span>",
+                            escape_text(&m.from_addr).replace('"', "&quot;")
+                        )
                     },
                     date = escape_text(&m.datetime_full()),
                     // Everyone the message went to, tucked behind a small chip so
@@ -1266,6 +1312,9 @@ impl MessageView {
             }
         }
         let scheme = if dark { "dark" } else { "light" };
+        // The ⋯ actions toggle: plain white in dark mode — the inherited text
+        // colour reads too pale there.
+        let toggle_color = if dark { "#ffffff" } else { "inherit" };
         // Paint the wrapper and the (still-loading) iframes in the theme colour so
         // there's no white flash before each message's content renders. The live
         // theme's grounds when the reader set them (issue #62); the stock GNOME
@@ -1353,16 +1402,78 @@ impl MessageView {
                body:not(.vireo-conv) .vireo-msg{{border-radius:0;margin:0;}}\
                .vireo-msg.selected{{box-shadow:0 0 0 2px {accent};}}\
                .vireo-msg-hdr{{cursor:pointer;}}\
-               .vireo-msg-hdr{{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:default;user-select:none;\
+               .vireo-msg-hdr{{padding:12px 16px;cursor:default;user-select:none;\
                  position:sticky;top:0;z-index:1;background-color:{bg};}}\
+               /* 8px between items on a line, but only 2px between wrapped\
+                  lines — the flex gap otherwise pads rows apart too. */\
+               .vireo-hdr-line{{display:flex;column-gap:8px;row-gap:2px;\
+                 align-items:baseline;flex-wrap:nowrap;\
+                 min-width:0;position:relative;}}\
+               .vireo-hdr-meta{{display:flex;gap:8px;align-items:baseline;flex:none;\
+                 margin-left:auto;}}\
+               /* Narrow pane: the meta group (folder chip, recipients chip, date)\
+                  drops to its own line as one unit — no mid-text wrapping — while\
+                  the sender and the action palette hold the first line. */\
+               @media (max-width:620px){{\
+                 /* Tighten the right-hand insets (card gutter + header padding)\
+                    so the palette toggle sits nearer the pane's edge — but the\
+                    combined inset never drops below 20px. */\
+                 body.vireo-conv{{padding:10px;}}\
+                 body.vireo-conv .vireo-msg-hdr{{padding:12px 10px;}}\
+                 .vireo-hdr-line{{flex-wrap:wrap;}}\
+                 .vireo-hdr-meta{{order:10;flex-basis:100%;margin-left:34px;\
+                   justify-content:flex-start;}}\
+                 /* Below the wrapped meta line the recipients need a touch\
+                    more air than the wide layout's 2px. */\
+                 .vireo-rcpt{{margin-top:6px;}}\
+                 /* With the meta group gone from the first line, the palette\
+                    pins itself to the corner (the \u{22ef} is already absolute). */\
+                 body:not([data-vireo-acts=\"toggle\"]) .vireo-acts{{margin-left:auto;}}\
+               }}\
                body:not(.vireo-conv) .vireo-msg-hdr{{background-color:{chrome};}}\
                {plain_css}\
                .vireo-ava{{width:26px;height:26px;border-radius:50%;flex:none;align-self:center;\
                  display:flex;align-items:center;justify-content:center;color:#fff;\
                  font-size:0.8em;font-weight:700;}}\
-               .vireo-from{{font-weight:700;}}\
-               .vireo-addr{{opacity:0.55;font-size:0.9em;}}\
-               .vireo-date{{margin-left:auto;opacity:0.55;font-size:0.85em;}}\
+               /* Zero flex-basis: the name and address only absorb free space\
+                  (up to their natural width), so their length can never force\
+                  the palette onto another line. Under pressure the address\
+                  gives way first (tiny grow share), fading out at its right\
+                  edge; the name ellipsizes only after that. */\
+               .vireo-from{{font-weight:700;flex:99 1 0;max-width:max-content;min-width:0;\
+                 white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}\
+               .vireo-addr{{opacity:0.55;font-size:0.9em;flex:1 1 0;max-width:max-content;\
+                 min-width:0;white-space:nowrap;overflow:hidden;text-overflow:clip;\
+                 position:relative;}}\
+               /* The fade exists only while something actually collides with\
+                  the address (`clipped` is set by measurement, below). */\
+               .vireo-addr.clipped{{\
+                 -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 18px),transparent);\
+                 mask-image:linear-gradient(to right,#000 calc(100% - 18px),transparent);}}\
+               /* Hovering a clipped address reveals it in full: an overlay\
+                  pinned to the span's spot, floating over whatever crowded it\
+                  out, gone when the cursor leaves. */\
+               .vireo-addr.clipped:hover{{-webkit-mask-image:none;mask-image:none;\
+                 z-index:6;}}\
+               /* Addresses act as links: click composes to them, right-click\
+                  offers Copy / New Message. */\
+               .vireo-mail{{cursor:pointer;}}\
+               .vireo-mail:hover{{text-decoration:underline;}}\
+               .vireo-mailmenu{{position:fixed;z-index:99;background:{bg};\
+                 border:1px solid rgba(128,128,128,0.35);border-radius:8px;\
+                 box-shadow:0 4px 16px rgba(0,0,0,0.25);padding:4px;\
+                 min-width:160px;font-size:0.92em;}}\
+               .vireo-mailmenu button{{display:block;width:100%;text-align:left;\
+                 background:none;border:none;padding:6px 10px;border-radius:6px;\
+                 color:inherit;cursor:pointer;font:inherit;}}\
+               .vireo-mailmenu button:hover{{background:rgba(128,128,128,0.18);}}\
+               .vireo-addr.clipped:hover::after{{content:attr(data-addr);\
+                 position:absolute;left:-6px;top:50%;transform:translateY(-50%);\
+                 background:{bg};border-radius:6px;padding:1px 6px;\
+                 white-space:nowrap;text-decoration:underline;}}\
+               body:not(.vireo-conv) .vireo-addr.clipped:hover::after{{\
+                 background:{chrome};}}\
+               .vireo-date{{opacity:0.55;font-size:0.85em;flex:none;white-space:nowrap;}}\
                .vireo-dot{{width:8px;height:8px;border-radius:50%;background:#3584e4;\
                  flex:none;align-self:center;}}\
                .vireo-end{{height:1px;}}\
@@ -1372,22 +1483,49 @@ impl MessageView {
                  border:0;border-radius:999px;cursor:pointer;}}\
                .vireo-quote:hover{{opacity:0.95;background:rgba(128,128,128,0.28);}}\
                .vireo-quote.open{{opacity:0.95;}}\
-               .vireo-acts{{display:flex;gap:2px;flex-basis:100%;justify-content:flex-end;margin-top:2px;}}\
+               .vireo-acts{{display:flex;gap:2px;flex:none;align-self:center;margin-left:4px;}}\
                .vireo-act{{color:inherit;background:none;border:none;border-radius:6px;\
                  padding:5px 8px;cursor:pointer;opacity:0.7;\
                  transition:opacity 120ms ease,background 120ms ease;}}\
                .vireo-act:hover{{opacity:1;background:rgba(128,128,128,0.18);}}\
                .vireo-act:active{{background:rgba(128,128,128,0.3);}}\
-               .vireo-act svg{{width:14px;height:14px;display:block;fill:currentColor;}}\
+               .vireo-act svg{{width:14px;height:14px;display:block;}}\
+               .vireo-act svg,.vireo-act svg *{{fill:currentColor;}}\
+               /* A set star: the one state that carries colour. */\
+               .vireo-act.on{{color:#e5a50a;opacity:1;}}\
                .vireo-acts-toggle{{display:none;}}\
-               body[data-vireo-acts=\"toggle\"] .vireo-acts{{display:none;}}\
-               body[data-vireo-acts=\"toggle\"] .vireo-acts.open{{display:flex;}}\
+               /* Behind-the-\u{22ef} mode: the palette overlays the header line as an\
+                  absolute strip anchored at the toggle, expanding leftward over\
+                  the text beneath (never pushing it), its left edge fading in\
+                  from transparent. The \u{22ef} itself never moves. */\
+               body[data-vireo-acts=\"toggle\"] .vireo-acts{{position:absolute;\
+                 right:34px;top:13px;transform:translateY(-50%) scaleX(0.6);\
+                 transform-origin:right center;margin:0;\
+                 padding:2px 6px 2px 30px;border-radius:8px;\
+                 background:linear-gradient(to right,transparent,{bg} 26px);\
+                 opacity:0;pointer-events:none;\
+                 transition:opacity 140ms ease,transform 180ms ease;}}\
+               body[data-vireo-acts=\"toggle\"] .vireo-acts.open{{opacity:1;\
+                 pointer-events:auto;transform:translateY(-50%) scaleX(1);}}\
+               body:not(.vireo-conv)[data-vireo-acts=\"toggle\"] .vireo-acts{{\
+                 background:linear-gradient(to right,transparent,{chrome} 26px);}}\
+               /* Always visible (not just on card hover), and OUT OF FLOW:\
+                  absolutely pinned to the header's right edge, so no amount of\
+                  header content can push or wrap it. The line reserves the\
+                  button's footprint as fixed right padding instead. */\
+               body[data-vireo-acts=\"toggle\"] .vireo-hdr-line{{padding-right:38px;}}\
+               /* Anchored to the FIRST row's centre (the 26px avatar/sender\
+                  line), not the line box's — when the meta row wraps beneath,\
+                  the box grows downward but the button must not move. */\
                body[data-vireo-acts=\"toggle\"] .vireo-acts-toggle{{display:block;\
-                 color:inherit;background:none;border:none;border-radius:6px;\
-                 padding:4px 8px;margin-left:4px;cursor:pointer;align-self:center;\
-                 opacity:0;transition:opacity 120ms ease,background 120ms ease;}}\
-               .vireo-acts-toggle svg{{width:14px;height:14px;display:block;fill:currentColor;}}\
-               body[data-vireo-acts=\"toggle\"] .vireo-msg:hover .vireo-acts-toggle{{opacity:0.65;}}\
+                 position:absolute;right:0;top:13px;transform:translateY(-50%);\
+                 color:{toggle_color};background:none;border:none;border-radius:6px;\
+                 padding:4px 8px;margin:0;cursor:pointer;\
+                 opacity:0.65;transition:opacity 120ms ease,background 120ms ease;}}\
+               /* `svg *` too: the embedded symbolic paths carry their own fill\
+                  attribute, which a rule on the svg element alone can't beat. */\
+               .vireo-acts-toggle svg{{width:14px;height:14px;display:block;}}\
+               .vireo-acts-toggle svg,.vireo-acts-toggle svg *{{fill:currentColor;}}\
                body[data-vireo-acts=\"toggle\"] .vireo-acts-toggle:hover{{opacity:1;\
                  background:rgba(128,128,128,0.18);}}\
                body[data-vireo-acts=\"toggle\"] .vireo-acts-toggle.open{{opacity:1;}}\
@@ -1395,16 +1533,20 @@ impl MessageView {
                  transition:opacity 300ms ease var(--acts-delay,0ms);}}\
                body[data-vireo-acts=\"hover\"] .vireo-msg:hover .vireo-acts{{opacity:1;\
                  pointer-events:auto;transition:opacity 300ms ease 0ms;}}\
-               .vireo-folder{{margin-left:0.5em;padding:0.05em 0.45em;border-radius:0.7em;\
-                 font-size:0.78em;opacity:0.75;border:1px solid currentColor;}}\
+               .vireo-folder{{padding:0.05em 0.45em;border-radius:0.7em;\
+                 font-size:0.78em;opacity:0.75;border:1px solid currentColor;\
+                 white-space:nowrap;flex:none;}}\
                .vireo-rcpt-toggle{{font:inherit;font-size:0.78em;color:inherit;background:none;\
                  border:1px solid rgba(128,128,128,0.45);border-radius:999px;\
                  padding:0.05em 0.6em;cursor:pointer;opacity:0.7;\
+                 white-space:nowrap;flex:none;\
                  transition:opacity 120ms ease,background 120ms ease;}}\
                .vireo-rcpt-toggle:hover{{opacity:1;background:rgba(128,128,128,0.18);}}\
                .vireo-rcpt-toggle.open{{opacity:1;background:rgba(128,128,128,0.18);}}\
-               .vireo-rcpt{{flex-basis:100%;font-size:0.85em;opacity:0.75;\
-                 user-select:text;overflow-wrap:anywhere;margin:0;}}\
+               /* Indented past the avatar (26px + 8px gap), so the recipients\
+                  align with the sender's name — as does the wrapped meta line. */\
+               .vireo-rcpt{{font-size:0.85em;opacity:0.75;\
+                 user-select:text;overflow-wrap:anywhere;margin:2px 0 0 34px;}}\
                .vireo-rcpt div{{margin-top:2px;}}\
                .vireo-loading{{opacity:0.5;padding:16px;}}\
              </style>{sizer}\
@@ -1849,14 +1991,57 @@ fn recipient_count(m: &Message) -> usize {
 fn recipients_html(m: &Message) -> String {
     let mut lines = String::new();
     for (label, list) in [("To", m.to.trim()), ("Cc", m.cc.trim())] {
-        if !list.is_empty() {
-            lines.push_str(&format!("<div><b>{label}:</b> {}</div>", escape_text(list)));
+        if list.is_empty() {
+            continue;
         }
+        // Each recipient becomes a `.vireo-mail` span (click composes to it,
+        // right-click offers copy/new-message), keyed by its bare address.
+        let mut parts = String::new();
+        for entry in split_addr_list(list) {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
+            }
+            let mail = entry
+                .rfind('<')
+                .and_then(|s| entry[s + 1..].find('>').map(|e| &entry[s + 1..s + 1 + e]))
+                .unwrap_or(entry)
+                .trim();
+            if !parts.is_empty() {
+                parts.push_str(", ");
+            }
+            parts.push_str(&format!(
+                "<span class=\"vireo-mail\" data-mail=\"{}\">{}</span>",
+                escape_text(mail).replace('"', "&quot;"),
+                escape_text(entry)
+            ));
+        }
+        lines.push_str(&format!("<div><b>{label}:</b> {parts}</div>"));
     }
     if lines.is_empty() {
         return String::new();
     }
     format!("<div class=\"vireo-rcpt\" hidden>{lines}</div>")
+}
+
+/// Split an address-list header on commas, honouring double-quoted display
+/// names (`"Doe, Jane" <j@x>` stays one entry).
+fn split_addr_list(list: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut in_quotes = false;
+    for (i, c) in list.char_indices() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => {
+                out.push(&list[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&list[start..]);
+    out
 }
 
 /// Every URL in `html` that would cause a fetch from a remote host, as byte
@@ -2829,6 +3014,7 @@ var ds=document.querySelectorAll('.vireo-msg .vireo-dot');\
 var d=ds.length?ds[0]:null;\
 if(d){var m=d.closest('.vireo-msg');\
 if(m)setTimeout(function(){try{follow=m;m.scrollIntoView({block:'start'});}catch(_){}},0);}}\
+setTimeout(markClipped,0);setTimeout(markClipped,400);\
 if(!pend)ready();\
 for(var i=0;i<fs.length;i++){(function(f){var counted=false;\
 function tick(){if(counted)return;counted=true;if(--pend<=0)ready();}\
@@ -2871,10 +3057,40 @@ card.addEventListener('mouseenter',function(){if(timer){clearTimeout(timer);time
 var as=document.querySelectorAll('.vireo-act');\
 for(var k=0;k<as.length;k++){as[k].addEventListener('click',function(e){\
 e.stopPropagation();e.preventDefault();reportPos();\
+if(this.dataset.act==='star')this.classList.toggle('on');\
 try{window.webkit.messageHandlers.vireo.postMessage(this.dataset.act+':'+this.dataset.key);}catch(_){}});\
 as[k].addEventListener('dblclick',function(e){e.stopPropagation();});}\
 });\
-window.addEventListener('resize',function(){var fs=all();for(var i=0;i<fs.length;i++)s(fs[i]);});\
+function markClipped(){var as=document.querySelectorAll('.vireo-addr');\
+for(var i=0;i<as.length;i++){var a=as[i];\
+a.classList.toggle('clipped',a.scrollWidth>a.clientWidth+1);}}\
+function hideMailMenu(){var m=window.__vireoMailMenu;\
+if(m&&m.parentNode)m.parentNode.removeChild(m);window.__vireoMailMenu=null;}\
+function mailMsg(mail){try{window.webkit.messageHandlers.vireo.postMessage('composeto:0:0:'+mail);}catch(_){}}\
+function showMailMenu(x,y,mail){hideMailMenu();\
+var mn=document.createElement('div');mn.className='vireo-mailmenu';\
+function item(label,fn){var b=document.createElement('button');b.type='button';\
+b.textContent=label;b.addEventListener('click',function(ev){\
+ev.stopPropagation();ev.preventDefault();hideMailMenu();fn();});mn.appendChild(b);}\
+item('New Message',function(){mailMsg(mail);});\
+item('Copy Address',function(){try{window.webkit.messageHandlers.vireo.postMessage('copyaddr:0:0:'+mail);}catch(_){}});\
+mn.style.left=Math.max(0,Math.min(x,window.innerWidth-180))+'px';\
+mn.style.top=Math.max(0,Math.min(y,window.innerHeight-84))+'px';\
+document.body.appendChild(mn);window.__vireoMailMenu=mn;}\
+document.addEventListener('click',function(e){var m=window.__vireoMailMenu;\
+if(m&&e.target&&m.contains(e.target))return;hideMailMenu();},true);\
+window.addEventListener('scroll',hideMailMenu,{passive:true});\
+document.addEventListener('click',function(e){\
+var t=e.target&&e.target.closest?e.target.closest('.vireo-mail'):null;\
+if(!t||!t.dataset.mail)return;\
+e.preventDefault();e.stopPropagation();mailMsg(t.dataset.mail);},true);\
+document.addEventListener('contextmenu',function(e){\
+var t=e.target&&e.target.closest?e.target.closest('.vireo-mail'):null;\
+if(!t||!t.dataset.mail)return;\
+e.preventDefault();e.stopPropagation();\
+showMailMenu(e.clientX,e.clientY,t.dataset.mail);},true);\
+window.addEventListener('resize',function(){var fs=all();for(var i=0;i<fs.length;i++)s(fs[i]);\
+markClipped();});\
 var _st;function reportPos(){var ms=document.querySelectorAll('.vireo-msg');\
 var best=null,off=0;\
 for(var i=0;i<ms.length;i++){var r=ms[i].getBoundingClientRect();\

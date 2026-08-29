@@ -3920,6 +3920,26 @@ fn finish_preview(decoded: String) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     let body = strip_link_noise(&body);
+    // Marketing "preheader padding" — long chains of &nbsp; + zero-width
+    // characters (zwnj, word-joiner, combining grapheme joiner, soft hyphen…)
+    // meant to push the real body out of inbox previews. The zero-width
+    // characters are NOT Unicode whitespace, so they would survive the
+    // collapse below as a huge blank gap ending in the ellipsis. Drop them;
+    // the non-breaking spaces between them then collapse away normally.
+    let body: String = body
+        .chars()
+        .filter(|c| {
+            !matches!(
+                c,
+                '\u{200b}'..='\u{200d}' // zero-width space/nbsp/joiners
+                    | '\u{2060}'        // word joiner
+                    | '\u{feff}'        // BOM / zero-width no-break space
+                    | '\u{00ad}'        // soft hyphen
+                    | '\u{034f}'        // combining grapheme joiner
+                    | '\u{2800}'        // Braille blank, another padder
+            )
+        })
+        .collect();
     let collapsed = body.split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed.chars().take(PREVIEW_CHARS).collect()
 }

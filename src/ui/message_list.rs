@@ -43,6 +43,9 @@ pub struct RowInit {
     pub palette_collapse_secs: std::rc::Rc<std::cell::Cell<u64>>,
     /// Shared "open the palette on row hover" flag (read live on each hover).
     pub palette_hover: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Whether the row carries the Actions Palette line at all (preference);
+    /// off returns its reserved space to the row.
+    pub show_palette: bool,
     /// Number of messages in this conversation (only set on a thread head; 1 for
     /// a standalone message).
     pub thread_count: usize,
@@ -156,6 +159,8 @@ pub struct MessageRow {
     palette_collapse_secs: std::rc::Rc<std::cell::Cell<u64>>,
     /// Shared "open the palette on row hover" flag (read live per hover).
     palette_hover: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Whether this row shows the Actions Palette line at all (preference).
+    show_palette: bool,
     /// Conversation size (only meaningful on a thread head).
     thread_count: usize,
     /// Nested reply under a thread head.
@@ -416,13 +421,17 @@ impl FactoryComponent for MessageRow {
                     // 0 lines: previews are off, so the row gives them no space.
                     set_visible: self.preview_lines > 0,
                     set_label: &self.msg.preview,
-                    set_halign: gtk::Align::Start,
+                    // Fill (not Start): the layout width then matches the
+                    // allocation exactly, so the ellipsis lands right where the
+                    // text is cut instead of stranded at a stale layout edge.
+                    set_halign: gtk::Align::Fill,
                     set_hexpand: true,
                     set_xalign: 0.0,
-                    // `lines` only means anything once wrapping is on; at one line
-                    // it changes nothing, since the text is ellipsized before it
-                    // can reach a second.
-                    set_wrap: true,
+                    // A single preview line never wraps: wrap + `lines` +
+                    // ellipsize is the combination that detaches the "…" from
+                    // the text; a plain ellipsized line keeps it attached and
+                    // tracks the pane width continuously.
+                    set_wrap: self.preview_lines > 1,
                     set_wrap_mode: gtk::pango::WrapMode::WordChar,
                     set_ellipsize: gtk::pango::EllipsizeMode::End,
                     // A ceiling, not a reservation: a short message keeps a short
@@ -441,6 +450,9 @@ impl FactoryComponent for MessageRow {
                     set_halign: gtk::Align::Start,
                     set_valign: gtk::Align::Center,
                     add_css_class: "actions-line",
+                    // Preference: no palette at all — the line (and the space
+                    // it reserves under the preview) goes away entirely.
+                    set_visible: self.show_palette,
 
                     // Actions toggle (⋯). Clicking it opens/closes the palette but
                     // does NOT select or open the message (it's a button, so the
@@ -493,16 +505,16 @@ impl FactoryComponent for MessageRow {
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Forward)),
                             },
                             gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
                                 #[watch]
-                                set_icon_name: if self.msg.starred { "co.hyprlab.Vireo-starred-symbolic" } else { "co.hyprlab.Vireo-non-starred-symbolic" },
+                                set_css_classes: if self.msg.starred { &["flat", "star-active"] } else { &["flat"] },
                                 #[watch]
                                 set_tooltip_text: Some(if self.msg.starred { "Remove star" } else { "Star" }),
-                                add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleStar)),
                             },
                             gtk::Button {
                                 #[watch]
-                                set_icon_name: if self.msg.unread { "co.hyprlab.Vireo-mail-read-symbolic" } else { "co.hyprlab.Vireo-mail-unread-symbolic" },
+                                set_icon_name: if self.msg.unread { "co.hyprlab.Vireo-mail-unread-symbolic" } else { "co.hyprlab.Vireo-mail-read-symbolic" },
                                 #[watch]
                                 set_tooltip_text: Some(if self.msg.unread { "Mark as read" } else { "Mark as unread" }),
                                 add_css_class: "flat",
@@ -546,6 +558,7 @@ impl FactoryComponent for MessageRow {
             ring_class,
             palette_collapse_secs,
             palette_hover,
+            show_palette,
             thread_count,
             is_thread_child,
             thread_expanded,
@@ -569,6 +582,7 @@ impl FactoryComponent for MessageRow {
             collapse_timer: None,
             palette_collapse_secs,
             palette_hover,
+            show_palette,
             thread_count,
             is_thread_child,
             thread_expanded,
@@ -832,11 +846,17 @@ impl MessageRow {
     /// circle clear of the list's edge would leave the dot lopsided — sitting
     /// twice as far from the edge as from the text beside it.
     fn content_css(&self) -> Vec<&'static str> {
-        if self.avatars {
+        let mut v = if self.avatars {
             vec!["message-row"]
         } else {
             vec!["message-row", "no-avatar"]
+        };
+        // Without the palette line the pill gets extra breathing room instead
+        // (see `.message-row.no-palette` in the stylesheet).
+        if !self.show_palette {
+            v.push("no-palette");
         }
+        v
     }
 
     /// Row classes: unread highlight plus a `thread-child` indent for replies.
@@ -1100,6 +1120,8 @@ pub struct MessageList {
     /// row keeps its count chip and chevron, but never opens — the thread is
     /// read through the reader's cards instead.
     thread_expansion: bool,
+    /// Whether rows carry the Actions Palette line at all (preference).
+    list_palette: bool,
     /// When `Some`, a spinner + this message overlays the list — shown while a
     /// large bulk action (archive/delete/spam) is applied.
     busy: Option<String>,
@@ -1160,6 +1182,8 @@ pub enum MessageListInput {
     /// Whether conversation rows may expand into their members in the list
     /// (the row keeps its chip and chevron either way).
     SetThreadExpansion(bool),
+    /// Whether rows carry the Actions Palette line at all.
+    SetListPalette(bool),
     /// Resolve what deleting the current selection means: a lone selected row
     /// that heads a conversation stands for the whole thread (output
     /// `DeleteThread`); anything else is an ordinary `Bulk` delete.
@@ -1577,6 +1601,7 @@ impl SimpleComponent for MessageList {
             last_count: String::new(),
             threading: true,
             thread_expansion: true,
+            list_palette: true,
 
             busy: None,
         };
@@ -1723,6 +1748,12 @@ impl SimpleComponent for MessageList {
                     // Turning expansion off folds every open thread (the
                     // `expanded` computation ignores the stored toggles while
                     // off); turning it on restores them.
+                    self.rebuild();
+                }
+            }
+            MessageListInput::SetListPalette(on) => {
+                if self.list_palette != on {
+                    self.list_palette = on;
                     self.rebuild();
                 }
             }
@@ -2577,6 +2608,7 @@ impl MessageList {
                     ring_class,
                     palette_collapse_secs: self.palette_collapse_secs.clone(),
                     palette_hover: self.palette_hover.clone(),
+                    show_palette: self.list_palette,
                     thread_count: meta.count,
                     is_thread_child: meta.is_child,
                     thread_expanded: meta.expanded,

@@ -367,6 +367,8 @@ pub struct AppModel {
     /// With the ⋯ toggle off: card actions appear automatically on hover.
     card_actions_auto: bool,
     /// The list's Actions Palette opens on row hover (no ⋯ click).
+    /// Whether the message list rows carry an Actions Palette at all.
+    list_palette: bool,
     list_palette_hover: bool,
     /// "New message" composes inline over the reading pane (vs a window).
     compose_inline: bool,
@@ -599,6 +601,7 @@ pub enum AppMsg {
     DeleteThreadConfirmed(Vec<Message>),
     SetThreadsExpanded(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
+    SetListPalette(bool),
     SetListPaletteHover(bool),
     SetComposeInline(bool),
     /// Ctrl+Z: undo the most recent move/delete.
@@ -1020,11 +1023,14 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed
                                         && model.reader_compose.is_none(),
+                                    // The icon shows the message's STATE (unread
+                                    // envelope while unread); the tooltip names
+                                    // the action.
                                     #[watch]
                                     set_icon_name: if model.reply_target().is_some_and(|m| m.unread) {
-                                        "co.hyprlab.Vireo-mail-read-symbolic"
-                                    } else {
                                         "co.hyprlab.Vireo-mail-unread-symbolic"
+                                    } else {
+                                        "co.hyprlab.Vireo-mail-read-symbolic"
                                     },
                                     #[watch]
                                     set_tooltip_text: Some(if model.reply_target().is_some_and(|m| m.unread) {
@@ -1038,16 +1044,18 @@ impl SimpleComponent for AppModel {
                                 },
                                 pack_start = &gtk::Button {
                                     set_tooltip_text: Some("Flag"),
-                                    add_css_class: "flat",
+                                    // One glyph in both states, like every other
+                                    // icon; the flagged state carries colour only.
+                                    set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
+                                    #[watch]
+                                    set_css_classes: if model.reply_target().is_some_and(|m| m.starred) {
+                                        &["flat", "star-active"]
+                                    } else {
+                                        &["flat"]
+                                    },
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed
                                         && model.reader_compose.is_none(),
-                                    #[watch]
-                                    set_icon_name: if model.reply_target().is_some_and(|m| m.starred) {
-                                        "co.hyprlab.Vireo-starred-symbolic"
-                                    } else {
-                                        "co.hyprlab.Vireo-non-starred-symbolic"
-                                    },
                                     #[watch]
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleStar),
@@ -1475,6 +1483,7 @@ impl SimpleComponent for AppModel {
                         AppMsg::ThreadMessageSeen { account_id, id }
                     }
                     MessageViewOutput::SelectCards(keys) => AppMsg::SelectCards(keys),
+                    MessageViewOutput::ComposeTo(addr) => AppMsg::ComposeTo(addr),
                 });
 
         // The drawer owns a Paned whose top pane is the reader body, so hand it
@@ -1650,6 +1659,7 @@ impl SimpleComponent for AppModel {
             selection_from_cards: false,
             card_actions_hover: config::load_card_actions_hover(),
             card_actions_auto: config::load_card_actions_auto(),
+            list_palette: config::load_list_palette(),
             list_palette_hover: config::load_list_palette_hover(),
             compose_inline: config::load_compose_inline(),
             message_theme: config::load_message_theme(),
@@ -1721,6 +1731,9 @@ impl SimpleComponent for AppModel {
         model
             .message_list
             .emit(MessageListInput::SetThreadExpansion(model.thread_expansion));
+        model
+            .message_list
+            .emit(MessageListInput::SetListPalette(model.list_palette));
         model
             .message_list
             .emit(MessageListInput::SetThreadsExpanded(model.threads_expanded));
@@ -3665,6 +3678,14 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetListPalette(on) => {
+                if self.list_palette != on {
+                    self.list_palette = on;
+                    self.save_settings();
+                    self.message_list.emit(MessageListInput::SetListPalette(on));
+                }
+            }
+
             AppMsg::SetListPaletteHover(on) => {
                 if self.list_palette_hover != on {
                     self.list_palette_hover = on;
@@ -3720,7 +3741,13 @@ impl SimpleComponent for AppModel {
                     to: addr,
                     ..Default::default()
                 };
-                self.open_compose(account, prefill, &sender);
+                // Same preference as "New Message": slide down over the
+                // reader, unless composing is set to open in a window.
+                if self.compose_inline {
+                    self.open_inline_reply(account, prefill, &sender);
+                } else {
+                    self.open_compose(account, prefill, &sender);
+                }
             }
 
             AppMsg::SendMessage(out) => {
@@ -4016,6 +4043,7 @@ impl SimpleComponent for AppModel {
                     sidebar_hover_expand: self.sidebar_hover_expand,
                     card_actions_hover: self.card_actions_hover,
                     card_actions_auto: self.card_actions_auto,
+                    list_palette: self.list_palette,
                     list_palette_hover: self.list_palette_hover,
                     compose_inline: self.compose_inline,
                     app_theme: self.app_theme,
@@ -4048,6 +4076,7 @@ impl SimpleComponent for AppModel {
                         PrefOutput::SetCardActionsMode { hover_toggle, hover_auto } => {
                             AppMsg::SetCardActionsMode { hover_toggle, hover_auto }
                         }
+                        PrefOutput::SetListPalette(on) => AppMsg::SetListPalette(on),
                         PrefOutput::SetListPaletteHover(on) => AppMsg::SetListPaletteHover(on),
                         PrefOutput::SetComposeInline(on) => AppMsg::SetComposeInline(on),
                         PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
@@ -4699,6 +4728,7 @@ impl AppModel {
             self.contacts_position,
             self.card_actions_hover,
             self.card_actions_auto,
+            self.list_palette,
             self.list_palette_hover,
             self.compose_inline,
             self.preview_lines,
@@ -6032,6 +6062,7 @@ impl AppModel {
                 MessageWindowOutput::OpenAttachment(att) => AppMsg::OpenAttachmentItem(att),
                 MessageWindowOutput::SaveAllAttachments(items) => AppMsg::SaveAttachmentItems(items),
                 MessageWindowOutput::AllowSender(addr) => AppMsg::AllowSender(addr),
+                MessageWindowOutput::ComposeTo(addr) => AppMsg::ComposeTo(addr),
                 MessageWindowOutput::Closed => AppMsg::PopoutClosed(key),
             });
 
