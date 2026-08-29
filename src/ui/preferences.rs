@@ -260,7 +260,7 @@ impl Component for Preferences {
             // Remembered vertical size (tall by default) — resizing sticks
             // across restarts via the save on close below.
             set_default_height: crate::config::load_prefs_height(),
-            set_title: Some("Accounts & Preferences"),
+            set_title: Some("Settings"),
 
             connect_close_request[sender] => move |w| {
                 crate::config::save_prefs_height(w.height());
@@ -540,7 +540,7 @@ impl Component for Preferences {
                         #[name = "settings_open_row"]
                         adw::ComboRow {
                             set_title: "This window opens to",
-                            set_subtitle: "The view shown first when Accounts &amp; Preferences \
+                            set_subtitle: "The view shown first when Settings \
                                            is opened from the menu.",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeSettingsOpen(row.selected()));

@@ -1575,7 +1575,7 @@ impl SimpleComponent for AppModel {
         let menu = gtk::gio::Menu::new();
         {
             let settings = gtk::gio::Menu::new();
-            settings.append(Some("Accounts & Preferences"), Some("win.accounts"));
+            settings.append(Some("Settings"), Some("win.accounts"));
             menu.append_section(None, &settings);
 
             let printing = gtk::gio::Menu::new();
@@ -4090,7 +4090,7 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            // Closing the combined Accounts & Preferences window drops both
+            // Closing the combined Settings window drops both
             // panels' components.
             AppMsg::ClosePreferences => {
                 self.prefs = None;
@@ -7503,7 +7503,7 @@ impl AppModel {
         dialog.present();
     }
 
-    /// Open (or focus) the combined Accounts & Preferences window on the
+    /// Open (or focus) the combined Settings window on the
     /// requested panel. When `add_new`, jump straight to the "add account"
     /// form — used by the empty-state "Add first account" button.
     fn open_settings_window(
