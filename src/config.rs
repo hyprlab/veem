@@ -56,13 +56,18 @@ fn shared_base(own: fn() -> Option<PathBuf>, sub: &str) -> Option<PathBuf> {
     own()
 }
 
-/// Whether the stable app's flatpak directory is actually reachable. Flatpak
+/// Whether the shared flatpak directory is actually reachable. Flatpak
 /// silently SKIPS a `--filesystem` grant whose host path doesn't exist, which
 /// left `~/.var/app/co.hyprlab.Vireo` pointing at the sandbox's throwaway
 /// tmpfs on beta-only installs — accounts "saved" there and vanished on quit
-/// (issue #83). Share only when the real directory is mounted; a beta without
-/// stable keeps its own persistent home instead. Decided once at first use,
-/// so our own writes creating the path on the tmpfs mid-session can't flip it.
+/// (issue #83). The real fix is the manifest's `:create` suffix, which makes
+/// flatpak create the host directory itself — a beta-first install thereby
+/// establishes the standard persistent home a later stable install picks up,
+/// in either install order. This check remains as defence in depth: should
+/// the mount ever be missing anyway (an old manifest, a stripped-down
+/// installation), the beta falls back to its own persistent home rather than
+/// writing into the tmpfs. Decided once at first use, so our own writes
+/// creating the path on the tmpfs mid-session can't flip it.
 fn stable_data_present() -> bool {
     use std::sync::OnceLock;
     static PRESENT: OnceLock<bool> = OnceLock::new();
