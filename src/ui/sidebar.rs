@@ -200,6 +200,8 @@ pub enum SidebarOutput {
     ComposeRequested,
     /// The refresh button beside it.
     RefreshRequested,
+    /// Long-press on the rail's refresh button: reveal the status bar.
+    StatusBarRequested,
     /// A folder-tree node was collapsed or expanded (#51) — for persistence.
     FolderNodeCollapsed { account_id: u32, path: String, collapsed: bool },
     /// A folder was dropped onto a new parent ("" = the account's top level).
@@ -1019,6 +1021,15 @@ impl Sidebar {
                 refresh.connect_clicked(move |_| {
                     let _ = s.output(SidebarOutput::RefreshRequested);
                 });
+                // Long-press reveals the status bar (same as the header
+                // refresh); claiming the sequence suppresses the click.
+                let long = gtk::GestureLongPress::new();
+                let s = sender.clone();
+                long.connect_pressed(move |gesture, _, _| {
+                    gesture.set_state(gtk::EventSequenceState::Claimed);
+                    let _ = s.output(SidebarOutput::StatusBarRequested);
+                });
+                refresh.add_controller(long);
                 bar.append(&refresh);
                 self.sync_stack = Some(stack);
                 self.sync_spinner = Some(spinner);

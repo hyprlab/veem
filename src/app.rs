@@ -1420,6 +1420,7 @@ impl SimpleComponent for AppModel {
                 SidebarOutput::AttachmentsSelected => AppMsg::ShowAttachments,
                 SidebarOutput::ContactsClicked => AppMsg::OpenContacts,
                 SidebarOutput::RefreshRequested => AppMsg::Refresh,
+                SidebarOutput::StatusBarRequested => AppMsg::ToggleNotifications,
                 SidebarOutput::OutboxSelected => AppMsg::ShowOutbox,
                 SidebarOutput::FolderSelected { account_id, folder_id, name, path } => {
                     AppMsg::FolderSelected { account_id, folder_id, name, path }
@@ -1948,6 +1949,16 @@ impl SimpleComponent for AppModel {
             model.sidebar_refresh.connect_clicked(move |_| {
                 let _ = s.send(AppMsg::Refresh);
             });
+            // Long-press slides the status bar down — the place to see what
+            // the spinner is spinning about. Claiming the sequence keeps the
+            // release from also firing the button's click (a refresh).
+            let long = gtk::GestureLongPress::new();
+            let s = sender.input_sender().clone();
+            long.connect_pressed(move |gesture, _, _| {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                let _ = s.send(AppMsg::ToggleNotifications);
+            });
+            model.sidebar_refresh.add_controller(long);
         }
         if model.sidebar_collapsed {
             widgets.sidebar_split.set_min_sidebar_width(SIDEBAR_RAIL_WIDTH);
@@ -2053,6 +2064,8 @@ impl SimpleComponent for AppModel {
         relm4::main_application().set_accelerators_for_action::<PrintAction>(&["<Ctrl>p"]);
         relm4::main_application()
             .set_accelerators_for_action::<PrintPreviewAction>(&["<Ctrl><Shift>p"]);
+        relm4::main_application()
+            .set_accelerators_for_action::<StatusBarAction>(&["<Ctrl><Shift>s"]);
         relm4::main_application().set_accelerators_for_action::<ShortcutsAction>(&[
             "<Ctrl>question",
             "<Ctrl><Shift>question",
@@ -3194,18 +3207,19 @@ impl SimpleComponent for AppModel {
                 if let Some((action, messages)) = self.pending_bulk.take() {
                     self.apply_bulk_move(action, messages);
                 }
-                // The optimistic removal is done; keep the spinner up until the
-                // server-side work finishes (BulkComplete). If nothing was sent,
-                // clear it now.
-                if self.bulk_pending == 0 {
-                    self.message_list.emit(MessageListInput::SetBusy(None));
-                }
+                // The rows are gone from the list — that is all the user needs
+                // to wait for. The spinner covered only the local apply; the
+                // server-side work carries on invisibly in the workers, spinning
+                // the refresh button and narrating in the status bar until
+                // BulkComplete. Nothing blocks further actions meanwhile.
+                self.message_list.emit(MessageListInput::SetBusy(None));
             }
 
             AppMsg::BulkComplete => {
                 self.bulk_pending = self.bulk_pending.saturating_sub(1);
-                if self.bulk_pending == 0 {
-                    self.message_list.emit(MessageListInput::SetBusy(None));
+                self.update_busy_indicator();
+                if self.bulk_pending == 0 && self.busy.is_empty() {
+                    self.notifications.emit(NotifyInput::SetStatus(String::new()));
                 }
             }
 
@@ -4564,9 +4578,12 @@ impl SimpleComponent for AppModel {
                 } else {
                     self.busy.insert(account_id);
                 }
-                self.sidebar.emit(SidebarInput::SetBusy(!self.busy.is_empty()));
-                self.set_header_refresh_busy(!self.busy.is_empty());
-                self.notifications.emit(NotifyInput::SetStatus(text));
+                self.update_busy_indicator();
+                // A sync going quiet must not blank the status while background
+                // bulk operations are still reporting there.
+                if !text.is_empty() || self.bulk_pending == 0 {
+                    self.notifications.emit(NotifyInput::SetStatus(text));
+                }
             }
 
             AppMsg::Error { account_id, text, connectivity } => {
@@ -4952,8 +4969,7 @@ impl AppModel {
         self.attachment_cache.clear();
         self.current = None;
         self.busy.clear();
-        self.sidebar.emit(SidebarInput::SetBusy(false));
-        self.set_header_refresh_busy(false);
+        self.update_busy_indicator();
         self.show_message(None, false);
         self.message_list.emit(MessageListInput::SetLoading);
         self.rebuild_sidebar();
@@ -4980,6 +4996,16 @@ impl AppModel {
         self.sidebar_refresh_spinner.set_spinning(busy);
         self.sidebar_refresh_stack
             .set_visible_child_name(if busy { "spinner" } else { "icon" });
+    }
+
+    /// Spin the refresh button (header and rail) while anything is happening
+    /// in the background — an account sync, or bulk moves/deletions still
+    /// being applied on the server. The at-a-glance "working on something"
+    /// signal; the status bar has the words.
+    fn update_busy_indicator(&self) {
+        let busy = !self.busy.is_empty() || self.bulk_pending > 0;
+        self.sidebar.emit(SidebarInput::SetBusy(busy));
+        self.set_header_refresh_busy(busy);
     }
 
     /// Custom avatar emoji for an account, if set.
@@ -6577,9 +6603,17 @@ impl AppModel {
             removed_ids.push(m.id);
         }
         self.bulk_pending += groups.len();
+        if !groups.is_empty() {
+            self.notifications.emit(NotifyInput::SetStatus(format!(
+                "Erasing {} message{} on the server…",
+                removed_ids.len(),
+                if removed_ids.len() == 1 { "" } else { "s" },
+            )));
+        }
         for ((account_id, path), uids) in groups {
             self.send_to(account_id, MailRequest::PurgeMessages { path, uids });
         }
+        self.update_busy_indicator();
         self.message_list.emit(MessageListInput::RemoveMany(removed_ids));
         self.push_unread_counts();
     }
@@ -7836,10 +7870,19 @@ impl AppModel {
             });
         }
         self.bulk_pending += groups.len();
+        if !groups.is_empty() {
+            self.notifications.emit(NotifyInput::SetStatus(format!(
+                "Moving {} message{} to {} on the server…",
+                removed_ids.len(),
+                if removed_ids.len() == 1 { "" } else { "s" },
+                kind_label(kind),
+            )));
+        }
         for ((account_id, src), (dest, uids, message_ids)) in groups {
             self.push_undo(account_id, &dest, &src, message_ids);
             self.send_to(account_id, MailRequest::MoveMessages { path: src, uids, dest });
         }
+        self.update_busy_indicator();
         self.message_list.emit(MessageListInput::RemoveMany(removed_ids));
         self.push_unread_counts();
     }
@@ -8275,6 +8318,7 @@ const SHORTCUT_HELP: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Z", "Undo the last move or delete"),
             ("Ctrl+P", "Print the message you are reading"),
             ("Ctrl+Shift+P", "Preview it as a PDF first"),
+            ("Ctrl+Shift+S", "Reveal the status bar (also: long-press Refresh)"),
             ("Ctrl+W", "Close the window (background sync keeps running)"),
             ("Ctrl+Q", "Quit Vireo entirely"),
             ("?", "This list"),
