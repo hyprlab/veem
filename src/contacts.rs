@@ -128,7 +128,7 @@ pub fn read_contacts() -> Vec<Contact> {
     // Local books: table `folder_id` + `folder_id_email_list`. Read the vCard
     // (not `full_name`, which EDS stores case-folded for search) so the display
     // name keeps its original capitalisation.
-    let active = active_book_uids();
+    let active = registry_books();
     if let Some(dir) = data_dir() {
         for db in find_dbs(&dir, "contacts.db") {
             if !db_book_active(&db, &active) {
@@ -162,7 +162,7 @@ pub fn read_contacts() -> Vec<Contact> {
 }
 
 /// `book_uid_active` keyed off a book database's directory name.
-fn db_book_active(db: &std::path::Path, active: &Option<HashSet<String>>) -> bool {
+fn db_book_active(db: &std::path::Path, active: &Option<HashMap<String, String>>) -> bool {
     let Some(folder) = db.parent().and_then(|p| p.file_name()) else {
         return true;
     };
@@ -669,7 +669,7 @@ fn read_book_db(path: &std::path::Path, query: &str, out: &mut Vec<Contact>, see
 /// Address books the user can add contacts to (local + cached/CardDAV).
 pub fn writable_books() -> Vec<Book> {
     let mut books = Vec::new();
-    let active = active_book_uids();
+    let active = registry_books();
     if let Some(dir) = data_dir() {
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             if !entry.path().join("contacts.db").is_file() {
@@ -685,7 +685,7 @@ pub fn writable_books() -> Vec<Book> {
             if !book_uid_active(&uid, &active) {
                 continue;
             }
-            let name = source_display_name(&uid).unwrap_or_else(|| "On This Computer".to_string());
+            let name = book_uid_name(&uid, &active, "On This Computer");
             books.push(Book { uid, name });
         }
     }
@@ -698,7 +698,7 @@ pub fn writable_books() -> Vec<Book> {
             if !book_uid_active(&uid, &active) {
                 continue;
             }
-            let name = source_display_name(&uid).unwrap_or_else(|| "CardDAV Address Book".to_string());
+            let name = book_uid_name(&uid, &active, "CardDAV Address Book");
             books.push(Book { uid, name });
         }
     }
@@ -924,14 +924,17 @@ impl ContactDetails {
     }
 }
 
-/// The UIDs of every *live, enabled* address-book source, straight from the
-/// EDS source registry over D-Bus. The cache/data directories of removed
-/// accounts linger on disk (EDS never deletes them), so without this check a
-/// book removed in GOA or GNOME Contacts keeps showing its contacts forever.
-/// The registry — not the sources directory — is the authority: GOA-derived
-/// sources are registry-only and never written to disk. `None` when the
-/// registry can't be reached (then keep everything rather than hide it all).
-fn active_book_uids() -> Option<HashSet<String>> {
+/// Every *live, enabled* address-book source, straight from the EDS source
+/// registry over D-Bus: uid → a friendly name for the account it belongs to
+/// ("Google — a@gmail.com", "CardDAV — j@mac.com", "On This Computer").
+///
+/// The cache/data directories of removed accounts linger on disk (EDS never
+/// deletes them), so without this a book removed in GOA or GNOME Contacts
+/// keeps showing its contacts forever. The registry — not the sources
+/// directory — is the authority: GOA-derived sources are registry-only and
+/// never written to disk. `None` when the registry can't be reached (then
+/// keep everything rather than hide it all).
+fn registry_books() -> Option<HashMap<String, String>> {
     let dest = sources_dest()?;
     let conn = zbus::blocking::Connection::session().ok()?;
     let reply = conn
@@ -946,7 +949,7 @@ fn active_book_uids() -> Option<HashSet<String>> {
     type Props = HashMap<String, zbus::zvariant::OwnedValue>;
     type Objects = HashMap<zbus::zvariant::OwnedObjectPath, HashMap<String, Props>>;
     let (objects,): (Objects,) = reply.body().deserialize().ok()?;
-    let mut uids = HashSet::new();
+    let mut sources: HashMap<String, String> = HashMap::new();
     for ifaces in objects.values() {
         let Some(props) = ifaces.get("org.gnome.evolution.dataserver.Source") else {
             continue;
@@ -955,16 +958,74 @@ fn active_book_uids() -> Option<HashSet<String>> {
             props.get("UID").and_then(|v| v.downcast_ref::<&str>().ok()).map(str::to_string);
         let data =
             props.get("Data").and_then(|v| v.downcast_ref::<&str>().ok()).map(str::to_string);
-        let (Some(uid), Some(data)) = (uid, data) else { continue };
+        if let (Some(uid), Some(data)) = (uid, data) {
+            sources.insert(uid, data);
+        }
+    }
+    let mut books = HashMap::new();
+    for (uid, data) in &sources {
         // An address book, and not switched off (GOA sets the book source's
         // [Data Source] Enabled=false when Contacts is toggled off for the
         // account). Only that section's Enabled counts — other sections
         // (Refresh etc.) have Enabled keys of their own.
-        if data.contains("[Address Book]") && !data_source_disabled(&data) {
-            uids.insert(uid);
+        if data.contains("[Address Book]") && !data_source_disabled(data) {
+            books.insert(uid.clone(), book_display_name(data, &sources));
         }
     }
-    Some(uids)
+    Some(books)
+}
+
+/// A `Key=value` lookup inside one `[Section]` of a source keyfile.
+fn keyfile_get(data: &str, section: &str, key: &str) -> Option<String> {
+    let mut in_section = false;
+    for line in data.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_section = line.eq_ignore_ascii_case(section);
+            continue;
+        }
+        if in_section {
+            if let Some(v) = line.strip_prefix(key).and_then(|r| r.strip_prefix('=')) {
+                let v = v.trim();
+                return (!v.is_empty()).then(|| v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// A book's friendly name: which account it belongs to and over what — walked
+/// up the source's parent chain to the account collection, whose backend
+/// (google / microsoft365 / webdav) and identity say it best.
+fn book_display_name(book_data: &str, sources: &HashMap<String, String>) -> String {
+    let mut backend = keyfile_get(book_data, "[Address Book]", "BackendName");
+    let mut identity: Option<String> = None;
+    let mut top_display = keyfile_get(book_data, "[Data Source]", "DisplayName");
+    let mut current = book_data.to_string();
+    for _ in 0..4 {
+        let Some(parent) = keyfile_get(&current, "[Data Source]", "Parent") else { break };
+        let Some(parent_data) = sources.get(&parent) else { break };
+        if let Some(b) = keyfile_get(parent_data, "[Collection]", "BackendName") {
+            backend = Some(b);
+        }
+        if identity.is_none() {
+            identity = keyfile_get(parent_data, "[Collection]", "Identity");
+        }
+        if let Some(d) = keyfile_get(parent_data, "[Data Source]", "DisplayName") {
+            top_display = Some(d);
+        }
+        current = parent_data.clone();
+    }
+    let account = identity.or(top_display);
+    match (backend.as_deref(), account) {
+        (Some("local"), _) | (None, None) => "On This Computer".to_string(),
+        (Some("google"), Some(a)) => format!("Google — {a}"),
+        (Some("google"), None) => "Google".to_string(),
+        (Some("microsoft365"), Some(a)) => format!("Microsoft 365 — {a}"),
+        (Some("microsoft365"), None) => "Microsoft 365".to_string(),
+        (_, Some(a)) => format!("CardDAV — {a}"),
+        (_, None) => "CardDAV Address Book".to_string(),
+    }
 }
 
 /// Whether a source keyfile's `[Data Source]` section says `Enabled=false`.
@@ -1002,8 +1063,21 @@ fn sources_dest() -> Option<String> {
 }
 
 /// Whether the registry lists `uid` as live (fail-open when unreachable).
-fn book_uid_active(uid: &str, active: &Option<HashSet<String>>) -> bool {
-    active.as_ref().map_or(true, |set| set.contains(uid))
+fn book_uid_active(uid: &str, books: &Option<HashMap<String, String>>) -> bool {
+    books.as_ref().map_or(true, |map| map.contains_key(uid))
+}
+
+/// The registry's friendly name for a book, with a fallback for when the
+/// registry is unreachable.
+fn book_uid_name(
+    uid: &str,
+    books: &Option<HashMap<String, String>>,
+    fallback: &str,
+) -> String {
+    books
+        .as_ref()
+        .and_then(|map| map.get(uid).cloned())
+        .unwrap_or_else(|| source_display_name(uid).unwrap_or_else(|| fallback.to_string()))
 }
 
 /// Every contact from the local + cached (CardDAV) EDS books, fully parsed
@@ -1012,7 +1086,7 @@ fn book_uid_active(uid: &str, active: &Option<HashSet<String>>) -> bool {
 pub fn read_contact_details() -> Vec<ContactDetails> {
     let mut out: Vec<ContactDetails> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    let active = active_book_uids();
+    let active = registry_books();
     // Walk the book directories directly (like `writable_books`) so each
     // contact remembers which book it belongs to.
     if let Some(dir) = data_dir() {
@@ -1026,8 +1100,7 @@ pub fn read_contact_details() -> Vec<ContactDetails> {
             if !book_uid_active(&uid, &active) {
                 continue;
             }
-            let name =
-                source_display_name(&uid).unwrap_or_else(|| "On This Computer".to_string());
+            let name = book_uid_name(&uid, &active, "On This Computer");
             read_detail_db(&db, "SELECT vcard FROM folder_id", &uid, &name, &mut out, &mut seen);
         }
     }
@@ -1041,8 +1114,7 @@ pub fn read_contact_details() -> Vec<ContactDetails> {
             if !book_uid_active(&uid, &active) {
                 continue;
             }
-            let name =
-                source_display_name(&uid).unwrap_or_else(|| "CardDAV Address Book".to_string());
+            let name = book_uid_name(&uid, &active, "CardDAV Address Book");
             read_detail_db(
                 &db,
                 "SELECT ECacheOBJ FROM ECacheObjects",
