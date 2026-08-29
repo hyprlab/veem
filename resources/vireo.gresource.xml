@@ -5,6 +5,7 @@
 <gresources>
   <gresource prefix="/co/hyprlab/Vireo">
     <file>icons/scalable/actions/co.hyprlab.Vireo-adw-external-link-symbolic.svg</file>
+    <file>icons/scalable/actions/co.hyprlab.Vireo-applications-system-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-audio-x-generic-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-avatar-default-symbolic.svg</file>
     <file>icons/scalable/actions/co.hyprlab.Vireo-code-symbolic.svg</file>

@@ -57,28 +57,6 @@ pub struct PrefInit {
     pub start_on_accounts: bool,
 }
 
-/// The linked Accounts/Preferences tab pair for the combined settings
-/// window's header bars. Each panel carries its own pair with its side
-/// pre-selected; clicking the other side calls `switch`, and the panel swap
-/// brings in that panel's own header, so the states here never change.
-pub fn settings_tabs<F: Fn() + 'static>(accounts_active: bool, switch: F) -> gtk::Box {
-    let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    tabs.add_css_class("linked");
-    tabs.add_css_class("settings-tabs");
-    let accounts = gtk::ToggleButton::with_label("Accounts");
-    let prefs = gtk::ToggleButton::with_label("Preferences");
-    prefs.set_group(Some(&accounts));
-    if accounts_active {
-        accounts.set_active(true);
-        prefs.connect_clicked(move |_| switch());
-    } else {
-        prefs.set_active(true);
-        accounts.connect_clicked(move |_| switch());
-    }
-    tabs.append(&accounts);
-    tabs.append(&prefs);
-    tabs
-}
 
 /// App-chrome appearance options, in combo order.
 const APP_THEMES: &[(&str, AppTheme)] = &[
@@ -177,7 +155,10 @@ pub struct Preferences {
     /// out when there is no palette to open.
     list_palette: bool,
     /// The Accounts/Preferences panel stack, for tab switching from update().
-    panels_stack: Option<gtk::Stack>,
+    panels_stack: Option<adw::ViewStack>,
+    /// The shared header bar (view switcher); hidden while the accounts
+    /// editor subpage is open, whose own header takes over.
+    host_header: Option<adw::HeaderBar>,
 }
 
 #[derive(Debug)]
@@ -217,6 +198,9 @@ pub enum PrefInput {
     ChangeAppTheme(u32),
     /// Switch the window to the Accounts panel (true) or Preferences (false).
     ShowAccounts(bool),
+    /// The accounts editor subpage opened/closed — hide/show the shared
+    /// header so the editor's own header takes over the window.
+    EditorOpen(bool),
 }
 
 #[derive(Debug)]
@@ -279,24 +263,31 @@ impl Component for Preferences {
                 gtk::glib::Propagation::Proceed
             },
 
-            // One window, two panels: Accounts and Preferences, switched by
-            // the tab toggle each panel carries in its own header bar. The
+            // One window, two views: Accounts and Preferences, switched by a
+            // view switcher (GNOME HIG) in the shared header bar. The
             // accounts panel (with its own sub-navigation) is built by the
-            // AccountsWindow component and handed in via PrefInit.
+            // AccountsWindow component and handed in via PrefInit; while its
+            // editor subpage is open the shared header hides, so the editor's
+            // own back/Save header takes over the window.
             #[wrap(Some)]
-            #[name = "panels_stack"]
-            set_content = &gtk::Stack {
-                set_transition_type: gtk::StackTransitionType::Crossfade,
-
-                #[name = "accounts_slot"]
-                add_named[Some("accounts")] = &adw::Bin {},
-
-                add_named[Some("preferences")] = &adw::ToolbarView {
-                #[name = "prefs_header"]
-                add_top_bar = &adw::HeaderBar {},
+            set_content = &adw::ToolbarView {
+                #[name = "host_header"]
+                add_top_bar = &adw::HeaderBar {
+                    #[wrap(Some)]
+                    #[name = "switcher"]
+                    set_title_widget = &adw::ViewSwitcher {
+                        set_policy: adw::ViewSwitcherPolicy::Wide,
+                    },
+                },
 
                 #[wrap(Some)]
-                set_content = &adw::PreferencesPage {
+                #[name = "panels_stack"]
+                set_content = &adw::ViewStack {
+                    #[name = "accounts_slot"]
+                    add_titled[Some("accounts"), "Accounts"] = &adw::Bin {},
+
+                    #[name = "prefs_page"]
+                    add_titled[Some("preferences"), "Preferences"] = &adw::PreferencesPage {
                     add = &adw::PreferencesGroup {
                         set_title: "Mail",
 
@@ -747,6 +738,7 @@ impl Component for Preferences {
             thread_expansion: init.thread_expansion,
             list_palette: init.list_palette,
             panels_stack: None,
+            host_header: None,
         };
 
         {
@@ -872,21 +864,25 @@ impl Component for Preferences {
         let adj = gtk::Adjustment::new(init.palette_collapse_secs as f64, 1.0, 30.0, 1.0, 5.0, 0.0);
         widgets.palette_collapse_row.set_adjustment(Some(&adj));
 
-        // The Accounts/Preferences tabs in this panel's header (Preferences
-        // side selected), and the accounts panel behind the other tab.
-        widgets.prefs_header.set_title_widget(Some(&settings_tabs(false, {
-            let s = sender.input_sender().clone();
-            move || {
-                let _ = s.send(PrefInput::ShowAccounts(true));
-            }
-        })));
+        // The view switcher drives the panel stack; the pages carry icons so
+        // the switcher shows the standard icon-and-label tabs.
+        widgets.switcher.set_stack(Some(&widgets.panels_stack));
         widgets.accounts_slot.set_child(Some(&init.accounts_panel));
+        widgets
+            .panels_stack
+            .page(&widgets.accounts_slot)
+            .set_icon_name(Some("co.hyprlab.Vireo-avatar-default-symbolic"));
+        widgets
+            .panels_stack
+            .page(&widgets.prefs_page)
+            .set_icon_name(Some("co.hyprlab.Vireo-applications-system-symbolic"));
         widgets.panels_stack.set_visible_child_name(if init.start_on_accounts {
             "accounts"
         } else {
             "preferences"
         });
         model.panels_stack = Some(widgets.panels_stack.clone());
+        model.host_header = Some(widgets.host_header.clone());
 
         ComponentParts { model, widgets }
     }
@@ -1003,6 +999,11 @@ impl Component for Preferences {
             PrefInput::ShowAccounts(accounts) => {
                 if let Some(stack) = &self.panels_stack {
                     stack.set_visible_child_name(if accounts { "accounts" } else { "preferences" });
+                }
+            }
+            PrefInput::EditorOpen(open) => {
+                if let Some(header) = &self.host_header {
+                    header.set_visible(!open);
                 }
             }
             PrefInput::ChangeMessageTheme(index) => {

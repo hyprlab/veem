@@ -193,8 +193,9 @@ pub enum AccountsOutput {
     EnabledChanged { email: String, enabled: bool },
     /// Import a GNOME Online Account into Vireo (with its credentials).
     ImportGoa(Box<AccountConfig>),
-    /// The header tabs asked for the Preferences panel.
-    ShowPreferences,
+    /// The editor subpage opened (true) or closed (false) — the combined
+    /// settings window hides its shared header while it is open.
+    EditorOpen(bool),
 }
 
 /// Whether a GOA account's mail runs over the Microsoft Graph API: the
@@ -254,10 +255,8 @@ impl Component for AccountsWindow {
 
                     #[wrap(Some)]
                     set_child = &adw::ToolbarView {
-                        // Title widget (the Accounts/Preferences tabs) is set
-                        // in init — it needs the output sender.
-                        #[name = "list_header"]
-                        add_top_bar = &adw::HeaderBar {},
+                        // No header of its own: the combined settings window's
+                        // shared header (with the view switcher) sits above.
 
                         #[wrap(Some)]
                         set_content = &adw::PreferencesPage {
@@ -687,14 +686,18 @@ impl Component for AccountsWindow {
         let es = sender.clone();
         widgets.email_row.connect_changed(move |_| es.input(AccountsInput::EmailChanged));
 
-        // The Accounts/Preferences tabs in the list page's header (Accounts
-        // side selected); the editor subpage keeps its own plain header.
-        widgets.list_header.set_title_widget(Some(&crate::ui::preferences::settings_tabs(true, {
+        // Tell the combined settings window when the editor subpage is up —
+        // every way in or out (Save, back button, swipe) lands here.
+        {
             let s = sender.output_sender().clone();
-            move || {
-                let _ = s.send(AccountsOutput::ShowPreferences);
-            }
-        })));
+            widgets.nav.connect_visible_page_notify(move |nav| {
+                let editor = nav
+                    .visible_page()
+                    .and_then(|p| p.tag())
+                    .is_some_and(|tag| tag == "editor");
+                let _ = s.send(AccountsOutput::EditorOpen(editor));
+            });
+        }
 
         ComponentParts { model, widgets }
     }

@@ -667,6 +667,8 @@ pub enum AppMsg {
     SystemResumed,
     OpenPreferences,
     ClosePreferences,
+    /// The accounts editor subpage opened/closed in the settings window.
+    SettingsEditorOpen(bool),
     // Worker events (each carries the account it came from)
     SetAccount(Account),
     SetFolders { account_id: u32, folders: Vec<Folder> },
@@ -4000,6 +4002,12 @@ impl SimpleComponent for AppModel {
                 self.accounts_win = None;
             }
 
+            AppMsg::SettingsEditorOpen(open) => {
+                if let Some(p) = &self.prefs {
+                    p.emit(PrefInput::EditorOpen(open));
+                }
+            }
+
             AppMsg::SetAccount(account) => {
                 if let Some(existing) = self.accounts.iter_mut().find(|a| a.id == account.id) {
                     *existing = account;
@@ -7323,7 +7331,7 @@ impl AppModel {
                     AppMsg::AccountEnabledChanged { email, enabled }
                 }
                 AccountsOutput::ImportGoa(account) => AppMsg::ImportGoaAccount(account),
-                AccountsOutput::ShowPreferences => AppMsg::OpenPreferences,
+                AccountsOutput::EditorOpen(open) => AppMsg::SettingsEditorOpen(open),
             });
         if add_new {
             accounts.emit(crate::ui::accounts::AccountsInput::AddAccount);
