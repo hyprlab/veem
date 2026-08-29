@@ -335,14 +335,6 @@ button.star-active {
   box-shadow: 0 0 0 2px @sidebar_bg_color;
 }
 
-/* Spinner card overlaid on the message list while a large bulk action runs. */
-.bulk-busy {
-  background: alpha(@window_bg_color, 0.9);
-  border-radius: 14px;
-  padding: 22px 30px;
-  box-shadow: 0 2px 12px alpha(black, 0.25);
-}
-
 /* ---- Message list ---- */
 
 .list-toolbar {

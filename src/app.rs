@@ -58,9 +58,6 @@ const READER_ACTIONS_BREAKPOINT: f64 = 560.0;
 
 const SIDEBAR_RAIL_WIDTH: f64 = 80.0;
 
-/// Selection size at/above which a bulk archive/delete/spam shows a spinner and
-/// applies deferred (smaller batches are fast enough to run inline).
-const BULK_SPINNER_MIN: usize = 25;
 
 relm4::new_action_group!(WindowActionGroup, "win");
 relm4::new_stateless_action!(AccountsAction, WindowActionGroup, "accounts");
@@ -407,14 +404,9 @@ pub struct AppModel {
     /// A draft awaiting its body before opening in the compose editor.
     pending_draft: Option<Message>,
     /// Outstanding bulk MoveMessages requests awaiting a worker `BulkComplete`.
-    /// While > 0 (and a large selection triggered it) the list shows a spinner.
+    /// Outstanding server-side bulk operations; while > 0 the refresh spinner
+    /// spins and the status bar narrates.
     bulk_pending: usize,
-    /// A large bulk archive/delete/spam deferred one tick so its spinner paints
-    /// before the (blocking) apply runs.
-    pending_bulk: Option<(BulkAction, Vec<Message>)>,
-    /// Messages awaiting a deferred permanent delete (same spinner-first trick as
-    /// `pending_bulk`).
-    pending_purge: Option<Vec<Message>>,
     /// Ids handed to conversation messages pulled in from another folder,
     /// allocated downwards from the top of the range. A message's id is its UID,
     /// which is only unique within its own folder — and the reader keys bodies by
@@ -543,10 +535,8 @@ pub enum AppMsg {
     ToggleReadCurrent,
     /// A bulk action applied to every selected message.
     Bulk { action: BulkAction, messages: Vec<Message> },
-    /// Apply the deferred large bulk action (runs after its spinner has painted).
-    BulkApply,
-    /// A worker finished one bulk MoveMessages request; clears the spinner once
-    /// all outstanding bulk moves are done.
+    /// A worker finished one bulk MoveMessages request; stops the busy
+    /// indicator once all outstanding bulk moves are done.
     BulkComplete,
     Compose,
     OpenAbout,
@@ -1582,8 +1572,6 @@ impl SimpleComponent for AppModel {
             list_selection: Vec::new(),
             undo_stack: Vec::new(),
             bulk_pending: 0,
-            pending_bulk: None,
-            pending_purge: None,
             related_id_seq: u32::MAX,
             related_ids: HashMap::new(),
             folder_unread: HashMap::new(),
@@ -3052,20 +3040,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::PurgeMessages(messages) => {
-                if messages.len() >= BULK_SPINNER_MIN {
-                    self.message_list.emit(MessageListInput::SetBusy(Some(format!(
-                        "Deleting {} messages…",
-                        messages.len()
-                    ))));
-                    self.pending_purge = Some(messages);
-                    let s = sender.clone();
-                    gtk::glib::timeout_add_local_once(
-                        std::time::Duration::from_millis(16),
-                        move || s.input(AppMsg::BulkApply),
-                    );
-                } else {
-                    self.purge_messages(messages);
-                }
+                self.purge_messages(messages);
             }
 
             AppMsg::CardAction { action, message } => {
@@ -3183,36 +3158,13 @@ impl SimpleComponent for AppModel {
                             self.delete_messages(messages, &sender);
                             return;
                         }
-                        if messages.len() >= BULK_SPINNER_MIN {
-                            self.message_list.emit(MessageListInput::SetBusy(Some(
-                                bulk_busy_label(action, messages.len()),
-                            )));
-                            self.pending_bulk = Some((action, messages));
-                            let s = sender.clone();
-                            gtk::glib::timeout_add_local_once(
-                                std::time::Duration::from_millis(16),
-                                move || s.input(AppMsg::BulkApply),
-                            );
-                        } else {
-                            self.apply_bulk_move(action, messages);
-                        }
+                        // The apply is one batched widget update, so no overlay
+                        // needed at any size: rows vanish at once, the server
+                        // work runs invisibly in the workers, and the refresh
+                        // spinner + status bar carry the progress story.
+                        self.apply_bulk_move(action, messages);
                     }
                 }
-            }
-
-            AppMsg::BulkApply => {
-                if let Some(messages) = self.pending_purge.take() {
-                    self.purge_messages(messages);
-                }
-                if let Some((action, messages)) = self.pending_bulk.take() {
-                    self.apply_bulk_move(action, messages);
-                }
-                // The rows are gone from the list — that is all the user needs
-                // to wait for. The spinner covered only the local apply; the
-                // server-side work carries on invisibly in the workers, spinning
-                // the refresh button and narrating in the status bar until
-                // BulkComplete. Nothing blocks further actions meanwhile.
-                self.message_list.emit(MessageListInput::SetBusy(None));
             }
 
             AppMsg::BulkComplete => {
@@ -8445,17 +8397,6 @@ fn reconcile_goa(config: &mut Vec<AccountConfig>, live: &crate::goa::GoaLiveStat
         }
     }
     outcome
-}
-
-/// Label for the spinner shown while a large bulk action is applied.
-fn bulk_busy_label(action: BulkAction, n: usize) -> String {
-    let verb = match action {
-        BulkAction::Archive => "Archiving",
-        BulkAction::Delete => "Deleting",
-        BulkAction::Spam => "Moving to Spam",
-        BulkAction::MarkRead | BulkAction::MarkUnread | BulkAction::Flag => "Updating",
-    };
-    format!("{verb} {n} messages…")
 }
 
 /// Trim the sidebar header in the icon-only rail so it no longer forces a minimum

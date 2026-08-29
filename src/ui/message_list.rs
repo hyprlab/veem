@@ -1122,9 +1122,6 @@ pub struct MessageList {
     thread_expansion: bool,
     /// Whether rows carry the Actions Palette line at all (preference).
     list_palette: bool,
-    /// When `Some`, a spinner + this message overlays the list — shown while a
-    /// large bulk action (archive/delete/spam) is applied.
-    busy: Option<String>,
 }
 
 /// How the message list is ordered.
@@ -1257,8 +1254,6 @@ pub enum MessageListInput {
     /// Remove many messages in a single batch (bulk archive/delete/spam), so the
     /// list updates in one render pass instead of one per message.
     RemoveMany(Vec<u32>),
-    /// Show (`Some(message)`) or hide (`None`) the busy spinner over the list.
-    SetBusy(Option<String>),
     /// Secondary-click at (x, y) in the list: open the context menu.
     ContextMenu { x: f64, y: f64 },
     /// Set the Actions Palette auto-collapse delay (seconds).
@@ -1515,25 +1510,6 @@ impl SimpleComponent for MessageList {
                 },
                 },
 
-                add_overlay = &gtk::Box {
-                    add_css_class: "bulk-busy",
-                    set_halign: gtk::Align::Center,
-                    set_valign: gtk::Align::Center,
-                    set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 12,
-                    #[watch]
-                    set_visible: model.busy.is_some(),
-
-                    gtk::Spinner {
-                        set_spinning: true,
-                        set_width_request: 32,
-                        set_height_request: 32,
-                    },
-                    gtk::Label {
-                        #[watch]
-                        set_label: model.busy.as_deref().unwrap_or(""),
-                    },
-                },
             },
         }
     }
@@ -1603,7 +1579,6 @@ impl SimpleComponent for MessageList {
             thread_expansion: true,
             list_palette: true,
 
-            busy: None,
         };
 
         let row_box = model.rows.widget();
@@ -2214,9 +2189,6 @@ impl SimpleComponent for MessageList {
                         }
                     }
                 }
-            }
-            MessageListInput::SetBusy(text) => {
-                self.busy = text;
             }
             MessageListInput::RowAction { action, message } => {
                 let _ = sender.output(MessageListOutput::Action { action, message });
