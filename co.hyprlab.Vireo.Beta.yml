@@ -40,7 +40,13 @@ finish-args:
   # beta binary redirects its config/cache/data base dirs there (see
   # `shared_base` in src/config.rs), so beta testers keep their accounts,
   # settings and cached mail without a second setup.
-  - --filesystem=~/.var/app/co.hyprlab.Vireo
+  # :create makes flatpak create the stable app's directory on the HOST when
+  # it doesn't exist yet — without it the grant is silently skipped on
+  # beta-only installs and the shared home pointed at the sandbox's throwaway
+  # tmpfs, losing accounts on quit (issue #83). With it, a beta-first install
+  # establishes the standard persistent home that a later stable install picks
+  # up natively; install order no longer matters.
+  - --filesystem=~/.var/app/co.hyprlab.Vireo:create
   # Read the old Veem app's data so first-run migration matches stable's.
   - --filesystem=~/.var/app/com.getveem.Veem:ro
 
