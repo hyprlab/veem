@@ -333,6 +333,17 @@ impl Component for Preferences {
                             },
                         },
 
+                        #[name = "compose_inline_row"]
+                        adw::SwitchRow {
+                            set_title: "Compose in the main window",
+                            set_subtitle: "New message slides down over the reading pane, \
+                                           like a reply — pop it out to a window from its \
+                                           header. Off = open a separate window directly.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleComposeInline(row.is_active()));
+                            },
+                        },
+
                         #[name = "show_attachments_row"]
                         adw::SwitchRow {
                             set_title: "Attachments in the sidebar",
@@ -416,16 +427,6 @@ impl Component for Preferences {
                             },
                         },
 
-                        #[name = "single_key_row"]
-                        adw::SwitchRow {
-                            set_title: "Single-key shortcuts",
-                            set_subtitle: "Act on mail with one key and no modifier — j/k to move, \
-                                           r to reply, a to archive. Press Ctrl+? for the full list.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleSingleKey(row.is_active()));
-                            },
-                        },
-
                         #[name = "avatars_row"]
                         adw::SwitchRow {
                             set_title: "Sender circles",
@@ -444,17 +445,6 @@ impl Component for Preferences {
                                            Off also stops previews being downloaded.",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangePreviewLines(row.selected()));
-                            },
-                        },
-
-                        #[name = "compose_inline_row"]
-                        adw::SwitchRow {
-                            set_title: "Compose in the main window",
-                            set_subtitle: "New message slides down over the reading pane, \
-                                           like a reply — pop it out to a window from its \
-                                           header. Off = open a separate window directly.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleComposeInline(row.is_active()));
                             },
                         },
 
@@ -505,7 +495,8 @@ impl Component for Preferences {
                     },
 
                     add = &adw::PreferencesGroup {
-                        set_title: "System & Appearance",
+                        // Rendered as Pango markup — a bare "&" breaks it.
+                        set_title: "System &amp; Appearance",
 
                         #[name = "app_theme_row"]
                         adw::ComboRow {
@@ -520,7 +511,7 @@ impl Component for Preferences {
                         #[name = "settings_open_row"]
                         adw::ComboRow {
                             set_title: "This window opens to",
-                            set_subtitle: "The view shown first when Accounts & Preferences \
+                            set_subtitle: "The view shown first when Accounts &amp; Preferences \
                                            is opened from the menu.",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeSettingsOpen(row.selected()));
@@ -545,6 +536,16 @@ impl Component for Preferences {
                                            without a window and waits in the system menu.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleAutostart(row.is_active()));
+                            },
+                        },
+
+                        #[name = "single_key_row"]
+                        adw::SwitchRow {
+                            set_title: "Single-key shortcuts",
+                            set_subtitle: "Act on mail with one key and no modifier — j/k to move, \
+                                           r to reply, a to archive. Press Ctrl+? for the full list.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleSingleKey(row.is_active()));
                             },
                         },
                     },
