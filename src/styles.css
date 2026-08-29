@@ -298,7 +298,10 @@ button.star-active {
   background-color: @accent_bg_color;
 }
 
-.contacts-listbox > row:selected label {
+/* Scoped to the row's own header box: a context-menu popover anchored to the
+   row is also its descendant, and a bare `label` selector painted the menu's
+   text white-on-white. */
+.contacts-listbox > row:selected box.header label {
   color: white;
   opacity: 1;
 }

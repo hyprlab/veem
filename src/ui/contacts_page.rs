@@ -48,6 +48,11 @@ pub struct ContactsPage {
     /// edited, `None` for a brand-new one.
     editor: Option<Editor>,
     editing_target: Option<usize>,
+    /// EDS UIDs deleted here but possibly still in EDS's local cache — a
+    /// re-read races the CardDAV flush, and without these tombstones a
+    /// deleted contact pops right back into the list. A tombstone lives
+    /// until a fresh read no longer contains its contact.
+    deleted: std::collections::HashSet<String>,
 }
 
 #[derive(Debug)]
@@ -336,6 +341,7 @@ impl Component for ContactsPage {
             loading: true,
             editor: None,
             editing_target: None,
+            deleted: std::collections::HashSet::new(),
         };
         let widgets = view_output!();
         widgets.detail_overlay.add_overlay(&compose_slot);
@@ -394,7 +400,13 @@ impl Component for ContactsPage {
                 }
             }
 
-            ContactsPageInput::SetContacts(contacts) => {
+            ContactsPageInput::SetContacts(mut contacts) => {
+                // Drop tombstoned (locally deleted) entries the read still
+                // carries; a tombstone retires once a read comes back clean.
+                let incoming: std::collections::HashSet<String> =
+                    contacts.iter().map(|c| c.eds_uid.clone()).collect();
+                self.deleted.retain(|uid| incoming.contains(uid));
+                contacts.retain(|c| !self.deleted.contains(&c.eds_uid));
                 // Keep the same person selected across a refresh, by identity.
                 let keep = self
                     .selected
@@ -539,14 +551,23 @@ impl Component for ContactsPage {
             }
 
             ContactsPageInput::DeleteConfirmed(idx) => {
-                if let Some(c) = self.contacts.get(idx) {
-                    if !c.eds_uid.is_empty() {
-                        let _ = sender.output(ContactsPageOutput::DeleteContact {
-                            book_uid: c.book_uid.clone(),
-                            uid: c.eds_uid.clone(),
-                        });
-                    }
+                if idx >= self.contacts.len() {
+                    return;
                 }
+                let c = self.contacts.remove(idx);
+                if !c.eds_uid.is_empty() {
+                    self.deleted.insert(c.eds_uid.clone());
+                    let _ = sender.output(ContactsPageOutput::DeleteContact {
+                        book_uid: c.book_uid,
+                        uid: c.eds_uid,
+                    });
+                }
+                // The entry leaves the list right now; the EDS delete and the
+                // reconciling re-read follow behind.
+                self.selected = None;
+                self.editor = None;
+                self.editing_target = None;
+                self.rebuild(widgets, &sender);
             }
         }
     }
