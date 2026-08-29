@@ -148,6 +148,9 @@ pub struct AppModel {
     draining_composers: Vec<(u32, Controller<Compose>)>,
     /// SlideDown revealer under the reader toolbar that hosts the inline pane.
     reader_compose_revealer: gtk::Revealer,
+    /// Same idea over the contacts view's detail pane: composing from a
+    /// contact slides down right there instead of yanking the mail view back.
+    contacts_compose_revealer: gtk::Revealer,
     /// Monotonic id source for composers.
     next_compose_id: u32,
     menu: gtk::gio::Menu,
@@ -1521,9 +1524,19 @@ impl SimpleComponent for AppModel {
                     }
                 });
 
+        // Built here (not in the model literal) because the contacts page
+        // mounts it over its detail pane at launch.
+        let contacts_compose_revealer = {
+            let r = gtk::Revealer::new();
+            r.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+            r.set_transition_duration(300);
+            r.set_reveal_child(false);
+            r.set_can_target(false);
+            r
+        };
         let contacts_page =
             ContactsPage::builder()
-                .launch(())
+                .launch(contacts_compose_revealer.clone())
                 .forward(sender.input_sender(), |out| match out {
                     ContactsPageOutput::Compose(email) => AppMsg::ComposeTo(email),
                     ContactsPageOutput::ToggleSidebar => AppMsg::ToggleSidebar,
@@ -1571,6 +1584,7 @@ impl SimpleComponent for AppModel {
                 r.set_reveal_child(false);
                 r
             },
+            contacts_compose_revealer,
             next_compose_id: 1,
             menu,
             accounts: Vec::new(),
@@ -3741,11 +3755,11 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ComposeTo(addr) => {
-                // The inline composer lives in the mail panes — composing from
-                // the contacts view (or gallery) must bring those back first,
-                // or it would open invisibly behind the stack.
+                // The contacts view hosts its own compose slot (the composer
+                // slides down over the contact card); from the gallery there is
+                // no slot, so bring the mail panes back first — the composer
+                // would otherwise open invisibly behind the stack.
                 self.showing_gallery = false;
-                self.showing_contacts = false;
                 let account = self
                     .current
                     .as_ref()
@@ -6396,6 +6410,27 @@ impl AppModel {
     }
 
     /// Open (or replace) the reader's inline reply/forward drop-down pane.
+    /// The revealer the inline composer should slide down in: the reader
+    /// pane's, or — while the contacts view is up — the contact card's.
+    fn compose_slot(&self) -> &gtk::Revealer {
+        if self.showing_contacts {
+            &self.contacts_compose_revealer
+        } else {
+            &self.reader_compose_revealer
+        }
+    }
+
+    /// Hide and empty both inline-composer slots (only one ever holds it).
+    fn clear_compose_slots(&self) {
+        for r in [&self.reader_compose_revealer, &self.contacts_compose_revealer] {
+            r.set_reveal_child(false);
+            // Without this the hidden, pane-covering revealer keeps
+            // swallowing every click and scroll over the pane beneath.
+            r.set_can_target(false);
+            r.set_child(None::<&gtk::Widget>);
+        }
+    }
+
     fn open_inline_reply(
         &mut self,
         account_id: u32,
@@ -6411,13 +6446,14 @@ impl AppModel {
         // ⋯ overflow is managed by hand, so hide it by hand.
         self.reader_overflow_btn.set_visible(false);
         // Fill the pane and paint an opaque surface: the composer covers the
-        // reader completely, rather than dropping down as a partial panel.
+        // pane completely, rather than dropping down as a partial panel.
         widget.set_vexpand(true);
         widget.set_hexpand(true);
         widget.add_css_class("inline-compose-surface");
-        self.reader_compose_revealer.set_child(Some(widget));
-        self.reader_compose_revealer.set_can_target(true);
-        self.reader_compose_revealer.set_reveal_child(true);
+        let slot = self.compose_slot();
+        slot.set_child(Some(widget));
+        slot.set_can_target(true);
+        slot.set_reveal_child(true);
         controller.emit(ComposeInput::FocusEditor);
         self.reader_compose = Some(ReaderCompose { id, controller, window: None });
     }
@@ -6434,9 +6470,7 @@ impl AppModel {
                 self.composers.push(ComposeHost { id: r.id, controller: r.controller, window });
             }
             None => {
-                self.reader_compose_revealer.set_reveal_child(false);
-                self.reader_compose_revealer.set_can_target(false);
-                self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
+                self.clear_compose_slots();
                 self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 r.controller.emit(ComposeInput::SaveDraftIfDirty);
                 self.draining_composers.push((r.id, r.controller));
@@ -6458,9 +6492,7 @@ impl AppModel {
         match r.window.take() {
             None => {
                 // inline → window: unparent from the revealer, then host in a window.
-                self.reader_compose_revealer.set_reveal_child(false);
-                self.reader_compose_revealer.set_can_target(false);
-                self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
+                self.clear_compose_slots();
                 self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 let window = self.compose_window_host(&widget, id, sender);
                 r.window = Some(window);
@@ -6474,9 +6506,10 @@ impl AppModel {
                 widget.set_hexpand(true);
                 widget.add_css_class("inline-compose-surface");
                 self.reader_overflow_btn.set_visible(false);
-                self.reader_compose_revealer.set_child(Some(&widget));
-                self.reader_compose_revealer.set_can_target(true);
-                self.reader_compose_revealer.set_reveal_child(true);
+                let slot = self.compose_slot();
+                slot.set_child(Some(&widget));
+                slot.set_can_target(true);
+                slot.set_reveal_child(true);
                 r.controller.emit(ComposeInput::SetWindowed(false));
             }
         }
@@ -6500,11 +6533,7 @@ impl AppModel {
                     window.destroy();
                 }
                 None => {
-                    self.reader_compose_revealer.set_reveal_child(false);
-                    // Without this the hidden, pane-covering revealer keeps
-                    // swallowing every click and scroll over the reader.
-                    self.reader_compose_revealer.set_can_target(false);
-                    self.reader_compose_revealer.set_child(None::<&gtk::Widget>);
+                    self.clear_compose_slots();
                     self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 }
             }

@@ -89,7 +89,8 @@ pub enum ContactsPageOutput {
 
 #[relm4::component(pub)]
 impl Component for ContactsPage {
-    type Init = ();
+    /// The app's compose revealer, mounted over the detail pane.
+    type Init = gtk::Revealer;
     type Input = ContactsPageInput;
     type Output = ContactsPageOutput;
     type CommandOutput = ();
@@ -202,14 +203,19 @@ impl Component for ContactsPage {
                             },
                         },
                         // pack_end packs right-to-left: sort at the far right
-                        // (matching the message list), then the GNOME Contacts
-                        // launcher, then "+", then the count.
+                        // (matching the message list), then the count, then
+                        // the GNOME Contacts launcher, then "+".
                         #[name = "sort_btn"]
                         pack_end = &gtk::MenuButton {
                             set_icon_name: "co.hyprlab.Vireo-view-sort-descending-symbolic",
                             set_tooltip_text: Some("Sort contacts"),
                             set_valign: gtk::Align::Center,
                             add_css_class: "flat",
+                        },
+                        #[name = "count_label"]
+                        pack_end = &gtk::Label {
+                            set_valign: gtk::Align::Center,
+                            add_css_class: "list-count",
                         },
                         pack_end = &gtk::Button {
                             set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
@@ -224,11 +230,6 @@ impl Component for ContactsPage {
                             set_tooltip_text: Some("New contact"),
                             add_css_class: "flat",
                             connect_clicked => ContactsPageInput::NewContact,
-                        },
-                        #[name = "count_label"]
-                        pack_end = &gtk::Label {
-                            set_valign: gtk::Align::Center,
-                            add_css_class: "list-count",
                         },
                     },
 
@@ -269,12 +270,24 @@ impl Component for ContactsPage {
                 },
 
                 #[wrap(Some)]
-                set_end_child = &adw::ToolbarView {
+                #[name = "detail_overlay"]
+                set_end_child = &gtk::Overlay {
+                    // The app mounts its contacts compose slot over this in
+                    // init, so "New message" slides down right here.
+                    #[wrap(Some)]
+                    set_child = &adw::ToolbarView {
                     set_hexpand: true,
 
                     add_top_bar = &adw::HeaderBar {
                         add_css_class: "flat",
                         set_show_start_title_buttons: false,
+                        // Top-left of the card pane: edit the shown contact.
+                        pack_start = &gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-document-edit-symbolic",
+                            set_tooltip_text: Some("Edit contact"),
+                            add_css_class: "flat",
+                            connect_clicked => ContactsPageInput::Edit,
+                        },
                         #[wrap(Some)]
                         set_title_widget = &gtk::Label {
                             set_label: "Contacts",
@@ -303,13 +316,14 @@ impl Component for ContactsPage {
                             },
                         },
                     },
+                    },
                 },
             },
         }
     }
 
     fn init(
-        _init: Self::Init,
+        compose_slot: Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
@@ -324,6 +338,7 @@ impl Component for ContactsPage {
             editing_target: None,
         };
         let widgets = view_output!();
+        widgets.detail_overlay.add_overlay(&compose_slot);
 
         // The sort menu: a radio per order, mirroring the message list's
         // sort button.
@@ -665,17 +680,6 @@ impl ContactsPage {
         let Some(c) = self.selected.and_then(|i| self.contacts.get(i)) else {
             return;
         };
-
-        // ---- action row: edit, aligned with the card's top ----
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        actions.set_halign(gtk::Align::End);
-        let edit = flat_button("co.hyprlab.Vireo-document-edit-symbolic", "Edit contact");
-        let s = sender.input_sender().clone();
-        edit.connect_clicked(move |_| {
-            let _ = s.send(ContactsPageInput::Edit);
-        });
-        actions.append(&edit);
-        detail.append(&actions);
 
         // ---- identity header: photo, name, who they are ----
         let avatar = avatar_for(c, 96);
