@@ -867,15 +867,33 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleSidebar),
                                 },
                                 // Across from the sidebar toggle: the visible
-                                // message count and the sort menu (moved out of
-                                // the list's own toolbar to reclaim a row).
-                                // pack_end packs right-to-left: sort rightmost.
+                                // message count, the refresh button and the sort
+                                // menu (moved out of the list's own toolbar to
+                                // reclaim a row). pack_end packs right-to-left:
+                                // sort rightmost, then refresh, then the count.
                                 #[name = "list_sort_btn"]
                                 pack_end = &gtk::MenuButton {
                                     set_icon_name: "co.hyprlab.Vireo-view-sort-descending-symbolic",
                                     set_tooltip_text: Some("Sort messages"),
                                     set_valign: gtk::Align::Center,
                                     add_css_class: "flat",
+                                },
+                                pack_end = &gtk::Spinner {
+                                    set_valign: gtk::Align::Center,
+                                    set_tooltip_text: Some("Refresh"),
+                                    #[watch]
+                                    set_spinning: !model.busy.is_empty(),
+                                    #[watch]
+                                    set_visible: !model.busy.is_empty(),
+                                },
+                                pack_end = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-view-refresh-symbolic",
+                                    set_tooltip_text: Some("Refresh"),
+                                    set_valign: gtk::Align::Center,
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: model.busy.is_empty(),
+                                    connect_clicked[sender] => move |_| sender.input(AppMsg::Refresh),
                                 },
                                 pack_end = &gtk::Label {
                                     #[watch]
@@ -1372,7 +1390,6 @@ impl SimpleComponent for AppModel {
                 SidebarOutput::UnifiedSelected => AppMsg::UnifiedSelected,
                 SidebarOutput::AttachmentsSelected => AppMsg::ShowAttachments,
                 SidebarOutput::ContactsClicked => AppMsg::OpenContacts,
-                SidebarOutput::RefreshRequested => AppMsg::Refresh,
                 SidebarOutput::OutboxSelected => AppMsg::ShowOutbox,
                 SidebarOutput::FolderSelected { account_id, folder_id, name, path } => {
                     AppMsg::FolderSelected { account_id, folder_id, name, path }
@@ -4388,7 +4405,6 @@ impl SimpleComponent for AppModel {
                 } else {
                     self.busy.insert(account_id);
                 }
-                self.sidebar.emit(SidebarInput::SetBusy(!self.busy.is_empty()));
                 self.notifications.emit(NotifyInput::SetStatus(text));
             }
 
@@ -4771,7 +4787,6 @@ impl AppModel {
         self.attachment_cache.clear();
         self.current = None;
         self.busy.clear();
-        self.sidebar.emit(SidebarInput::SetBusy(false));
         self.show_message(None, false);
         self.message_list.emit(MessageListInput::SetLoading);
         self.rebuild_sidebar();

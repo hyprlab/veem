@@ -7,13 +7,17 @@
 /* ---- Sidebar / account header ---- */
 
 /* The sidebar's "New message" action: a standing accent button shaped like a
-   row — full width, rounded like the row highlights, icon column aligned with
-   the rows below. Text and icon in plain white on the accent. */
+   row, rounded like the row highlights, icon column aligned with the rows
+   below. Text and icon in plain white on the accent. A touch narrower than
+   the full-width rows (~5%) and centred, so it reads as its own button
+   rather than another row in the list. */
 row.compose-row {
   background-color: @accent_bg_color;
   color: white;
   padding-top: 2px;
   padding-bottom: 2px;
+  margin-left: 12px;
+  margin-right: 12px;
 }
 
 row.compose-row:hover {
@@ -271,6 +275,14 @@ headerbar.rail-header {
 .add-folder-btn label,
 .add-folder-btn image {
   opacity: 0.6;
+}
+
+/* Faint rule above the pinned Contacts/Attachments footer, just enough to
+   set the utility rows apart from the account list above. */
+.footer-separator {
+  min-height: 1px;
+  margin: 4px 12px;
+  opacity: 0.5;
 }
 
 /* Collapsible "Folders" (custom folders) section header. */
