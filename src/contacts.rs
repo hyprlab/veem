@@ -479,6 +479,23 @@ fn unfold_vcard(vcard: &str) -> String {
         .replace("\n\t", "")
 }
 
+/// Split a (unfolded) vCard content line into property (name + params) and
+/// value at the first colon *outside* double quotes. A naive colon split
+/// breaks on quoted parameter values — iCloud's photo lines carry
+/// `X-EVOLUTION-WEBDAV-IMG-URL="https://…"` before the real value, and the
+/// `https:` inside the quotes swallowed everything after it.
+fn split_vcard_line(line: &str) -> Option<(&str, &str)> {
+    let mut in_quotes = false;
+    for (i, ch) in line.char_indices() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            ':' if !in_quotes => return Some((&line[..i], &line[i + 1..])),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn vcard_display_name(vcard: &str) -> Option<String> {
     for line in unfold_vcard(vcard).lines() {
         let Some((prop, value)) = line.split_once(':') else {
@@ -506,7 +523,7 @@ fn vcard_photo(vcard: &str) -> Option<Vec<u8>> {
 
     const MAX_PHOTO_BYTES: usize = 2_000_000;
     for line in unfold_vcard(vcard).lines() {
-        let Some((property, raw_value)) = line.split_once(':') else {
+        let Some((property, raw_value)) = split_vcard_line(line) else {
             continue;
         };
         let name = property
@@ -1220,7 +1237,7 @@ fn pretty_birthday(raw: &str) -> String {
 fn parse_vcard_details(vcard: &str) -> Option<ContactDetails> {
     let mut c = ContactDetails::default();
     for line in unfold_vcard(vcard).lines() {
-        let Some((prop, raw_value)) = line.split_once(':') else { continue };
+        let Some((prop, raw_value)) = split_vcard_line(line) else { continue };
         let mut parts = prop.split(';');
         // Group prefixes (`item1.EMAIL`) hide the property name; strip them.
         let name = parts
@@ -1447,6 +1464,17 @@ mod tests {
 
     const ONE_PIXEL_PNG: &str =
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+    // iCloud's CardDAV photos: a quoted https URL parameter precedes the real
+    // file value — the split must not stop at the colon inside the quotes.
+    #[test]
+    fn quoted_params_do_not_swallow_the_value() {
+        let line = "PHOTO;X-EVOLUTION-WEBDAV-IMG-URL=\"https://gateway.icloud.com/x/y\";\
+                    VALUE=uri:file:///tmp/photo.jpg";
+        let (prop, value) = super::split_vcard_line(line).unwrap();
+        assert!(prop.ends_with("VALUE=uri"));
+        assert_eq!(value, "file:///tmp/photo.jpg");
+    }
 
     #[test]
     fn fn_preserves_case() {
