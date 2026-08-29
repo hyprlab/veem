@@ -294,7 +294,7 @@ impl Component for Preferences {
                     #[name = "prefs_page"]
                     add_titled[Some("preferences"), "Preferences"] = &adw::PreferencesPage {
                     add = &adw::PreferencesGroup {
-                        set_title: "Mail",
+                        set_title: "General",
 
                         #[name = "fetch_row"]
                         adw::ComboRow {
@@ -312,6 +312,10 @@ impl Component for Preferences {
                                 sender.input(PrefInput::TogglePush(row.is_active()));
                             },
                         },
+                    },
+
+                    add = &adw::PreferencesGroup {
+                        set_title: "Notifications",
 
                         #[name = "notifications_row"]
                         adw::SwitchRow {
@@ -332,17 +336,10 @@ impl Component for Preferences {
                                 sender.input(PrefInput::ToggleNotificationContent(row.is_active()));
                             },
                         },
+                    },
 
-                        #[name = "compose_inline_row"]
-                        adw::SwitchRow {
-                            set_title: "Compose in the main window",
-                            set_subtitle: "New message slides down over the reading pane, \
-                                           like a reply — pop it out to a window from its \
-                                           header. Off = open a separate window directly.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleComposeInline(row.is_active()));
-                            },
-                        },
+                    add = &adw::PreferencesGroup {
+                        set_title: "Sidebar",
 
                         #[name = "show_attachments_row"]
                         adw::SwitchRow {
@@ -379,53 +376,6 @@ impl Component for Preferences {
 
                     add = &adw::PreferencesGroup {
                         set_title: "Message List",
-
-                        #[name = "threading_row"]
-                        adw::SwitchRow {
-                            set_title: "Group messages by conversation",
-                            set_subtitle: "Collapse replies into a single threaded conversation.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleThreading(row.is_active()));
-                            },
-                        },
-
-                        #[name = "thread_expansion_row"]
-                        adw::SwitchRow {
-                            #[watch]
-                            set_sensitive: model.threading,
-                            set_title: "Expandable conversations",
-                            set_subtitle: "Allow a conversation to expand/collapse its messages \
-                                           in the list. When off, the row keeps its count chip \
-                                           but the messages are displayed only as cards in the \
-                                           reading pane.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleThreadExpansion(row.is_active()));
-                            },
-                        },
-
-                        #[name = "threads_expanded_row"]
-                        adw::SwitchRow {
-                            #[watch]
-                            set_sensitive: model.threading && model.thread_expansion,
-                            set_title: "Expand conversations by default",
-                            set_subtitle: "Show every message of a conversation in the list. \
-                                           When off, conversations start collapsed to their \
-                                           newest message.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleThreadsExpanded(row.is_active()));
-                            },
-                        },
-
-                        #[name = "confirm_thread_delete_row"]
-                        adw::SwitchRow {
-                            set_title: "Confirm conversation deletion",
-                            set_subtitle: "Warn before deleting when a whole conversation is \
-                                           selected, since every message in the thread goes \
-                                           with it.",
-                            connect_active_notify[sender] => move |row| {
-                                sender.input(PrefInput::ToggleConfirmThreadDelete(row.is_active()));
-                            },
-                        },
 
                         #[name = "avatars_row"]
                         adw::SwitchRow {
@@ -490,6 +440,85 @@ impl Component for Preferences {
                                            cards' alike.",
                             connect_value_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangePaletteCollapse(row.value() as u64));
+                            },
+                        },
+                    },
+
+                    add = &adw::PreferencesGroup {
+                        set_title: "Conversations",
+
+                        #[name = "threading_row"]
+                        adw::SwitchRow {
+                            set_title: "Group messages by conversation",
+                            set_subtitle: "Collapse replies into a single threaded conversation.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleThreading(row.is_active()));
+                            },
+                        },
+
+                        #[name = "thread_expansion_row"]
+                        adw::SwitchRow {
+                            #[watch]
+                            set_sensitive: model.threading,
+                            set_title: "Expandable conversations",
+                            set_subtitle: "Allow a conversation to expand/collapse its messages \
+                                           in the list. When off, the row keeps its count chip \
+                                           but the messages are displayed only as cards in the \
+                                           reading pane.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleThreadExpansion(row.is_active()));
+                            },
+                        },
+
+                        #[name = "threads_expanded_row"]
+                        adw::SwitchRow {
+                            #[watch]
+                            set_sensitive: model.threading && model.thread_expansion,
+                            set_title: "Expand conversations by default",
+                            set_subtitle: "Show every message of a conversation in the list. \
+                                           When off, conversations start collapsed to their \
+                                           newest message.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleThreadsExpanded(row.is_active()));
+                            },
+                        },
+
+                        #[name = "confirm_thread_delete_row"]
+                        adw::SwitchRow {
+                            set_title: "Confirm conversation deletion",
+                            set_subtitle: "Warn before deleting when a whole conversation is \
+                                           selected, since every message in the thread goes \
+                                           with it.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleConfirmThreadDelete(row.is_active()));
+                            },
+                        },
+                    },
+
+                    add = &adw::PreferencesGroup {
+                        set_title: "Reading",
+
+                        #[name = "message_theme_row"]
+                        adw::ComboRow {
+                            set_title: "Message appearance",
+                            set_subtitle: "Theme for email content only, not the app itself.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeMessageTheme(row.selected()));
+                            },
+                        },
+                    },
+
+                    add = &adw::PreferencesGroup {
+                        set_title: "Composing",
+
+                        #[name = "compose_inline_row"]
+                        adw::SwitchRow {
+                            set_title: "Compose in the main window",
+                            set_subtitle: "New message slides down over the reading pane, \
+                                           like a reply — pop it out to a window from its \
+                                           header. Off = open a separate window directly.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleComposeInline(row.is_active()));
                             },
                         },
                     },
@@ -571,19 +600,6 @@ impl Component for Preferences {
                             set_title: "Clock",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeClockStyle(row.selected()));
-                            },
-                        },
-                    },
-
-                    add = &adw::PreferencesGroup {
-                        set_title: "Reading",
-
-                        #[name = "message_theme_row"]
-                        adw::ComboRow {
-                            set_title: "Message appearance",
-                            set_subtitle: "Theme for email content only, not the app itself.",
-                            connect_selected_notify[sender] => move |row| {
-                                sender.input(PrefInput::ChangeMessageTheme(row.selected()));
                             },
                         },
                     },
