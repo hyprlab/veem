@@ -1,5 +1,6 @@
-//! A reusable modal that browses GNOME Contacts: search, pick a contact (the
-//! caller decides what to do with it), or open the full GNOME Contacts app.
+//! A reusable modal that browses GNOME Contacts to *pick* one — used by the
+//! composer's address-book button. (General browsing lives in the in-app
+//! contacts view, `ui/contacts_page.rs`, shown in the main content area.)
 
 use adw::prelude::*;
 

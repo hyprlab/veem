@@ -80,6 +80,7 @@ use crate::ui::message_list::{
 use crate::ui::attachments_gallery::{
     AttachmentsGallery, GalleryInput, GalleryOutput,
 };
+use crate::ui::contacts_page::{ContactsPage, ContactsPageInput, ContactsPageOutput};
 use crate::ui::attachment_drawer::{AttachmentDrawer, AttachmentDrawerInput};
 use crate::ui::message_view::{MessageView, MessageViewInput, MessageViewOutput};
 use crate::ui::message_window::{
@@ -381,6 +382,10 @@ pub struct AppModel {
     /// In-message attachment thumbnail drawer, docked below the reader body.
     attachment_drawer: Controller<AttachmentDrawer>,
     gallery: Controller<AttachmentsGallery>,
+    /// The in-app contacts view behind the sidebar's Contacts row.
+    contacts_page: Controller<ContactsPage>,
+    /// Whether the content area shows the contacts view.
+    showing_contacts: bool,
     /// True when the attachments gallery replaces the mail panes.
     showing_gallery: bool,
     /// Whether the Outbox is showing instead of the mail panes.
@@ -694,6 +699,10 @@ pub enum AppMsg {
     NotifyCount(usize),
     ToggleNotifications,
     OpenContacts,
+    /// The background EDS read for the contacts view finished.
+    ContactsLoaded(Vec<crate::contacts::ContactDetails>),
+    /// Right-click on the sidebar's Contacts row: the external app.
+    LaunchGnomeContacts,
 }
 
 #[relm4::component(pub)]
@@ -818,9 +827,16 @@ impl SimpleComponent for AppModel {
                     gtk::Stack {
                         set_hexpand: true,
                         set_transition_type: gtk::StackTransitionType::Crossfade,
-                        // Swap the mail panes for the attachments gallery.
+                        // Swap the mail panes for the attachments gallery or
+                        // the contacts view.
                         #[watch]
-                        set_visible_child_name: if model.showing_gallery { "gallery" } else { "mail" },
+                        set_visible_child_name: if model.showing_gallery {
+                            "gallery"
+                        } else if model.showing_contacts {
+                            "contacts"
+                        } else {
+                            "mail"
+                        },
 
                     add_named[Some("mail")] = &gtk::Paned {
                         set_orientation: gtk::Orientation::Horizontal,
@@ -1411,6 +1427,7 @@ impl SimpleComponent for AppModel {
                 SidebarOutput::ContactsClicked => AppMsg::OpenContacts,
                 SidebarOutput::RefreshRequested => AppMsg::Refresh,
                 SidebarOutput::StatusBarRequested => AppMsg::ToggleNotifications,
+                SidebarOutput::OpenGnomeContacts => AppMsg::LaunchGnomeContacts,
                 SidebarOutput::OutboxSelected => AppMsg::ShowOutbox,
                 SidebarOutput::FolderSelected { account_id, folder_id, name, path } => {
                     AppMsg::FolderSelected { account_id, folder_id, name, path }
@@ -1496,6 +1513,13 @@ impl SimpleComponent for AppModel {
                     GalleryOutput::OpenMessage { account_id, folder_path, uid } => {
                         AppMsg::OpenAttachmentMessage { account_id, folder_path, uid }
                     }
+                });
+
+        let contacts_page =
+            ContactsPage::builder()
+                .launch(())
+                .forward(sender.input_sender(), |out| match out {
+                    ContactsPageOutput::Compose(email) => AppMsg::ComposeTo(email),
                 });
 
         let notifications = NotificationCenter::builder().launch(()).forward(
@@ -1659,6 +1683,8 @@ impl SimpleComponent for AppModel {
             attachment_drawer,
             gallery,
             showing_gallery: false,
+            contacts_page,
+            showing_contacts: false,
             showing_outbox: false,
             outbox_by_account: HashMap::new(),
             gallery_by_account: HashMap::new(),
@@ -1787,6 +1813,24 @@ impl SimpleComponent for AppModel {
             gallery_tv.set_content(Some(model.gallery.widget()));
             widgets.content_stack.add_named(&gallery_tv, Some("gallery"));
 
+            // The contacts view gets the same chrome, plus the escape hatch to
+            // the full GNOME Contacts app for anything Vireo doesn't do
+            // (editing, linking, new address books).
+            let contacts_tv = adw::ToolbarView::new();
+            let contacts_hb = adw::HeaderBar::new();
+            contacts_hb.add_css_class("flat");
+            let title = gtk::Label::new(Some("Contacts"));
+            title.add_css_class("pane-title");
+            contacts_hb.set_title_widget(Some(&title));
+            let open_gnome = gtk::Button::from_icon_name(
+                "co.hyprlab.Vireo-adw-external-link-symbolic",
+            );
+            open_gnome.set_tooltip_text(Some("Open GNOME Contacts"));
+            open_gnome.connect_clicked(|_| crate::ui::contacts_browser::launch_gnome_contacts());
+            contacts_hb.pack_end(&open_gnome);
+            contacts_tv.add_top_bar(&contacts_hb);
+            contacts_tv.set_content(Some(model.contacts_page.widget()));
+            widgets.content_stack.add_named(&contacts_tv, Some("contacts"));
         }
         // Desktop-notification click actions: raise the window (error alerts) and
         // raise + open a specific message (new-mail alerts). Registered here rather
@@ -2262,6 +2306,7 @@ impl SimpleComponent for AppModel {
                 // server request is ever aimed at it.
                 self.showing_outbox = true;
                 self.showing_gallery = false;
+                self.showing_contacts = false;
                 self.unified = false;
                 self.selected = None;
                 self.current = None;
@@ -2319,6 +2364,7 @@ impl SimpleComponent for AppModel {
                 self.close_sidebar_peek();
                 self.showing_outbox = false;
                 self.showing_gallery = true;
+                self.showing_contacts = false;
                 self.gallery_by_account.clear();
                 // Clear first, then flag loading — SetItems resets the loading
                 // flag, so the other order cancels the spinner it just showed.
@@ -2346,6 +2392,7 @@ impl SimpleComponent for AppModel {
 
             AppMsg::OpenAttachmentMessage { account_id, folder_path, uid } => {
                 self.showing_gallery = false;
+                self.showing_contacts = false;
                 self.showing_outbox = false;
                 if let Some(folder) = self
                     .folders
@@ -2363,6 +2410,7 @@ impl SimpleComponent for AppModel {
             AppMsg::UnifiedSelected => {
                 self.close_sidebar_peek();
                 self.showing_gallery = false;
+                self.showing_contacts = false;
                 self.showing_outbox = false;
                 self.unified = true;
                 self.selected = None;
@@ -4557,7 +4605,26 @@ impl SimpleComponent for AppModel {
             AppMsg::NotifyCount(n) => self.notify_count = n,
             AppMsg::ToggleNotifications => self.notifications.emit(NotifyInput::TogglePanel),
 
-            AppMsg::OpenContacts => self.show_contacts_window(&sender),
+            AppMsg::OpenContacts => {
+                self.close_sidebar_peek();
+                self.showing_outbox = false;
+                self.showing_gallery = false;
+                self.showing_contacts = true;
+                // Read EDS off the UI thread (SQLite + photo decoding); the
+                // page shows its loading face until the list lands.
+                self.contacts_page.emit(ContactsPageInput::SetLoading);
+                let s = sender.clone();
+                std::thread::spawn(move || {
+                    let contacts = crate::contacts::read_contact_details();
+                    s.input(AppMsg::ContactsLoaded(contacts));
+                });
+            }
+
+            AppMsg::ContactsLoaded(contacts) => {
+                self.contacts_page.emit(ContactsPageInput::SetContacts(contacts));
+            }
+
+            AppMsg::LaunchGnomeContacts => crate::ui::contacts_browser::launch_gnome_contacts(),
         }
     }
 }
@@ -5678,6 +5745,7 @@ impl AppModel {
     /// sidebar selection and the "open message from notification" flow.
     fn select_folder(&mut self, account_id: u32, folder_id: u32, _name: String, path: String) {
         self.showing_gallery = false;
+        self.showing_contacts = false;
         self.showing_outbox = false;
         // Mirror the selection in the sidebar. Navigation that starts in the
         // sidebar hits its already-selected guard; navigation from anywhere
@@ -7195,14 +7263,6 @@ impl AppModel {
                 self.message_list.emit(MessageListInput::SetMessages { messages: msgs.clone() });
             }
         }
-    }
-
-    /// Modal contacts browser: pick a contact to start a new message to them.
-    fn show_contacts_window(&self, sender: &ComponentSender<Self>) {
-        let input = sender.input_sender().clone();
-        crate::ui::contacts_browser::present(&self.window, move |contact| {
-            let _ = input.send(AppMsg::ComposeTo(contact.email));
-        });
     }
 
     /// Dialog to add an email to GNOME Contacts (choosing the address book).

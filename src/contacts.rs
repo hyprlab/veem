@@ -855,6 +855,214 @@ fn vcard_for(name: &str, email: &str) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------
+// Full contact details (the in-app Contacts view)
+// ---------------------------------------------------------------------------
+
+/// One labelled value on a contact (a "Home" email, a "Mobile" phone…). The
+/// label may be empty when the vCard carries no usable TYPE.
+#[derive(Debug, Clone)]
+pub struct Labeled {
+    pub label: String,
+    pub value: String,
+}
+
+/// A fully parsed address-book entry, everything the in-app Contacts view
+/// shows. Read straight from the EDS vCards, so it matches GNOME Contacts.
+#[derive(Debug, Clone, Default)]
+pub struct ContactDetails {
+    pub name: String,
+    pub nickname: String,
+    pub org: String,
+    pub title: String,
+    pub birthday: String,
+    pub note: String,
+    pub emails: Vec<Labeled>,
+    pub phones: Vec<Labeled>,
+    pub addresses: Vec<Labeled>,
+    pub urls: Vec<String>,
+    pub photo: Option<Vec<u8>>,
+}
+
+impl ContactDetails {
+    /// The address used for avatars and as the compose default.
+    pub fn primary_email(&self) -> Option<&str> {
+        self.emails.first().map(|e| e.value.as_str())
+    }
+}
+
+/// Every contact from the local + cached (CardDAV) EDS books, fully parsed
+/// and sorted by display name. Contact *lists* (EDS distribution lists) are
+/// skipped — they aren't people.
+pub fn read_contact_details() -> Vec<ContactDetails> {
+    let mut out: Vec<ContactDetails> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    if let Some(dir) = data_dir() {
+        for db in find_dbs(&dir, "contacts.db") {
+            read_detail_db(&db, "SELECT vcard FROM folder_id", &mut out, &mut seen);
+        }
+    }
+    if let Some(dir) = cache_dir() {
+        for db in find_dbs(&dir, "cache.db") {
+            read_detail_db(&db, "SELECT ECacheOBJ FROM ECacheObjects", &mut out, &mut seen);
+        }
+    }
+    out.sort_by_key(|c| c.name.to_lowercase());
+    out
+}
+
+fn read_detail_db(
+    path: &std::path::Path,
+    query: &str,
+    out: &mut Vec<ContactDetails>,
+    seen: &mut HashSet<String>,
+) {
+    let conn = match open_book_db(path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("contacts: cannot open {}: {e}", path.display());
+            return;
+        }
+    };
+    let mut stmt = match conn.prepare(query) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("contacts: query failed on {}: {e}", path.display());
+            return;
+        }
+    };
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0));
+    if let Ok(rows) = rows {
+        for vcard in rows.flatten() {
+            let Some(c) = parse_vcard_details(&vcard) else { continue };
+            // The same person can live in several books; the first email is
+            // as stable an identity as vCards offer.
+            let key = c
+                .primary_email()
+                .map(|e| e.to_lowercase())
+                .unwrap_or_else(|| format!("name:{}", c.name.to_lowercase()));
+            if seen.insert(key) {
+                out.push(c);
+            }
+        }
+    }
+}
+
+/// The human label for a property's TYPE parameters ("" when none applies).
+fn vcard_type_label(params: &[&str]) -> String {
+    let joined = params.join(";").to_uppercase();
+    for (needle, label) in [
+        ("CELL", "Mobile"),
+        ("HOME", "Home"),
+        ("WORK", "Work"),
+        ("FAX", "Fax"),
+    ] {
+        if joined.contains(needle) {
+            return label.to_string();
+        }
+    }
+    String::new()
+}
+
+/// "1985-04-12" / "19850412" → "April 12, 1985"; "--04-12" → "April 12";
+/// anything else passes through unchanged.
+fn pretty_birthday(raw: &str) -> String {
+    const MONTHS: [&str; 12] = [
+        "January", "February", "March", "April", "May", "June", "July", "August", "September",
+        "October", "November", "December",
+    ];
+    let head = raw.split('T').next().unwrap_or(raw);
+    let digits: String = head.chars().filter(|c| c.is_ascii_digit()).collect();
+    let (year, month, day) = if head.starts_with("--") && digits.len() == 4 {
+        (None, &digits[0..2], &digits[2..4])
+    } else if digits.len() == 8 {
+        (Some(&digits[0..4]), &digits[4..6], &digits[6..8])
+    } else {
+        return raw.to_string();
+    };
+    let (Ok(m), Ok(d)) = (month.parse::<usize>(), day.parse::<u32>()) else {
+        return raw.to_string();
+    };
+    let Some(month_name) = (1..=12).contains(&m).then(|| MONTHS[m - 1]) else {
+        return raw.to_string();
+    };
+    match year {
+        Some(y) => format!("{month_name} {d}, {y}"),
+        None => format!("{month_name} {d}"),
+    }
+}
+
+/// Parse the fields the Contacts view shows out of one vCard. Returns `None`
+/// for contact lists and entries with neither a name nor an address.
+fn parse_vcard_details(vcard: &str) -> Option<ContactDetails> {
+    let mut c = ContactDetails::default();
+    for line in unfold_vcard(vcard).lines() {
+        let Some((prop, raw_value)) = line.split_once(':') else { continue };
+        let mut parts = prop.split(';');
+        // Group prefixes (`item1.EMAIL`) hide the property name; strip them.
+        let name = parts
+            .next()
+            .unwrap_or("")
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        let params: Vec<&str> = parts.collect();
+        let value = unescape_vcard_text(raw_value.trim());
+        if value.is_empty() {
+            continue;
+        }
+        match name.as_str() {
+            "X-EVOLUTION-LIST" if value.eq_ignore_ascii_case("true") => return None,
+            "FN" => c.name = value,
+            "NICKNAME" if c.nickname.is_empty() => c.nickname = value,
+            "ORG" => {
+                // ORG is org;department;… — the org alone reads best.
+                c.org = value.split(';').next().unwrap_or("").trim().to_string();
+            }
+            "TITLE" if c.title.is_empty() => c.title = value,
+            "BDAY" => c.birthday = pretty_birthday(&value),
+            "NOTE" if c.note.is_empty() => c.note = value,
+            "EMAIL" => {
+                if value.contains('@') && !c.emails.iter().any(|e| e.value == value) {
+                    c.emails.push(Labeled { label: vcard_type_label(&params), value });
+                }
+            }
+            "TEL" => {
+                if !c.phones.iter().any(|p| p.value == value) {
+                    c.phones.push(Labeled { label: vcard_type_label(&params), value });
+                }
+            }
+            "URL" => {
+                if !c.urls.contains(&value) {
+                    c.urls.push(value);
+                }
+            }
+            "ADR" => {
+                // pobox;extended;street;locality;region;postal-code;country.
+                let formatted = raw_value
+                    .split(';')
+                    .map(|p| unescape_vcard_text(p.trim()))
+                    .filter(|p| !p.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if !formatted.is_empty() && !c.addresses.iter().any(|a| a.value == formatted) {
+                    c.addresses.push(Labeled { label: vcard_type_label(&params), value: formatted });
+                }
+            }
+            _ => {}
+        }
+    }
+    if c.name.trim().is_empty() {
+        c.name = c
+            .primary_email()
+            .map(str::to_string)
+            .or_else(|| (!c.nickname.is_empty()).then(|| c.nickname.clone()))?;
+    }
+    c.photo = vcard_photo(vcard);
+    Some(c)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{vcard_display_name, vcard_photo};

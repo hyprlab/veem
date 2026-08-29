@@ -58,6 +58,8 @@ enum Sel {
     Unified,
     /// The attachments gallery (all inboxes).
     Attachments,
+    /// The in-app contacts view.
+    Contacts,
     Outbox,
     Folder(u32, String),
     /// An account's inbox selected via the "All Inboxes" sub-list.
@@ -97,6 +99,8 @@ pub struct Sidebar {
     unified_list: Option<gtk::ListBox>,
     /// The "Attachments" row list box (one row), when shown.
     attachments_list: Option<gtk::ListBox>,
+    /// The "Contacts" row list box (one row), when shown.
+    contacts_list: Option<gtk::ListBox>,
     /// Refresh/spinner stack + spinner beside the "New Message" button.
     sync_stack: Option<gtk::Stack>,
     sync_spinner: Option<gtk::Spinner>,
@@ -202,6 +206,8 @@ pub enum SidebarOutput {
     RefreshRequested,
     /// Long-press on the rail's refresh button: reveal the status bar.
     StatusBarRequested,
+    /// Right-click on the Contacts row: open the GNOME Contacts app.
+    OpenGnomeContacts,
     /// A folder-tree node was collapsed or expanded (#51) — for persistence.
     FolderNodeCollapsed { account_id: u32, path: String, collapsed: bool },
     /// A folder was dropped onto a new parent ("" = the account's top level).
@@ -350,6 +356,7 @@ impl Component for Sidebar {
             custom_chevrons: HashMap::new(),
             unified_list: None,
             attachments_list: None,
+            contacts_list: None,
             sync_stack: None,
             sync_spinner: None,
             busy: false,
@@ -441,9 +448,12 @@ impl Component for Sidebar {
                 let _ = sender.output(SidebarOutput::AttachmentsSelected);
             }
 
-            // The Contacts row launches a window rather than switching the
-            // panes, so it never becomes the sidebar selection.
             SidebarInput::ContactsRowClicked => {
+                if self.selected == Sel::Contacts {
+                    return;
+                }
+                self.selected = Sel::Contacts;
+                self.clear_other_selections(Sel::Contacts);
                 let _ = sender.output(SidebarOutput::ContactsClicked);
             }
 
@@ -626,6 +636,11 @@ impl Component for Sidebar {
 
             SidebarInput::SetContactsRow(show) => {
                 self.show_contacts = show;
+                // The row is about to disappear from under the selection; fall
+                // back the same way an emptied selection does.
+                if !show && self.selected == Sel::Contacts {
+                    self.selected = Sel::None;
+                }
                 self.rebuild_normal(
                     &widgets.pinned_box,
                     &widgets.normal_box,
@@ -935,6 +950,7 @@ impl Sidebar {
         self.custom_chevrons.clear();
         self.unified_list = None;
         self.attachments_list = None;
+        self.contacts_list = None;
         self.outbox_list = None;
         self.folder_badges.clear();
         self.tree_chevrons.clear();
@@ -1277,9 +1293,9 @@ impl Sidebar {
             footer.append(&sep);
         }
 
-        // "Contacts" row — opens the app-wide contacts browser. A launcher, not
-        // a view: clicking fires and the row unselects itself, leaving the real
-        // folder selection alone.
+        // "Contacts" row — shows the in-app contacts view in the content area
+        // (a selection, like Attachments). Right-click offers a jump straight
+        // to the GNOME Contacts app.
         if self.show_contacts {
             let list = gtk::ListBox::new();
             list.set_selection_mode(gtk::SelectionMode::Single);
@@ -1306,14 +1322,30 @@ impl Sidebar {
             list.append(&row);
 
             let s = sender.clone();
-            list.connect_row_selected(move |list, row| {
+            list.connect_row_selected(move |_, row| {
                 if row.is_some() {
                     s.input(SidebarInput::ContactsRowClicked);
-                    // Re-entrant unselect fires this handler again with None.
-                    list.unselect_all();
                 }
             });
+            let right_click = gtk::GestureClick::new();
+            right_click.set_button(3);
+            let s = sender.clone();
+            right_click.connect_pressed(move |gesture, _, x, y| {
+                let Some(widget) = gesture.widget() else { return };
+                let s2 = s.clone();
+                show_context_menu(
+                    &widget,
+                    x,
+                    y,
+                    vec![vec![MenuEntry::new("Open GNOME Contacts", move || {
+                        let _ = s2.output(SidebarOutput::OpenGnomeContacts);
+                    })
+                    .icon("co.hyprlab.Vireo-adw-external-link-symbolic")]],
+                );
+            });
+            list.add_controller(right_click);
             footer.append(&list);
+            self.contacts_list = Some(list);
         }
 
         // "Attachments" row — a gallery of every inbox attachment. The very
@@ -1860,6 +1892,11 @@ impl Sidebar {
                 l.unselect_all();
             }
         }
+        if keep != Sel::Contacts {
+            if let Some(l) = &self.contacts_list {
+                l.unselect_all();
+            }
+        }
         if keep != Sel::Outbox {
             if let Some(l) = &self.outbox_list {
                 l.unselect_all();
@@ -1900,6 +1937,14 @@ impl Sidebar {
         }
     }
 
+    fn select_contacts(&self) {
+        if let Some(list) = &self.contacts_list {
+            if let Some(row) = list.row_at_index(0) {
+                list.select_row(Some(&row));
+            }
+        }
+    }
+
     fn select_outbox(&self) {
         if let Some(list) = &self.outbox_list {
             if let Some(row) = list.row_at_index(0) {
@@ -1912,6 +1957,7 @@ impl Sidebar {
         match self.selected.clone() {
             Sel::Unified => self.select_unified(),
             Sel::Attachments => self.select_attachments(),
+            Sel::Contacts => self.select_contacts(),
             Sel::Outbox => self.select_outbox(),
             Sel::Folder(acc, path) => self.select_folder(acc, &path),
             Sel::UnifiedInbox(acc) => self.select_unified_inbox(acc),
