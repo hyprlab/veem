@@ -330,6 +330,12 @@ impl Component for MessageWindow {
                 self.view.emit(MessageViewInput::SetContentTheme(o));
             }
             MessageWindowInput::SetSenderCheck(check) => {
+                // Light the popout's header seal too (#88).
+                self.view.emit(MessageViewInput::SenderCheckFor {
+                    account_id: self.msg.account_id,
+                    id: self.msg.id,
+                    check: check.clone(),
+                });
                 self.view.emit(MessageViewInput::SetSenderCheck(check));
             }
             MessageWindowInput::SetBody { account_id, id, body } => {

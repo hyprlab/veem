@@ -921,6 +921,9 @@ headerbar.reader-toolbar button.image-button {
 
 .sender-detail {
   padding: 12px;
+  /* Sized to read like the message header text it pops out of, not like
+     app chrome. */
+  font-size: 0.95em;
 }
 
 /* Link destination plaque, bottom-left of the message body — the same idea as a
