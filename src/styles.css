@@ -695,6 +695,19 @@ button.star-active {
 
 /* ---- Reader ---- */
 
+/* The reader pane's toolbar: tighter than stock between the action icons —
+   narrower buttons and less gap in the packed start/end groups — so the full
+   row fits down to READER_ACTIONS_BREAKPOINT before folding into the ⋯ menu. */
+headerbar.reader-toolbar box.start,
+headerbar.reader-toolbar box.end {
+  border-spacing: 1px;
+}
+headerbar.reader-toolbar button.image-button {
+  min-width: 28px;
+  padding-left: 3px;
+  padding-right: 3px;
+}
+
 .reader-header {
   padding: 20px 24px 16px 24px;
 }

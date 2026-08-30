@@ -50,11 +50,11 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
 /// the top-edge maximize).
 const READER_MIN_WIDTH: i32 = 400;
 
-/// Below this reader-pane width the header's action buttons collapse into a
-/// single overflow menu. The full row of actions plus the window controls
-/// needs ~540px; with slack under that, squeezing the pane can never push
-/// the close button off the window's right edge.
-const READER_ACTIONS_BREAKPOINT: f64 = 560.0;
+/// Fallback threshold for folding the reader header's actions into the
+/// overflow menu. Normally the threshold is *measured* at startup from the
+/// real row (see the breakpoint in init) so it tracks the user's decoration
+/// layout; this value only stands in if that measurement comes back empty.
+const READER_ACTIONS_BREAKPOINT: f64 = 490.0;
 
 const SIDEBAR_RAIL_WIDTH: f64 = 80.0;
 
@@ -965,12 +965,17 @@ impl SimpleComponent for AppModel {
                             set_size_request: (READER_MIN_WIDTH, 200),
                             #[wrap(Some)]
                             set_child = &adw::ToolbarView {
+                            #[name = "reader_header"]
                             add_top_bar = &adw::HeaderBar {
                                 // Rightmost of the packed items, beside the window
                                 // controls: the overflow ⋯ that stands in for the
                                 // action buttons while collapsed.
                                 pack_end: &model.reader_overflow_btn,
                                 add_css_class: "flat",
+                                // Tighter icon spacing than stock so the full
+                                // action row fits a narrower pane (see
+                                // READER_ACTIONS_BREAKPOINT and styles.css).
+                                add_css_class: "reader-toolbar",
                                 // Empty title so the window's "Vireo" title isn't
                                 // shown here; the app title lives above the sidebar.
                                 #[wrap(Some)]
@@ -1839,11 +1844,48 @@ impl SimpleComponent for AppModel {
         let widgets = view_output!();
         // Collapse the reader header's actions into the overflow menu when the
         // pane can no longer fit the full row — squeezing it further must never
-        // push the window controls off the right edge.
+        // push the window controls off the right edge. The threshold is
+        // measured, not assumed: the window-controls cost depends on the
+        // user's decoration layout (GNOME ships one button, others run three),
+        // so the row's cost is taken from the real headerbar now — while every
+        // action is still visible, before the breakpoint could hide any — and
+        // the controls' share is re-derived if the decoration layout changes.
         {
+            // The controls' width comes from the headerbar's own live
+            // GtkWindowControls children (a detached WindowControls never
+            // populates its buttons and measures 0).
+            fn measure_controls(w: &gtk::Widget, sum: &mut i32) {
+                if let Some(c) = w.downcast_ref::<gtk::WindowControls>() {
+                    *sum += c.measure(gtk::Orientation::Horizontal, -1).1;
+                    return;
+                }
+                let mut child = w.first_child();
+                while let Some(c) = child {
+                    measure_controls(&c, sum);
+                    child = c.next_sibling();
+                }
+            }
+            let header: gtk::Widget = widgets.reader_header.clone().upcast();
+            let full = header.measure(gtk::Orientation::Horizontal, -1).1;
+            let mut controls = 0;
+            measure_controls(&header, &mut controls);
+            // The actions' share of the row is layout-independent; slack keeps
+            // the fold a step ahead of an actual squeeze.
+            let actions = full - controls;
+            let threshold = move |controls: i32| {
+                if full <= 0 {
+                    READER_ACTIONS_BREAKPOINT
+                } else {
+                    (actions + controls) as f64 + 24.0
+                }
+            };
+            tracing::info!(
+                "reader toolbar: actions {actions}px + controls {controls}px → collapse below {:.0}px",
+                threshold(controls)
+            );
             let bp = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
                 adw::BreakpointConditionLengthType::MaxWidth,
-                READER_ACTIONS_BREAKPOINT,
+                threshold(controls),
                 adw::LengthUnit::Px,
             ));
             let s = sender.input_sender().clone();
@@ -1854,7 +1896,28 @@ impl SimpleComponent for AppModel {
             bp.connect_unapply(move |_| {
                 let _ = s.send(AppMsg::SetReaderActionsCollapsed(false));
             });
-            widgets.reader_bin.add_breakpoint(bp);
+            widgets.reader_bin.add_breakpoint(bp.clone());
+            if let Some(settings) = gtk::Settings::default() {
+                settings.connect_notify_local(Some("gtk-decoration-layout"), move |_, _| {
+                    // Re-measure in an idle: the headerbar's own controls
+                    // rebuild on this same notify, in unspecified order.
+                    let bp = bp.clone();
+                    let header = header.clone();
+                    gtk::glib::idle_add_local_once(move || {
+                        let mut controls = 0;
+                        measure_controls(&header, &mut controls);
+                        tracing::info!(
+                            "reader toolbar: decoration layout changed, controls {controls}px → collapse below {:.0}px",
+                            threshold(controls)
+                        );
+                        bp.set_condition(Some(&adw::BreakpointCondition::new_length(
+                            adw::BreakpointConditionLengthType::MaxWidth,
+                            threshold(controls),
+                            adw::LengthUnit::Px,
+                        )));
+                    });
+                });
+            }
             let s = sender.input_sender().clone();
             model.reader_overflow_btn.connect_clicked(move |_| {
                 let _ = s.send(AppMsg::ReaderOverflowMenu);
@@ -5885,7 +5948,6 @@ impl AppModel {
                         entry!("Mark as Unread", "mail-unread", AppMsg::ToggleReadCurrent, acts)
                     },
                     entry!("Add to Contacts", "contact-new", AppMsg::AddToContacts, acts),
-                    entry!("Open Contacts", "x-office-address-book", AppMsg::OpenContacts, true),
                     if starred {
                         entry!("Remove Flag", "non-starred", AppMsg::ToggleStar, acts)
                     } else {
