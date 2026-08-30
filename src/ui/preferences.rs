@@ -421,10 +421,10 @@ impl Component for Preferences {
 
                         #[name = "avatars_row"]
                         adw::SwitchRow {
-                            set_title: "Sender circles",
-                            set_subtitle: "The coloured circle of initials beside each message, in \
-                                           the list and above the message. Turning it off gives \
-                                           the sender and subject more room.",
+                            set_title: "Sender avatars",
+                            set_subtitle: "The sender's avatar beside each message, in the list \
+                                           and above the message. Turning it off gives the \
+                                           sender and subject more room.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleAvatars(row.is_active()));
                             },
@@ -724,7 +724,7 @@ impl Component for Preferences {
                         #[name = "sender_logos_row"]
                         adw::SwitchRow {
                             set_title: "Show sender logos",
-                            set_subtitle: "Fills the sender circle with the brand's own site \
+                            set_subtitle: "Fills the sender's avatar with the brand's own site \
                                            icon, fetched from the sender's domain. That domain \
                                            learns your IP address, which is what blocking \
                                            remote content otherwise avoids.",

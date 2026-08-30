@@ -286,7 +286,7 @@ pub struct AppModel {
     palette_collapse_secs: u64,
     /// Whether to load sender avatars from Gravatar.
     gravatar: bool,
-    /// Whether the coloured sender circles are drawn at all (#29).
+    /// Whether the coloured avatars are drawn at all (#29).
     avatars: bool,
     /// Whether a sender's site icon may fill their circle (#30).
     sender_logos: bool,
@@ -594,7 +594,7 @@ pub enum AppMsg {
     /// is still on screen.
     LightboxRendered(u64),
     /// The GNOME Contacts photo index changed (EDS sync, or the first load
-    /// finished) — refresh the sender circles that are on screen.
+    /// finished) — refresh the avatars that are on screen.
     ContactPhotosChanged,
     SetAvatars(bool),
     SetSenderLogos(bool),
@@ -874,7 +874,7 @@ impl SimpleComponent for AppModel {
                         // no wide-handle gap between them.
                         set_wide_handle: false,
                         // Launch wide enough for a row's Actions Palette. That is
-                        // also the list's minimum while the sender circles are on,
+                        // also the list's minimum while the avatars are on,
                         // so `shrink_start_child: false` clamps to the same figure
                         // either way. With the circles off the minimum drops to what
                         // the sender and subject need (#29) — a fine width to be
@@ -1698,7 +1698,7 @@ impl SimpleComponent for AppModel {
         };
         model.prime_from_cache();
         model.spawn_workers(&sender);
-        // Refresh visible sender circles when the GNOME Contacts photo index
+        // Refresh visible avatars when the GNOME Contacts photo index
         // changes (first load finishing, or an EDS/CardDAV sync).
         crate::contacts::watch_photo_changes({
             let input = sender.input_sender().clone();
@@ -3637,7 +3637,7 @@ impl SimpleComponent for AppModel {
                 }
             }
             AppMsg::ContactPhotosChanged => {
-                // The list skips the work when sender circles are off; the
+                // The list skips the work when avatars are off; the
                 // reader's cards draw initials only, so it has nothing to do.
                 self.message_list.emit(MessageListInput::ContactPhotosChanged);
             }

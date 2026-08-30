@@ -32,7 +32,7 @@ pub enum RowAction {
 pub struct RowInit {
     pub msg: Message,
     pub gravatar: bool,
-    /// Whether the sender circle is drawn at all (#29).
+    /// Whether the avatar is drawn at all (#29).
     pub avatars: bool,
     /// Whether a sender's site icon may fill it (#30).
     pub sender_logos: bool,
@@ -389,7 +389,7 @@ impl FactoryComponent for MessageRow {
                     set_spacing: 0,
                     set_halign: gtk::Align::Start,
                     set_valign: gtk::Align::End,
-                    // With sender circles on, the ⋯ centres under the avatar:
+                    // With avatars on, the ⋯ centres under the avatar:
                     // circle centre (pill padding + 19) minus half the button.
                     // Thread children share the exact pill geometry and only
                     // add their card's 10px indent. Without circles it hugs
@@ -397,9 +397,9 @@ impl FactoryComponent for MessageRow {
                     set_margin_start: if self.avatars {
                         if self.is_thread_child { 26 } else { 16 }
                     } else if self.is_thread_child {
-                        24
-                    } else {
                         14
+                    } else {
+                        4
                     },
                     // With circles on, ride lower for a sliver of air between
                     // the circle's bottom edge and the ⋯ — but keep 1px clear
@@ -575,9 +575,14 @@ impl FactoryComponent for MessageRow {
             // box, so every read row's sender and preview would sit 18px further
             // left than an unread one's and the column would jitter as mail is
             // read. The space is always reserved; only the dot's ink changes.
+            //
+            // With avatars on, the dot centres in the row beside the circle;
+            // without them it leads the row, so it aligns with the sender
+            // name's line instead (the .no-avatar margin in styles.css puts
+            // it on that line's centre).
             gtk::Box {
                 add_css_class: "unread-dot",
-                set_valign: gtk::Align::Center,
+                set_valign: if self.avatars { gtk::Align::Center } else { gtk::Align::Start },
                 #[watch]
                 set_opacity: if self.msg.unread || self.thread_unread { 1.0 } else { 0.0 },
             },
@@ -1081,7 +1086,7 @@ impl MessageRow {
         sender.oneshot_command(find_logo(email.to_string()));
     }
 
-    /// Classes for the row's content box. Without the sender circle the unread
+    /// Classes for the row's content box. Without the avatar the unread
     /// dot becomes the row's first element, and the wide inset that kept the
     /// circle clear of the list's edge would leave the dot lopsided — sitting
     /// twice as far from the edge as from the text beside it.
@@ -1097,7 +1102,7 @@ impl MessageRow {
             v.push("no-palette");
         }
         // Previews off leaves a two-line row: too short for the ⋯ to clear
-        // the sender circle's bottom edge — reserve just enough height that
+        // the avatar's bottom edge — reserve just enough height that
         // they never collide (see `.message-row.palette-room`).
         if self.show_palette && self.avatars && self.preview_lines == 0 {
             v.push("palette-room");
@@ -1298,7 +1303,7 @@ pub struct MessageList {
     gravatar: bool,
     /// Lines of preview text per row (1–3), from Preferences.
     preview_lines: u32,
-    /// Whether the coloured sender circles are drawn (#29).
+    /// Whether the coloured avatars are drawn (#29).
     avatars: bool,
     /// Whether a sender's site icon may fill one (#30).
     sender_logos: bool,
@@ -1460,7 +1465,7 @@ pub enum MessageListInput {
     /// The open folder is (or stopped being) a Sent folder — rows name the
     /// recipient there instead of the sender (#27).
     SetShowRecipient(bool),
-    /// Show or hide the coloured sender circles (#29).
+    /// Show or hide the coloured avatars (#29).
     SetAvatars(bool),
     /// Fill them with senders' own site icons, or stop (#30).
     SetSenderLogos(bool),

@@ -625,7 +625,7 @@ struct PrivacyFile {
     /// a hash of each sender's email to a third party).
     #[serde(default)]
     gravatar: bool,
-    /// Whether the coloured sender circles are drawn in the message list and the
+    /// Whether the coloured avatars are drawn in the message list and the
     /// reader (#29 — they cost horizontal room on a small screen).
     #[serde(default = "default_avatars")]
     avatars: bool,
@@ -920,7 +920,7 @@ pub fn load_gravatar() -> bool {
     load_privacy().gravatar
 }
 
-/// Whether the sender circles are shown in the list and the reader.
+/// Whether the avatars are shown in the list and the reader.
 pub fn load_avatars() -> bool {
     load_privacy().avatars
 }

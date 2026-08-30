@@ -491,7 +491,7 @@ button.star-active {
   color: @accent_bg_color;
 }
 
-/* Sender circles off (#29): the unread dot leads the row, so it gets the same
+/* Avatars off (#29): the unread dot leads the row, so it gets the same
    gap on each side — 12px to the list's edge (6px margin + 6px padding), and
    8px of box spacing plus this margin to the sender's name. */
 .message-row.no-avatar {
@@ -500,9 +500,12 @@ button.star-active {
 
 .message-row.no-avatar .unread-dot {
   margin-right: 4px;
+  /* Valign Start plus this nudge centres the 10px dot on the sender name's
+     ~20px first line (with avatars on, the dot centres in the row instead). */
+  margin-top: 5px;
 }
 
-/* Palette + sender circles + previews off: a two-line row is too short for
+/* Palette + avatars + previews off: a two-line row is too short for
    the floating ⋯ to clear the circle, so the pill reserves exactly the height
    the pair needs — centred 38px circle, 2px air, the ⋯ riding 1px off the
    pill's bottom edge — and not a pixel more. Rows with a preview are already
