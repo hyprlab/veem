@@ -415,6 +415,11 @@ button.star-active {
      visual rhythm on their own. The side margin matches the inset the pills
      use (they drop their own horizontal margin in exchange). */
   margin: 0 6px;
+  /* No focus ring either: keyboard navigation moves the selection itself, so
+     the accent pill is the position indicator — the ring only ever showed up
+     as an artifact on rows that inherit focus programmatically (e.g. the
+     neighbour of a deleted row). */
+  outline: none;
 }
 
 /* Every state tint lives on the inner .message-row as an inset rounded pill

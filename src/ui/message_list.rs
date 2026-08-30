@@ -1147,6 +1147,13 @@ pub struct MessageList {
     reader_keys: Vec<(u32, u32)>,
     /// How many rows are currently selected (drives the bulk-action bar).
     selection_count: usize,
+    /// Which way the user last moved through the list: +1 down, -1 up.
+    /// Deleting the viewed message advances in this direction (like Apple
+    /// Mail): triaging downward selects the message below the deleted one,
+    /// and after moving up the list, deletion selects the one above instead.
+    /// Updated only by the user's own selection movement — the programmatic
+    /// post-delete advance keeps its index and never flips it.
+    nav_direction: i32,
     /// Conversation keys the user has toggled away from the default state
     /// (expanded when the default is collapsed, and vice versa).
     expanded_threads: std::collections::HashSet<(u32, String)>,
@@ -1653,6 +1660,7 @@ impl SimpleComponent for MessageList {
             selected_id: None,
             selected_ids: Vec::new(),
             selection_count: 0,
+            nav_direction: 1,
             from_reader: 0,
             reader_keys: Vec::new(),
             expanded_threads: std::collections::HashSet::new(),
@@ -2039,6 +2047,19 @@ impl SimpleComponent for MessageList {
                         // it's already the viewed row (e.g. programmatic restore
                         // after a rebuild) so it isn't needlessly reloaded.
                         if self.selected_id != Some(*key) {
+                            // Which way did the user move? Only a change with a
+                            // known previous row says anything — the post-delete
+                            // advance clears selected_id first, so it can never
+                            // flip the direction it is itself steering by.
+                            let pos =
+                                |k: &(u32, u32)| self.shown.iter().position(|m| (m.account_id, m.id) == *k);
+                            if let (Some(old), Some(new)) =
+                                (self.selected_id.as_ref().and_then(&pos), pos(key))
+                            {
+                                if new != old {
+                                    self.nav_direction = if new > old { 1 } else { -1 };
+                                }
+                            }
                             self.selected_id = Some(*key);
                             if let Some(m) = self
                                 .shown
@@ -2071,15 +2092,27 @@ impl SimpleComponent for MessageList {
                 if !messages.is_empty() {
                     let _ = sender.output(MessageListOutput::Bulk { action, messages });
                 }
-                self.rows.widget().unselect_all();
-                self.selected_id = None;
-                self.selected_ids.clear();
-                self.selection_count = 0;
+                // Row-removing actions keep the selection: the RemoveMany that
+                // follows reads it to know the viewed message is going away and
+                // to advance the selection (and reader) in its place — clearing
+                // here left the reader stale on the deleted message. In-place
+                // actions (read/flag) drop the selection as before, dismissing
+                // the bulk bar.
+                if matches!(action, BulkAction::MarkRead | BulkAction::MarkUnread | BulkAction::Flag)
+                {
+                    self.rows.widget().unselect_all();
+                    self.selected_id = None;
+                    self.selected_ids.clear();
+                    self.selection_count = 0;
+                }
             }
             MessageListInput::MoveSelection(delta) => {
                 let list = self.rows.widget();
                 if self.shown.is_empty() {
                     return;
+                }
+                if delta != 0 {
+                    self.nav_direction = delta.signum();
                 }
                 // From the current row, or from the top/bottom when nothing is
                 // selected yet, so the first keypress always lands somewhere.
@@ -2141,6 +2174,7 @@ impl SimpleComponent for MessageList {
                         row.grab_focus();
                     }
                 });
+                self.hide_focus_ring();
             }
 
             MessageListInput::FocusSearch => {
@@ -2277,11 +2311,13 @@ impl SimpleComponent for MessageList {
 
                 if was_viewed {
                     match removed_idx {
-                        // Select the row now at the removed slot (or the new last
-                        // row if we deleted the bottom one). Selecting it fires
-                        // SelectionChanged, which loads it in the reader.
+                        // Advance in the direction the user was triaging: the
+                        // row now at the removed slot when moving down the
+                        // list, the one above it when moving up (Apple Mail's
+                        // behaviour). Selecting it fires SelectionChanged,
+                        // which loads it in the reader.
                         Some(idx) if !self.shown.is_empty() => {
-                            let next = idx.min(self.shown.len() - 1);
+                            let next = self.advance_index(idx);
                             self.select_and_focus(next);
                         }
                         // Nothing left to show → clear the reader.
@@ -2292,7 +2328,7 @@ impl SimpleComponent for MessageList {
                 } else if had_focus {
                     if let Some(idx) = removed_idx {
                         if !self.shown.is_empty() {
-                            self.focus_only(idx.min(self.shown.len() - 1));
+                            self.focus_only(self.advance_index(idx));
                         }
                     }
                 }
@@ -2355,7 +2391,7 @@ impl SimpleComponent for MessageList {
                 if was_viewed {
                     match first_removed {
                         Some(idx) if !self.shown.is_empty() => {
-                            let next = idx.min(self.shown.len() - 1);
+                            let next = self.advance_index(idx);
                             self.select_and_focus(next);
                         }
                         _ => {
@@ -2365,7 +2401,7 @@ impl SimpleComponent for MessageList {
                 } else if had_focus {
                     if let Some(idx) = first_removed {
                         if !self.shown.is_empty() {
-                            self.focus_only(idx.min(self.shown.len() - 1));
+                            self.focus_only(self.advance_index(idx));
                         }
                     }
                 }
@@ -2400,6 +2436,27 @@ impl SimpleComponent for MessageList {
                     self.selected_id = Some(key);
                     self.selected_ids = vec![key];
                     self.select_current();
+                    // These arrive from outside the list (a notification
+                    // click, an undo) where the row can be far outside the
+                    // viewport — bring it into view. In an idle so a rebuild
+                    // queued just before this (and its own scroll restore)
+                    // has laid the rows out first; the focus grab is what
+                    // scrolls, and the selection pill is the indicator.
+                    if let Some(idx) =
+                        self.shown.iter().position(|m| (m.account_id, m.id) == key)
+                    {
+                        let list = self.rows.widget().clone();
+                        gtk::glib::idle_add_local_once(move || {
+                            if let Some(row) = list.row_at_index(idx as i32) {
+                                row.grab_focus();
+                            }
+                            if let Some(win) =
+                                list.root().and_then(|r| r.downcast::<gtk::Window>().ok())
+                            {
+                                win.set_focus_visible(false);
+                            }
+                        });
+                    }
                     let (thread, solo) = self.conversation_for(&m);
                     let _ = sender.output(MessageListOutput::Selected { message: m, thread, solo });
                 }
@@ -3020,6 +3077,14 @@ impl MessageList {
         }
     }
 
+    /// Where deletion advances to, once the row at `idx` is gone: the row now
+    /// occupying that slot when the user was moving down the list, the row
+    /// above it when they were moving up. Clamped to the list either way.
+    fn advance_index(&self, idx: usize) -> usize {
+        let next = if self.nav_direction < 0 { idx.saturating_sub(1) } else { idx };
+        next.min(self.shown.len().saturating_sub(1))
+    }
+
     /// Put keyboard focus on row `idx` without touching selection — the
     /// counterpart to `select_and_focus` for a row that wasn't the one being
     /// viewed. Used when a removed row held focus but wasn't the viewed
@@ -3030,6 +3095,22 @@ impl MessageList {
         let list = self.rows.widget();
         if let Some(row) = list.row_at_index(idx as i32) {
             row.grab_focus();
+        }
+        self.hide_focus_ring();
+    }
+
+    /// Drop the window's focus-visible flag after a *programmatic* focus grab:
+    /// the reclaimed row keeps keyboard focus (arrow keys resume from it), but
+    /// no accent focus ring appears around a row the user never navigated to.
+    /// The next real key press turns the ring back on, as normal.
+    fn hide_focus_ring(&self) {
+        if let Some(win) = self
+            .rows
+            .widget()
+            .root()
+            .and_then(|r| r.downcast::<gtk::Window>().ok())
+        {
+            win.set_focus_visible(false);
         }
     }
 

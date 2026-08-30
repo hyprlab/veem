@@ -691,6 +691,7 @@ pub enum AppMsg {
     Messages { account_id: u32, folder_id: u32, messages: Vec<Message> },
     /// Additional indexed summaries from the background backfill (search index).
     MessagesAppend { account_id: u32, folder_id: u32, messages: Vec<Message> },
+    UndoRestored { account_id: u32, folder_id: u32, message_ids: Vec<String> },
     /// A folder's background backfill finished — it's fully indexed now.
     BackfillDone { account_id: u32, folder_id: u32 },
     FolderUnread { account_id: u32, folder_id: u32, unread: u32 },
@@ -4422,6 +4423,26 @@ impl SimpleComponent for AppModel {
                 }
                 // Refresh unread badges with the freshly-synced counts.
                 self.push_unread_counts();
+            }
+
+            AppMsg::UndoRestored { account_id, folder_id, message_ids } => {
+                // The undone move landed and the folder's reload has already
+                // been processed (the worker sends Messages first): put the
+                // user on the restored message — selected, loaded in the
+                // reader, and scrolled into view — instead of wherever the
+                // reload left the list. If the restored message isn't in the
+                // current view (folder switched meanwhile), SelectAndLoad
+                // finds no row and nothing moves.
+                let restored = self
+                    .message_cache
+                    .get(&(account_id, folder_id))
+                    .and_then(|msgs| {
+                        msgs.iter().find(|m| message_ids.contains(&m.message_id))
+                    })
+                    .map(|m| (m.account_id, m.id));
+                if let Some(key) = restored {
+                    self.message_list.emit(MessageListInput::SelectAndLoad(key));
+                }
             }
 
             AppMsg::MessagesAppend { account_id, folder_id, messages } => {
@@ -8945,6 +8966,9 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
         }
         WorkerEvent::MessagesAppend { folder_id, messages } => {
             AppMsg::MessagesAppend { account_id, folder_id, messages }
+        }
+        WorkerEvent::Restored { folder_id, message_ids } => {
+            AppMsg::UndoRestored { account_id, folder_id, message_ids }
         }
         WorkerEvent::Gallery { items } => AppMsg::GalleryItems { account_id, items },
         WorkerEvent::BackfillDone { folder_id } => AppMsg::BackfillDone { account_id, folder_id },
