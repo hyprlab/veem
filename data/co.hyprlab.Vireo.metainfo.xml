@@ -56,6 +56,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.18.0" date="2026-08-29" type="stable">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.18.0</url>
+      <description>
+        <p>Contacts become a full in-app view with editing via Evolution Data Server; Accounts and Settings merge into one window; bulk mail actions apply instantly and run in the background; All Inboxes loads instantly from cache; threads animate open and shut; forwards keep their formatting through a proper HTML sanitizer; and a Reply-To field joins the composer.</p>
+      </description>
+    </release>
     <release version="1.17.1" date="2026-08-28" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.17.1</url>
       <description>

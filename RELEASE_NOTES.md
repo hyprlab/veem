@@ -2,6 +2,22 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.18.0
+
+The 1.18 feature release, beta-tested by the community (thank you @p-mitana, @thecalamityjoe87, @frenchy82 and @yioannides for the feedback that shaped it).
+
+**Contacts, without leaving your mail.** The sidebar's Contacts row now opens a full view right in the app: search, sort and browse everyone from GNOME Contacts, with a full card for each person — their photo (click to expand; iCloud photos finally render), every email with compose and copy at hand, phone numbers, addresses, websites, birthday, notes, and which account the entry belongs to. Edit contacts, add new ones, and delete them without opening GNOME Contacts — changes sync back through Evolution Data Server, so CardDAV accounts pick them up. Composing from a contact slides the composer down right over the card.
+
+**One Settings window.** Accounts and Settings live together behind a standard GNOME view switcher, with every option regrouped into focused sections and a preference for which view opens first.
+
+**Mail that doesn't make you wait.** Bulk actions apply instantly and finish quietly in the background; the refresh spinner shows something's working and the status bar (burger menu, long-press Refresh, or Ctrl+Shift+S) tells you exactly what. All Inboxes paints from the local cache the instant the app opens. Emptied folders show a proper "No Messages" page.
+
+**Conversations, polished.** Threads slide open and shut in the message list with an animated caret (thanks to Isaac's PR #79); conversations open on their first unread; thread-wide delete, Ctrl+A, and threaded popout windows; optional newest-message-first reading order; and an optional card style for single messages.
+
+**Composer & reader.** A Reply-To field joins Cc/Bcc behind "More"; forwards finally keep their formatting, safely — bodies pass through a proper HTML sanitizer so a forwarded invoice still looks like the invoice, with nothing dangerous along for the ride. An "Always show recipients" option keeps the To line visible under every sender. Desktop notifications clear when you read the mail in the app.
+
+**Sidebar.** Contacts and Attachments pin to the sidebar's bottom edge as one clean section (from Isaac's PR #80), chevrons align, account labels are honoured, and the menu gains sections.
+
 ## What's new in 1.17.1
 
 **Microsoft 365 accounts from GNOME Online Accounts work now (issue

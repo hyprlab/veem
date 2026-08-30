@@ -24,7 +24,7 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
     (
         "Isaac",
         "thecalamityjoe87",
-        "PDF thumbnails, the attachment-opening fix, the reader's To line, remote-content option, GNOME-styled context menus",
+        "The sidebar's pinned footer, thread expand/collapse animations, PDF thumbnails, the attachment-opening fix, the reader's To line, remote-content option, GNOME-styled context menus",
     ),
     (
         "Alexander Lubovenko",
