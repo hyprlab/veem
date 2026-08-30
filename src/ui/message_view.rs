@@ -1236,12 +1236,12 @@ impl MessageView {
                             card_action_button(key, "reply", "mail-reply-sender-symbolic", "Reply to this message"),
                             card_action_button(key, "replyall", "mail-reply-all-symbolic", "Reply to everyone on this message"),
                             card_action_button(key, "forward", "mail-forward-symbolic", "Forward this message"),
-                            // State-showing icon (unread envelope while unread);
-                            // the tooltip names the action.
+                            // Action-showing icon (read envelope = "mark as
+                            // read"), like the menus and toolbar.
                             if m.unread {
-                                card_action_button(key, "toggleread", "mail-unread-symbolic", "Mark as Read")
+                                card_action_button(key, "toggleread", "mail-read-symbolic", "Mark as Read")
                             } else {
-                                card_action_button(key, "toggleread", "mail-read-symbolic", "Mark as Unread")
+                                card_action_button(key, "toggleread", "mail-unread-symbolic", "Mark as Unread")
                             },
                             // The star keeps one glyph; the flagged state is
                             // colour alone (`.on`, toggled optimistically on

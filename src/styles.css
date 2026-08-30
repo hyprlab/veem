@@ -544,7 +544,24 @@ button.star-active {
    touches the list edges. */
 .message-listbox > row.thread-child {
   margin-left: 10px;
-  border-left: 2px dotted alpha(currentColor, 0.3);
+  /* @window_fg_color, not currentColor: a selected row's currentColor is the
+     white selection foreground, which made the rail vanish under selection. */
+  border-left: 2px dotted alpha(@window_fg_color, 0.3);
+}
+
+/* The LAST reply: its rail stops at the node dot (row centre) instead of
+   running on below it. The row's own border goes transparent (keeping its
+   2px of geometry) and a half-height in-row widget draws the same dotted
+   border for the top half only (see the rail-stub overlay in the row view). */
+.message-listbox > row.thread-child.thread-last {
+  border-left-color: transparent;
+}
+
+/* Identical stroke to the sibling rows' rails; the negative margin moves it
+   from the row's content box back onto the border's own axis. */
+.thread-rail-stub {
+  border-left: 2px dotted alpha(@window_fg_color, 0.3);
+  margin-left: -2px;
 }
 
 /* Every row-level tint off — the card below carries the state instead. */

@@ -1066,14 +1066,13 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed
                                         && model.reader_compose.is_none(),
-                                    // The icon shows the message's STATE (unread
-                                    // envelope while unread); the tooltip names
-                                    // the action.
+                                    // The icon shows the ACTION (read envelope =
+                                    // "mark as read"), matching the menus.
                                     #[watch]
                                     set_icon_name: if model.reply_target().is_some_and(|m| m.unread) {
-                                        "co.hyprlab.Vireo-mail-unread-symbolic"
-                                    } else {
                                         "co.hyprlab.Vireo-mail-read-symbolic"
+                                    } else {
+                                        "co.hyprlab.Vireo-mail-unread-symbolic"
                                     },
                                     #[watch]
                                     set_tooltip_text: Some(if model.reply_target().is_some_and(|m| m.unread) {

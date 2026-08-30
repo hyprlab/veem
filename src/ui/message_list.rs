@@ -52,6 +52,8 @@ pub struct RowInit {
     pub thread_count: usize,
     /// This row is a (newer/older) reply nested under a thread head — indent it.
     pub is_thread_child: bool,
+    /// The LAST reply of its thread: the dotted rail stops at its node dot.
+    pub is_last_child: bool,
     /// Whether this thread head is currently expanded.
     pub thread_expanded: bool,
     /// Whether conversations can expand in the list at all (preference) —
@@ -180,6 +182,7 @@ pub struct MessageRow {
     thread_count: usize,
     /// Nested reply under a thread head.
     is_thread_child: bool,
+    is_last_child: bool,
     /// Whether this head's conversation is expanded.
     thread_expanded: bool,
     thread_expandable: bool,
@@ -342,6 +345,23 @@ impl FactoryComponent for MessageRow {
             // The node dot where this member meets the group's dotted rail
             // (thread children only): overlaid at the row's left edge and
             // pulled onto the rail itself by .thread-node's negative margin.
+            // The last reply's rail: a real dotted border on a widget spanning
+            // exactly the row's top half (homogeneous halves), so it ends at
+            // the node dot and renders identically to the sibling rows' full
+            // border rails — a gradient imitation drew square dots. Added
+            // before the node dot so the dot draws over where they meet.
+            add_overlay = &gtk::Box {
+                set_orientation: gtk::Orientation::Vertical,
+                set_halign: gtk::Align::Start,
+                set_homogeneous: true,
+                set_visible: self.is_last_child,
+
+                gtk::Box {
+                    add_css_class: "thread-rail-stub",
+                },
+                gtk::Box {},
+            },
+
             add_overlay = &gtk::Box {
                 add_css_class: "thread-node",
                 set_halign: gtk::Align::Start,
@@ -470,8 +490,10 @@ impl FactoryComponent for MessageRow {
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Forward)),
                             },
                             gtk::Button {
+                                // Action-showing icon (read envelope = "mark
+                                // as read"), like the menus and toolbar.
                                 #[watch]
-                                set_icon_name: if self.msg.unread { "co.hyprlab.Vireo-mail-unread-symbolic" } else { "co.hyprlab.Vireo-mail-read-symbolic" },
+                                set_icon_name: if self.msg.unread { "co.hyprlab.Vireo-mail-read-symbolic" } else { "co.hyprlab.Vireo-mail-unread-symbolic" },
                                 #[watch]
                                 set_tooltip_text: Some(if self.msg.unread { "Mark as read" } else { "Mark as unread" }),
                                 add_css_class: "flat",
@@ -741,6 +763,7 @@ impl FactoryComponent for MessageRow {
             show_palette,
             thread_count,
             is_thread_child,
+            is_last_child,
             thread_expanded,
             thread_expandable,
             thread_key,
@@ -767,6 +790,7 @@ impl FactoryComponent for MessageRow {
             show_palette,
             thread_count,
             is_thread_child,
+            is_last_child,
             thread_expanded,
             thread_expandable,
             thread_key,
@@ -1091,6 +1115,9 @@ impl MessageRow {
         }
         if self.is_thread_child {
             v.push("thread-child");
+        }
+        if self.is_last_child {
+            v.push("thread-last");
         }
         v
     }
@@ -2937,6 +2964,7 @@ impl MessageList {
                         show_palette: self.list_palette,
                         thread_count: 0,
                         is_thread_child: true,
+                        is_last_child: i == children.len() - 1,
                         thread_expanded: false,
                         thread_expandable: self.thread_expansion,
                         thread_key: None,
@@ -3074,6 +3102,7 @@ impl MessageList {
         struct RowMeta {
             count: usize,
             is_child: bool,
+            is_last: bool,
             expanded: bool,
             key: Option<(u32, String)>,
             unread: bool,
@@ -3122,17 +3151,21 @@ impl MessageList {
             metas.push(RowMeta {
                 count,
                 is_child: false,
+                is_last: false,
                 expanded,
                 key: if count > 1 { Some(key.clone()) } else { None },
                 unread: any_unread,
                 latest,
             });
             if expanded {
-                for child in it {
+                let rest: Vec<Message> = it.collect();
+                let n = rest.len();
+                for (j, child) in rest.into_iter().enumerate() {
                     shown.push(child);
                     metas.push(RowMeta {
                         count: 0,
                         is_child: true,
+                        is_last: j + 1 == n,
                         expanded: false,
                         key: None,
                         unread: false,
@@ -3177,6 +3210,7 @@ impl MessageList {
                     show_palette: self.list_palette,
                     thread_count: meta.count,
                     is_thread_child: meta.is_child,
+                    is_last_child: meta.is_last,
                     thread_expanded: meta.expanded,
                     thread_expandable: self.thread_expansion,
                     thread_key: meta.key,
