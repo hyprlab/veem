@@ -1231,6 +1231,8 @@ impl MessageView {
                         let key = (m.account_id, m.id);
                         format!(
                             "<span class=\"vireo-acts\">{}{}{}{}{}{}{}{}{}{}</span>",
+                            // Same order as the reader toolbar and the list's
+                            // Actions Palette, View Source closing the line.
                             card_action_button(key, "reply", "mail-reply-sender-symbolic", "Reply to this message"),
                             card_action_button(key, "replyall", "mail-reply-all-symbolic", "Reply to everyone on this message"),
                             card_action_button(key, "forward", "mail-forward-symbolic", "Forward this message"),
@@ -1241,7 +1243,6 @@ impl MessageView {
                             } else {
                                 card_action_button(key, "toggleread", "mail-read-symbolic", "Mark as Unread")
                             },
-                            card_action_button(key, "contact", "contact-new-symbolic", "Add sender to Contacts"),
                             // The star keeps one glyph; the flagged state is
                             // colour alone (`.on`, toggled optimistically on
                             // click too).
@@ -1253,9 +1254,10 @@ impl MessageView {
                                 id = key.1,
                                 svg = inline_icon_svg("non-starred-symbolic"),
                             ),
-                            card_action_button(key, "spam", "mail-mark-junk-symbolic", "Mark as Spam"),
                             card_action_button(key, "archive", "mail-archive-symbolic", "Archive this message"),
                             card_action_button(key, "delete", "user-trash-symbolic", "Delete this message"),
+                            card_action_button(key, "spam", "mail-mark-junk-symbolic", "Mark as Spam"),
+                            card_action_button(key, "contact", "contact-new-symbolic", "Add sender to Contacts"),
                             card_action_button(key, "viewsource", "code-symbolic", "View source"),
                         )
                     } else {

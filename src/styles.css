@@ -456,12 +456,12 @@ button.star-active {
 }
 
 .message-row {
-  /* The pill: inset from the list edges, rounded like the thread cards. The
-     padding is trimmed by exactly the margin so the content sits where it
-     always did — only the highlight's shape changed. */
+  /* The pill: inset from the list edges, rounded like the thread cards.
+     Vertical padding is symmetric — the Actions Palette floats in an overlay
+     and takes no room, so the text block sits centred in the pill. */
   margin: 2px 0;
   border-radius: 12px;
-  padding: 8px 8px 8px 10px;
+  padding: 13px 8px 13px 10px;
 }
 
 /* Selected rows: every text element fully white at full strength, in both
@@ -497,24 +497,17 @@ button.star-active {
   padding-left: 6px;
 }
 
-/* With the Actions Palette line off, its vertical room goes back to the pill
-   as breathing space; with it on, the padding stays as it always was. */
-.message-row.no-palette {
-  padding-top: 13px;
-  padding-bottom: 13px;
-}
-
 .message-row.no-avatar .unread-dot {
   margin-right: 4px;
 }
 
-/* ...and the palette line stops reserving its 260px, so the pane can be dragged
-   down to what the sender and subject need. Turning the circles off is a request
-   for a narrow list, and that reservation — which keeps opening the palette from
-   shoving the pane wider — is the only thing standing in the way. Below the
-   palette's own width it is clipped by the row rather than pushing the pane. */
-.message-row.no-avatar .actions-line {
-  min-width: 0;
+/* Palette + sender circles + previews off: a two-line row is too short for
+   the floating ⋯ to clear the circle, so the pill reserves exactly the height
+   the pair needs — centred 38px circle, 2px air, the ⋯ riding 1px off the
+   pill's bottom edge — and not a pixel more. Rows with a preview are already
+   tall enough and keep their natural height. */
+.message-row.palette-room {
+  min-height: 54px;
 }
 
 /* Conversation threading: count chip + compact expand/collapse chevron on the
@@ -566,9 +559,11 @@ button.star-active {
    list (the rows' shared 6px margin), so an expanded thread never opens a gap
    along the pane's right side. */
 .message-listbox > row.thread-child .message-row {
-  margin: 3px 0 3px 10px;
+  /* Identical geometry to the top-level pills — same padding, same vertical
+     rhythm — the only difference is the 10px indent onto the thread rail. */
+  margin: 2px 0 2px 10px;
   border-radius: 12px;
-  padding: 8px 12px;
+  padding: 13px 8px 13px 10px;
 }
 
 /* Node dot where each member meets the rail: an 8px circle whose negative
@@ -598,15 +593,15 @@ button.star-active {
   background-color: alpha(@accent_bg_color, 0.5);
 }
 
-/* The Actions Palette: quick-action buttons that slide in from the chevron,
-   over the preview slot (so the row height doesn't change). */
-/* The row's actions line holds the ⋯ toggle and, once opened, the palette. Its
-   width is reserved up front so revealing the palette never widens the message
-   list: the pane's minimum comes from its widest row, and a pane that grows the
-   moment you click is disconcerting. The figure is the palette's own metrics —
-   eight buttons at 22px + 4px padding, plus the 20px toggle and 2px spacing. */
-.actions-line {
-  min-width: 234px;
+/* The Actions Palette: quick-action buttons that slide in from the chevron.
+   The whole line floats in an overlay over the pill's bottom-left corner, so
+   neither the ⋯ nor the opened palette takes any room in the row — the open
+   palette reads as a small floating toolbar over the text instead. */
+.actions-palette {
+  background: @view_bg_color;
+  border-radius: 8px;
+  padding: 1px 4px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
 }
 
 .actions-palette button {
@@ -625,13 +620,23 @@ button.star-active {
 .palette-toggle {
   min-width: 20px;
   min-height: 0;
-  padding: 0 2px;
+  /* A hair inside the row pill's edge, so the hover wash never touches it. */
+  padding: 1px 3px;
   opacity: 0;
   transition: opacity 200ms ease-in-out;
 }
 
+/* Revealed (row hovered), the ⋯ is bare — no ground of its own, so it never
+   reads as a chip colliding with the sender circle. Only when the pointer
+   reaches the button itself does a translucent wash lift it for the click. */
 .palette-toggle.revealed {
-  opacity: 0.6;
+  opacity: 0.85;
+}
+
+.palette-toggle.revealed:hover {
+  opacity: 1;
+  background: alpha(@view_bg_color, 0.65);
+  border-radius: 8px;
 }
 
 .palette-toggle.revealed:hover {
@@ -647,7 +652,6 @@ button.star-active {
   min-height: 10px;
   border-radius: 5px;
   background: @accent_bg_color;
-  margin-top: 6px;
 }
 
 .message-sender {
@@ -912,10 +916,11 @@ headerbar.reader-toolbar button.image-button {
   border: none;
 }
 
-/* Compact recipient fields (From/To/Cc/Bcc/Subject) so the body editor, which
-   expands to fill, gets far more vertical room. Default row header is 50px. */
+/* Recipient fields (From/To/Cc/Bcc/Subject): trimmed from libadwaita's 50px
+   default so the body editor keeps generous room, but no further — 34px read
+   as cramped (yioannides, #81). */
 .compose-fields > row > box.header {
-  min-height: 34px;
+  min-height: 42px;
 }
 
 .compose-body {

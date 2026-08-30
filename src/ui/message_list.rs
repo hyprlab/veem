@@ -24,6 +24,7 @@ pub enum RowAction {
     Archive,
     Delete,
     ViewSource,
+    AddContact,
 }
 
 /// Init for a row: the message, Gravatar flag, and optional account-ring class
@@ -338,6 +339,144 @@ impl FactoryComponent for MessageRow {
                 set_visible: self.is_thread_child,
             },
 
+            // The Actions Palette floats over the pill's bottom-left corner,
+            // opening rightward from the ⋯ button. As an overlay it takes no
+            // room in the row: the text sits centred in the pill whether the
+            // palette preference is on or off (the reserved line used to read
+            // as a lopsided empty band under the text — yioannides, #81).
+            #[name = "actions_line"]
+            add_overlay = &gtk::Box {
+                    set_spacing: 2,
+                    set_halign: gtk::Align::Start,
+                    set_valign: gtk::Align::End,
+                    // With sender circles on, the ⋯ centres under the avatar:
+                    // circle centre (pill padding + 19) minus half the button.
+                    // Thread children share the exact pill geometry and only
+                    // add their card's 10px indent. Without circles it hugs
+                    // the pill's edge.
+                    set_margin_start: if self.avatars {
+                        if self.is_thread_child { 26 } else { 16 }
+                    } else if self.is_thread_child {
+                        24
+                    } else {
+                        14
+                    },
+                    // With circles on, ride lower for a sliver of air between
+                    // the circle's bottom edge and the ⋯ — but keep 1px clear
+                    // of the pill's own bottom edge (the pill's 2px outer
+                    // margin sits inside this overlay's bounds).
+                    set_margin_bottom: if self.avatars { 3 } else { 4 },
+                    add_css_class: "actions-line",
+                    // Preference: no palette at all — the line (and the space
+                    // it reserves under the preview) goes away entirely.
+                    set_visible: self.show_palette,
+
+                    // Actions toggle (⋯). Clicking it opens/closes the palette but
+                    // does NOT select or open the message (it's a button, so the
+                    // click is consumed before the row's selection gesture).
+                    gtk::Button {
+                        set_icon_name: "co.hyprlab.Vireo-view-more-horizontal-symbolic",
+                        // Hidden until the row is hovered (or the palette is open);
+                        // the .revealed class fades it in via a CSS transition.
+                        #[watch]
+                        set_css_classes: &self.chevron_classes(),
+                        set_tooltip_text: Some("Actions"),
+                        set_valign: gtk::Align::Center,
+                        connect_clicked[sender] => move |_| sender.input(MessageRowInput::TogglePalette),
+                    },
+
+                    gtk::Revealer {
+                        set_transition_type: gtk::RevealerTransitionType::SlideRight,
+                        set_transition_duration: 180,
+                        #[watch]
+                        set_reveal_child: self.palette_open,
+
+                        gtk::Box {
+                            add_css_class: "actions-palette",
+                            set_halign: gtk::Align::Start,
+                            set_valign: gtk::Align::Center,
+                            set_spacing: 0,
+
+                            // Keep the palette open while the cursor is over it.
+                            add_controller = gtk::EventControllerMotion {
+                                connect_enter[sender] => move |_, _, _| sender.input(MessageRowInput::PaletteEnter),
+                                connect_leave[sender] => move |_| sender.input(MessageRowInput::PaletteLeave),
+                            },
+
+                            // Mirrors the reader toolbar's order (Reply,
+                            // Reply All, Forward, Read, Flag; Archive, Delete,
+                            // Spam), with Add to Contacts and View Source
+                            // closing the line.
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-mail-reply-sender-symbolic",
+                                set_tooltip_text: Some("Reply"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Reply)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-mail-reply-all-symbolic",
+                                set_tooltip_text: Some("Reply All"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ReplyAll)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-mail-forward-symbolic",
+                                set_tooltip_text: Some("Forward"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Forward)),
+                            },
+                            gtk::Button {
+                                #[watch]
+                                set_icon_name: if self.msg.unread { "co.hyprlab.Vireo-mail-unread-symbolic" } else { "co.hyprlab.Vireo-mail-read-symbolic" },
+                                #[watch]
+                                set_tooltip_text: Some(if self.msg.unread { "Mark as read" } else { "Mark as unread" }),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleRead)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
+                                #[watch]
+                                set_css_classes: if self.msg.starred { &["flat", "star-active"] } else { &["flat"] },
+                                #[watch]
+                                set_tooltip_text: Some(if self.msg.starred { "Remove star" } else { "Star" }),
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleStar)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
+                                set_tooltip_text: Some("Archive"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Archive)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
+                                set_tooltip_text: Some("Delete"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Delete)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
+                                set_tooltip_text: Some("Mark as spam"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Spam)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-contact-new-symbolic",
+                                set_tooltip_text: Some("Add sender to Contacts"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::AddContact)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-code-symbolic",
+                                set_tooltip_text: Some("View Source"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ViewSource)),
+                            },
+                        },
+                    },
+
+                },
+
+
             #[wrap(Some)]
             set_child = &gtk::Box {
             set_orientation: gtk::Orientation::Horizontal,
@@ -380,6 +519,7 @@ impl FactoryComponent for MessageRow {
                 set_orientation: gtk::Orientation::Vertical,
                 set_spacing: 2,
                 set_hexpand: true,
+                set_valign: gtk::Align::Center,
 
                 gtk::Box {
                     set_spacing: 6,
@@ -486,107 +626,6 @@ impl FactoryComponent for MessageRow {
                     add_css_class: "message-preview",
                 },
 
-                // Below it, the Actions Palette on a line of its own, opening
-                // rightward from the ⋯ button. The line reserves the palette's
-                // width even while collapsed (see `.actions-line`), so the first
-                // click doesn't shove the whole pane wider under the pointer.
-                gtk::Box {
-                    set_spacing: 2,
-                    set_halign: gtk::Align::Start,
-                    set_valign: gtk::Align::Center,
-                    add_css_class: "actions-line",
-                    // Preference: no palette at all — the line (and the space
-                    // it reserves under the preview) goes away entirely.
-                    set_visible: self.show_palette,
-
-                    // Actions toggle (⋯). Clicking it opens/closes the palette but
-                    // does NOT select or open the message (it's a button, so the
-                    // click is consumed before the row's selection gesture).
-                    gtk::Button {
-                        set_icon_name: "co.hyprlab.Vireo-view-more-horizontal-symbolic",
-                        // Hidden until the row is hovered (or the palette is open);
-                        // the .revealed class fades it in via a CSS transition.
-                        #[watch]
-                        set_css_classes: &self.chevron_classes(),
-                        set_tooltip_text: Some("Actions"),
-                        set_valign: gtk::Align::Center,
-                        connect_clicked[sender] => move |_| sender.input(MessageRowInput::TogglePalette),
-                    },
-
-                    gtk::Revealer {
-                        set_transition_type: gtk::RevealerTransitionType::SlideRight,
-                        set_transition_duration: 180,
-                        #[watch]
-                        set_reveal_child: self.palette_open,
-
-                        gtk::Box {
-                            add_css_class: "actions-palette",
-                            set_halign: gtk::Align::Start,
-                            set_valign: gtk::Align::Center,
-                            set_spacing: 0,
-
-                            // Keep the palette open while the cursor is over it.
-                            add_controller = gtk::EventControllerMotion {
-                                connect_enter[sender] => move |_, _, _| sender.input(MessageRowInput::PaletteEnter),
-                                connect_leave[sender] => move |_| sender.input(MessageRowInput::PaletteLeave),
-                            },
-
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-mail-reply-sender-symbolic",
-                                set_tooltip_text: Some("Reply"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Reply)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-mail-reply-all-symbolic",
-                                set_tooltip_text: Some("Reply All"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ReplyAll)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-mail-forward-symbolic",
-                                set_tooltip_text: Some("Forward"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Forward)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
-                                #[watch]
-                                set_css_classes: if self.msg.starred { &["flat", "star-active"] } else { &["flat"] },
-                                #[watch]
-                                set_tooltip_text: Some(if self.msg.starred { "Remove star" } else { "Star" }),
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleStar)),
-                            },
-                            gtk::Button {
-                                #[watch]
-                                set_icon_name: if self.msg.unread { "co.hyprlab.Vireo-mail-unread-symbolic" } else { "co.hyprlab.Vireo-mail-read-symbolic" },
-                                #[watch]
-                                set_tooltip_text: Some(if self.msg.unread { "Mark as read" } else { "Mark as unread" }),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleRead)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
-                                set_tooltip_text: Some("Mark as spam"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Spam)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
-                                set_tooltip_text: Some("Archive"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Archive)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
-                                set_tooltip_text: Some("Delete"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Delete)),
-                            },
-                        },
-                    },
-
-                },
             },
             },
             },
@@ -920,6 +959,12 @@ impl MessageRow {
         // (see `.message-row.no-palette` in the stylesheet).
         if !self.show_palette {
             v.push("no-palette");
+        }
+        // Previews off leaves a two-line row: too short for the ⋯ to clear
+        // the sender circle's bottom edge — reserve just enough height that
+        // they never collide (see `.message-row.palette-room`).
+        if self.show_palette && self.avatars && self.preview_lines == 0 {
+            v.push("palette-room");
         }
         v
     }
@@ -1323,6 +1368,9 @@ pub enum MessageListInput {
     ReclaimFocus,
     /// Put the cursor in the search field.
     FocusSearch,
+    /// Showcase staging: open row N's Actions Palette (screenshot hook only —
+    /// see VIREO_SHOWCASE_PALETTE in app.rs).
+    DebugOpenPalette(usize),
     /// Expand/collapse a conversation thread.
     ToggleThread((u32, String)),
     /// A collapsing thread's replies have finished sliding shut — drop them
@@ -2435,6 +2483,9 @@ impl SimpleComponent for MessageList {
                         self.rows.widget().unselect_all();
                     }
                 }
+            }
+            MessageListInput::DebugOpenPalette(idx) => {
+                self.rows.send(idx, MessageRowInput::TogglePalette);
             }
             MessageListInput::SelectAndLoad(key) => {
                 if let Some(m) = self.shown.iter().find(|m| (m.account_id, m.id) == key).cloned() {

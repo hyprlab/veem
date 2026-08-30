@@ -2393,6 +2393,16 @@ impl SimpleComponent for AppModel {
                     gtk::glib::timeout_add_seconds_local_once(3, move || {
                         let _ = list.send(MessageListInput::MoveSelection(1));
                     });
+                    // VIREO_SHOWCASE_PALETTE=N opens row N's Actions Palette
+                    // (so a capture can verify the floating palette's look).
+                    if let Some(Ok(idx)) =
+                        std::env::var("VIREO_SHOWCASE_PALETTE").ok().map(|v| v.parse())
+                    {
+                        let list = model.message_list.sender().clone();
+                        gtk::glib::timeout_add_seconds_local_once(7, move || {
+                            let _ = list.send(MessageListInput::DebugOpenPalette(idx));
+                        });
+                    }
                     let view = model.message_view.sender().clone();
                     gtk::glib::timeout_add_seconds_local_once(6, move || {
                         let _ = view.send(crate::ui::message_view::MessageViewInput::CardClicked {
@@ -3327,6 +3337,9 @@ impl SimpleComponent for AppModel {
                             });
                         }
                     }
+                    RowAction::AddContact => {
+                        self.show_add_contact_dialog(&m.from_name, &m.from_addr, &sender);
+                    }
                 }
             }
 
@@ -3753,9 +3766,19 @@ impl SimpleComponent for AppModel {
 
             AppMsg::SetPreviewLines(lines) => {
                 if self.preview_lines != lines {
+                    let was_off = self.preview_lines == 0;
                     self.preview_lines = lines;
                     self.save_settings();
                     self.message_list.emit(MessageListInput::SetPreviewLines(lines));
+                    // Previews switched back on: IMAP summaries fetched while
+                    // they were off carry no preview text (the setting also
+                    // stops the body slice being downloaded), so nothing would
+                    // show until the next scheduled sync. Refresh now so they
+                    // fill in right away. (Graph always has bodyPreview in
+                    // hand, which is why Microsoft accounts showed instantly.)
+                    if was_off && lines > 0 {
+                        sender.input(AppMsg::Refresh);
+                    }
                 }
             }
 
@@ -8820,7 +8843,18 @@ fn showcase_capture(win: &gtk::Widget, path: &str) {
     snapshot.scale(2.0, 2.0);
     gtk::prelude::PaintableExt::snapshot(&paintable, &snapshot, w as f64, h as f64);
     let Some(node) = snapshot.to_node() else {
-        tracing::error!("showcase: nothing to render");
+        // A fully occluded window is suspended by the compositor and stops
+        // producing frames, so the snapshot comes back empty. Raise it and
+        // try again shortly.
+        tracing::warn!("showcase: nothing to render (window suspended?) — presenting + retrying");
+        if let Some(w) = win.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
+            w.present();
+        }
+        let win = win.clone();
+        let path = path.to_string();
+        gtk::glib::timeout_add_seconds_local_once(2, move || {
+            showcase_capture(&win, &path);
+        });
         return;
     };
     let Some(renderer) = win.native().and_then(|n| n.renderer()) else {
