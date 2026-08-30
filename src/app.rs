@@ -3989,7 +3989,19 @@ impl SimpleComponent for AppModel {
                 // A mailto: link from anywhere on the system (the desktop file
                 // registers the scheme). Same open-composer flow as ComposeTo,
                 // with the URI's subject/cc/bcc/body carried along.
-                let Some(prefill) = parse_mailto(&uri) else { return };
+                let Some(mut prefill) = parse_mailto(&uri) else { return };
+                // attach= names files (#90): keep only the ones that really
+                // exist as regular files. Whatever attaches shows up as a
+                // normal removable chip in the composer, so nothing rides
+                // along invisibly if a web link (rather than Nautilus)
+                // carried the parameter.
+                prefill.attachments.retain(|p| {
+                    let ok = p.is_file();
+                    if !ok {
+                        tracing::info!("mailto attach ignored (not a file): {}", p.display());
+                    }
+                    ok
+                });
                 self.showing_gallery = false;
                 let account = self
                     .current
@@ -8995,9 +9007,14 @@ fn pct_decode_mailto(s: &str) -> String {
 fn parse_mailto(uri: &str) -> Option<crate::ui::compose::ComposePrefill> {
     let rest = uri.strip_prefix("mailto:")?;
     let (addr, query) = rest.split_once('?').unwrap_or((rest, ""));
+    // Leading slashes aren't part of any address: Nautilus's "Send by email"
+    // opens `mailto:///?attach=…` (#90), and sloppy generators write
+    // `mailto://user@host` URL-style.
+    let addr = addr.trim_start_matches('/');
     let mut to = pct_decode_mailto(addr);
     let (mut cc, mut bcc, mut subject, mut body) =
         (String::new(), String::new(), String::new(), String::new());
+    let mut attachments: Vec<std::path::PathBuf> = Vec::new();
     for pair in query.split('&').filter(|p| !p.is_empty()) {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
         let v = pct_decode_mailto(v);
@@ -9013,6 +9030,16 @@ fn parse_mailto(uri: &str) -> Option<crate::ui::compose::ComposePrefill> {
             "bcc" => bcc = v,
             "subject" => subject = v,
             "body" => body = v,
+            // Nautilus's "Send by email" (and xdg-email) pass the files as
+            // attach= parameters (#90) — an absolute path or a file:// URI.
+            // Only absolute paths are accepted; the caller re-checks that
+            // each names a real file before attaching.
+            "attach" | "attachment" if !v.is_empty() => {
+                let path = v.strip_prefix("file://").unwrap_or(&v);
+                if path.starts_with('/') {
+                    attachments.push(std::path::PathBuf::from(path));
+                }
+            }
             _ => {}
         }
     }
@@ -9032,6 +9059,7 @@ fn parse_mailto(uri: &str) -> Option<crate::ui::compose::ComposePrefill> {
         bcc,
         subject,
         body_html,
+        attachments,
         ..Default::default()
     })
 }
@@ -9740,6 +9768,22 @@ mod tests {
         assert_eq!(p.body_html, "&lt;script&gt;");
 
         assert!(super::parse_mailto("https://example.com").is_none());
+
+        // Nautilus-style attachments (#90): plain absolute paths and file://
+        // URIs, percent-decoded, several allowed; relative paths refused.
+        // Nautilus opens `mailto:///?…` — the slashes are not an address.
+        let p = super::parse_mailto(
+            "mailto:///?attach=/home/u/a%20b.pdf&attach=file:///tmp/c.png&attach=../etc/passwd",
+        )
+        .unwrap();
+        assert_eq!(p.to, "");
+        assert_eq!(
+            p.attachments,
+            vec![
+                std::path::PathBuf::from("/home/u/a b.pdf"),
+                std::path::PathBuf::from("/tmp/c.png"),
+            ],
+        );
     }
 
     #[test]

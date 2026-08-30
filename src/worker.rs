@@ -105,6 +105,16 @@ const WATCH_LEASE: Duration = Duration::from_secs(3600);
 /// whatever the server chooses to say.
 const WATCH_VERIFY: Duration = Duration::from_secs(60);
 
+/// How long ending an IDLE (the DONE handshake) may take before the connection
+/// is declared wedged and dropped (#91). Unbounded, a server that never answers
+/// DONE — or a middlebox that silently killed the idle connection — swallowed
+/// the folder click that interrupted the IDLE, forever.
+const IDLE_DONE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Cap on the SELECT / IDLE-init round trips entering an IDLE, for the same
+/// wedged-connection reason as [`IDLE_DONE_TIMEOUT`].
+const IDLE_START_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// A request from the UI to the worker.
 #[derive(Debug)]
 pub enum MailRequest {
@@ -506,7 +516,8 @@ async fn run_imap(
     let mut refs_repair: std::collections::VecDeque<(u32, String)> =
         std::collections::VecDeque::new();
     // IMAP IDLE push: watch the most recently loaded folder for new mail.
-    let push_enabled = crate::config::load_push();
+    // The account's own setting wins over the global switch (#91).
+    let push_enabled = account.push.unwrap_or_else(crate::config::load_push);
     let mut idle_folder: Option<(u32, String)> = None;
     // When the other folders' unread chips were last re-checked (None = not
     // yet this session; connect_and_list's full listing covers startup itself).
@@ -2044,6 +2055,23 @@ async fn recv_one(rx: &mut mpsc::UnboundedReceiver<MailRequest>) -> IdleOutcome 
 /// prefetch pass and re-IDLE); `Request` to be handled normally; `Closed` when
 /// the channel ends. Any IDLE error falls back to a plain receive.
 #[allow(clippy::too_many_arguments)]
+/// End an IDLE and recover the session, giving the DONE handshake
+/// [`IDLE_DONE_TIMEOUT`] to complete. `None` on timeout or error — the future
+/// (and with it the wedged connection) is simply dropped, and the caller's
+/// next request reconnects (#91: an unbounded await here swallowed the very
+/// request that interrupted the IDLE).
+async fn idle_done(
+    handle: async_imap::extensions::idle::Handle<TlsStream<TcpStream>>,
+) -> Option<ImapSession> {
+    match tokio::time::timeout(IDLE_DONE_TIMEOUT, handle.done()).await {
+        Ok(res) => res.ok(),
+        Err(_) => {
+            tracing::info!("IDLE DONE went unanswered; dropping the connection");
+            None
+        }
+    }
+}
+
 async fn idle_wait(
     session: &mut Option<ImapSession>,
     account: &AccountConfig,
@@ -2062,15 +2090,23 @@ async fn idle_wait(
     let Some(mut sess) = session.take() else {
         return recv_one(rx).await;
     };
-    if sess.select(path).await.is_err() {
-        // Stale connection — drop it so the next request reconnects.
-        return recv_one(rx).await;
+    // Stale or wedged connection — drop it so the next request reconnects.
+    // The timeout matters as much as the error: a dead-but-open connection
+    // (silently dropped by a NAT during a long IDLE) answers nothing at all.
+    match tokio::time::timeout(IDLE_START_TIMEOUT, sess.select(path)).await {
+        Ok(Ok(_)) => {}
+        _ => return recv_one(rx).await,
     }
 
     let mut handle = sess.idle();
-    if handle.init().await.is_err() {
-        *session = handle.done().await.ok();
-        return recv_one(rx).await;
+    match tokio::time::timeout(IDLE_START_TIMEOUT, handle.init()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => {
+            *session = idle_done(handle).await;
+            return recv_one(rx).await;
+        }
+        // No answer: the handle (and its connection) is dropped, not reused.
+        Err(_) => return recv_one(rx).await,
     }
 
     enum Wake {
@@ -2084,7 +2120,7 @@ async fn idle_wait(
             req = rx.recv() => { drop(stop); Wake::Request(req) }
         }
     };
-    *session = handle.done().await.ok();
+    *session = idle_done(handle).await;
 
     match wake {
         Wake::Request(Some(req)) => IdleOutcome::Request(req),
@@ -2268,9 +2304,13 @@ async fn watch_folder(
             continue;
         };
         backoff = Duration::from_secs(60);
-        if sess.examine(&path).await.is_err() {
-            tracing::info!("unwatching {path}: no longer selectable");
-            return;
+        match tokio::time::timeout(IDLE_START_TIMEOUT, sess.examine(&path)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) => {
+                tracing::info!("unwatching {path}: no longer selectable");
+                return;
+            }
+            Err(_) => continue, // wedged straight away; reconnect
         }
         // Catch up on whatever happened while unwatched (startup, or the gap a
         // dropped connection left), then settle into the IDLE/verify cycle.
@@ -2296,8 +2336,9 @@ async fn watch_folder(
                     .clamp(1, WATCH_VERIFY.as_secs())
             });
             let mut handle = sess.idle();
-            if handle.init().await.is_err() {
-                break;
+            match tokio::time::timeout(IDLE_START_TIMEOUT, handle.init()).await {
+                Ok(Ok(())) => {}
+                _ => break, // error or wedged; drop the connection and redial
             }
             let woke = {
                 let (idle_fut, _stop) = handle.wait_with_timeout(Duration::from_secs(timeout));
@@ -2306,9 +2347,9 @@ async fn watch_folder(
                     Ok(async_imap::extensions::idle::IdleResponse::NewData(_))
                 )
             };
-            match handle.done().await {
-                Ok(s) => sess = s,
-                Err(_) => break,
+            match idle_done(handle).await {
+                Some(s) => sess = s,
+                None => break,
             }
             // Recount whether pushed awake or on the verify tick; a changed
             // number (or any pushed wake) is activity that renews the lease,
@@ -7616,6 +7657,7 @@ mod tests {
     fn sample_account() -> AccountConfig {
         AccountConfig {
             folder_roles: Default::default(),
+            push: None,
             name: String::new(),
             email: "me@example.com".into(),
             protocol: crate::config::Protocol::Imap,

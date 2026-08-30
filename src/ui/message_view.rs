@@ -124,10 +124,29 @@ impl MessageView {
             .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |_| {});
     }
 
-    /// The verdict-details popover, anchored where the seal was clicked
-    /// (webview coordinates). The old toolbar button's popover, reparented.
-    fn show_sender_popover(&self, account_id: u32, id: u32, rect: (f64, f64, f64, f64)) {
+    /// The verdict-details popover, anchored where the seal was clicked.
+    /// The old toolbar button's popover, reparented.
+    ///
+    /// The rect arrives in the page's CSS pixels with `page_width` as the
+    /// page's innerWidth. With a GNOME text scaling factor ≠ 1.0, WebKit
+    /// zooms the whole page, so CSS pixels differ from widget pixels by
+    /// widget-width / innerWidth — scaling by the measured ratio anchors the
+    /// popover correctly under any scale (and is exactly 1.0 without one).
+    fn show_sender_popover(
+        &self,
+        account_id: u32,
+        id: u32,
+        rect: (f64, f64, f64, f64),
+        page_width: f64,
+    ) {
         let Some(check) = self.member_checks.get(&(account_id, id)) else { return };
+        let widget_width = self.webview.width() as f64;
+        let ratio = if page_width > 0.0 && widget_width > 0.0 {
+            widget_width / page_width
+        } else {
+            1.0
+        };
+        let rect = (rect.0 * ratio, rect.1 * ratio, rect.2 * ratio, rect.3 * ratio);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
         content.add_css_class("sender-detail");
         let heading = gtk::Label::new(Some(check.trust.label()));
@@ -243,7 +262,7 @@ pub enum MessageViewInput {
     SenderCheckFor { account_id: u32, id: u32, check: Box<crate::models::SenderCheck> },
     /// The header seal was clicked — show the verdict details anchored on the
     /// seal's own rect (x, y, w, h in document coordinates).
-    SenderInfoAt { account_id: u32, id: u32, rect: (f64, f64, f64, f64) },
+    SenderInfoAt { account_id: u32, id: u32, rect: (f64, f64, f64, f64), page_width: f64 },
     /// A conversation message header was double-clicked — open that message in
     /// its own window.
     OpenHeader { account_id: u32, id: u32 },
@@ -632,16 +651,21 @@ impl Component for MessageView {
                         }
                     }
                     // The header's verification seal was clicked; extra is
-                    // the seal's own rect, so the popover centres on it.
+                    // the seal's own rect plus the page's innerWidth. The
+                    // rect is in CSS pixels — under a GNOME text scaling
+                    // factor ≠ 1.0 WebKit zooms the page, so CSS pixels no
+                    // longer match widget pixels; innerWidth lets the
+                    // receiver recover the real ratio.
                     "senderinfo" => {
                         let nums: Vec<f64> = extra
                             .map(|e| e.split(',').filter_map(|n| n.parse().ok()).collect())
                             .unwrap_or_default();
-                        if let [x, y, w, h] = nums[..] {
+                        if let [x, y, w, h, vw] = nums[..] {
                             open_sender.input(MessageViewInput::SenderInfoAt {
                                 account_id,
                                 id,
                                 rect: (x, y, w, h),
+                                page_width: vw,
                             });
                         }
                     }
@@ -889,8 +913,8 @@ impl Component for MessageView {
                 }
             }
 
-            MessageViewInput::SenderInfoAt { account_id, id, rect } => {
-                self.show_sender_popover(account_id, id, rect);
+            MessageViewInput::SenderInfoAt { account_id, id, rect, page_width } => {
+                self.show_sender_popover(account_id, id, rect, page_width);
             }
 
             MessageViewInput::Rendered => {
@@ -1624,12 +1648,18 @@ impl MessageView {
                   offers Copy / New Message. */\
                /* Sender-authentication seal (#88): invisible until a\
                   verdict arrives; a pass wears Bazaar's fixed blue (never the\
-                  system accent), problems the warning/error reds. */\
+                  system accent), problems the warning/error reds.\
+                  Sized in em and anchored to the text baseline, then eased\
+                  down to the name's optical centre with an em transform\
+                  (margins can't move it: WebKit synthesizes the missing\
+                  baseline before they apply) — a fixed centred pixel box sat\
+                  visibly low whenever a GNOME text scaling factor shrank the\
+                  type around it. */\
                .vireo-verify{{display:none;background:none;border:none;\
                  padding:0 2px;margin-left:2px;cursor:pointer;line-height:0;\
-                 align-self:center;flex:none;}}\
+                 align-self:baseline;transform:translateY(0.18em);flex:none;}}\
                .vireo-verify.on{{display:inline-flex;}}\
-               .vireo-verify svg{{width:14px;height:14px;display:block;}}\
+               .vireo-verify svg{{width:0.95em;height:0.95em;display:block;}}\
                .vireo-verify svg,.vireo-verify svg *{{fill:currentColor;}}\
                .vireo-verify.trust-pass{{color:#3584e4;}}\
                .vireo-verify.trust-unverified{{color:currentColor;opacity:0.4;}}\
@@ -3280,7 +3310,7 @@ var v=e.target&&e.target.closest?e.target.closest('.vireo-verify'):null;\
 if(!v||!v.dataset.key)return;e.preventDefault();e.stopPropagation();\
 var r=v.getBoundingClientRect();\
 try{window.webkit.messageHandlers.vireo.postMessage(\
-'senderinfo:'+v.dataset.key+':'+Math.round(r.left)+','+Math.round(r.top)+','+Math.round(r.width)+','+Math.round(r.height));}catch(_){}},true);\
+'senderinfo:'+v.dataset.key+':'+r.left+','+r.top+','+r.width+','+r.height+','+window.innerWidth);}catch(_){}},true);\
 document.addEventListener('contextmenu',function(e){\
 var t=e.target&&e.target.closest?e.target.closest('.vireo-mail'):null;\
 if(!t||!t.dataset.mail)return;\

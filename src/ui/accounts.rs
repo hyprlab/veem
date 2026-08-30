@@ -596,6 +596,19 @@ impl Component for AccountsWindow {
                                 },
                             },
 
+                            // Per-account push override (#91): some servers
+                            // mishandle IDLE, and one bad account shouldn't
+                            // cost the good ones their instant delivery.
+                            add = &adw::PreferencesGroup {
+                                set_title: "Syncing",
+
+                                #[name = "push_row"]
+                                adw::ComboRow {
+                                    set_title: "Instant new mail (IMAP push)",
+                                    set_subtitle: "Turn off for servers that stall on push connections.",
+                                },
+                            },
+
                             // Manual special-folder mapping (#82): for servers
                             // whose Sent/Trash/… aren't detected, pin each role
                             // to one of the account's real folders.
@@ -700,6 +713,13 @@ impl Component for AccountsWindow {
             .provider_row
             .set_model(Some(&gtk::StringList::new(&provider_labels)));
         widgets.provider_row.set_list_factory(Some(&non_ellipsizing_factory()));
+
+        // Push override choices mirror AccountConfig::push (None / Some(true)
+        // / Some(false), in that order).
+        widgets
+            .push_row
+            .set_model(Some(&gtk::StringList::new(&["Follow Settings", "On", "Off"])));
+        widgets.push_row.set_list_factory(Some(&non_ellipsizing_factory()));
 
         // Show the SMTP credential fields only when the toggle is on.
         widgets
@@ -1980,6 +2000,11 @@ fn read_account(widgets: &AccountsWindowWidgets, emoji: Option<String>) -> Accou
         oauth: false,
         oauth_settings: None,
         oauth_refresh: String::new(),
+        push: match widgets.push_row.selected() {
+            1 => Some(true),
+            2 => Some(false),
+            _ => None,
+        },
         // Assigned by SaveWithSig from the Special Folders combos.
         folder_roles: Default::default(),
     }
@@ -2021,6 +2046,11 @@ fn fill_editor(widgets: &AccountsWindowWidgets, acc: &AccountConfig) {
     widgets.smtp_separate_row.set_active(acc.smtp_separate);
     widgets.smtp_user_row.set_text(&acc.smtp_username);
     widgets.smtp_pass_row.set_text(&acc.smtp_password);
+    widgets.push_row.set_selected(match acc.push {
+        None => 0,
+        Some(true) => 1,
+        Some(false) => 2,
+    });
     // Show the effective label (custom, or the email address).
     widgets
         .label_row
@@ -2097,6 +2127,7 @@ fn clear_editor(widgets: &AccountsWindowWidgets) {
     widgets.user_row.set_text("");
     widgets.pass_row.set_text("");
     widgets.smtp_separate_row.set_active(false);
+    widgets.push_row.set_selected(0);
     widgets.smtp_user_row.set_text("");
     widgets.smtp_pass_row.set_text("");
     widgets.label_row.set_text("");

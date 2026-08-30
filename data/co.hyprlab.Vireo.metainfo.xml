@@ -56,6 +56,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.18.3" date="2026-08-30">
+
+      <description><p>Folder clicks can no longer be wedged by a stalled IMAP IDLE, push becomes a per-account setting, Nautilus's Send by email attaches the files, and the sender seal renders correctly under GNOME text scaling.</p></description>
+
+    </release>
     <release version="1.18.2" date="2026-08-30">
 
       <description><p>Sender-authentication seal in the message header, a chevron-placement preference with a column-aligned leading layout, thread rows that show the newest message, and thread-wide mark as read in the context menu.</p></description>

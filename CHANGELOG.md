@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.18.4-beta.1 — 2026-08-30
+
+Catch-up release: the beta matches stable 1.18.3 (next section). No
+beta-only changes.
+
+## 1.18.3 — 2026-08-30
+
+Fix release for #90 and #91 (both reported by @frenchy82) plus two
+sender-seal corrections under GNOME text scaling.
+
+- **A folder click can no longer be swallowed by IDLE (#91).** Ending
+  an IMAP IDLE awaited the DONE handshake with no bound, so a server
+  that never answers (or a connection a middlebox silently killed)
+  wedged the worker with the interrupting request already dequeued:
+  clicking a folder did nothing until a restart. DONE now gets 5
+  seconds, SELECT/EXAMINE and IDLE-init 10, in the main loop and both
+  watcher kinds; a timeout drops the dead connection and the pending
+  request reconnects and completes.
+- **Push is a per-account choice (#91).** Each account's editor gains
+  Syncing → "Instant new mail (IMAP push)": Follow Settings, On, or
+  Off. Off also suppresses that account's inbox and per-folder
+  watchers, so one server that mishandles IDLE no longer costs the
+  others their instant delivery. Existing configs are untouched
+  (absent key = follow the global switch).
+- **Nautilus attachments (#90).** "Send by email" in GNOME Files
+  passes files as attach= parameters on a mailto: URI; the composer
+  now attaches them (absolute paths or file:// URIs, several allowed,
+  only existing regular files) as normal removable chips. The
+  mailto:/// form no longer leaves "///" in To:.
+- **The sender seal under text scaling.** The verdict popover is
+  anchored by the measured widget/page ratio, so it centres on the
+  seal at any GNOME text scaling factor; the seal itself is now
+  em-sized and baseline-anchored, so it sits level with the sender's
+  name instead of sinking when the type shrinks.
 ## 1.18.3-beta.1 — 2026-08-30
 
 Catch-up release: the beta matches stable 1.18.2 (next section). No

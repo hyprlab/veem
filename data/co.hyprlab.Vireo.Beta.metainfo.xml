@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.18.4-beta.1" date="2026-08-30" type="development">
+
+      <description><p>Catch-up release: matches stable 1.18.3.</p></description>
+
+    </release>
     <release version="1.18.3-beta.1" date="2026-08-30" type="development">
 
       <description><p>Catch-up release: matches stable 1.18.2.</p></description>
