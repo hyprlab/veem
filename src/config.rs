@@ -776,7 +776,11 @@ fn default_threading() -> bool {
 }
 
 fn default_thread_expansion() -> bool {
-    true
+    // Off for new installs (2026-08-30): conversations expand in the reading
+    // pane's cards; the list keeps its count chip without in-list expansion.
+    // Only a privacy.toml MISSING this key sees the default — every save
+    // writes all fields, so an existing install's choice is pinned.
+    false
 }
 
 fn default_confirm_thread_delete() -> bool {
@@ -816,7 +820,9 @@ fn default_card_actions_hover() -> bool {
 }
 
 fn default_card_actions_auto() -> bool {
-    true
+    // Off for new installs (2026-08-30): card actions wait behind the ⋯
+    // toggle (card_actions_hover) rather than appearing on hover.
+    false
 }
 
 fn default_compose_inline() -> bool {
