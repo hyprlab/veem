@@ -9,14 +9,14 @@
 /* The sidebar's "New message" action: a standing accent button shaped like a
    row — full width, rounded like the row highlights, icon column aligned with
    the rows below. Text and icon in plain white on the accent. */
-/* Row geometry plus extra vertical presence: 4px above and below the
+/* Row geometry plus extra vertical presence: 5px above and below the
    shared .folder-row padding, so the accent button stands taller than a
    plain row without changing its width alignment. */
 row.compose-row {
   background-color: @accent_bg_color;
   color: white;
-  padding-top: 4px;
-  padding-bottom: 4px;
+  padding-top: 5px;
+  padding-bottom: 5px;
 }
 
 /* The icon-only rail centres a lone icon — no text to pad around, and the
