@@ -112,6 +112,13 @@ emaint sync -r bennypowers
 emerge -av mail-client/vireo
 ```
 
+**Nix** — a community-maintained flake lives in
+[tbaumann's fork](https://github.com/tbaumann/vireo) (thanks @tbaumann):
+
+```sh
+nix run github:tbaumann/vireo
+```
+
 Arch, Debian/Ubuntu and Snap packages were discontinued after 1.7.0 — use the
 Flatpak (it works on every distribution) or build from source.
 
