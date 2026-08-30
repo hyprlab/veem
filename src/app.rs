@@ -517,6 +517,10 @@ pub enum AppMsg {
     MessageSelected { message: Message, thread: Vec<Message>, solo: bool },
     /// A new-mail desktop notification was clicked — open that message.
     OpenMessageFromNotification { account_id: u32, folder_id: u32, message_id: u32 },
+    /// A notification action button (#38): mark the notified message read, or
+    /// archive it, without raising the window.
+    NotificationMarkRead { account_id: u32, folder_id: u32, message_id: u32 },
+    NotificationArchive { account_id: u32, folder_id: u32, message_id: u32 },
     /// The search field became active/inactive — supply or drop the cross-folder
     /// search pool (every folder's messages, so search can span the mailbox).
     SearchActive(bool),
@@ -1942,6 +1946,33 @@ impl SimpleComponent for AppModel {
                 }
             });
             app.add_action(&open);
+
+            // Notification buttons (#38): act on the message where it lies,
+            // without presenting the window — that's their point.
+            for (name, mk) in [
+                (
+                    crate::notify::MARK_READ_ACTION,
+                    (&|account_id, folder_id, message_id| AppMsg::NotificationMarkRead {
+                        account_id,
+                        folder_id,
+                        message_id,
+                    }) as &dyn Fn(u32, u32, u32) -> AppMsg,
+                ),
+                (crate::notify::ARCHIVE_ACTION, &|account_id, folder_id, message_id| {
+                    AppMsg::NotificationArchive { account_id, folder_id, message_id }
+                }),
+            ] {
+                let act = gtk::gio::SimpleAction::new(name, Some(ty));
+                let asender = sender.clone();
+                act.connect_activate(move |_, param| {
+                    if let Some((account_id, folder_id, message_id)) =
+                        param.and_then(|v| v.get::<(u32, u32, u32)>())
+                    {
+                        asender.input(mk(account_id, folder_id, message_id));
+                    }
+                });
+                app.add_action(&act);
+            }
         }
         // Restore the last window size + maximized state (Wayland can't restore
         // position/monitor).
@@ -2617,6 +2648,22 @@ impl SimpleComponent for AppModel {
                     self.select_folder(account_id, folder_id, name, path);
                     self.message_list
                         .emit(MessageListInput::SelectAndLoad((account_id, message_id)));
+                }
+            }
+
+            AppMsg::NotificationMarkRead { account_id, folder_id, message_id } => {
+                if let Some(m) = notified_message(account_id, folder_id, message_id, &self.folders)
+                {
+                    // set_read clears the account's notification itself.
+                    self.set_read(&m, true);
+                }
+            }
+
+            AppMsg::NotificationArchive { account_id, folder_id, message_id } => {
+                if let Some(m) = notified_message(account_id, folder_id, message_id, &self.folders)
+                {
+                    self.move_to(m, FolderKind::Archive);
+                    crate::notify::withdraw_mail(account_id);
                 }
             }
 
@@ -9024,6 +9071,24 @@ pub fn queue_mailto(uri: String) {
         }
         None => MAILTO_PENDING.lock().unwrap().push(uri),
     }
+}
+
+/// Resolve a notification's `(account_id, folder_id, message_id)` to the full
+/// cached [`Message`] (#38): the notified message may not be in the current
+/// view, but the worker upserts it into the cache before notifying, so the
+/// cache always has it.
+fn notified_message(
+    account_id: u32,
+    folder_id: u32,
+    message_id: u32,
+    folders: &std::collections::HashMap<u32, Vec<Folder>>,
+) -> Option<Message> {
+    let path = folders.get(&account_id)?.iter().find(|f| f.id == folder_id)?.path.clone();
+    let cache = crate::cache::Cache::open().ok()?;
+    cache
+        .load_messages(account_id, &path, folder_id)
+        .into_iter()
+        .find(|m| m.id == message_id)
 }
 
 /// Percent-decode for mailto components (RFC 6068): `%XX` only — `+` stays
