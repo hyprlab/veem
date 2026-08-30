@@ -13,6 +13,9 @@ use webkit6::prelude::{PolicyDecisionExt, WebViewExt};
 use crate::models::Message;
 
 pub struct MessageView {
+    /// Render a lone message as an inset card, same as a conversation's
+    /// messages (#57, preference; off keeps the full-bleed view).
+    single_message_card: bool,
     /// Always show the recipients line under the sender (preference) — the
     /// chip then only appears for multi-recipient mail, as a collapse toggle.
     always_show_recipients: bool,
@@ -120,6 +123,8 @@ pub enum MessageViewInput {
     SetBannerShown(bool),
     /// The "always show recipients" preference changed (re-render follows).
     SetAlwaysShowRecipients(bool),
+    /// The "single messages as cards" preference changed (re-render follows).
+    SetSingleMessageCard(bool),
     Show {
         /// The conversation, newest first. A single message for a normal open;
         /// several for a threaded conversation.
@@ -456,6 +461,7 @@ impl Component for MessageView {
         }
         let model = MessageView {
             always_show_recipients: false,
+            single_message_card: false,
             current: None,
             thread: Vec::new(),
             folder_labels: std::collections::HashMap::new(),
@@ -753,6 +759,9 @@ impl Component for MessageView {
             }
             MessageViewInput::SetAlwaysShowRecipients(on) => {
                 self.always_show_recipients = on;
+            }
+            MessageViewInput::SetSingleMessageCard(on) => {
+                self.single_message_card = on;
             }
             MessageViewInput::SetBannerShown(show) => {
                 self.show_banner = show;
@@ -1123,6 +1132,7 @@ impl MessageView {
             !self.remote_allowed,
             dark,
             self.always_show_recipients,
+            self.single_message_card,
         )
     }
 
@@ -1144,6 +1154,7 @@ impl MessageView {
         restrict: bool,
         dark: bool,
         always_show_recipients: bool,
+        single_message_card: bool,
     ) -> String {
         // Every message renders with the conversation chrome — a thread of one
         // gets the same in-document header. But only a real conversation is
@@ -1151,7 +1162,9 @@ impl MessageView {
         // goes full-bleed — no gutter, no radius, its ground filling the whole
         // view — so it reads as a message rather than a card in a margin.
         let conversation = !thread.is_empty();
-        let carded = thread.len() > 1;
+        // A lone message cards up too when the preference asks (#57);
+        // otherwise it keeps the full-bleed treatment below.
+        let carded = thread.len() > 1 || (conversation && single_message_card);
         // Card selection only means something between cards: a lone message is
         // already the selection, so it never wears the accent outline.
         let mark_selection = thread.len() > 1;
@@ -1351,7 +1364,7 @@ impl MessageView {
         // ground than its own; a full-bleed single message sits on its own
         // ground — the chrome ground when it paints no background (see
         // `plain_css` below) — so the whole view is one colour.
-        let single_ground = if !thread.is_empty() && thread.len() == 1
+        let single_ground = if !carded && thread.len() == 1
             && !paints_own_background(&thread[0].body)
         {
             chrome.clone()
@@ -1396,7 +1409,7 @@ impl MessageView {
         // that declares a background keeps the plain ground so its design
         // renders as intended.
         let single_plain =
-            thread.len() == 1 && !paints_own_background(&thread[0].body);
+            !carded && thread.len() == 1 && !paints_own_background(&thread[0].body);
         let plain_css = if single_plain {
             format!(
                 "body:not(.vireo-conv) .vireo-msg,\
@@ -1683,7 +1696,7 @@ impl MessageView {
         // The cover matches it so the spinner gives way to the document
         // without a change of colour.
         let (ground, page, chrome) = self.theme_grounds(dark);
-        let ground = if self.thread.len() > 1 {
+        let ground = if self.thread.len() > 1 || (!self.thread.is_empty() && self.single_message_card) {
             page
         } else if self.thread.len() == 1 && !paints_own_background(&self.thread[0].body) {
             chrome
@@ -3618,6 +3631,7 @@ mod tests {
             true,
             false,
             false,
+            false,
         );
         assert_eq!(
             doc.matches("<section class=\"vireo-msg\"").count(),
@@ -3652,6 +3666,7 @@ mod tests {
             &[],
             "#3584e4",
             true,
+            false,
             false,
             false,
         );
@@ -3690,6 +3705,7 @@ mod tests {
             true,
             false,
             false,
+            false,
         );
         assert_eq!(
             doc.matches("<button type=\"button\" class=\"vireo-rcpt-toggle\"").count(),
@@ -3714,6 +3730,7 @@ mod tests {
             &[],
             "#3584e4",
             true,
+            false,
             false,
             false,
         );
@@ -3748,6 +3765,7 @@ mod tests {
             true,
             false,
             false,
+            false,
         );
         assert_eq!(doc.matches("class=\"vireo-dot\"").count(), 1, "one dot: {doc}");
         assert_eq!(doc.matches("class=\"vireo-end\"").count(), 0, "no sentinel: {doc}");
@@ -3776,6 +3794,7 @@ mod tests {
             true,
             false,
             false,
+            false,
         );
         assert_eq!(doc.matches("class=\"vireo-dot\"").count(), 1, "still marked: {doc}");
         assert_eq!(doc.matches("class=\"vireo-end\"").count(), 0, "no sentinel: {doc}");
@@ -3798,6 +3817,7 @@ mod tests {
             &[],
             "#3584e4",
             true,
+            false,
             false,
             false,
         );
@@ -3823,6 +3843,7 @@ mod tests {
             true,
             false,
             false,
+            false,
         );
         assert!(doc.contains("class=\"vireo-msg selected\" data-key=\"1:2\""), "{doc}");
         assert_eq!(doc.matches("vireo-msg selected").count(), 1, "only the selected one");
@@ -3845,6 +3866,7 @@ mod tests {
             true,
             false,
             false,
+            false,
         );
         assert!(doc.contains("<section class=\"vireo-msg\""), "message chrome: {doc}");
         assert!(doc.contains("class=\"vireo-msg-hdr\""), "in-document header: {doc}");
@@ -3854,6 +3876,27 @@ mod tests {
         assert!(doc.contains(&format!("background:{}", GROUND.0)), "plain ground: {doc}");
     }
 
+    /// With the "single messages as cards" preference on (#57), a lone
+    /// message renders exactly like a one-message conversation: carded, on
+    /// the deeper page ground.
+    #[test]
+    fn a_single_message_cards_up_when_asked() {
+        let doc = MessageView::conversation_document(
+            &[msg_for_print()],
+            &std::collections::HashMap::new(),
+            &Default::default(),
+            &Default::default(),
+            &[],
+            "#3584e4",
+            true,
+            false,
+            false,
+            true,
+        );
+        assert!(doc.contains("<body class=\"vireo-conv\">"), "card gutter: {doc}");
+        assert!(doc.contains(&format!("background:{}", PAGE.0)), "deeper page ground: {doc}");
+    }
+
     #[test]
     fn a_message_from_another_folder_is_labelled_with_it() {
         let a = msg_for_print(); // the message on screen
@@ -3861,7 +3904,7 @@ mod tests {
         b.id = 2;
         b.folder_id = 3; // pulled in from Sent
         let labels = std::collections::HashMap::from([((1u32, 2u32), "Sent".to_string())]);
-        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), &Default::default(), &[], "#3584e4", true, false, false);
+        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), &Default::default(), &[], "#3584e4", true, false, false, false);
         assert_eq!(
             doc.matches("vireo-folder").count(),
             // once in the stylesheet, once on the message that came from Sent —
@@ -3881,7 +3924,7 @@ mod tests {
         b.id = 2;
         let labels =
             std::collections::HashMap::from([((1u32, 2u32), "<img src=x onerror=alert(1)>".into())]);
-        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), &Default::default(), &[], "#3584e4", true, false, false);
+        let doc = MessageView::conversation_document(&[a, b], &labels, &Default::default(), &Default::default(), &[], "#3584e4", true, false, false, false);
         assert!(!doc.contains("<img src=x"), "the label must be escaped, not rendered");
         assert!(doc.contains("&lt;img src=x"));
     }
@@ -3900,7 +3943,7 @@ mod tests {
         b.id = 2;
         // Two messages: the per-message headers only render in conversation mode.
         let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), &Default::default(),
-            &[], "#3584e4", true, false, false);
+            &[], "#3584e4", true, false, false, false);
 
         assert!(!doc.contains("<script>x=1"), "{doc}");
         assert!(!doc.contains("<img src=y"), "{doc}");
@@ -3915,7 +3958,7 @@ mod tests {
         let mut b = msg_for_print();
         b.id = 2;
         let doc = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), &Default::default(),
-            &[], "#3584e4", true, false, false);
+            &[], "#3584e4", true, false, false, false);
 
         // A nonce'd CSP, so an injected `<script>` or `onerror=` is refused by
         // the engine even if the escaping above ever regresses.
@@ -3949,6 +3992,7 @@ mod tests {
                 &[],
                 "#3584e4",
                 true,
+                false,
                 false,
                 false,
             );
@@ -4080,7 +4124,7 @@ mod tests {
         b.id = 2;
         b.body = "<p style=\"height:300px\">second</p>".into();
         let html = MessageView::conversation_document(&[a, b], &Default::default(), &Default::default(), &Default::default(),
-            &[], "#3584e4", true, false, false);
+            &[], "#3584e4", true, false, false, false);
 
         let view = webkit6::WebView::new();
         let settings = webkit6::Settings::new();

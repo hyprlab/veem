@@ -666,6 +666,10 @@ struct PrivacyFile {
     /// Whether the reader always shows the recipients line under the sender.
     #[serde(default)]
     always_show_recipients: bool,
+    /// Whether a lone message renders as an inset card like a conversation's
+    /// messages (#57); off keeps the full-bleed view.
+    #[serde(default)]
+    single_message_card: bool,
     /// Whether deleting a whole selected conversation asks for confirmation
     /// first.
     #[serde(default = "default_confirm_thread_delete")]
@@ -830,6 +834,7 @@ impl Default for PrivacyFile {
             thread_expansion: default_thread_expansion(),
             thread_newest_first: false,
             always_show_recipients: false,
+            single_message_card: false,
             confirm_thread_delete: default_confirm_thread_delete(),
             message_theme: MessageTheme::default(),
             notifications: default_notifications(),
@@ -938,6 +943,10 @@ pub fn load_thread_newest_first() -> bool {
 
 pub fn load_always_show_recipients() -> bool {
     load_privacy().always_show_recipients
+}
+
+pub fn load_single_message_card() -> bool {
+    load_privacy().single_message_card
 }
 
 pub fn load_thread_expansion() -> bool {
@@ -1052,6 +1061,7 @@ pub fn save_privacy(
     thread_expansion: bool,
     thread_newest_first: bool,
     always_show_recipients: bool,
+    single_message_card: bool,
     confirm_thread_delete: bool,
     message_theme: MessageTheme,
     notifications: bool,
@@ -1095,6 +1105,7 @@ pub fn save_privacy(
         thread_expansion,
         thread_newest_first,
         always_show_recipients,
+        single_message_card,
         confirm_thread_delete,
         message_theme,
         notifications,

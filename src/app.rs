@@ -358,6 +358,8 @@ pub struct AppModel {
     thread_newest_first: bool,
     /// Reader always shows the recipients line under the sender.
     always_show_recipients: bool,
+    /// Lone messages render as inset cards (#57).
+    single_message_card: bool,
     /// Whether conversation rows may expand into their members in the list
     /// (the row keeps its chip and chevron either way).
     thread_expansion: bool,
@@ -605,6 +607,7 @@ pub enum AppMsg {
     SetThreadsExpanded(bool),
     SetThreadNewestFirst(bool),
     SetAlwaysShowRecipients(bool),
+    SetSingleMessageCard(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
     SetListPalette(bool),
     SetListPaletteHover(bool),
@@ -1730,6 +1733,7 @@ impl SimpleComponent for AppModel {
             threads_expanded: config::load_threads_expanded(),
             thread_newest_first: config::load_thread_newest_first(),
             always_show_recipients: config::load_always_show_recipients(),
+            single_message_card: config::load_single_message_card(),
             thread_expansion: config::load_thread_expansion(),
             confirm_thread_delete: config::load_confirm_thread_delete(),
             selection_from_cards: false,
@@ -1825,6 +1829,9 @@ impl SimpleComponent for AppModel {
         model
             .message_view
             .emit(MessageViewInput::SetAlwaysShowRecipients(model.always_show_recipients));
+        model
+            .message_view
+            .emit(MessageViewInput::SetSingleMessageCard(model.single_message_card));
         model.arm_auto_fetch(&sender);
 
         // The app-wide theme choice must be in force before the first frame.
@@ -3773,6 +3780,21 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetSingleMessageCard(on) => {
+                if self.single_message_card != on {
+                    self.single_message_card = on;
+                    self.save_settings();
+                    self.message_view.emit(MessageViewInput::SetSingleMessageCard(on));
+                    // Only lone messages change; re-render one if it's open.
+                    if self.current_thread.len() <= 1 {
+                        if let Some(current) = self.current.clone() {
+                            let m = self.with_cached_body(current);
+                            self.show_message(Some(m), false);
+                        }
+                    }
+                }
+            }
+
             AppMsg::SetPaletteCollapse(secs) => {
                 if self.palette_collapse_secs != secs {
                     self.palette_collapse_secs = secs;
@@ -4841,6 +4863,7 @@ impl AppModel {
             self.thread_expansion,
             self.thread_newest_first,
             self.always_show_recipients,
+            self.single_message_card,
             self.confirm_thread_delete,
             self.message_theme,
             self.notifications_enabled,
@@ -7649,6 +7672,7 @@ impl AppModel {
             threads_expanded: self.threads_expanded,
             thread_newest_first: self.thread_newest_first,
             always_show_recipients: self.always_show_recipients,
+            single_message_card: self.single_message_card,
             thread_expansion: self.thread_expansion,
             confirm_thread_delete: self.confirm_thread_delete,
             message_theme: self.message_theme,
@@ -7694,6 +7718,7 @@ impl AppModel {
                 PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
                 PrefOutput::SetThreadNewestFirst(on) => AppMsg::SetThreadNewestFirst(on),
                 PrefOutput::SetAlwaysShowRecipients(on) => AppMsg::SetAlwaysShowRecipients(on),
+                PrefOutput::SetSingleMessageCard(on) => AppMsg::SetSingleMessageCard(on),
                 PrefOutput::SetCardActionsMode { hover_toggle, hover_auto } => {
                     AppMsg::SetCardActionsMode { hover_toggle, hover_auto }
                 }
