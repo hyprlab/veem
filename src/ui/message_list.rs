@@ -2435,6 +2435,11 @@ impl SimpleComponent for MessageList {
                 if let Some(m) = self.shown.iter().find(|m| (m.account_id, m.id) == key).cloned() {
                     self.selected_id = Some(key);
                     self.selected_ids = vec![key];
+                    // The list is in Multiple selection mode, so selecting the
+                    // target only ADDS it — anything already selected (e.g. the
+                    // row the last deletion advanced to) would stay lit and turn
+                    // this into a two-row selection the reader ignores.
+                    self.rows.widget().unselect_all();
                     self.select_current();
                     // These arrive from outside the list (a notification
                     // click, an undo) where the row can be far outside the

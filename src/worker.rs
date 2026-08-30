@@ -1391,6 +1391,9 @@ async fn run_imap(
                         n => format!("Move undone — {n} messages restored"),
                     }));
                 }
+                // Always signal completion — the app spins the refresh
+                // indicator while the undo's server work is in flight.
+                emit(WorkerEvent::BulkComplete);
             }
 
             MailRequest::PurgeMessages { path, uids } => {

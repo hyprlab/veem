@@ -1678,7 +1678,7 @@ impl SimpleComponent for AppModel {
             sidebar_header: None,
             sidebar_refresh: {
                 let b = gtk::Button::new();
-                b.set_tooltip_text(Some("Refresh"));
+                b.set_tooltip_text(Some("Refresh or long-press for Status Bar"));
                 b.add_css_class("flat");
                 b.set_valign(gtk::Align::Center);
                 b
@@ -3908,6 +3908,13 @@ impl SimpleComponent for AppModel {
                     dest_folder_id: e.restore_folder_id,
                     message_ids: e.message_ids,
                 });
+                // Finding, moving and reloading the restored messages takes a
+                // few round trips — spin the refresh indicator until the
+                // worker's BulkComplete says the undo has landed.
+                self.bulk_pending += 1;
+                self.update_busy_indicator();
+                self.notifications
+                    .emit(NotifyInput::SetStatus("Undoing move…".to_string()));
             }
 
             AppMsg::SetComposeInline(on) => {
