@@ -4,13 +4,13 @@ Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita
 
 ## What's new in 1.18.2
 
-Built with the community: Isaac (@thecalamityjoe87) drove the sidebar work in PRs #89 and #95, and @taprobane99 requested the header seal (#88).
+Sidebar work in this release was done with Isaac (@thecalamityjoe87, PRs #89 and #95); the header seal was requested by @taprobane99 (#88).
 
-**Trust at a glance.** The sender-authentication seal now sits right beside the sender's name in the message header — blue when DKIM, SPF and DMARC check out, amber when something's off, red when authentication fails. Click it for the full verdict.
+**Sender authentication in the header.** The DKIM/SPF/DMARC verdict now appears as a seal beside the sender's name: blue when the checks pass, amber when something is off, red when authentication fails. Clicking the seal shows each check's result.
 
-**Your sidebar, your chevrons.** A new Chevron placement setting offers the classic trailing chevrons or a leading layout where every disclosure chevron, icon and unread chip lines up in clean columns — designed with Isaac across two PRs. Avatars slim down a touch, icons stop drifting off their column, and double-clicking All Inboxes folds its account list.
+**Chevron placement.** A new setting places the sidebar's disclosure chevrons on the left or the right (the previous layout, still the default). In the left layout, chevrons overlay the row edge so icons, labels and unread counts align in consistent columns. Account avatars are slightly smaller, icon alignment is corrected, and double-clicking All Inboxes expands or collapses its account list.
 
-**Conversations tell you what's new.** A collapsed thread now shows the newest reply's sender and preview instead of repeating the message that started it — and its right-click menu can mark the whole conversation read or unread in one go.
+**Threads show the newest message.** A collapsed conversation row now shows the newest reply's sender and preview instead of the message that started the thread. The row's context menu can also mark the whole conversation as read or unread.
 
 ## What's new in 1.18.1
 

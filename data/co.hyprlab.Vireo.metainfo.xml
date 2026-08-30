@@ -58,7 +58,7 @@
   <releases>
     <release version="1.18.2" date="2026-08-30">
 
-      <description><p>The sender-authentication seal moves into the message header, chevron placement becomes a preference with a column-aligned leading layout, conversations surface their newest message in the list, and thread-wide mark as read arrives in the context menu.</p></description>
+      <description><p>Sender-authentication seal in the message header, a chevron-placement preference with a column-aligned leading layout, thread rows that show the newest message, and thread-wide mark as read in the context menu.</p></description>
 
     </release>
     <release version="1.18.1" date="2026-08-30">
