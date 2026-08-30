@@ -61,7 +61,7 @@
   <releases>
     <release version="1.18.2b" date="2026-08-30" type="development">
 
-      <description><p>The beta catches up to stable 1.18.1: mailto registration, Special Folders mapping, the steadied message list and sliding Actions Palette.</p></description>
+      <description><p>The 1.18.2 preview: everything in stable 1.18.1, plus the verified-sender seal in the message header and aligned sidebar unread counts.</p></description>
 
     </release>
     <release version="1.18.1b" date="2026-08-29" type="development">

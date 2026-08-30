@@ -4,7 +4,7 @@ Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita
 
 ## What's new in 1.18.2b
 
-The beta catches up to stable 1.18.1 — same code, beta app ID. Everything below applies.
+The 1.18.2 preview: everything in stable 1.18.1, plus the verified-sender seal moves into the message header itself — GNOME's own scalloped checkmark, in Bazaar's fixed blue, beside the sender's name with the verdict a click away (#88, thanks @taprobane99) — and every sidebar unread count lines up on one shared column (from Isaac's PR #89).
 
 ## What's new in 1.18.1
 

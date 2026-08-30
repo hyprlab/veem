@@ -2,8 +2,25 @@
 
 ## 1.18.2b — 2026-08-30
 
-The beta channel catches up to stable 1.18.1 — same code, beta app ID.
-See 1.18.1 below for everything new.
+The 1.18.2 preview cycle (refreshed through the cycle; thanks
+@taprobane99 and @thecalamityjoe87). Includes everything in stable
+1.18.1, plus:
+
+- **The sender seal moves into the message header (#88).** The
+  verified-sender indicator leaves the reader toolbar for the spot it
+  describes: beside the sender's name in every message header —
+  single messages, conversation cards, and popouts. It wears GNOME's
+  own verified-checkmark seal (the icon-development-kit asset Bazaar
+  uses) in a fixed blue for a pass, amber for suspicious, red for
+  likely forgery, and nothing at all for unverified. Clicking it opens
+  the familiar verdict popover, anchored on the seal and sized to the
+  header text.
+- **Sidebar counts share one column (from Isaac's PR #89).** Every
+  expanded row reserves a fixed caret lane after its unread pill, so
+  all pills line up on one right-hand column; row icons pin to exact
+  16px boxes so the icon column can't drift. One departure from the
+  PR: the All Inboxes chevron stays its own button — selecting the
+  unified view and expanding its sub-list remain separate actions.
 
 ## 1.18.1 — 2026-08-30
 
