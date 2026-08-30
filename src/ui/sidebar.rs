@@ -74,6 +74,9 @@ pub struct Sidebar {
     /// Whether the collapsed-up "All Inboxes" row wears its total-unread chip
     /// (while expanded, the per-inbox sub-list carries the counts instead).
     show_unified_chip: bool,
+    /// Whether the disclosure chevrons LEAD their rows (Settings: Chevron
+    /// placement). Off restores the classic trailing position.
+    chevrons_left: bool,
     /// Per-account widgets, rebuilt on each SetContents.
     revealers: HashMap<u32, gtk::Revealer>,
     chevrons: HashMap<u32, gtk::Image>,
@@ -152,6 +155,7 @@ pub enum SidebarInput {
         sections: Vec<SectionData>,
         show_unified: bool,
         unified_chip: bool,
+        chevrons_left: bool,
         unified_unread: u32,
     },
     UnifiedRowSelected,
@@ -348,6 +352,7 @@ impl Component for Sidebar {
             sections: Vec::new(),
             show_unified: false,
             show_unified_chip: true,
+            chevrons_left: true,
             revealers: HashMap::new(),
             chevrons: HashMap::new(),
             folder_lists: HashMap::new(),
@@ -410,7 +415,7 @@ impl Component for Sidebar {
         _root: &Self::Root,
     ) {
         match msg {
-            SidebarInput::SetContents { mut sections, show_unified, unified_chip, unified_unread } => {
+            SidebarInput::SetContents { mut sections, show_unified, unified_chip, chevrons_left, unified_unread } => {
                 // Order each account's folders essential-first, then custom, so
                 // the essential/custom split lines up with row indices (the main
                 // list holds indices 0..E, the custom list E..).
@@ -428,6 +433,7 @@ impl Component for Sidebar {
                 self.sections = sections;
                 self.show_unified = show_unified;
                 self.show_unified_chip = unified_chip;
+                self.chevrons_left = chevrons_left;
                 self.unified_unread = unified_unread;
                 self.rebuild_normal(
                     &widgets.pinned_box,
@@ -1148,10 +1154,11 @@ impl Sidebar {
                 hbox.append(&overlay);
                 self.unified_badge = Some(badge);
             } else {
-                // Leading disclosure chevron (like the account headers and
-                // the folder tree's expanders), toggling the per-account
-                // inbox sub-list — still its own button: selecting the
-                // unified view and expanding it stay separate actions.
+                // The disclosure chevron toggling the per-account inbox
+                // sub-list — its own button either way (selecting the
+                // unified view and expanding it stay separate actions).
+                // Placement follows Settings → Chevron placement: leading
+                // (like the folder tree's expanders), or classic trailing.
                 let chevron = gtk::Image::from_icon_name(if self.unified_expanded {
                     "co.hyprlab.Vireo-pan-down-symbolic"
                 } else {
@@ -1167,15 +1174,25 @@ impl Sidebar {
                 chev_btn.connect_clicked(move |_| {
                     let _ = cs.send(SidebarInput::ToggleUnifiedExpand);
                 });
-                hbox.append(&chev_btn);
-                self.unified_chevron = Some(chevron);
-
-                hbox.append(&img);
-                let label = gtk::Label::new(Some("All Inboxes"));
-                label.set_halign(gtk::Align::Start);
-                label.set_hexpand(true);
-                label.add_css_class("account-name");
-                hbox.append(&label);
+                row.add_css_class(if self.chevrons_left { "chev-left" } else { "chev-right" });
+                if self.chevrons_left {
+                    hbox.append(&chev_btn);
+                    self.unified_chevron = Some(chevron);
+                    hbox.append(&img);
+                    let label = gtk::Label::new(Some("All Inboxes"));
+                    label.set_halign(gtk::Align::Start);
+                    label.set_hexpand(true);
+                    label.add_css_class("account-name");
+                    hbox.append(&label);
+                } else {
+                    self.unified_chevron = Some(chevron);
+                    hbox.append(&img);
+                    let label = gtk::Label::new(Some("All Inboxes"));
+                    label.set_halign(gtk::Align::Start);
+                    label.set_hexpand(true);
+                    label.add_css_class("account-name");
+                    hbox.append(&label);
+                }
                 // The total-unread chip right-aligns like every folder row's,
                 // one shared column down the sidebar. While the sub-list is
                 // expanded the per-inbox rows carry the counts, so the total
@@ -1188,6 +1205,9 @@ impl Sidebar {
                 );
                 hbox.append(&badge);
                 self.unified_badge = Some(badge);
+                if !self.chevrons_left {
+                    hbox.append(&chev_btn);
+                }
             }
             row.set_child(Some(&hbox));
             list.append(&row);
@@ -1197,6 +1217,14 @@ impl Sidebar {
                 if row.is_some() {
                     let _ = s.send(SidebarInput::UnifiedRowSelected);
                 }
+            });
+            // Double-click toggles the per-account sub-list, same as the
+            // chevron (single click only selects; activation needs the
+            // double-click once single-click activation is off).
+            list.set_activate_on_single_click(false);
+            let s2 = sender.input_sender().clone();
+            list.connect_row_activated(move |_, _| {
+                let _ = s2.send(SidebarInput::ToggleUnifiedExpand);
             });
             // Right-click "All Inboxes": act on every inbox at once.
             let click = gtk::GestureClick::new();
@@ -1529,18 +1557,25 @@ impl Sidebar {
                 "co.hyprlab.Vireo-pan-down-symbolic"
             });
             chevron.set_valign(gtk::Align::Center);
-            chevron.add_css_class("leading-chevron");
+            if self.chevrons_left {
+                chevron.add_css_class("leading-chevron");
+            }
 
             if self.collapsed {
                 hbox.append(&circle_overlay);
                 hbox.set_halign(gtk::Align::Center);
                 header.set_tooltip_text(Some(&name_str));
             } else {
-                hbox.append(&chevron);
+                if self.chevrons_left {
+                    hbox.append(&chevron);
+                }
                 hbox.append(&circle_overlay);
                 let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
                 vbox.set_hexpand(true);
                 vbox.set_valign(gtk::Align::Center);
+                // Clearance for the unread chip that overlays the circle's
+                // corner while the section is collapsed.
+                vbox.set_margin_start(4);
                 let name = gtk::Label::new(Some(&name_str));
                 name.set_halign(gtk::Align::Start);
                 name.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -1552,6 +1587,9 @@ impl Sidebar {
                 vbox.append(&name);
                 vbox.append(&email);
                 hbox.append(&vbox);
+                if !self.chevrons_left {
+                    hbox.append(&chevron);
+                }
             }
 
             header.set_child(Some(&hbox));
@@ -2278,6 +2316,7 @@ fn build_unified_inbox_row(
         hbox.append(&circle);
 
         let name = gtk::Label::new(Some(&name_str));
+        name.set_margin_start(4);
         name.set_hexpand(true);
         name.set_halign(gtk::Align::Start);
         name.set_ellipsize(gtk::pango::EllipsizeMode::End);

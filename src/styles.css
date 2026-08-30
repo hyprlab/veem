@@ -165,19 +165,33 @@ headerbar.rail-header {
   padding: 0;
 }
 
-/* All Inboxes' leading chevron: a generous 32px hit target whose negative
-   margins tuck the excess into the row padding, so its centred 16px icon
+/* All Inboxes' chevron, Settings → Chevron placement: Left. The negative
+   margins tuck the hit target into the row padding so its centred icon
    lines up with the account headers' leading chevrons below. */
-.unified-row .chevron-btn {
+.unified-row.chev-left .chevron-btn {
   min-width: 24px;
   min-height: 32px;
   margin-left: -14px;
   margin-right: 0;
 }
 
-/* Tuck the "All Inboxes" label 4px closer to its inbox icon. */
-.unified-row .folder-icon {
+/* Left placement: tuck the "All Inboxes" label 4px closer to its icon. */
+.unified-row.chev-left .folder-icon {
   margin-right: -4px;
+}
+
+/* Chevron placement: Right — the classic layout: trailing 32px target whose
+   negative end margin slides into the row padding. */
+.unified-row.chev-right {
+  padding-right: 0;
+}
+.unified-row.chev-right .folder-row {
+  padding-right: 12px;
+}
+.unified-row.chev-right .chevron-btn {
+  min-width: 32px;
+  min-height: 32px;
+  margin-right: -8px;
 }
 
 /* The account headers' leading chevrons sit on the same vertical line as
