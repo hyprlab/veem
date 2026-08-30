@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.18.2-beta.4 — 2026-08-30
+
+- Settings → Sidebar gains "Chevron placement" (Left/Right): Left is
+  the leading-chevron design from beta.3, Right restores the classic
+  trailing layout. Rebuilds the sidebar live and persists.
+- Double-clicking All Inboxes toggles its per-account sub-list
+  (single click still only selects the unified view).
+- Account circles get 6px of clearance from their text, so a
+  collapsed section's corner count chip never crowds it.
+
 ## 1.18.2-beta.3 — 2026-08-30
 
 - Sidebar disclosure chevrons lead their rows: All Inboxes and the
