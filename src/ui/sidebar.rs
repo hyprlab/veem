@@ -1054,9 +1054,10 @@ impl Sidebar {
                 self.sync_spinner = Some(spinner);
             }
 
-            // The compose pill, drawn like a row so it matches the sidebar's
-            // look; expanded, it hugs its text (plus the row's own padding)
-            // and centres in the bar rather than stretching across it.
+            // The compose button, drawn like a row so it matches the
+            // sidebar's look. Expanded: full width like the rows below, the
+            // label alone (no icon), centred. The collapsed rail keeps the
+            // icon — there's no room for words there.
             let list = gtk::ListBox::new();
             list.set_selection_mode(gtk::SelectionMode::None);
             list.add_css_class("navigation-sidebar");
@@ -1073,11 +1074,6 @@ impl Sidebar {
                 hbox.append(&img);
             } else {
                 hbox.set_halign(gtk::Align::Center);
-                hbox.set_spacing(6);
-                let icon =
-                    gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-message-new-symbolic");
-                icon.add_css_class("folder-icon");
-                hbox.append(&icon);
                 let label = gtk::Label::new(Some("New Message"));
                 label.add_css_class("account-name");
                 // The pill must be able to shrink with the sidebar (down to its
@@ -1094,11 +1090,10 @@ impl Sidebar {
             });
 
             if !self.collapsed {
-                // Hexpand still claims the bar's width; Center then gives the
-                // list its natural (text-hugging) width within it, while
-                // narrow sidebars can still squeeze it (the label ellipsizes).
+                // Full width, like the rows below it; the centred label
+                // carries the action on its own.
                 list.set_hexpand(true);
-                list.set_halign(gtk::Align::Center);
+                list.set_halign(gtk::Align::Fill);
             }
             bar.append(&list);
             pinned.append(&bar);
