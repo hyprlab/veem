@@ -356,6 +356,8 @@ pub struct AppModel {
     threads_expanded: bool,
     /// Reading pane shows conversations newest-message-first.
     thread_newest_first: bool,
+    /// Reader always shows the recipients line under the sender.
+    always_show_recipients: bool,
     /// Whether conversation rows may expand into their members in the list
     /// (the row keeps its chip and chevron either way).
     thread_expansion: bool,
@@ -602,6 +604,7 @@ pub enum AppMsg {
     DeleteThreadConfirmed(Vec<Message>),
     SetThreadsExpanded(bool),
     SetThreadNewestFirst(bool),
+    SetAlwaysShowRecipients(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
     SetListPalette(bool),
     SetListPaletteHover(bool),
@@ -1726,6 +1729,7 @@ impl SimpleComponent for AppModel {
             thread_key: None,
             threads_expanded: config::load_threads_expanded(),
             thread_newest_first: config::load_thread_newest_first(),
+            always_show_recipients: config::load_always_show_recipients(),
             thread_expansion: config::load_thread_expansion(),
             confirm_thread_delete: config::load_confirm_thread_delete(),
             selection_from_cards: false,
@@ -1818,6 +1822,9 @@ impl SimpleComponent for AppModel {
         model
             .message_view
             .emit(MessageViewInput::SetContentTheme(model.message_theme.dark_override()));
+        model
+            .message_view
+            .emit(MessageViewInput::SetAlwaysShowRecipients(model.always_show_recipients));
         model.arm_auto_fetch(&sender);
 
         // The app-wide theme choice must be in force before the first frame.
@@ -3751,6 +3758,21 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetAlwaysShowRecipients(on) => {
+                if self.always_show_recipients != on {
+                    self.always_show_recipients = on;
+                    self.save_settings();
+                    self.message_view.emit(MessageViewInput::SetAlwaysShowRecipients(on));
+                    // Re-render whatever is open so the header reflects it.
+                    if self.current_thread.len() > 1 {
+                        self.show_thread();
+                    } else if let Some(current) = self.current.clone() {
+                        let m = self.with_cached_body(current);
+                        self.show_message(Some(m), false);
+                    }
+                }
+            }
+
             AppMsg::SetPaletteCollapse(secs) => {
                 if self.palette_collapse_secs != secs {
                     self.palette_collapse_secs = secs;
@@ -4818,6 +4840,7 @@ impl AppModel {
             self.threads_expanded,
             self.thread_expansion,
             self.thread_newest_first,
+            self.always_show_recipients,
             self.confirm_thread_delete,
             self.message_theme,
             self.notifications_enabled,
@@ -7625,6 +7648,7 @@ impl AppModel {
             threading: self.threading,
             threads_expanded: self.threads_expanded,
             thread_newest_first: self.thread_newest_first,
+            always_show_recipients: self.always_show_recipients,
             thread_expansion: self.thread_expansion,
             confirm_thread_delete: self.confirm_thread_delete,
             message_theme: self.message_theme,
@@ -7669,6 +7693,7 @@ impl AppModel {
                 }
                 PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
                 PrefOutput::SetThreadNewestFirst(on) => AppMsg::SetThreadNewestFirst(on),
+                PrefOutput::SetAlwaysShowRecipients(on) => AppMsg::SetAlwaysShowRecipients(on),
                 PrefOutput::SetCardActionsMode { hover_toggle, hover_auto } => {
                     AppMsg::SetCardActionsMode { hover_toggle, hover_auto }
                 }

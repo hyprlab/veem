@@ -27,6 +27,8 @@ pub struct PrefInit {
     pub threads_expanded: bool,
     /// Reading pane shows conversations newest-message-first.
     pub thread_newest_first: bool,
+    /// Reader always shows the recipients line under the sender.
+    pub always_show_recipients: bool,
     /// Conversation rows may expand into their members in the message list.
     pub thread_expansion: bool,
     /// Deleting a whole selected conversation asks for confirmation.
@@ -181,6 +183,7 @@ pub enum PrefInput {
     ToggleThreading(bool),
     ToggleThreadsExpanded(bool),
     ToggleThreadNewestFirst(bool),
+    ToggleAlwaysShowRecipients(bool),
     ToggleThreadExpansion(bool),
     ToggleConfirmThreadDelete(bool),
     ChangeCardActionsMode(u32),
@@ -225,6 +228,7 @@ pub enum PrefOutput {
     SetThreading(bool),
     SetThreadsExpanded(bool),
     SetThreadNewestFirst(bool),
+    SetAlwaysShowRecipients(bool),
     SetThreadExpansion(bool),
     SetConfirmThreadDelete(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
@@ -519,6 +523,17 @@ impl Component for Preferences {
                             set_subtitle: "Theme for email content only, not the app itself.",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeMessageTheme(row.selected()));
+                            },
+                        },
+
+                        #[name = "always_show_recipients_row"]
+                        adw::SwitchRow {
+                            set_title: "Always show recipients",
+                            set_subtitle: "Show who each message went to under its sender, \
+                                           without clicking the recipients chip. With one \
+                                           recipient the chip is dropped entirely.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleAlwaysShowRecipients(row.is_active()));
                             },
                         },
                     },
@@ -846,6 +861,7 @@ impl Component for Preferences {
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
         widgets.thread_newest_first_row.set_active(init.thread_newest_first);
+        widgets.always_show_recipients_row.set_active(init.always_show_recipients);
         widgets.thread_expansion_row.set_active(init.thread_expansion);
         widgets.confirm_thread_delete_row.set_active(init.confirm_thread_delete);
         widgets.card_actions_row.set_model(Some(&gtk::StringList::new(&[
@@ -982,6 +998,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleThreadNewestFirst(on) => {
                 let _ = sender.output(PrefOutput::SetThreadNewestFirst(on));
+            }
+            PrefInput::ToggleAlwaysShowRecipients(on) => {
+                let _ = sender.output(PrefOutput::SetAlwaysShowRecipients(on));
             }
             PrefInput::ChangeCardActionsMode(index) => {
                 let (hover_toggle, hover_auto) = match index {

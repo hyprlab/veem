@@ -663,6 +663,9 @@ struct PrivacyFile {
     /// Whether the reading pane shows a conversation newest-message-first.
     #[serde(default)]
     thread_newest_first: bool,
+    /// Whether the reader always shows the recipients line under the sender.
+    #[serde(default)]
+    always_show_recipients: bool,
     /// Whether deleting a whole selected conversation asks for confirmation
     /// first.
     #[serde(default = "default_confirm_thread_delete")]
@@ -826,6 +829,7 @@ impl Default for PrivacyFile {
             threads_expanded: false,
             thread_expansion: default_thread_expansion(),
             thread_newest_first: false,
+            always_show_recipients: false,
             confirm_thread_delete: default_confirm_thread_delete(),
             message_theme: MessageTheme::default(),
             notifications: default_notifications(),
@@ -930,6 +934,10 @@ pub fn load_threads_expanded() -> bool {
 /// Whether conversation rows can expand into their members in the list.
 pub fn load_thread_newest_first() -> bool {
     load_privacy().thread_newest_first
+}
+
+pub fn load_always_show_recipients() -> bool {
+    load_privacy().always_show_recipients
 }
 
 pub fn load_thread_expansion() -> bool {
@@ -1043,6 +1051,7 @@ pub fn save_privacy(
     threads_expanded: bool,
     thread_expansion: bool,
     thread_newest_first: bool,
+    always_show_recipients: bool,
     confirm_thread_delete: bool,
     message_theme: MessageTheme,
     notifications: bool,
@@ -1085,6 +1094,7 @@ pub fn save_privacy(
         threads_expanded,
         thread_expansion,
         thread_newest_first,
+        always_show_recipients,
         confirm_thread_delete,
         message_theme,
         notifications,
