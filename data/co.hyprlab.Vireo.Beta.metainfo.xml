@@ -59,6 +59,12 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.18.1b" date="2026-08-29" type="development">
+      <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.18.1b</url>
+      <description>
+        <p>Catches up with stable 1.18.0: all of 1.18.0b plus the community-feedback fixes — sanitized HTML forwards, Reply-To, thread animations, notification clearing, and the beta-first shared-data fix.</p>
+      </description>
+    </release>
     <release version="1.18.0b" date="2026-08-29" type="development">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.18.0b</url>
       <description>

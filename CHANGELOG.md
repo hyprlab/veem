@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.18.1b — 2026-08-29
+
+- Beta-channel build matching stable 1.18.0 (see below) — everything
+  previewed in 1.18.0b plus the beta-feedback fixes: the DPD
+  encoded-word repair, live delete counts, the gapless sidebar footer,
+  the Settings renames, Reply-To, sanitized HTML forwards, thread
+  animations, and the shared-data fix that makes a beta-first install
+  create the persistent home stable picks up (#83).
+
+
 ## 1.18.0 — 2026-08-29
 
 The beta-tested 1.18 feature release (previewed as 1.18.0b, hardened by
