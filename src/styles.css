@@ -105,11 +105,13 @@ headerbar.rail-header {
   font-weight: 600;
 }
 
-/* Per-account avatar circle in the sidebar (background colour set at runtime). */
+/* Per-account avatar circle in the sidebar (background colour set at runtime).
+   30px rather than a round 34 — shaved down slightly to leave a bit more
+   breathing room for the overlaid disclosure chevron beside it. */
 .account-circle {
-  min-width: 34px;
-  min-height: 34px;
-  border-radius: 17px;
+  min-width: 30px;
+  min-height: 30px;
+  border-radius: 15px;
 }
 
 .account-circle label {
@@ -131,9 +133,9 @@ headerbar.rail-header {
 
 /* Small pill for the "All Inboxes" per-account sub-list. */
 .account-circle-sm {
-  min-width: 22px;
-  min-height: 22px;
-  border-radius: 11px;
+  min-width: 21px;
+  min-height: 21px;
+  border-radius: 10.5px;
 }
 
 /* Small-circle initials. */
@@ -165,24 +167,25 @@ headerbar.rail-header {
   padding: 0;
 }
 
-/* All Inboxes: its disclosure chevron lines up with the account headers'
-   below it. The account chevron's right edge sits at 6px (list margin) +
-   12px (header padding); here the row keeps no padding of its own, the
-   inner .folder-row provides the 12px, and the chevron button shrinks to
-   exactly its 16px icon. */
-.unified-row {
-  padding-right: 0;
+/* Header disclosure chevrons ("All Inboxes", each account) are overlaid on
+   the row's left edge (see sidebar.rs) rather than packed into the row's
+   own layout — they reserve no space of their own, so the icon/avatar and
+   label keep their normal position and any pill keeps the normal
+   flush-right one every other row's pill has. "All Inboxes" applies this
+   to `.chevron-btn` itself (a 24px box, icon centred inside) rather than a
+   bare icon like the account headers below, so it needs a bigger pull-in
+   to land the icon — not just the button's own edge — on the same column. */
+.row-disclosure-chevron {
+  margin-left: -9px;
+  opacity: 0.6;
 }
-.unified-row .folder-row {
-  padding-right: 12px;
-}
-/* A generous hit target without moving the icon: the button grows to 32px
-   and the negative end margin slides its extra width into the row padding,
-   keeping the centred 16px icon exactly in the chevron column. */
-.unified-row .chevron-btn {
-  min-width: 32px;
-  min-height: 32px;
-  margin-right: -8px;
+
+/* The account header applies its own left padding (12px, `.account-header`)
+   around the chevron's overlay, on top of the margin above — "All Inboxes"
+   has no such wrapper padding, so left as-is the two chevrons land 12px
+   apart. This pulls the header's back in to match. */
+.account-header .row-disclosure-chevron {
+  margin-left: -8px;
 }
 
 /* Draggable account rows in the Accounts window. */
