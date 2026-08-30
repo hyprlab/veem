@@ -187,6 +187,11 @@ pub struct AccountConfig {
     /// memory (like `password`); stored on save.
     #[serde(default, skip_serializing)]
     pub oauth_refresh: String,
+    /// Per-account IMAP push override (#91): Some(true/false) wins over the
+    /// global "Instant new mail" switch; None follows it. Lets an account on
+    /// a server that mishandles IDLE opt out without costing push elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push: Option<bool>,
     /// Manual special-folder assignments (#82), applied over auto-detection:
     /// role → full folder path. Roles: "sent", "drafts", "trash", "junk",
     /// "archive". Empty = fully automatic.
