@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.18.5-beta.1 — 2026-08-30
+
+Catch-up release: the beta matches stable 1.18.4 (next section). No
+beta-only changes.
+
+## 1.18.4 — 2026-08-30
+
+Composer attachment fixes with Isaac (@thecalamityjoe87, PR #96).
+
+- **Attachment pills hug their content.** The composer's attachment
+  chips sat in FlowBox cells that stretch by default, so a pill's
+  background ran the full cell width past its remove button and the
+  empty remainder highlighted on hover. Chip and cell now shrink to
+  the content, and only the remove button takes focus.
+- **Files handed to the app open a composer.** A file manager's
+  "Open With Vireo" (or `vireo <file>` on the command line) opens a
+  fresh composer with the files attached, relayed to the running
+  instance over D-Bus like mailto; arguments that name no real file
+  are ignored.
 ## 1.18.4-beta.1 — 2026-08-30
 
 Catch-up release: the beta matches stable 1.18.3 (next section). No

@@ -957,6 +957,10 @@ impl Compose {
 
             let chip = gtk::Box::new(gtk::Orientation::Horizontal, 4);
             chip.add_css_class("attach-chip");
+            // FlowBoxChild defaults to halign: Fill, which would otherwise
+            // stretch this box the full width of its cell — leaving the pill's
+            // background trailing well past the remove button. Hug the content.
+            chip.set_halign(gtk::Align::Start);
             chip.append(&gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-attachment-symbolic"));
             let lbl = gtk::Label::new(Some(&name));
             lbl.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
@@ -972,6 +976,16 @@ impl Compose {
             chip.append(&rm);
 
             flow.append(&chip);
+            // GtkFlowBox auto-wraps `chip` in a FlowBoxChild that, unlike
+            // `chip` itself, has no halign we can set beforehand — it still
+            // fills (and hover-highlights) the full cell. Shrink it to the
+            // pill's own size and drop its own row interactivity, since the
+            // remove button inside is the only real click target.
+            if let Some(cell) = chip.parent().and_downcast::<gtk::FlowBoxChild>() {
+                cell.set_halign(gtk::Align::Start);
+                cell.set_can_focus(false);
+                cell.set_focusable(false);
+            }
         }
         flow.set_visible(!self.attachments.is_empty());
     }
