@@ -2,6 +2,16 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.18.2
+
+Built with the community: Isaac (@thecalamityjoe87) drove the sidebar work in PRs #89 and #95, and @taprobane99 requested the header seal (#88).
+
+**Trust at a glance.** The sender-authentication seal now sits right beside the sender's name in the message header — blue when DKIM, SPF and DMARC check out, amber when something's off, red when authentication fails. Click it for the full verdict.
+
+**Your sidebar, your chevrons.** A new Chevron placement setting offers the classic trailing chevrons or a leading layout where every disclosure chevron, icon and unread chip lines up in clean columns — designed with Isaac across two PRs. Avatars slim down a touch, icons stop drifting off their column, and double-clicking All Inboxes folds its account list.
+
+**Conversations tell you what's new.** A collapsed thread now shows the newest reply's sender and preview instead of repeating the message that started it — and its right-click menu can mark the whole conversation read or unread in one go.
+
 ## What's new in 1.18.1
 
 The polish release 1.18.0's feedback asked for — thank you @thecalamityjoe87, @yioannides, @frenchy82, @p-mitana, @taprobane99 and @tbaumann.

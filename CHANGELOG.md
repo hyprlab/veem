@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.18.2 — 2026-08-30
+
+Sender authenticity in the header, a chevron-placement choice built with
+Isaac (@thecalamityjoe87, PRs #89 and #95), and conversations that show
+you what's new (thanks @taprobane99 for #88).
+
+- **The sender seal joins the header (#88).** The DKIM/SPF/DMARC
+  verdict now renders as GNOME's verified-checkmark seal right beside
+  the sender's name — blue for authenticated, amber for suspicious,
+  red for failing — with a popover (anchored on the seal itself)
+  spelling out each check. The icon is the icon-development-kit seal
+  as bundled by Bazaar.
+- **Chevron placement is a preference.** Settings → Chevron placement
+  offers Left or Right (the classic layout; default for new installs).
+  The Left layout grew from Isaac's PR #89 and adopts his PR #95
+  mechanism: disclosure chevrons ride an overlay on the row's left
+  edge and reserve no layout space, so icons, labels and unread chips
+  all share one column down the sidebar. Double-clicking All Inboxes
+  toggles its per-account list.
+- **Sidebar papercuts (PR #95).** Sidebar symbolic icons pin to exact
+  16px boxes, killing a subpixel drift against the avatar column;
+  account avatars slim to 30px (sub-list pills 21px) for chevron
+  breathing room; expanded rows gain a small left inset.
+- **Conversations surface their newest message.** A collapsed thread
+  row now shows the newest member's sender, avatar and preview beside
+  the newest-member date it already carried — so when a reply lands,
+  the list says who replied and what they said, instead of
+  resurfacing the opener. Row identity (selection, reply, expansion)
+  still belongs to the thread head.
+- **Mark a whole thread read from the list.** A conversation row's
+  context menu offers Mark All as Read / as Unread for every member
+  through the bulk pipeline, replacing the singular toggle there;
+  expanded replies keep their per-message toggle.
+- **Sender avatars, by name.** The "sender circles" option is now
+  "Sender avatars" everywhere; with avatars off, the unread dot
+  aligns with the sender name and the Actions Palette shifts left to
+  match.
+- Beta versions now use semver prereleases (X.Y.Z-beta.N) natively in
+  Cargo.toml; VERSION is the crate version verbatim on both channels.
+
 ## 1.18.1 — 2026-08-30
 
 Fast-follow polish release: everything the 1.18.0 feedback surfaced,

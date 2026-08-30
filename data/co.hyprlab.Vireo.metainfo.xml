@@ -56,6 +56,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.18.2" date="2026-08-30">
+
+      <description><p>The sender-authentication seal moves into the message header, chevron placement becomes a preference with a column-aligned leading layout, conversations surface their newest message in the list, and thread-wide mark as read arrives in the context menu.</p></description>
+
+    </release>
     <release version="1.18.1" date="2026-08-30">
 
       <description><p>Polish release: Vireo registers as a mailto-handling email client, per-account special-folder mapping, a steadier message list with a sliding Actions Palette, direction-following deletion, trustworthy undo, and many sizing fixes from community feedback.</p></description>
