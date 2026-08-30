@@ -765,7 +765,10 @@ struct PrivacyFile {
 }
 
 fn default_chevrons_left() -> bool {
-    true
+    // Right for new installs (Jason, 2026-08-30): the classic trailing
+    // placement; Left is the opt-in. Only a privacy.toml missing the key
+    // sees this — every save writes all fields.
+    false
 }
 
 fn default_show_unified() -> bool {

@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.18.3-beta.1 — 2026-08-30
+
+Catch-up release: the beta matches stable 1.18.2 (next section). No
+beta-only changes.
+
+## 1.18.2 — 2026-08-30
+
+Sender authentication in the message header, a chevron-placement
+preference, and thread rows that surface the newest message. Sidebar
+work with Isaac (@thecalamityjoe87, PRs #89 and #95); the header seal
+was requested by @taprobane99 (#88).
+
+- **Sender seal in the header (#88).** The DKIM/SPF/DMARC verdict
+  renders as GNOME's verified-checkmark seal beside the sender's
+  name: blue for authenticated, amber for suspicious, red for
+  failing. Clicking it opens a popover, anchored on the seal, listing
+  each check's result. The icon is the icon-development-kit seal as
+  bundled by Bazaar.
+- **Chevron placement preference.** Settings → Chevron placement
+  offers Left or Right (the previous layout; default for new
+  installs). The Left layout comes from Isaac's PRs #89 and #95:
+  disclosure chevrons are overlaid on the row's left edge and reserve
+  no layout space, so icons, labels and unread chips share one column
+  down the sidebar. Double-clicking All Inboxes toggles its
+  per-account list.
+- **Sidebar fixes (PR #95).** Sidebar symbolic icons are pinned to
+  exact 16px boxes, removing a subpixel drift against the avatar
+  column. Account avatars are now 30px (sub-list pills 21px) to make
+  room for the leading chevron. Expanded rows get a small left inset.
+- **Thread rows show the newest message.** A collapsed thread row now
+  displays the newest member's sender, avatar and preview alongside
+  the newest-member date it already used. Row identity (selection,
+  reply, expansion) still belongs to the thread head.
+- **Thread-wide read toggle.** A conversation row's context menu
+  offers Mark All as Read / as Unread for every member, via the bulk
+  pipeline, replacing the singular toggle on that row. Expanded
+  replies keep their per-message toggle.
+- **"Sender circles" renamed to "Sender avatars"** everywhere. With
+  avatars off, the unread dot aligns with the sender name and the
+  Actions Palette shifts left to match.
+- Beta versions use semver prereleases (X.Y.Z-beta.N) natively in
+  Cargo.toml; VERSION is the crate version verbatim on both channels.
 ## 1.18.2-beta.4 — 2026-08-30
 
 - Settings → Sidebar gains "Chevron placement" (Left/Right): Left is

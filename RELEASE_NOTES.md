@@ -2,6 +2,19 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.18.3-beta.1
+
+The beta channel catches up with stable 1.18.2: everything in the section below, as the parallel-installable "Vireo (beta)" build. No beta-only changes.
+
+## What's new in 1.18.2
+
+Sidebar work in this release was done with Isaac (@thecalamityjoe87, PRs #89 and #95); the header seal was requested by @taprobane99 (#88).
+
+**Sender authentication in the header.** The DKIM/SPF/DMARC verdict now appears as a seal beside the sender's name: blue when the checks pass, amber when something is off, red when authentication fails. Clicking the seal shows each check's result.
+
+**Chevron placement.** A new setting places the sidebar's disclosure chevrons on the left or the right (the previous layout, still the default). In the left layout, chevrons overlay the row edge so icons, labels and unread counts align in consistent columns. Account avatars are slightly smaller, icon alignment is corrected, and double-clicking All Inboxes expands or collapses its account list.
+
+**Threads show the newest message.** A collapsed conversation row now shows the newest reply's sender and preview instead of the message that started the thread. The row's context menu can also mark the whole conversation as read or unread.
 ## What's new in 1.18.2-beta.2
 
 The 1.18.2 preview: everything in stable 1.18.1, plus the verified-sender seal moves into the message header itself — GNOME's own scalloped checkmark, in Bazaar's fixed blue, beside the sender's name with the verdict a click away (#88, thanks @taprobane99) — and every sidebar unread count lines up on one shared column (from Isaac's PR #89).
