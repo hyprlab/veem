@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.18.2b" date="2026-08-30" type="development">
+
+      <description><p>The beta catches up to stable 1.18.1: mailto registration, Special Folders mapping, the steadied message list and sliding Actions Palette.</p></description>
+
+    </release>
     <release version="1.18.1b" date="2026-08-29" type="development">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.18.1b</url>
       <description>

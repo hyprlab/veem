@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.18.2b — 2026-08-30
+
+The beta channel catches up to stable 1.18.1 — same code, beta app ID.
+See 1.18.1 below for everything new.
+
 ## 1.18.1 — 2026-08-30
 
 Fast-follow polish release: everything the 1.18.0 feedback surfaced,
