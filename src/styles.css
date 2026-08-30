@@ -19,10 +19,10 @@ row.compose-row {
   padding-bottom: 5px;
 }
 
-/* The icon-only rail centres a lone icon — no text to pad around. */
+/* The icon-only rail centres a lone icon — no text to pad around, and the
+   expanded button's extra vertical presence goes back to the default. */
 .rail-collapsed row.compose-row {
-  padding-left: 0;
-  padding-right: 0;
+  padding: 0;
 }
 
 row.compose-row:hover {
