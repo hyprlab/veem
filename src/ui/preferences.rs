@@ -440,16 +440,6 @@ impl Component for Preferences {
                             },
                         },
 
-                        #[name = "card_actions_row"]
-                        adw::ComboRow {
-                            set_title: "Message card actions",
-                            set_subtitle: "How each message's action icons show in the \
-                                           reader, single or threaded.",
-                            connect_selected_notify[sender] => move |row| {
-                                sender.input(PrefInput::ChangeCardActionsMode(row.selected()));
-                            },
-                        },
-
                         #[name = "list_palette_row"]
                         adw::SwitchRow {
                             set_title: "Actions Palette in the message list",
@@ -557,6 +547,16 @@ impl Component for Preferences {
                             set_subtitle: "Theme for email content only, not the app itself.",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeMessageTheme(row.selected()));
+                            },
+                        },
+
+                        #[name = "card_actions_row"]
+                        adw::ComboRow {
+                            set_title: "Message card actions",
+                            set_subtitle: "How each message's action icons show in the \
+                                           reader, single or threaded.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeCardActionsMode(row.selected()));
                             },
                         },
 
@@ -867,6 +867,46 @@ impl Component for Preferences {
         let senders_box = model.senders.widget();
         let blacklist_box = model.blacklist.widget();
         let widgets = view_output!();
+
+        // Settings never truncates. AdwComboRow's DEFAULT item factory builds
+        // the selected-value display with an ellipsizing label — and rebuilds
+        // it on every selection change, so fixing the widget after the fact
+        // doesn't stick ("Follow system" → "Follow s…"). Give every combo a
+        // plain factory whose labels never ellipsize; the short row titles
+        // yield the space instead.
+        fn no_truncate(row: &adw::ComboRow) {
+            let factory = gtk::SignalListItemFactory::new();
+            factory.connect_setup(|_, item| {
+                if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+                    let label = gtk::Label::new(None);
+                    label.set_xalign(0.0);
+                    item.set_child(Some(&label));
+                }
+            });
+            factory.connect_bind(|_, item| {
+                let Some(item) = item.downcast_ref::<gtk::ListItem>() else { return };
+                if let (Some(label), Some(s)) = (
+                    item.child().and_downcast::<gtk::Label>(),
+                    item.item().and_downcast::<gtk::StringObject>(),
+                ) {
+                    label.set_label(&s.string());
+                }
+            });
+            row.set_factory(Some(&factory));
+        }
+        for row in [
+            &widgets.fetch_row,
+            &widgets.preview_lines_row,
+            &widgets.message_theme_row,
+            &widgets.card_actions_row,
+            &widgets.app_theme_row,
+            &widgets.settings_open_row,
+            &widgets.date_style_row,
+            &widgets.clock_style_row,
+        ] {
+            no_truncate(row);
+        }
+
         widgets.auto_remote_content_row.set_active(init.auto_remote_content);
         widgets.show_remote_banner_row.set_active(init.show_remote_banner);
         widgets.gravatar_row.set_active(init.gravatar);
@@ -914,7 +954,7 @@ impl Component for Preferences {
         widgets.thread_expansion_row.set_active(init.thread_expansion);
         widgets.confirm_thread_delete_row.set_active(init.confirm_thread_delete);
         widgets.card_actions_row.set_model(Some(&gtk::StringList::new(&[
-            "Hidden behind a \u{22ef} toggle",
+            "Hidden behind a toggle",
             "Shown while hovering",
             "Always visible",
         ])));
