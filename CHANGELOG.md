@@ -1,5 +1,71 @@
 # Changelog
 
+## 1.18.1 — 2026-08-30
+
+Fast-follow polish release: everything the 1.18.0 feedback surfaced,
+plus two long-requested integrations (thanks @thecalamityjoe87,
+@yioannides, @frenchy82, @p-mitana, @taprobane99, @tbaumann).
+
+- **Vireo registers as an email client (#87).** The desktop entry
+  declares `x-scheme-handler/mailto`, so GNOME's Default Applications
+  lists Vireo and mailto: links open a prefilled composer
+  (to/cc/bcc/subject/body, RFC 6068 decoding — plus-addressing safe).
+  Second launches now hand off over D-Bus and exit instantly (relm4's
+  run loop never exits for a remote instance; registration also can't
+  happen early, since relm4 builds the UI in its own startup handler).
+- **Manual special-folder mapping (#82).** Each account's editor gains
+  a Special Folders section: Sent, Drafts, Trash, Junk and Archive,
+  each Automatic or pinned to a real folder. Overrides demote the
+  auto-detected holder, ride every role-routed action, persist in
+  accounts.toml, and fall back to detection if the folder disappears.
+- **The list stays put (#84, from Isaac's PR #85).** Deleting a
+  message or closing a compose while scrolled elsewhere no longer
+  snaps the list back to the selection: `preserving_scroll` pins the
+  adjustment through row removals and the focus-restore, and a removed
+  focused row hands focus to its neighbour without scrolling.
+- **Deletion follows your direction of travel.** Moving down the list,
+  delete selects the message below; after moving up, the one above
+  (Apple Mail's behaviour). The bulk path no longer clears the
+  selection before removal, so the reader advances properly; rows drop
+  GTK's focus ring (the selection pill is the indicator).
+- **Undo, made trustworthy.** Ctrl+Z selects and reveals the restored
+  message, spins the refresh indicator while the server works, and
+  survives iCloud: a HEADER search that misses falls back to scanning
+  the newest UIDs' Message-ID headers, and summaries lost to iCloud's
+  BODY[1]-after-append quirk repair themselves via a deep BODY[TEXT]
+  retry (which also heals long-blank previews).
+- **Address menus behave.** The reader's address right-click menu
+  dismisses on any click (a scrim under the menu — the sandboxed body
+  frames can't dispatch events), gains Add to Contacts, and matches
+  the app's context-menu styling. The toolbar's Add-sender button
+  retires in its favour.
+- **The message list, re-balanced (yioannides' #81 pass).** The
+  Actions Palette floats over the pill instead of reserving a phantom
+  line, so text centres and rows tighten; it slides out of the ⋯ onto
+  one shared card (one open at a time), the ⋯ centres under the
+  sender circle, thread member cards share the top-level geometry,
+  and the thread rail ends at the last member's node dot. Palettes
+  and cards mirror the reader toolbar's order, Add to Contacts and
+  View Source joining before the close. Read/unread icons show the
+  action again, everywhere.
+- **Reader toolbar folds when measured, not assumed.** The overflow
+  threshold is measured from the real headerbar (and re-derived when
+  gtk-decoration-layout changes), so three-button window layouts no
+  longer push the close button off the pane.
+- **All Inboxes, quieter.** The total-unread chip hides while the
+  per-account list is expanded and sits beside the label when folded;
+  two new switches control All Inboxes and its chip. Sender logos
+  persist on disk with a weekly staleness check. Settings dropdowns
+  never truncate (custom non-ellipsizing combo factories). Composer
+  recipient rows grow to 42px. Toggling preview lines back on
+  refreshes immediately.
+- **Peek sidebar, steadied.** The narrow-window overlay no longer
+  shifts the panes beneath it (the ghost strip rejects snapshots of
+  the expanded panel), and its header matches the expanded sidebar's.
+- New installs default to collapsed in-list conversations and
+  toggle-gated card actions (existing settings untouched); the README
+  points Nix users at @tbaumann's community-maintained flake.
+
 ## 1.18.0 — 2026-08-29
 
 The beta-tested 1.18 feature release (previewed as 1.18.0b, hardened by

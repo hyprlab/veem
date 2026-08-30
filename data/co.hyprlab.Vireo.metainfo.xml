@@ -56,6 +56,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.18.1" date="2026-08-30">
+
+      <description><p>Polish release: Vireo registers as a mailto-handling email client, per-account special-folder mapping, a steadier message list with a sliding Actions Palette, direction-following deletion, trustworthy undo, and many sizing fixes from community feedback.</p></description>
+
+    </release>
     <release version="1.18.0" date="2026-08-29" type="stable">
       <url type="details">https://github.com/hyprlab/vireo/releases/tag/v1.18.0</url>
       <description>
