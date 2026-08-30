@@ -187,6 +187,11 @@ pub struct AccountConfig {
     /// memory (like `password`); stored on save.
     #[serde(default, skip_serializing)]
     pub oauth_refresh: String,
+    /// Manual special-folder assignments (#82), applied over auto-detection:
+    /// role → full folder path. Roles: "sent", "drafts", "trash", "junk",
+    /// "archive". Empty = fully automatic.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub folder_roles: std::collections::BTreeMap<String, String>,
 }
 
 /// A send-as alias (#34): an extra From identity the composer offers. By
@@ -744,6 +749,23 @@ struct PrivacyFile {
     /// the banner; it never changes what is blocked, only whether you're told.
     #[serde(default = "default_show_remote_banner")]
     show_remote_banner: bool,
+    /// Whether the sidebar offers the unified "All Inboxes" section at all
+    /// (it only ever appears with more than one enabled account).
+    #[serde(default = "default_show_unified")]
+    show_unified: bool,
+    /// Whether the "All Inboxes" row wears its total-unread chip while its
+    /// per-account sub-list is collapsed (expanded, the sub-list carries the
+    /// counts granularly and the total is never shown).
+    #[serde(default = "default_unified_chip")]
+    unified_chip: bool,
+}
+
+fn default_show_unified() -> bool {
+    true
+}
+
+fn default_unified_chip() -> bool {
+    true
 }
 
 fn default_fetch_interval() -> u64 {
@@ -759,7 +781,11 @@ fn default_threading() -> bool {
 }
 
 fn default_thread_expansion() -> bool {
-    true
+    // Off for new installs (2026-08-30): conversations expand in the reading
+    // pane's cards; the list keeps its count chip without in-list expansion.
+    // Only a privacy.toml MISSING this key sees the default — every save
+    // writes all fields, so an existing install's choice is pinned.
+    false
 }
 
 fn default_confirm_thread_delete() -> bool {
@@ -799,7 +825,9 @@ fn default_card_actions_hover() -> bool {
 }
 
 fn default_card_actions_auto() -> bool {
-    true
+    // Off for new installs (2026-08-30): card actions wait behind the ⋯
+    // toggle (card_actions_hover) rather than appearing on hover.
+    false
 }
 
 fn default_compose_inline() -> bool {
@@ -820,6 +848,8 @@ impl Default for PrivacyFile {
             allowed_senders: Vec::new(),
             auto_remote_content: false,
             show_remote_banner: default_show_remote_banner(),
+            show_unified: default_show_unified(),
+            unified_chip: default_unified_chip(),
             gravatar: false,
             avatars: default_avatars(),
             sender_logos: false,
@@ -943,6 +973,14 @@ pub fn load_thread_newest_first() -> bool {
 
 pub fn load_always_show_recipients() -> bool {
     load_privacy().always_show_recipients
+}
+
+pub fn load_show_unified() -> bool {
+    load_privacy().show_unified
+}
+
+pub fn load_unified_chip() -> bool {
+    load_privacy().unified_chip
 }
 
 pub fn load_single_message_card() -> bool {
@@ -1081,6 +1119,8 @@ pub fn save_privacy(
     show_remote_banner: bool,
     sidebar_hover_expand: bool,
     app_theme: AppTheme,
+    show_unified: bool,
+    unified_chip: bool,
 ) {
     let Some(path) = privacy_path() else {
         return;
@@ -1125,6 +1165,8 @@ pub fn save_privacy(
         show_remote_banner,
         sidebar_hover_expand,
         app_theme,
+        show_unified,
+        unified_chip,
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {

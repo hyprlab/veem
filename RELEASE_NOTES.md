@@ -2,6 +2,20 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.18.1
+
+The polish release 1.18.0's feedback asked for — thank you @thecalamityjoe87, @yioannides, @frenchy82, @p-mitana, @taprobane99 and @tbaumann.
+
+**Vireo is your email client now.** GNOME Settings lists Vireo under Default Applications → Mail, and clicking a mailto: link anywhere opens a composer prefilled with the address, subject and body. Opening the app a second time presents the existing window instantly.
+
+**Special folders, your way.** When a provider's Sent, Trash, Junk, Drafts or Archive isn't detected (or lands wrong), each account's editor now has a Special Folders section to pin any role to any real folder — deletes, archives and sent mail follow your mapping.
+
+**The list holds its ground.** Deleting mail or closing a compose while scrolled elsewhere no longer yanks the list back to the selection (thanks Isaac for PR #85). Deletion advances in the direction you're triaging, like Apple Mail. Undo puts you on the restored message — reliably, even on iCloud — and spins the refresh indicator while it works.
+
+**A calmer, denser message list.** Row text sits centred in its pill, rows tighten up, and the ⋯ Actions Palette slides out over the row on one seamless card — with Add to Contacts and View Source aboard, one palette open at a time, and the thread rail ending neatly at the last reply's dot. Right-clicking any email address now offers Add to Contacts, and the menu closes like it should.
+
+**Small things that add up.** The reader toolbar folds exactly when your window-button layout needs it to; All Inboxes only shows its total count when folded (and both are now optional); sender logos survive restarts; Settings dropdowns never truncate; previews refill the moment you turn them back on.
+
 ## What's new in 1.18.1b
 
 The beta channel catches up with stable **1.18.0** — everything listed under 1.18.0 below, as the parallel-installable "Vireo (beta)" build that shares your accounts and mail with the stable app. If 1.18.0b lost your account on a beta-only install (#83), that's fixed: re-add it once and it sticks.

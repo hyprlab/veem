@@ -71,6 +71,9 @@ pub struct Sidebar {
     sections: Vec<SectionData>,
     /// Whether to show the unified "All Inboxes" row.
     show_unified: bool,
+    /// Whether the collapsed-up "All Inboxes" row wears its total-unread chip
+    /// (while expanded, the per-inbox sub-list carries the counts instead).
+    show_unified_chip: bool,
     /// Per-account widgets, rebuilt on each SetContents.
     revealers: HashMap<u32, gtk::Revealer>,
     chevrons: HashMap<u32, gtk::Image>,
@@ -148,6 +151,7 @@ pub enum SidebarInput {
     SetContents {
         sections: Vec<SectionData>,
         show_unified: bool,
+        unified_chip: bool,
         unified_unread: u32,
     },
     UnifiedRowSelected,
@@ -343,6 +347,7 @@ impl Component for Sidebar {
         let mut model = Sidebar {
             sections: Vec::new(),
             show_unified: false,
+            show_unified_chip: true,
             revealers: HashMap::new(),
             chevrons: HashMap::new(),
             folder_lists: HashMap::new(),
@@ -405,7 +410,7 @@ impl Component for Sidebar {
         _root: &Self::Root,
     ) {
         match msg {
-            SidebarInput::SetContents { mut sections, show_unified, unified_unread } => {
+            SidebarInput::SetContents { mut sections, show_unified, unified_chip, unified_unread } => {
                 // Order each account's folders essential-first, then custom, so
                 // the essential/custom split lines up with row indices (the main
                 // list holds indices 0..E, the custom list E..).
@@ -422,6 +427,7 @@ impl Component for Sidebar {
                     .collect();
                 self.sections = sections;
                 self.show_unified = show_unified;
+                self.show_unified_chip = unified_chip;
                 self.unified_unread = unified_unread;
                 self.rebuild_normal(
                     &widgets.pinned_box,
@@ -525,6 +531,13 @@ impl Component for Sidebar {
                 if let Some(rev) = &self.unified_revealer {
                     rev.set_reveal_child(self.unified_expanded);
                 }
+                // Expanded: the sub-list shows each inbox's count, so the
+                // total chip bows out; it returns when collapsed back up.
+                let show_chip =
+                    self.unified_unread > 0 && !self.unified_expanded && self.show_unified_chip;
+                if let Some(label) = &self.unified_badge {
+                    label.set_visible(show_chip);
+                }
                 if let Some(ch) = &self.unified_chevron {
                     ch.set_icon_name(Some(if self.unified_expanded {
                         "co.hyprlab.Vireo-pan-down-symbolic"
@@ -586,7 +599,9 @@ impl Component for Sidebar {
                 }
                 if let Some(label) = &self.unified_badge {
                     label.set_text(&unified.to_string());
-                    label.set_visible(unified > 0);
+                    label.set_visible(
+                        unified > 0 && !self.unified_expanded && self.show_unified_chip,
+                    );
                 }
                 // Keep the avatar-circle badges in sync too. They only show while
                 // the account is collapsed (toggled live in ToggleCollapseLocal),
@@ -1023,7 +1038,7 @@ impl Sidebar {
             if self.collapsed {
                 // Refresh, showing a spinner while any account syncs.
                 let refresh = gtk::Button::new();
-                refresh.set_tooltip_text(Some("Refresh"));
+                refresh.set_tooltip_text(Some("Refresh or long-press for Status Bar"));
                 refresh.add_css_class("flat");
                 refresh.set_valign(gtk::Align::Center);
                 refresh.set_halign(gtk::Align::Center);
@@ -1127,21 +1142,32 @@ impl Sidebar {
                 // Total-unread chip overlaid on the inbox icon so the count stays
                 // visible in the icon-only rail.
                 let (overlay, badge) = with_unread_overlay(&img, self.unified_unread);
+                badge.set_visible(
+                    self.unified_unread > 0 && !self.unified_expanded && self.show_unified_chip,
+                );
                 hbox.append(&overlay);
                 self.unified_badge = Some(badge);
             } else {
                 hbox.append(&img);
                 let label = gtk::Label::new(Some("All Inboxes"));
-                label.set_hexpand(true);
                 label.set_halign(gtk::Align::Start);
                 label.add_css_class("account-name");
                 hbox.append(&label);
+                // The total-unread chip sits right of the label and grows into
+                // the row's empty middle, so it can never crowd the chevron.
+                // While the sub-list is expanded the per-inbox rows carry the
+                // counts, so the total is redundant and hidden.
                 let badge = gtk::Label::new(Some(&self.unified_unread.to_string()));
                 badge.add_css_class("unread-badge");
                 badge.set_valign(gtk::Align::Center);
-                badge.set_visible(self.unified_unread > 0);
+                badge.set_visible(
+                    self.unified_unread > 0 && !self.unified_expanded && self.show_unified_chip,
+                );
                 hbox.append(&badge);
                 self.unified_badge = Some(badge);
+                let spring = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                spring.set_hexpand(true);
+                hbox.append(&spring);
 
                 // Disclosure chevron toggling the per-account inbox sub-list.
                 let chevron = gtk::Image::from_icon_name(if self.unified_expanded {

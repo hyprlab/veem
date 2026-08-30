@@ -272,6 +272,10 @@ pub enum WorkerEvent {
     /// message it was asked for, so a late answer to a message the user has
     /// already moved on from can be ignored.
     Related { message_id: u32, messages: Vec<Message> },
+    /// An undone move put these messages back in `folder_id`; sent after the
+    /// folder's fresh [`WorkerEvent::Messages`] so the app can land the user
+    /// on the restored message instead of wherever the reload left the list.
+    Restored { folder_id: u32, message_ids: Vec<String> },
     /// Cached attachments for an inbox, for the attachments gallery.
     Gallery { items: Vec<crate::models::GalleryItem> },
     /// The background backfill for a folder finished — its whole index is now
@@ -1296,21 +1300,52 @@ async fn run_imap(
                 let mut failed: Option<String> = None;
                 {
                     let sess = session.as_mut().unwrap();
-                    if let Err(e) = sess.select(&path).await {
-                        failed = Some(e.to_string());
-                    } else {
-                        for id in &message_ids {
-                            match sess.uid_search(format!("HEADER Message-ID \"{id}\"")).await {
-                                Ok(set) => uids.extend(set),
-                                Err(e) => {
-                                    failed = Some(e.to_string());
-                                    break;
+                    let mut exists = 0u32;
+                    match sess.select(&path).await {
+                        Err(e) => failed = Some(e.to_string()),
+                        Ok(mb) => {
+                            exists = mb.exists;
+                            for id in &message_ids {
+                                match sess.uid_search(format!("HEADER Message-ID \"{id}\"")).await {
+                                    Ok(set) => uids.extend(set),
+                                    Err(e) => {
+                                        failed = Some(e.to_string());
+                                        break;
+                                    }
                                 }
                             }
                         }
                     }
                     uids.sort_unstable();
                     uids.dedup();
+                    // Some servers (iCloud among them) can't be trusted with
+                    // HEADER searches: the index lags behind a just-landed
+                    // move, and our stored ids are lowercased while the
+                    // server's match may be case-sensitive. FETCH has neither
+                    // problem — before declaring the messages gone, read the
+                    // newest headers (a move lands at the top of the UID
+                    // space) and match Message-IDs locally.
+                    if failed.is_none() && uids.is_empty() && exists > 0 {
+                        let wanted: std::collections::HashSet<&str> =
+                            message_ids.iter().map(String::as_str).collect();
+                        let lo = exists.saturating_sub(199).max(1);
+                        let scanned: Result<Vec<Fetch>, _> = async {
+                            sess.fetch(
+                                format!("{lo}:{exists}"),
+                                "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])",
+                            )
+                            .await?
+                            .try_collect()
+                            .await
+                        }
+                        .await;
+                        match scanned {
+                            Ok(fetches) => uids.extend(fetches.iter().filter_map(|f| {
+                                f.uid.filter(|_| wanted.contains(message_id_of(f).as_str()))
+                            })),
+                            Err(e) => failed = Some(e.to_string()),
+                        }
+                    }
                     if failed.is_none() && !uids.is_empty() {
                         if let Err(e) = move_messages(sess, &path, &uids, &dest).await {
                             failed = Some(e.to_string());
@@ -1346,12 +1381,19 @@ async fn run_imap(
                             c.upsert_messages(account_id, &dest, &messages);
                         }
                         emit(WorkerEvent::Messages { folder_id: dest_folder_id, messages });
+                        emit(WorkerEvent::Restored {
+                            folder_id: dest_folder_id,
+                            message_ids: message_ids.clone(),
+                        });
                     }
                     emit(WorkerEvent::Notice(match uids.len() {
                         1 => "Move undone — message restored".to_string(),
                         n => format!("Move undone — {n} messages restored"),
                     }));
                 }
+                // Always signal completion — the app spins the refresh
+                // indicator while the undo's server work is in flight.
+                emit(WorkerEvent::BulkComplete);
             }
 
             MailRequest::PurgeMessages { path, uids } => {
@@ -3852,6 +3894,58 @@ async fn fetch_window(
             })
             .collect()
     };
+    // Fill in previews the summary fetch came back without. iCloud answers
+    // BODY[1] with nothing on a message it re-appended (a move-back from an
+    // undo, for one) — and keeps doing so on every later sync, so the row
+    // would wear a blank summary for good. The TEXT section survives (the
+    // full-body fetch the reader uses works fine), so re-ask with that and
+    // run the same MIME-prefix extraction. Bounded: genuinely body-less
+    // messages stay empty and shouldn't grow the fetch each sync.
+    if want_preview {
+        let missing: Vec<String> = messages
+            .iter()
+            .filter(|m| m.preview.is_empty())
+            .take(12)
+            .map(|m| m.uid.to_string())
+            .collect();
+        if !missing.is_empty() {
+            tracing::info!(
+                "previews: retrying via BODY[TEXT] acct={account_id} folder={folder_id} uids={missing:?}"
+            );
+            let refetched: Result<Vec<Fetch>, _> = async {
+                session
+                    .uid_fetch(
+                        missing.join(","),
+                        format!("(UID BODY.PEEK[TEXT]<0.{PREVIEW_REPAIR_BYTES}>)"),
+                    )
+                    .await?
+                    .try_collect()
+                    .await
+            }
+            .await;
+            match refetched {
+                Err(e) => tracing::warn!("previews: BODY[TEXT] retry failed: {e}"),
+                Ok(fetches) => {
+                    use async_imap::imap_proto::types::{MessageSection, SectionPath};
+                    for f in &fetches {
+                        let p = f
+                            .section(&SectionPath::Full(MessageSection::Text))
+                            .map(preview_from_part)
+                            .unwrap_or_default()
+                            .replace('\0', " ");
+                        if p.is_empty() {
+                            continue;
+                        }
+                        if let Some(m) =
+                            f.uid.and_then(|uid| messages.iter_mut().find(|m| m.uid == uid))
+                        {
+                            m.preview = p;
+                        }
+                    }
+                }
+            }
+        }
+    }
     messages.reverse(); // IMAP returns oldest-first; show newest at the top.
     Ok(messages)
 }
@@ -3875,6 +3969,13 @@ const PREVIEW_FETCH_BYTES: usize = 2048;
 
 /// Longest preview stored per message.
 const PREVIEW_CHARS: usize = 240;
+
+/// The bigger slice for the preview *repair* fetch (the BODY[TEXT] retry for
+/// messages whose summary fetch produced no preview). An HTML-only message can
+/// spend several KB on `<head>` boilerplate before its first visible text —
+/// which is exactly how a message ends up on the repair list — so the retry
+/// reads deep enough to find it. Only a handful of messages ever qualify.
+const PREVIEW_REPAIR_BYTES: usize = 32768;
 
 /// Turn the first bytes of a message's body part into a one-line snippet for the
 /// message list.
@@ -4819,6 +4920,24 @@ fn references_of(fetch: &Fetch) -> String {
         return String::new();
     }
     normalize_msgids(value.as_bytes())
+}
+
+/// The `Message-ID:` value from a fetch that asked for
+/// `HEADER.FIELDS (MESSAGE-ID)`, normalized like the ENVELOPE ids so it
+/// compares equal to the ids the app stores.
+fn message_id_of(fetch: &Fetch) -> String {
+    use async_imap::imap_proto::types::{MessageSection, SectionPath};
+    let Some(raw) = fetch.section(&SectionPath::Full(MessageSection::Header)) else {
+        return String::new();
+    };
+    let text = String::from_utf8_lossy(raw);
+    let Some((name, value)) = text.split_once(':') else {
+        return String::new();
+    };
+    if !name.trim().eq_ignore_ascii_case("message-id") {
+        return String::new();
+    }
+    normalize_msgid(value.as_bytes())
 }
 
 /// Combine two normalized Message-ID lists, keeping the first list's order and
@@ -7496,6 +7615,7 @@ mod tests {
 
     fn sample_account() -> AccountConfig {
         AccountConfig {
+            folder_roles: Default::default(),
             name: String::new(),
             email: "me@example.com".into(),
             protocol: crate::config::Protocol::Imap,

@@ -11,14 +11,50 @@
 //!
 //! One fetch per domain per session, remembered either way: a miss is cached too,
 //! or every row from the same sender would ask again.
+//!
+//! Icons persist on disk (`~/.local/share/vireo/logos/<domain>.img`) so a
+//! restart shows them without touching the network; a `.miss` marker remembers
+//! a domain with nothing to give. Both go stale after a week: the next message
+//! from that sender then re-asks the domain — a changed brand icon appears, a
+//! domain that gained one is picked up — while the stale icon keeps showing in
+//! the meantime.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 thread_local! {
     static CACHE: RefCell<HashMap<String, gtk::gdk::Texture>> = RefCell::new(HashMap::new());
     /// Domains with no usable icon, so they are asked once and not again.
     static MISSES: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// Domains whose weekly refresh has already been kicked off this session.
+    static REFRESHED: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+}
+
+/// How long a stored icon (or miss) is trusted before the domain is re-asked.
+const REFRESH_AFTER: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+
+fn store_dir() -> Option<PathBuf> {
+    let dir = crate::config::data_base()?.join("vireo").join("logos");
+    let _ = std::fs::create_dir_all(&dir);
+    Some(dir)
+}
+
+fn img_path(domain: &str) -> Option<PathBuf> {
+    Some(store_dir()?.join(format!("{domain}.img")))
+}
+
+fn miss_path(domain: &str) -> Option<PathBuf> {
+    Some(store_dir()?.join(format!("{domain}.miss")))
+}
+
+/// Whether the file at `path` exists and was written within [`REFRESH_AFTER`].
+fn fresh(path: &PathBuf) -> bool {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < REFRESH_AFTER)
 }
 
 /// The registrable domain of an email address: the part that owns the brand.
@@ -48,27 +84,81 @@ pub fn domain_of(email: &str) -> Option<String> {
 }
 
 /// A previously decoded logo for this sender's domain (main thread only).
+/// Falls back to the on-disk copy — however old — so a restart shows icons
+/// without a single network request; [`wants_refresh`] handles staleness.
 pub fn cached(email: &str) -> Option<gtk::gdk::Texture> {
     let domain = domain_of(email)?;
-    CACHE.with(|c| c.borrow().get(&domain).cloned())
+    if let Some(tex) = CACHE.with(|c| c.borrow().get(&domain).cloned()) {
+        return Some(tex);
+    }
+    let bytes = img_path(&domain).and_then(|p| std::fs::read(p).ok())?;
+    let tex = decode(&bytes)?;
+    CACHE.with(|c| {
+        c.borrow_mut().insert(domain, tex.clone());
+    });
+    Some(tex)
+}
+
+/// Whether the stored icon for this sender's domain is a week old — time to
+/// look again in the background while the old one keeps showing. Says yes at
+/// most once a session per domain, so a screenful of rows from one sender
+/// doesn't fan out into a fetch per row.
+pub fn wants_refresh(email: &str) -> bool {
+    let Some(domain) = domain_of(email) else {
+        return false;
+    };
+    let due = img_path(&domain).is_some_and(|p| p.exists() && !fresh(&p));
+    due && REFRESHED.with(|r| r.borrow_mut().insert(domain))
 }
 
 /// Whether this domain has already been asked about and had nothing to give.
+/// A miss remembered on disk expires after a week, so a domain that gains an
+/// icon is eventually found.
 pub fn known_missing(email: &str) -> bool {
     match domain_of(email) {
-        Some(domain) => MISSES.with(|m| m.borrow().contains(&domain)),
+        Some(domain) => {
+            MISSES.with(|m| m.borrow().contains(&domain))
+                || miss_path(&domain).is_some_and(|p| fresh(&p))
+        }
         // Nothing to look up counts as answered.
         None => true,
     }
 }
 
 /// Blocking fetch of a domain's icon. Call off the main thread.
+///
+/// A fresh on-disk copy answers without touching the network; otherwise the
+/// domain is asked and the answer stored — icon or miss. When the network
+/// fails with a stale copy in hand, the stale copy stands (and stays due for
+/// refresh, so it is retried later).
 pub fn fetch(email: &str) -> Option<Vec<u8>> {
     let domain = domain_of(email)?;
-    for url in candidate_urls(&domain) {
-        if let Some(bytes) = get(&url) {
+    let img = img_path(&domain);
+    if let Some(p) = img.as_ref().filter(|p| fresh(p)) {
+        if let Ok(bytes) = std::fs::read(p) {
             return Some(bytes);
         }
+    }
+    if miss_path(&domain).is_some_and(|p| fresh(&p)) {
+        return None;
+    }
+    for url in candidate_urls(&domain) {
+        if let Some(bytes) = get(&url) {
+            if let Some(p) = img.as_ref() {
+                let _ = std::fs::write(p, &bytes);
+            }
+            if let Some(p) = miss_path(&domain) {
+                let _ = std::fs::remove_file(p);
+            }
+            return Some(bytes);
+        }
+    }
+    if let Some(p) = img.as_ref().filter(|p| p.exists()) {
+        // Nothing new, but yesterday's icon beats initials.
+        return std::fs::read(p).ok();
+    }
+    if let Some(p) = miss_path(&domain) {
+        let _ = std::fs::write(p, b"");
     }
     None
 }
@@ -142,6 +232,14 @@ pub fn decode_and_cache(email: &str, bytes: &[u8]) -> Option<gtk::gdk::Texture> 
             Some(tex)
         }
         None => {
+            // Undecodable bytes: persist the miss (and drop the stored copy)
+            // so the next session doesn't fetch and fail to decode them again.
+            if let Some(p) = img_path(&domain) {
+                let _ = std::fs::remove_file(p);
+            }
+            if let Some(p) = miss_path(&domain) {
+                let _ = std::fs::write(p, b"");
+            }
             remember_miss(&domain);
             None
         }

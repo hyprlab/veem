@@ -24,7 +24,7 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
     (
         "Isaac",
         "thecalamityjoe87",
-        "The sidebar's pinned footer, thread expand/collapse animations, PDF thumbnails, the attachment-opening fix, the reader's To line, remote-content option, GNOME-styled context menus",
+        "The sidebar's pinned footer, thread expand/collapse animations, the list that stays put when rows vanish, PDF thumbnails, the attachment-opening fix, the reader's To line, remote-content option, GNOME-styled context menus",
     ),
     (
         "Alexander Lubovenko",
@@ -50,11 +50,11 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
 /// the top-edge maximize).
 const READER_MIN_WIDTH: i32 = 400;
 
-/// Below this reader-pane width the header's action buttons collapse into a
-/// single overflow menu. The full row of actions plus the window controls
-/// needs ~540px; with slack under that, squeezing the pane can never push
-/// the close button off the window's right edge.
-const READER_ACTIONS_BREAKPOINT: f64 = 560.0;
+/// Fallback threshold for folding the reader header's actions into the
+/// overflow menu. Normally the threshold is *measured* at startup from the
+/// real row (see the breakpoint in init) so it tracks the user's decoration
+/// layout; this value only stands in if that measurement comes back empty.
+const READER_ACTIONS_BREAKPOINT: f64 = 490.0;
 
 const SIDEBAR_RAIL_WIDTH: f64 = 80.0;
 
@@ -358,6 +358,10 @@ pub struct AppModel {
     thread_newest_first: bool,
     /// Reader always shows the recipients line under the sender.
     always_show_recipients: bool,
+    /// Whether the sidebar offers the unified "All Inboxes" section at all.
+    show_unified_pref: bool,
+    /// Whether the collapsed "All Inboxes" row wears its total-unread chip.
+    unified_chip: bool,
     /// Lone messages render as inset cards (#57).
     single_message_card: bool,
     /// Whether conversation rows may expand into their members in the list
@@ -620,6 +624,8 @@ pub enum AppMsg {
     SetNotificationContent(bool),
     SetAttachmentsRow(bool),
     SetContactsRow(bool),
+    SetShowUnified(bool),
+    SetUnifiedChip(bool),
     /// The message list's visible-count text changed.
     ListCount(String),
     /// Preference: hovering the narrow-window rail floats the sidebar out.
@@ -648,6 +654,8 @@ pub enum AppMsg {
     ReplyAll,
     Forward,
     AddToContacts,
+    AddContactAddr(String),
+    OpenMailto(String),
     ContactAdded(Result<crate::contacts::AddOutcome, String>),
     ViewSource,
     /// User clicked "Load attachments" for a message whose attachments weren't
@@ -691,6 +699,7 @@ pub enum AppMsg {
     Messages { account_id: u32, folder_id: u32, messages: Vec<Message> },
     /// Additional indexed summaries from the background backfill (search index).
     MessagesAppend { account_id: u32, folder_id: u32, messages: Vec<Message> },
+    UndoRestored { account_id: u32, folder_id: u32, message_ids: Vec<String> },
     /// A folder's background backfill finished — it's fully indexed now.
     BackfillDone { account_id: u32, folder_id: u32 },
     FolderUnread { account_id: u32, folder_id: u32, unread: u32 },
@@ -965,12 +974,17 @@ impl SimpleComponent for AppModel {
                             set_size_request: (READER_MIN_WIDTH, 200),
                             #[wrap(Some)]
                             set_child = &adw::ToolbarView {
+                            #[name = "reader_header"]
                             add_top_bar = &adw::HeaderBar {
                                 // Rightmost of the packed items, beside the window
                                 // controls: the overflow ⋯ that stands in for the
                                 // action buttons while collapsed.
                                 pack_end: &model.reader_overflow_btn,
                                 add_css_class: "flat",
+                                // Tighter icon spacing than stock so the full
+                                // action row fits a narrower pane (see
+                                // READER_ACTIONS_BREAKPOINT and styles.css).
+                                add_css_class: "reader-toolbar",
                                 // Empty title so the window's "Vireo" title isn't
                                 // shown here; the app title lives above the sidebar.
                                 #[wrap(Some)]
@@ -1053,14 +1067,13 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed
                                         && model.reader_compose.is_none(),
-                                    // The icon shows the message's STATE (unread
-                                    // envelope while unread); the tooltip names
-                                    // the action.
+                                    // The icon shows the ACTION (read envelope =
+                                    // "mark as read"), matching the menus.
                                     #[watch]
                                     set_icon_name: if model.reply_target().is_some_and(|m| m.unread) {
-                                        "co.hyprlab.Vireo-mail-unread-symbolic"
-                                    } else {
                                         "co.hyprlab.Vireo-mail-read-symbolic"
+                                    } else {
+                                        "co.hyprlab.Vireo-mail-unread-symbolic"
                                     },
                                     #[watch]
                                     set_tooltip_text: Some(if model.reply_target().is_some_and(|m| m.unread) {
@@ -1090,17 +1103,9 @@ impl SimpleComponent for AppModel {
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleStar),
                                 },
-                                pack_start = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-contact-new-symbolic",
-                                    set_tooltip_text: Some("Add sender to Contacts"),
-                                    add_css_class: "flat",
-                                    #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
-                                        && model.reader_compose.is_none(),
-                                    #[watch]
-                                    set_sensitive: model.reply_target().is_some(),
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::AddToContacts),
-                                },
+                                // (No Add-to-Contacts button here: the action
+                                // lives on the address itself — right-click any
+                                // address in a message header.)
                                 // pack_end fills right-to-left, so these are declared
                                 // in reverse of their visual order. Left to right:
                                 // Archive, Delete, Spam, Print, sender check.
@@ -1512,6 +1517,7 @@ impl SimpleComponent for AppModel {
                     }
                     MessageViewOutput::SelectCards(keys) => AppMsg::SelectCards(keys),
                     MessageViewOutput::ComposeTo(addr) => AppMsg::ComposeTo(addr),
+                    MessageViewOutput::AddContactAddr(addr) => AppMsg::AddContactAddr(addr),
                 });
 
         // The drawer owns a Paned whose top pane is the reader body, so hand it
@@ -1672,7 +1678,7 @@ impl SimpleComponent for AppModel {
             sidebar_header: None,
             sidebar_refresh: {
                 let b = gtk::Button::new();
-                b.set_tooltip_text(Some("Refresh"));
+                b.set_tooltip_text(Some("Refresh or long-press for Status Bar"));
                 b.add_css_class("flat");
                 b.set_valign(gtk::Align::Center);
                 b
@@ -1733,6 +1739,8 @@ impl SimpleComponent for AppModel {
             threads_expanded: config::load_threads_expanded(),
             thread_newest_first: config::load_thread_newest_first(),
             always_show_recipients: config::load_always_show_recipients(),
+            show_unified_pref: config::load_show_unified(),
+            unified_chip: config::load_unified_chip(),
             single_message_card: config::load_single_message_card(),
             thread_expansion: config::load_thread_expansion(),
             confirm_thread_delete: config::load_confirm_thread_delete(),
@@ -1839,11 +1847,48 @@ impl SimpleComponent for AppModel {
         let widgets = view_output!();
         // Collapse the reader header's actions into the overflow menu when the
         // pane can no longer fit the full row — squeezing it further must never
-        // push the window controls off the right edge.
+        // push the window controls off the right edge. The threshold is
+        // measured, not assumed: the window-controls cost depends on the
+        // user's decoration layout (GNOME ships one button, others run three),
+        // so the row's cost is taken from the real headerbar now — while every
+        // action is still visible, before the breakpoint could hide any — and
+        // the controls' share is re-derived if the decoration layout changes.
         {
+            // The controls' width comes from the headerbar's own live
+            // GtkWindowControls children (a detached WindowControls never
+            // populates its buttons and measures 0).
+            fn measure_controls(w: &gtk::Widget, sum: &mut i32) {
+                if let Some(c) = w.downcast_ref::<gtk::WindowControls>() {
+                    *sum += c.measure(gtk::Orientation::Horizontal, -1).1;
+                    return;
+                }
+                let mut child = w.first_child();
+                while let Some(c) = child {
+                    measure_controls(&c, sum);
+                    child = c.next_sibling();
+                }
+            }
+            let header: gtk::Widget = widgets.reader_header.clone().upcast();
+            let full = header.measure(gtk::Orientation::Horizontal, -1).1;
+            let mut controls = 0;
+            measure_controls(&header, &mut controls);
+            // The actions' share of the row is layout-independent; slack keeps
+            // the fold a step ahead of an actual squeeze.
+            let actions = full - controls;
+            let threshold = move |controls: i32| {
+                if full <= 0 {
+                    READER_ACTIONS_BREAKPOINT
+                } else {
+                    (actions + controls) as f64 + 24.0
+                }
+            };
+            tracing::info!(
+                "reader toolbar: actions {actions}px + controls {controls}px → collapse below {:.0}px",
+                threshold(controls)
+            );
             let bp = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
                 adw::BreakpointConditionLengthType::MaxWidth,
-                READER_ACTIONS_BREAKPOINT,
+                threshold(controls),
                 adw::LengthUnit::Px,
             ));
             let s = sender.input_sender().clone();
@@ -1854,7 +1899,28 @@ impl SimpleComponent for AppModel {
             bp.connect_unapply(move |_| {
                 let _ = s.send(AppMsg::SetReaderActionsCollapsed(false));
             });
-            widgets.reader_bin.add_breakpoint(bp);
+            widgets.reader_bin.add_breakpoint(bp.clone());
+            if let Some(settings) = gtk::Settings::default() {
+                settings.connect_notify_local(Some("gtk-decoration-layout"), move |_, _| {
+                    // Re-measure in an idle: the headerbar's own controls
+                    // rebuild on this same notify, in unspecified order.
+                    let bp = bp.clone();
+                    let header = header.clone();
+                    gtk::glib::idle_add_local_once(move || {
+                        let mut controls = 0;
+                        measure_controls(&header, &mut controls);
+                        tracing::info!(
+                            "reader toolbar: decoration layout changed, controls {controls}px → collapse below {:.0}px",
+                            threshold(controls)
+                        );
+                        bp.set_condition(Some(&adw::BreakpointCondition::new_length(
+                            adw::BreakpointConditionLengthType::MaxWidth,
+                            threshold(controls),
+                            adw::LengthUnit::Px,
+                        )));
+                    });
+                });
+            }
             let s = sender.input_sender().clone();
             model.reader_overflow_btn.connect_clicked(move |_| {
                 let _ = s.send(AppMsg::ReaderOverflowMenu);
@@ -2005,10 +2071,18 @@ impl SimpleComponent for AppModel {
                     // pointer this captures the expanded panel, but the cache
                     // is refreshed again on the next rail hover before it is
                     // ever shown.
+                    // Only cache while the pane really is the rail: the pane
+                    // also "enters" under a stationary pointer whenever the
+                    // peek panel slides in or out beneath it, and caching the
+                    // expanded panel here is what used to hand the ghost strip
+                    // an oversized snapshot (aspect-scaled to ~146px, shoving
+                    // the panes sideways on the next open).
                     if let Some(pane) = pane_weak.upgrade() {
-                        use gtk::gdk::prelude::PaintableExt;
-                        let live = gtk::WidgetPaintable::new(Some(&pane));
-                        *snap.borrow_mut() = Some(live.current_image());
+                        if pane.width() <= SIDEBAR_RAIL_WIDTH as i32 {
+                            use gtk::gdk::prelude::PaintableExt;
+                            let live = gtk::WidgetPaintable::new(Some(&pane));
+                            *snap.borrow_mut() = Some(live.current_image());
+                        }
                     }
                     if let Some(prev) = pending.borrow_mut().take() {
                         prev.remove();
@@ -2319,6 +2393,44 @@ impl SimpleComponent for AppModel {
                     gtk::glib::timeout_add_seconds_local_once(3, move || {
                         let _ = list.send(MessageListInput::MoveSelection(1));
                     });
+                    // VIREO_SHOWCASE_PALETTE=N opens row N's Actions Palette
+                    // (so a capture can verify the floating palette's look).
+                    if let Some(Ok(idx)) =
+                        std::env::var("VIREO_SHOWCASE_PALETTE").ok().map(|v| v.parse())
+                    {
+                        let list = model.message_list.sender().clone();
+                        let burst = std::env::var("VIREO_SHOWCASE_BURST").ok();
+                        let win = root.clone();
+                        {
+                            // An occluded window's frame clock is suspended
+                            // and animations cannot progress — raise it well
+                            // ahead so the slide actually runs for the burst.
+                            let win = win.clone();
+                            gtk::glib::timeout_add_seconds_local_once(5, move || {
+                                win.present();
+                            });
+                        }
+                        gtk::glib::timeout_add_seconds_local_once(7, move || {
+                            let _ = list.send(MessageListInput::DebugOpenPalette(idx));
+                            // TEMP: frame burst right after the open, to see
+                            // the slide animation (or its absence) in stills.
+                            if let Some(base) = burst.clone() {
+                                for (i, ms) in [40u64, 90, 140, 240].iter().enumerate() {
+                                    let win = win.clone();
+                                    let path = format!("{base}.{i}.png");
+                                    gtk::glib::timeout_add_local_once(
+                                        std::time::Duration::from_millis(*ms),
+                                        move || {
+                                            showcase_capture(
+                                                win.upcast_ref::<gtk::Widget>(),
+                                                &path,
+                                            );
+                                        },
+                                    );
+                                }
+                            }
+                        });
+                    }
                     let view = model.message_view.sender().clone();
                     gtk::glib::timeout_add_seconds_local_once(6, move || {
                         let _ = view.send(crate::ui::message_view::MessageViewInput::CardClicked {
@@ -2367,6 +2479,13 @@ impl SimpleComponent for AppModel {
                 menu.append(Some(label), Some(&format!("sortmenu.order::{key}")));
             }
             widgets.list_sort_btn.set_menu_model(Some(&menu));
+        }
+
+        // mailto: URIs can arrive (via GApplication `open`) before this init
+        // ran — install the live sender and drain anything that queued early.
+        let _ = MAILTO_SENDER.set(sender.input_sender().clone());
+        for uri in MAILTO_PENDING.lock().unwrap().drain(..) {
+            sender.input(AppMsg::OpenMailto(uri));
         }
 
         ComponentParts { model, widgets }
@@ -3253,6 +3372,9 @@ impl SimpleComponent for AppModel {
                             });
                         }
                     }
+                    RowAction::AddContact => {
+                        self.show_add_contact_dialog(&m.from_name, &m.from_addr, &sender);
+                    }
                 }
             }
 
@@ -3373,6 +3495,12 @@ impl SimpleComponent for AppModel {
                 if let Some(m) = self.reply_target() {
                     self.show_add_contact_dialog(&m.from_name, &m.from_addr, &sender);
                 }
+            }
+
+            AppMsg::AddContactAddr(addr) => {
+                // From an address's right-click menu: only the address is
+                // known; the dialog's name field starts blank for the user.
+                self.show_add_contact_dialog("", &addr, &sender);
             }
 
             AppMsg::ContactAdded(result) => {
@@ -3673,9 +3801,19 @@ impl SimpleComponent for AppModel {
 
             AppMsg::SetPreviewLines(lines) => {
                 if self.preview_lines != lines {
+                    let was_off = self.preview_lines == 0;
                     self.preview_lines = lines;
                     self.save_settings();
                     self.message_list.emit(MessageListInput::SetPreviewLines(lines));
+                    // Previews switched back on: IMAP summaries fetched while
+                    // they were off carry no preview text (the setting also
+                    // stops the body slice being downloaded), so nothing would
+                    // show until the next scheduled sync. Refresh now so they
+                    // fill in right away. (Graph always has bodyPreview in
+                    // hand, which is why Microsoft accounts showed instantly.)
+                    if was_off && lines > 0 {
+                        sender.input(AppMsg::Refresh);
+                    }
                 }
             }
 
@@ -3694,6 +3832,23 @@ impl SimpleComponent for AppModel {
                     self.show_contacts = show;
                     self.save_settings();
                     self.sidebar.emit(SidebarInput::SetContactsRow(show));
+                }
+            }
+
+            AppMsg::SetShowUnified(show) => {
+                if self.show_unified_pref != show {
+                    self.show_unified_pref = show;
+                    self.save_settings();
+                    // Rebuilds the sidebar with or without the unified section.
+                    self.rebuild_sidebar();
+                }
+            }
+
+            AppMsg::SetUnifiedChip(show) => {
+                if self.unified_chip != show {
+                    self.unified_chip = show;
+                    self.save_settings();
+                    self.rebuild_sidebar();
                 }
             }
 
@@ -3836,6 +3991,13 @@ impl SimpleComponent for AppModel {
                     dest_folder_id: e.restore_folder_id,
                     message_ids: e.message_ids,
                 });
+                // Finding, moving and reloading the restored messages takes a
+                // few round trips — spin the refresh indicator until the
+                // worker's BulkComplete says the undo has landed.
+                self.bulk_pending += 1;
+                self.update_busy_indicator();
+                self.notifications
+                    .emit(NotifyInput::SetStatus("Undoing move…".to_string()));
             }
 
             AppMsg::SetComposeInline(on) => {
@@ -3875,6 +4037,24 @@ impl SimpleComponent for AppModel {
                 };
                 // Same preference as "New Message": slide down over the
                 // reader, unless composing is set to open in a window.
+                if self.compose_inline {
+                    self.open_inline_reply(account, prefill, &sender);
+                } else {
+                    self.open_compose(account, prefill, &sender);
+                }
+            }
+
+            AppMsg::OpenMailto(uri) => {
+                // A mailto: link from anywhere on the system (the desktop file
+                // registers the scheme). Same open-composer flow as ComposeTo,
+                // with the URI's subject/cc/bcc/body carried along.
+                let Some(prefill) = parse_mailto(&uri) else { return };
+                self.showing_gallery = false;
+                let account = self
+                    .current
+                    .as_ref()
+                    .map(|m| m.account_id)
+                    .unwrap_or_else(|| self.active_account());
                 if self.compose_inline {
                     self.open_inline_reply(account, prefill, &sender);
                 } else {
@@ -3922,7 +4102,7 @@ impl SimpleComponent for AppModel {
 
             AppMsg::ComposeClosed(id) => {
                 self.close_compose(id);
-                self.message_list.emit(MessageListInput::FocusList);
+                self.message_list.emit(MessageListInput::ReclaimFocus);
             }
 
             AppMsg::ComposeToggleWindow(id) => self.toggle_compose_window(id, &sender),
@@ -4012,6 +4192,16 @@ impl SimpleComponent for AppModel {
                             }
                         }
                         self.save_sidebar_state();
+                        // Changed Special Folders assignments (#82) land on the
+                        // live lists at once; the reconnect's fresh LIST then
+                        // confirms them (and restores auto-detection for any
+                        // role set back to Automatic).
+                        for (i, cfg) in self.config.iter().enumerate() {
+                            if let Some(folders) = self.folders.get_mut(&(i as u32 + 1)) {
+                                apply_folder_roles(&cfg.folder_roles, folders);
+                            }
+                        }
+                        self.rebuild_sidebar();
                         self.reconnect_all(&sender);
                     }
                     Err(e) => self.notifications.emit(NotifyInput::Push {
@@ -4187,6 +4377,18 @@ impl SimpleComponent for AppModel {
                 {
                     return;
                 }
+                // Manual special-folder assignments (#82) ride over whatever
+                // the worker detected.
+                let mut folders = folders;
+                if let Some(cfg) = self.config.get(account_id as usize - 1) {
+                    apply_folder_roles(&cfg.folder_roles.clone(), &mut folders);
+                }
+                // Keep the settings editor's folder choices current while open.
+                if let Some(acc) = &self.accounts_win {
+                    acc.emit(crate::ui::accounts::AccountsInput::SetFolderChoices(
+                        self.folder_choice_map_with(account_id, &folders),
+                    ));
+                }
                 // Merge unread counts by PATH, and never let a zero overwrite
                 // a known count: a refresh's per-folder STATUS can fail
                 // silently (Gmail right after a RENAME answers zeros), and
@@ -4351,6 +4553,26 @@ impl SimpleComponent for AppModel {
                 }
                 // Refresh unread badges with the freshly-synced counts.
                 self.push_unread_counts();
+            }
+
+            AppMsg::UndoRestored { account_id, folder_id, message_ids } => {
+                // The undone move landed and the folder's reload has already
+                // been processed (the worker sends Messages first): put the
+                // user on the restored message — selected, loaded in the
+                // reader, and scrolled into view — instead of wherever the
+                // reload left the list. If the restored message isn't in the
+                // current view (folder switched meanwhile), SelectAndLoad
+                // finds no row and nothing moves.
+                let restored = self
+                    .message_cache
+                    .get(&(account_id, folder_id))
+                    .and_then(|msgs| {
+                        msgs.iter().find(|m| message_ids.contains(&m.message_id))
+                    })
+                    .map(|m| (m.account_id, m.id));
+                if let Some(key) = restored {
+                    self.message_list.emit(MessageListInput::SelectAndLoad(key));
+                }
             }
 
             AppMsg::MessagesAppend { account_id, folder_id, messages } => {
@@ -4883,6 +5105,8 @@ impl AppModel {
             self.show_remote_banner,
             self.sidebar_hover_expand,
             self.app_theme,
+            self.show_unified_pref,
+            self.unified_chip,
         );
     }
 
@@ -5488,23 +5712,49 @@ impl AppModel {
             // visible beneath the animation. The snapshot was cached on
             // pointer-enter (before the expand click could rebuild the rows);
             // a live capture is only the fallback.
-            if let Some(ghost) = self.peek_rail_ghost.clone() {
+            // Snapshot first (while the rail is still live), but flip the
+            // ghost visible in the same breath as the collapse below — with
+            // both in one layout pass, the rail is swapped for its frozen
+            // pixels with zero net movement. Setting the overlay width or
+            // showing the ghost while the sidebar is still docked each used
+            // to buy a one-frame layout shift underneath the panel.
+            let ghost_img = self.peek_rail_ghost.clone().map(|ghost| {
                 use gtk::gdk::prelude::PaintableExt;
-                let img = self.rail_snapshot.borrow().clone().or_else(|| {
-                    split
-                        .sidebar()
-                        .map(|side| gtk::WidgetPaintable::new(Some(&side)).current_image())
-                });
-                ghost.set_paintable(img.as_ref());
-                ghost.set_visible(true);
-            }
+                // Reject a cached snapshot that isn't rail-shaped: the ghost's
+                // Picture aspect-scales its paintable, so anything wider than
+                // rail/height would grow the strip and shove the panes over.
+                let rail_shaped = |img: &gtk::gdk::Paintable| {
+                    let h = split.sidebar().map(|s| s.height()).unwrap_or(0);
+                    h <= 0
+                        || img.intrinsic_height() <= 0
+                        || img.intrinsic_width() * h
+                            <= (SIDEBAR_RAIL_WIDTH as i32 + 2) * img.intrinsic_height()
+                };
+                let img = self
+                    .rail_snapshot
+                    .borrow()
+                    .clone()
+                    .filter(rail_shaped)
+                    .or_else(|| {
+                        split
+                            .sidebar()
+                            .map(|side| gtk::WidgetPaintable::new(Some(&side)).current_image())
+                    });
+                (ghost, img)
+            });
             if sync_rows {
                 self.sidebar.emit(SidebarInput::SetCollapsed(false));
             }
             self.peek_sidebar_header();
+            if let Some((ghost, img)) = ghost_img {
+                ghost.set_paintable(img.as_ref());
+                ghost.set_visible(true);
+            }
+            split.set_collapsed(true);
+            // Only now that the sidebar is out of the layout: the overlay
+            // panel's width. On a docked split this would widen the rail.
             split.set_min_sidebar_width(280.0);
             split.set_max_sidebar_width(280.0);
-            split.set_collapsed(true);
             if animate {
                 // Show on the next loop iteration, once the hidden collapsed
                 // state has settled — flipping both in one go skips the
@@ -5622,6 +5872,41 @@ impl AppModel {
 
     /// Push the current accounts + folders to the sidebar, in the user's chosen
     /// order and with each account's collapsed state.
+    /// The Special Folders choices per account email (#82): every folder of
+    /// every configured account, for the settings editor's combos.
+    fn folder_choice_map(
+        &self,
+    ) -> std::collections::HashMap<String, Vec<(String, String)>> {
+        let mut map = std::collections::HashMap::new();
+        for (i, cfg) in self.config.iter().enumerate() {
+            let id = i as u32 + 1;
+            let list = self
+                .folders
+                .get(&id)
+                .map(|fs| fs.iter().map(|f| (f.path.clone(), f.name.clone())).collect())
+                .unwrap_or_default();
+            map.insert(cfg.email.clone(), list);
+        }
+        map
+    }
+
+    /// [`folder_choice_map`], but with `account_id`'s list taken from `fresh`
+    /// (a SetFolders payload not yet stored on self).
+    fn folder_choice_map_with(
+        &self,
+        account_id: u32,
+        fresh: &[Folder],
+    ) -> std::collections::HashMap<String, Vec<(String, String)>> {
+        let mut map = self.folder_choice_map();
+        if let Some(cfg) = self.config.get(account_id as usize - 1) {
+            map.insert(
+                cfg.email.clone(),
+                fresh.iter().map(|f| (f.path.clone(), f.name.clone())).collect(),
+            );
+        }
+        map
+    }
+
     fn rebuild_sidebar(&self) {
         let order = self.ordered_emails();
         let sections: Vec<SectionData> = order
@@ -5669,14 +5954,16 @@ impl AppModel {
         // single-account — its default selection then landed on that account's
         // inbox (possibly inside a collapsed section, so nothing visibly
         // highlighted) instead of the "All Inboxes" the app should open with.
-        let show_unified = self.config.iter().filter(|c| c.enabled).count() > 1
-            // The demo has no config-file accounts, but its two mock accounts
-            // deserve the same All Inboxes opening as a real multi-account setup.
-            || (demo_mode() && self.accounts.len() > 1);
+        let show_unified = self.show_unified_pref
+            && (self.config.iter().filter(|c| c.enabled).count() > 1
+                // The demo has no config-file accounts, but its two mock accounts
+                // deserve the same All Inboxes opening as a real multi-account setup.
+                || (demo_mode() && self.accounts.len() > 1));
         let unified_unread = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
         self.sidebar.emit(SidebarInput::SetContents {
             sections,
             show_unified,
+            unified_chip: self.unified_chip,
             unified_unread,
         });
 
@@ -5850,8 +6137,6 @@ impl AppModel {
                     } else {
                         entry!("Mark as Unread", "mail-unread", AppMsg::ToggleReadCurrent, acts)
                     },
-                    entry!("Add to Contacts", "contact-new", AppMsg::AddToContacts, acts),
-                    entry!("Open Contacts", "x-office-address-book", AppMsg::OpenContacts, true),
                     if starred {
                         entry!("Remove Flag", "non-starred", AppMsg::ToggleStar, acts)
                     } else {
@@ -7680,6 +7965,8 @@ impl AppModel {
             notification_content: self.notification_content,
             show_attachments: self.show_attachments,
             show_contacts: self.show_contacts,
+            show_unified: self.show_unified_pref,
+            unified_chip: self.unified_chip,
             settings_open_accounts: self.settings_open_accounts,
             sidebar_hover_expand: self.sidebar_hover_expand,
             card_actions_hover: self.card_actions_hover,
@@ -7733,6 +8020,8 @@ impl AppModel {
                 }
                 PrefOutput::SetAttachmentsRow(show) => AppMsg::SetAttachmentsRow(show),
                 PrefOutput::SetContactsRow(show) => AppMsg::SetContactsRow(show),
+                PrefOutput::SetShowUnified(show) => AppMsg::SetShowUnified(show),
+                PrefOutput::SetUnifiedChip(show) => AppMsg::SetUnifiedChip(show),
                 PrefOutput::SetSidebarHoverExpand(on) => {
                     AppMsg::SetSidebarHoverExpand(on)
                 }
@@ -7749,6 +8038,9 @@ impl AppModel {
                 PrefOutput::Closed => AppMsg::ClosePreferences,
             });
         prefs.widget().present();
+        accounts.emit(crate::ui::accounts::AccountsInput::SetFolderChoices(
+            self.folder_choice_map(),
+        ));
         self.accounts_win = Some(accounts);
         self.prefs = Some(prefs);
     }
@@ -8650,6 +8942,135 @@ fn demo_mode() -> bool {
     std::env::var_os("VIREO_DEMO").is_some()
 }
 
+/// The [`FolderKind`] behind a Special Folders role key (#82).
+fn role_kind(role: &str) -> Option<FolderKind> {
+    match role {
+        "sent" => Some(FolderKind::Sent),
+        "drafts" => Some(FolderKind::Drafts),
+        "trash" => Some(FolderKind::Trash),
+        "junk" => Some(FolderKind::Junk),
+        "archive" => Some(FolderKind::Archive),
+        _ => None,
+    }
+}
+
+/// Apply an account's manual special-folder assignments (#82) over the
+/// auto-detected kinds: the chosen folder takes the role, whatever held it
+/// demotes to Custom, and the list re-sorts into the fixed role order.
+/// Folder ids are untouched — they are referenced from cached messages.
+fn apply_folder_roles(
+    roles: &std::collections::BTreeMap<String, String>,
+    folders: &mut Vec<Folder>,
+) {
+    if roles.is_empty() {
+        return;
+    }
+    for (role, path) in roles {
+        let Some(kind) = role_kind(role) else { continue };
+        if !folders.iter().any(|f| &f.path == path) {
+            // The assigned folder vanished server-side: leave detection alone.
+            continue;
+        }
+        for f in folders.iter_mut() {
+            if f.kind == kind {
+                f.kind = FolderKind::Custom;
+            }
+        }
+        if let Some(f) = folders.iter_mut().find(|f| &f.path == path) {
+            f.kind = kind;
+        }
+    }
+    folders.sort_by(|a, b| {
+        crate::worker::folder_order(a.kind)
+            .cmp(&crate::worker::folder_order(b.kind))
+            .then_with(|| a.path.to_lowercase().cmp(&b.path.to_lowercase()))
+    });
+}
+
+/// A `mailto:` handed to the app before its component was up. `queue_mailto`
+/// runs on GApplication's `open` signal, which can fire before `AppModel::init`
+/// installs the sender — anything early waits here and is drained by init.
+static MAILTO_PENDING: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static MAILTO_SENDER: std::sync::OnceLock<relm4::Sender<AppMsg>> = std::sync::OnceLock::new();
+
+/// Route a `mailto:` URI to the app (from main's `connect_open`).
+pub fn queue_mailto(uri: String) {
+    match MAILTO_SENDER.get() {
+        Some(s) => {
+            let _ = s.send(AppMsg::OpenMailto(uri));
+        }
+        None => MAILTO_PENDING.lock().unwrap().push(uri),
+    }
+}
+
+/// Percent-decode for mailto components (RFC 6068): `%XX` only — `+` stays
+/// literal, because plus-addressing (`user+tag@example.com`) is a real thing.
+fn pct_decode_mailto(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Turn a `mailto:` URI into a composer prefill (RFC 6068: address part plus
+/// to/cc/bcc/subject/body query keys, all percent-encoded).
+fn parse_mailto(uri: &str) -> Option<crate::ui::compose::ComposePrefill> {
+    let rest = uri.strip_prefix("mailto:")?;
+    let (addr, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let mut to = pct_decode_mailto(addr);
+    let (mut cc, mut bcc, mut subject, mut body) =
+        (String::new(), String::new(), String::new(), String::new());
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        let v = pct_decode_mailto(v);
+        match k.to_ascii_lowercase().as_str() {
+            // A second `to` joins the address part, comma-separated.
+            "to" if !v.is_empty() => {
+                if !to.is_empty() {
+                    to.push_str(", ");
+                }
+                to.push_str(&v);
+            }
+            "cc" => cc = v,
+            "bcc" => bcc = v,
+            "subject" => subject = v,
+            "body" => body = v,
+            _ => {}
+        }
+    }
+    // The rich editor takes HTML; the mailto body is plain text.
+    let body_html = if body.is_empty() {
+        String::new()
+    } else {
+        body.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace("\r\n", "\n")
+            .replace('\n', "<br>")
+    };
+    Some(crate::ui::compose::ComposePrefill {
+        to,
+        cc,
+        bcc,
+        subject,
+        body_html,
+        ..Default::default()
+    })
+}
+
 /// Render the window's widget tree to a PNG at 2x (crisp text for marketing
 /// shots). Content only — the compositor's shadow/frame is not part of the
 /// tree, which is exactly what the site and store screenshots want.
@@ -8664,7 +9085,18 @@ fn showcase_capture(win: &gtk::Widget, path: &str) {
     snapshot.scale(2.0, 2.0);
     gtk::prelude::PaintableExt::snapshot(&paintable, &snapshot, w as f64, h as f64);
     let Some(node) = snapshot.to_node() else {
-        tracing::error!("showcase: nothing to render");
+        // A fully occluded window is suspended by the compositor and stops
+        // producing frames, so the snapshot comes back empty. Raise it and
+        // try again shortly.
+        tracing::warn!("showcase: nothing to render (window suspended?) — presenting + retrying");
+        if let Some(w) = win.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
+            w.present();
+        }
+        let win = win.clone();
+        let path = path.to_string();
+        gtk::glib::timeout_add_seconds_local_once(2, move || {
+            showcase_capture(&win, &path);
+        });
         return;
     };
     let Some(renderer) = win.native().and_then(|n| n.renderer()) else {
@@ -8762,10 +9194,10 @@ fn set_sidebar_header_compact(
     title.set_visible(!compact);
 }
 
-/// The peek variant of the expanded sidebar header: full-width rows and the
-/// "Vireo" title, but the hamburger stays pinned over the rail's 80px strip
-/// (start side, centred) instead of jumping to the panel's far end — a cursor
-/// heading for it on the rail keeps finding it in the floating panel. Window
+/// The peek variant of the expanded sidebar header: identical layout to the
+/// expanded sidebar's — Refresh at the top-left, the hamburger at the top-end,
+/// the "Vireo" title centred — so the floating panel reads as the same
+/// sidebar, just overlaid. Window
 /// controls stay hidden, matching the rail the peek floats out of.
 fn set_sidebar_header_peek(
     header: &adw::HeaderBar,
@@ -8781,14 +9213,12 @@ fn set_sidebar_header_peek(
     }
     header.remove_css_class("rail-header");
     header.set_title_widget(Some(title));
-    // Menu first so its rail-centring margin holds; Refresh follows it, where
-    // the expanded header's top-left slot would put it.
-    header.pack_start(menu);
+    // Same placement as the expanded sidebar header (Refresh start, menu
+    // end), so the overlay reads as the normal sidebar rather than shuffling
+    // its buttons around.
+    menu.set_margin_start(0);
     header.pack_start(refresh);
-    // Centre the button over the rail's width, compensating the header's own
-    // start padding, so it sits where the rail drew it.
-    let w = menu.width().max(34);
-    menu.set_margin_start(((SIDEBAR_RAIL_WIDTH as i32 - w) / 2 - 6).max(0));
+    header.pack_end(menu);
     title.set_visible(true);
 }
 
@@ -8851,6 +9281,9 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
         }
         WorkerEvent::MessagesAppend { folder_id, messages } => {
             AppMsg::MessagesAppend { account_id, folder_id, messages }
+        }
+        WorkerEvent::Restored { folder_id, message_ids } => {
+            AppMsg::UndoRestored { account_id, folder_id, message_ids }
         }
         WorkerEvent::Gallery { items } => AppMsg::GalleryItems { account_id, items },
         WorkerEvent::BackfillDone { folder_id } => AppMsg::BackfillDone { account_id, folder_id },
@@ -9284,6 +9717,66 @@ fn next_after_vanish(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn folder_roles_override_detection_and_demote_the_old_holder() {
+        use crate::models::{Folder, FolderKind};
+        let f = |id: u32, path: &str, kind: FolderKind| Folder {
+            id,
+            account_id: 1,
+            name: path.to_string(),
+            path: path.to_string(),
+            kind,
+            unread: 0,
+        };
+        let mut folders = vec![
+            f(1, "INBOX", FolderKind::Inbox),
+            f(2, "Sent Items", FolderKind::Custom),
+            f(3, "Sent", FolderKind::Sent),
+            f(4, "Rubbish", FolderKind::Custom),
+        ];
+        let roles: std::collections::BTreeMap<String, String> = [
+            ("sent".to_string(), "Sent Items".to_string()),
+            ("trash".to_string(), "Rubbish".to_string()),
+            // A mapping whose folder no longer exists changes nothing.
+            ("junk".to_string(), "Gone".to_string()),
+        ]
+        .into();
+        super::apply_folder_roles(&roles, &mut folders);
+        let kind_of = |path: &str| folders.iter().find(|f| f.path == path).unwrap().kind;
+        assert_eq!(kind_of("Sent Items"), FolderKind::Sent);
+        assert_eq!(kind_of("Sent"), FolderKind::Custom, "old holder demotes");
+        assert_eq!(kind_of("Rubbish"), FolderKind::Trash);
+        assert_eq!(kind_of("INBOX"), FolderKind::Inbox);
+        // Ids survive the re-sort (cached messages reference them).
+        assert_eq!(folders.iter().find(|f| f.path == "Sent Items").unwrap().id, 2);
+    }
+
+    #[test]
+    fn mailto_uris_become_composer_prefills() {
+        let p = super::parse_mailto("mailto:ann@example.com").unwrap();
+        assert_eq!(p.to, "ann@example.com");
+        assert!(p.subject.is_empty() && p.body_html.is_empty());
+
+        let p = super::parse_mailto(
+            "mailto:ann@example.com?subject=Hi%20there&cc=bob@x.org&body=line%20one%0Aline%20two",
+        )
+        .unwrap();
+        assert_eq!(p.to, "ann@example.com");
+        assert_eq!(p.subject, "Hi there");
+        assert_eq!(p.cc, "bob@x.org");
+        assert_eq!(p.body_html, "line one<br>line two");
+
+        // Plus-addressing survives: '+' is literal in mailto, never a space.
+        let p = super::parse_mailto("mailto:user%2Btag@example.com?to=a+b@x.org").unwrap();
+        assert_eq!(p.to, "user+tag@example.com, a+b@x.org");
+
+        // A body with markup arrives escaped, not interpreted.
+        let p = super::parse_mailto("mailto:a@b.c?body=%3Cscript%3E").unwrap();
+        assert_eq!(p.body_html, "&lt;script&gt;");
+
+        assert!(super::parse_mailto("https://example.com").is_none());
+    }
+
     #[test]
     fn forward_sanitizer_strips_active_content() {
         use super::sanitize_forward_html;

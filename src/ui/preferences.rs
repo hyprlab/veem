@@ -51,6 +51,8 @@ pub struct PrefInit {
     pub notification_content: bool,
     pub show_attachments: bool,
     pub show_contacts: bool,
+    pub show_unified: bool,
+    pub unified_chip: bool,
     pub sidebar_hover_expand: bool,
     pub preview_lines: u32,
     pub single_key_shortcuts: bool,
@@ -153,6 +155,7 @@ pub struct Preferences {
     /// Mirrors the notifications switch, so the "show sender and subject" row
     /// below it can grey out when nothing is being posted at all.
     notifications: bool,
+    show_unified: bool,
     /// Mirrors the threading switch, so the "threaded message list" row below
     /// it can grey out when conversations aren't grouped at all.
     threading: bool,
@@ -199,6 +202,8 @@ pub enum PrefInput {
     ToggleNotificationContent(bool),
     ToggleAttachmentsRow(bool),
     ToggleContactsRow(bool),
+    ToggleShowUnified(bool),
+    ToggleUnifiedChip(bool),
     ToggleSidebarHoverExpand(bool),
     ChangePreviewLines(u32),
     ToggleSingleKey(bool),
@@ -245,6 +250,8 @@ pub enum PrefOutput {
     SetNotificationContent(bool),
     SetAttachmentsRow(bool),
     SetContactsRow(bool),
+    SetShowUnified(bool),
+    SetUnifiedChip(bool),
     SetSidebarHoverExpand(bool),
     SetAppTheme(AppTheme),
     /// The "this window opens to" choice changed (true = Accounts).
@@ -353,6 +360,29 @@ impl Component for Preferences {
                     add = &adw::PreferencesGroup {
                         set_title: "Sidebar",
 
+                        #[name = "show_unified_row"]
+                        adw::SwitchRow {
+                            set_title: "All Inboxes",
+                            set_subtitle: "A unified inbox combining every account, at the top \
+                                           of the sidebar. Only shown with more than one \
+                                           account.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleShowUnified(row.is_active()));
+                            },
+                        },
+
+                        #[name = "unified_chip_row"]
+                        adw::SwitchRow {
+                            #[watch]
+                            set_sensitive: model.show_unified,
+                            set_title: "All Inboxes unread count",
+                            set_subtitle: "Show the combined unread chip next to All Inboxes \
+                                           while its per-account list is folded up.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleUnifiedChip(row.is_active()));
+                            },
+                        },
+
                         #[name = "show_attachments_row"]
                         adw::SwitchRow {
                             set_title: "Attachments in the sidebar",
@@ -407,16 +437,6 @@ impl Component for Preferences {
                                            Off also stops previews being downloaded.",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangePreviewLines(row.selected()));
-                            },
-                        },
-
-                        #[name = "card_actions_row"]
-                        adw::ComboRow {
-                            set_title: "Message card actions",
-                            set_subtitle: "How each message's action icons show in the \
-                                           reader, single or threaded.",
-                            connect_selected_notify[sender] => move |row| {
-                                sender.input(PrefInput::ChangeCardActionsMode(row.selected()));
                             },
                         },
 
@@ -527,6 +547,16 @@ impl Component for Preferences {
                             set_subtitle: "Theme for email content only, not the app itself.",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeMessageTheme(row.selected()));
+                            },
+                        },
+
+                        #[name = "card_actions_row"]
+                        adw::ComboRow {
+                            set_title: "Message card actions",
+                            set_subtitle: "How each message's action icons show in the \
+                                           reader, single or threaded.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeCardActionsMode(row.selected()));
                             },
                         },
 
@@ -811,6 +841,7 @@ impl Component for Preferences {
             blacklist,
             blacklist_addrs: Vec::new(),
             notifications: init.notifications,
+            show_unified: init.show_unified,
             threading: init.threading,
             thread_expansion: init.thread_expansion,
             list_palette: init.list_palette,
@@ -836,6 +867,46 @@ impl Component for Preferences {
         let senders_box = model.senders.widget();
         let blacklist_box = model.blacklist.widget();
         let widgets = view_output!();
+
+        // Settings never truncates. AdwComboRow's DEFAULT item factory builds
+        // the selected-value display with an ellipsizing label — and rebuilds
+        // it on every selection change, so fixing the widget after the fact
+        // doesn't stick ("Follow system" → "Follow s…"). Give every combo a
+        // plain factory whose labels never ellipsize; the short row titles
+        // yield the space instead.
+        fn no_truncate(row: &adw::ComboRow) {
+            let factory = gtk::SignalListItemFactory::new();
+            factory.connect_setup(|_, item| {
+                if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+                    let label = gtk::Label::new(None);
+                    label.set_xalign(0.0);
+                    item.set_child(Some(&label));
+                }
+            });
+            factory.connect_bind(|_, item| {
+                let Some(item) = item.downcast_ref::<gtk::ListItem>() else { return };
+                if let (Some(label), Some(s)) = (
+                    item.child().and_downcast::<gtk::Label>(),
+                    item.item().and_downcast::<gtk::StringObject>(),
+                ) {
+                    label.set_label(&s.string());
+                }
+            });
+            row.set_factory(Some(&factory));
+        }
+        for row in [
+            &widgets.fetch_row,
+            &widgets.preview_lines_row,
+            &widgets.message_theme_row,
+            &widgets.card_actions_row,
+            &widgets.app_theme_row,
+            &widgets.settings_open_row,
+            &widgets.date_style_row,
+            &widgets.clock_style_row,
+        ] {
+            no_truncate(row);
+        }
+
         widgets.auto_remote_content_row.set_active(init.auto_remote_content);
         widgets.show_remote_banner_row.set_active(init.show_remote_banner);
         widgets.gravatar_row.set_active(init.gravatar);
@@ -855,6 +926,8 @@ impl Component for Preferences {
         widgets.notification_content_row.set_active(init.notification_content);
         widgets.show_attachments_row.set_active(init.show_attachments);
         widgets.show_contacts_row.set_active(init.show_contacts);
+        widgets.show_unified_row.set_active(init.show_unified);
+        widgets.unified_chip_row.set_active(init.unified_chip);
         widgets.sidebar_hover_expand_row.set_active(init.sidebar_hover_expand);
         let preview_labels = ["Off", "1 line", "2 lines", "3 lines"];
         widgets
@@ -881,7 +954,7 @@ impl Component for Preferences {
         widgets.thread_expansion_row.set_active(init.thread_expansion);
         widgets.confirm_thread_delete_row.set_active(init.confirm_thread_delete);
         widgets.card_actions_row.set_model(Some(&gtk::StringList::new(&[
-            "Hidden behind a \u{22ef} toggle",
+            "Hidden behind a toggle",
             "Shown while hovering",
             "Always visible",
         ])));
@@ -1061,6 +1134,13 @@ impl Component for Preferences {
             }
             PrefInput::ToggleAttachmentsRow(on) => {
                 let _ = sender.output(PrefOutput::SetAttachmentsRow(on));
+            }
+            PrefInput::ToggleShowUnified(on) => {
+                self.show_unified = on;
+                let _ = sender.output(PrefOutput::SetShowUnified(on));
+            }
+            PrefInput::ToggleUnifiedChip(on) => {
+                let _ = sender.output(PrefOutput::SetUnifiedChip(on));
             }
             PrefInput::ToggleContactsRow(on) => {
                 let _ = sender.output(PrefOutput::SetContactsRow(on));

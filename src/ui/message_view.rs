@@ -183,6 +183,8 @@ pub enum MessageViewInput {
     SelectAllCards,
     /// An email address in a card header was clicked — compose to it.
     ComposeTo(String),
+    /// "Add to Contacts" from an address's right-click menu.
+    AddContact(String),
     /// Which messages the list has selected. Drawn as an accent outline on the
     /// matching cards, applied to the live document rather than by rendering it
     /// again — a re-render would lose the reader's scroll position.
@@ -251,6 +253,8 @@ pub enum MessageViewOutput {
     ContactSender(Box<Message>),
     /// An email address in a card header was clicked — open a composer to it.
     ComposeTo(String),
+    /// "Add to Contacts" picked on an address's right-click menu.
+    AddContactAddr(String),
 }
 
 #[relm4::component(pub)]
@@ -534,6 +538,12 @@ impl Component for MessageView {
                     "composeto" => {
                         if let Some(addr) = extra.map(str::trim).filter(|a| !a.is_empty()) {
                             open_sender.input(MessageViewInput::ComposeTo(addr.to_string()));
+                        }
+                    }
+                    // "Add to Contacts" from the address menu.
+                    "addcontact" => {
+                        if let Some(addr) = extra.map(str::trim).filter(|a| !a.is_empty()) {
+                            open_sender.input(MessageViewInput::AddContact(addr.to_string()));
                         }
                     }
                     // "Copy Address" from the address menu.
@@ -865,6 +875,9 @@ impl Component for MessageView {
             }
             MessageViewInput::ComposeTo(addr) => {
                 let _ = sender.output(MessageViewOutput::ComposeTo(addr));
+            }
+            MessageViewInput::AddContact(addr) => {
+                let _ = sender.output(MessageViewOutput::AddContactAddr(addr));
             }
             MessageViewInput::SetSelectedCards(keys) => {
                 // The list mirrors every selection change here — including the
@@ -1218,17 +1231,18 @@ impl MessageView {
                         let key = (m.account_id, m.id);
                         format!(
                             "<span class=\"vireo-acts\">{}{}{}{}{}{}{}{}{}{}</span>",
+                            // Same order as the reader toolbar and the list's
+                            // Actions Palette, View Source closing the line.
                             card_action_button(key, "reply", "mail-reply-sender-symbolic", "Reply to this message"),
                             card_action_button(key, "replyall", "mail-reply-all-symbolic", "Reply to everyone on this message"),
                             card_action_button(key, "forward", "mail-forward-symbolic", "Forward this message"),
-                            // State-showing icon (unread envelope while unread);
-                            // the tooltip names the action.
+                            // Action-showing icon (read envelope = "mark as
+                            // read"), like the menus and toolbar.
                             if m.unread {
-                                card_action_button(key, "toggleread", "mail-unread-symbolic", "Mark as Read")
+                                card_action_button(key, "toggleread", "mail-read-symbolic", "Mark as Read")
                             } else {
-                                card_action_button(key, "toggleread", "mail-read-symbolic", "Mark as Unread")
+                                card_action_button(key, "toggleread", "mail-unread-symbolic", "Mark as Unread")
                             },
-                            card_action_button(key, "contact", "contact-new-symbolic", "Add sender to Contacts"),
                             // The star keeps one glyph; the flagged state is
                             // colour alone (`.on`, toggled optimistically on
                             // click too).
@@ -1240,9 +1254,10 @@ impl MessageView {
                                 id = key.1,
                                 svg = inline_icon_svg("non-starred-symbolic"),
                             ),
-                            card_action_button(key, "spam", "mail-mark-junk-symbolic", "Mark as Spam"),
                             card_action_button(key, "archive", "mail-archive-symbolic", "Archive this message"),
                             card_action_button(key, "delete", "user-trash-symbolic", "Delete this message"),
+                            card_action_button(key, "spam", "mail-mark-junk-symbolic", "Mark as Spam"),
+                            card_action_button(key, "contact", "contact-new-symbolic", "Add sender to Contacts"),
                             card_action_button(key, "viewsource", "code-symbolic", "View source"),
                         )
                     } else {
@@ -1492,14 +1507,19 @@ impl MessageView {
                   offers Copy / New Message. */\
                .vireo-mail{{cursor:pointer;}}\
                .vireo-mail:hover{{text-decoration:underline;}}\
+               /* Styled after the app's own context menus (context_menu.rs +\
+                  .context-menu-list in styles.css): same padding, min width,\
+                  row shape and weight, so both menu families read as one. */\
+               .vireo-mailmenu-scrim{{position:fixed;left:0;top:0;right:0;bottom:0;\
+                 z-index:98;}}\
                .vireo-mailmenu{{position:fixed;z-index:99;background:{bg};\
-                 border:1px solid rgba(128,128,128,0.35);border-radius:8px;\
-                 box-shadow:0 4px 16px rgba(0,0,0,0.25);padding:4px;\
-                 min-width:160px;font-size:0.92em;}}\
+                 border:1px solid rgba(128,128,128,0.2);border-radius:12px;\
+                 box-shadow:0 6px 24px rgba(0,0,0,0.22);padding:6px;\
+                 min-width:190px;font-size:0.95em;}}\
                .vireo-mailmenu button{{display:block;width:100%;text-align:left;\
-                 background:none;border:none;padding:6px 10px;border-radius:6px;\
-                 color:inherit;cursor:pointer;font:inherit;}}\
-               .vireo-mailmenu button:hover{{background:rgba(128,128,128,0.18);}}\
+                 background:none;border:none;padding:8px 10px;border-radius:6px;\
+                 color:inherit;cursor:pointer;font:inherit;font-weight:normal;}}\
+               .vireo-mailmenu button:hover{{background:rgba(128,128,128,0.14);}}\
                .vireo-addr.clipped:hover::after{{content:attr(data-addr);\
                  position:absolute;left:-6px;top:50%;transform:translateY(-50%);\
                  background:{bg};border-radius:6px;padding:1px 6px;\
@@ -3099,17 +3119,24 @@ function markClipped(){var as=document.querySelectorAll('.vireo-addr');\
 for(var i=0;i<as.length;i++){var a=as[i];\
 a.classList.toggle('clipped',a.scrollWidth>a.clientWidth+1);}}\
 function hideMailMenu(){var m=window.__vireoMailMenu;\
-if(m&&m.parentNode)m.parentNode.removeChild(m);window.__vireoMailMenu=null;}\
+if(m&&m.parentNode)m.parentNode.removeChild(m);window.__vireoMailMenu=null;\
+var sc=window.__vireoMailScrim;\
+if(sc&&sc.parentNode)sc.parentNode.removeChild(sc);window.__vireoMailScrim=null;}\
 function mailMsg(mail){try{window.webkit.messageHandlers.vireo.postMessage('composeto:0:0:'+mail);}catch(_){}}\
 function showMailMenu(x,y,mail){hideMailMenu();\
+var sc=document.createElement('div');sc.className='vireo-mailmenu-scrim';\
+['mousedown','contextmenu'].forEach(function(ev){sc.addEventListener(ev,function(e){\
+e.preventDefault();e.stopPropagation();hideMailMenu();});});\
+document.body.appendChild(sc);window.__vireoMailScrim=sc;\
 var mn=document.createElement('div');mn.className='vireo-mailmenu';\
 function item(label,fn){var b=document.createElement('button');b.type='button';\
 b.textContent=label;b.addEventListener('click',function(ev){\
 ev.stopPropagation();ev.preventDefault();hideMailMenu();fn();});mn.appendChild(b);}\
 item('New Message',function(){mailMsg(mail);});\
 item('Copy Address',function(){try{window.webkit.messageHandlers.vireo.postMessage('copyaddr:0:0:'+mail);}catch(_){}});\
-mn.style.left=Math.max(0,Math.min(x,window.innerWidth-180))+'px';\
-mn.style.top=Math.max(0,Math.min(y,window.innerHeight-84))+'px';\
+item('Add to Contacts',function(){try{window.webkit.messageHandlers.vireo.postMessage('addcontact:0:0:'+mail);}catch(_){}});\
+mn.style.left=Math.max(0,Math.min(x,window.innerWidth-200))+'px';\
+mn.style.top=Math.max(0,Math.min(y,window.innerHeight-124))+'px';\
 document.body.appendChild(mn);window.__vireoMailMenu=mn;}\
 document.addEventListener('click',function(e){var m=window.__vireoMailMenu;\
 if(m&&e.target&&m.contains(e.target))return;hideMailMenu();},true);\

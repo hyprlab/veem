@@ -24,6 +24,7 @@ pub enum RowAction {
     Archive,
     Delete,
     ViewSource,
+    AddContact,
 }
 
 /// Init for a row: the message, Gravatar flag, and optional account-ring class
@@ -51,6 +52,8 @@ pub struct RowInit {
     pub thread_count: usize,
     /// This row is a (newer/older) reply nested under a thread head — indent it.
     pub is_thread_child: bool,
+    /// The LAST reply of its thread: the dotted rail stops at its node dot.
+    pub is_last_child: bool,
     /// Whether this thread head is currently expanded.
     pub thread_expanded: bool,
     /// Whether conversations can expand in the list at all (preference) —
@@ -150,6 +153,12 @@ pub async fn find_logo(email: String) -> FaceCmd {
 /// One message summary row.
 pub struct MessageRow {
     msg: Message,
+    /// This row's live position, for telling the list which palette opened.
+    index: DynamicIndex,
+    /// The palette clip's current animation target width (interior-mutable:
+    /// update_view only has &self). -0 sentinel not needed — starts closed.
+    palette_target: std::cell::Cell<i32>,
+    palette_anim: std::cell::RefCell<Option<adw::TimedAnimation>>,
     gravatar: bool,
     avatars: bool,
     sender_logos: bool,
@@ -173,6 +182,7 @@ pub struct MessageRow {
     thread_count: usize,
     /// Nested reply under a thread head.
     is_thread_child: bool,
+    is_last_child: bool,
     /// Whether this head's conversation is expanded.
     thread_expanded: bool,
     thread_expandable: bool,
@@ -199,6 +209,8 @@ pub enum MessageRowInput {
     SetHasAttachment(bool),
     /// The pointer entered/left the row — fade the chevron in/out.
     SetRowHover(bool),
+    /// Another row's palette opened — fold this one if it is out.
+    ClosePalette,
     /// The chevron was clicked — slide the Actions Palette open or shut.
     TogglePalette,
     /// The cursor moved onto the palette — keep it open (cancel auto-collapse).
@@ -225,6 +237,8 @@ pub enum MessageRowInput {
 pub enum MessageRowOutput {
     Action { action: RowAction, message: Box<Message> },
     ToggleThread((u32, String)),
+    /// This row's palette just opened — the list closes every other one.
+    PaletteOpened(usize),
 }
 
 /// The keys of every selected row in the ListBox this drag started from, in list
@@ -331,12 +345,204 @@ impl FactoryComponent for MessageRow {
             // The node dot where this member meets the group's dotted rail
             // (thread children only): overlaid at the row's left edge and
             // pulled onto the rail itself by .thread-node's negative margin.
+            // The last reply's rail: a real dotted border on a widget spanning
+            // exactly the row's top half (homogeneous halves), so it ends at
+            // the node dot and renders identically to the sibling rows' full
+            // border rails — a gradient imitation drew square dots. Added
+            // before the node dot so the dot draws over where they meet.
+            add_overlay = &gtk::Box {
+                set_orientation: gtk::Orientation::Vertical,
+                set_halign: gtk::Align::Start,
+                set_homogeneous: true,
+                set_visible: self.is_last_child,
+
+                gtk::Box {
+                    add_css_class: "thread-rail-stub",
+                },
+                gtk::Box {},
+            },
+
             add_overlay = &gtk::Box {
                 add_css_class: "thread-node",
                 set_halign: gtk::Align::Start,
                 set_valign: gtk::Align::Center,
                 set_visible: self.is_thread_child,
             },
+
+            // The Actions Palette floats over the pill's bottom-left corner,
+            // opening rightward from the ⋯ button. As an overlay it takes no
+            // room in the row: the text sits centred in the pill whether the
+            // palette preference is on or off (the reserved line used to read
+            // as a lopsided empty band under the text — yioannides, #81).
+            //
+            // The outer holder has a FIXED width: overlay children are only
+            // re-allocated lazily, so a container that grows with the slide
+            // animation snaps in whenever the next relayout happens instead
+            // of animating. Constant allocation outside, free growth inside.
+            add_overlay = &gtk::Box {
+                set_width_request: 320,
+                set_halign: gtk::Align::Start,
+                set_valign: gtk::Align::End,
+
+                #[name = "actions_line"]
+                gtk::Box {
+                    set_spacing: 0,
+                    set_halign: gtk::Align::Start,
+                    set_valign: gtk::Align::End,
+                    // With sender circles on, the ⋯ centres under the avatar:
+                    // circle centre (pill padding + 19) minus half the button.
+                    // Thread children share the exact pill geometry and only
+                    // add their card's 10px indent. Without circles it hugs
+                    // the pill's edge.
+                    set_margin_start: if self.avatars {
+                        if self.is_thread_child { 26 } else { 16 }
+                    } else if self.is_thread_child {
+                        24
+                    } else {
+                        14
+                    },
+                    // With circles on, ride lower for a sliver of air between
+                    // the circle's bottom edge and the ⋯ — but keep 1px clear
+                    // of the pill's own bottom edge (the pill's 2px outer
+                    // margin sits inside this overlay's bounds).
+                    set_margin_bottom: if self.avatars { 3 } else { 4 },
+                    // Open, the whole line — ⋯ and icons — sits on one card
+                    // surface; the ⋯ is the card's left cap.
+                    #[watch]
+                    set_css_classes: if self.palette_open {
+                        &["actions-line", "open"]
+                    } else {
+                        &["actions-line"]
+                    },
+                    // Preference: no palette at all — the line (and the space
+                    // it reserves under the preview) goes away entirely.
+                    set_visible: self.show_palette,
+
+                    // Actions toggle (⋯). Clicking it opens/closes the palette but
+                    // does NOT select or open the message (it's a button, so the
+                    // click is consumed before the row's selection gesture).
+                    gtk::Button {
+                        set_icon_name: "co.hyprlab.Vireo-view-more-horizontal-symbolic",
+                        // Hidden until the row is hovered (or the palette is open);
+                        // the .revealed class fades it in via a CSS transition.
+                        #[watch]
+                        set_css_classes: &self.chevron_classes(),
+                        set_tooltip_text: Some("Actions"),
+                        set_valign: gtk::Align::Center,
+                        connect_clicked[sender] => move |_| sender.input(MessageRowInput::TogglePalette),
+                    },
+
+                    // Not a GtkRevealer: inside an Overlay's overlay child
+                    // its slide never repainted frame-by-frame (the palette
+                    // just popped in at the end). Instead the palette hangs
+                    // as a clipped overlay over a spacer whose width is the
+                    // one thing animated (post_view): the spacer is a hard
+                    // cap — a Box's width_request is only a floor, and the
+                    // palette at natural width would simply ignore it.
+                    #[name = "palette_clip"]
+                    gtk::Overlay {
+                        #[wrap(Some)]
+                        set_child = &gtk::Box {
+                            #[name = "palette_spacer"]
+                            gtk::Box {
+                                set_width_request: 0,
+                            },
+                        },
+
+                        #[name = "palette_inner"]
+                        add_overlay = &gtk::Box {
+                            add_css_class: "actions-palette",
+                            set_halign: gtk::Align::Start,
+                            set_valign: gtk::Align::Center,
+                            set_spacing: 0,
+                            // Hidden until the first open: rows that never
+                            // process an update never run post_view, so the
+                            // clip isn't armed yet — an unclipped palette
+                            // would paint over every row (which it did).
+                            set_visible: false,
+
+                            // Keep the palette open while the cursor is over it.
+                            add_controller = gtk::EventControllerMotion {
+                                connect_enter[sender] => move |_, _, _| sender.input(MessageRowInput::PaletteEnter),
+                                connect_leave[sender] => move |_| sender.input(MessageRowInput::PaletteLeave),
+                            },
+
+                            // Mirrors the reader toolbar's order (Reply,
+                            // Reply All, Forward, Read, Flag; Archive, Delete,
+                            // Spam), with Add to Contacts and View Source
+                            // closing the line.
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-mail-reply-sender-symbolic",
+                                set_tooltip_text: Some("Reply"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Reply)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-mail-reply-all-symbolic",
+                                set_tooltip_text: Some("Reply All"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ReplyAll)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-mail-forward-symbolic",
+                                set_tooltip_text: Some("Forward"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Forward)),
+                            },
+                            gtk::Button {
+                                // Action-showing icon (read envelope = "mark
+                                // as read"), like the menus and toolbar.
+                                #[watch]
+                                set_icon_name: if self.msg.unread { "co.hyprlab.Vireo-mail-read-symbolic" } else { "co.hyprlab.Vireo-mail-unread-symbolic" },
+                                #[watch]
+                                set_tooltip_text: Some(if self.msg.unread { "Mark as read" } else { "Mark as unread" }),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleRead)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
+                                #[watch]
+                                set_css_classes: if self.msg.starred { &["flat", "star-active"] } else { &["flat"] },
+                                #[watch]
+                                set_tooltip_text: Some(if self.msg.starred { "Remove star" } else { "Star" }),
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleStar)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
+                                set_tooltip_text: Some("Archive"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Archive)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
+                                set_tooltip_text: Some("Delete"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Delete)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
+                                set_tooltip_text: Some("Mark as spam"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Spam)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-contact-new-symbolic",
+                                set_tooltip_text: Some("Add sender to Contacts"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::AddContact)),
+                            },
+                            gtk::Button {
+                                set_icon_name: "co.hyprlab.Vireo-code-symbolic",
+                                set_tooltip_text: Some("View Source"),
+                                add_css_class: "flat",
+                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ViewSource)),
+                            },
+                        },
+                    },
+
+                },
+            },
+
 
             #[wrap(Some)]
             set_child = &gtk::Box {
@@ -380,6 +586,7 @@ impl FactoryComponent for MessageRow {
                 set_orientation: gtk::Orientation::Vertical,
                 set_spacing: 2,
                 set_hexpand: true,
+                set_valign: gtk::Align::Center,
 
                 gtk::Box {
                     set_spacing: 6,
@@ -486,107 +693,6 @@ impl FactoryComponent for MessageRow {
                     add_css_class: "message-preview",
                 },
 
-                // Below it, the Actions Palette on a line of its own, opening
-                // rightward from the ⋯ button. The line reserves the palette's
-                // width even while collapsed (see `.actions-line`), so the first
-                // click doesn't shove the whole pane wider under the pointer.
-                gtk::Box {
-                    set_spacing: 2,
-                    set_halign: gtk::Align::Start,
-                    set_valign: gtk::Align::Center,
-                    add_css_class: "actions-line",
-                    // Preference: no palette at all — the line (and the space
-                    // it reserves under the preview) goes away entirely.
-                    set_visible: self.show_palette,
-
-                    // Actions toggle (⋯). Clicking it opens/closes the palette but
-                    // does NOT select or open the message (it's a button, so the
-                    // click is consumed before the row's selection gesture).
-                    gtk::Button {
-                        set_icon_name: "co.hyprlab.Vireo-view-more-horizontal-symbolic",
-                        // Hidden until the row is hovered (or the palette is open);
-                        // the .revealed class fades it in via a CSS transition.
-                        #[watch]
-                        set_css_classes: &self.chevron_classes(),
-                        set_tooltip_text: Some("Actions"),
-                        set_valign: gtk::Align::Center,
-                        connect_clicked[sender] => move |_| sender.input(MessageRowInput::TogglePalette),
-                    },
-
-                    gtk::Revealer {
-                        set_transition_type: gtk::RevealerTransitionType::SlideRight,
-                        set_transition_duration: 180,
-                        #[watch]
-                        set_reveal_child: self.palette_open,
-
-                        gtk::Box {
-                            add_css_class: "actions-palette",
-                            set_halign: gtk::Align::Start,
-                            set_valign: gtk::Align::Center,
-                            set_spacing: 0,
-
-                            // Keep the palette open while the cursor is over it.
-                            add_controller = gtk::EventControllerMotion {
-                                connect_enter[sender] => move |_, _, _| sender.input(MessageRowInput::PaletteEnter),
-                                connect_leave[sender] => move |_| sender.input(MessageRowInput::PaletteLeave),
-                            },
-
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-mail-reply-sender-symbolic",
-                                set_tooltip_text: Some("Reply"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Reply)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-mail-reply-all-symbolic",
-                                set_tooltip_text: Some("Reply All"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ReplyAll)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-mail-forward-symbolic",
-                                set_tooltip_text: Some("Forward"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Forward)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
-                                #[watch]
-                                set_css_classes: if self.msg.starred { &["flat", "star-active"] } else { &["flat"] },
-                                #[watch]
-                                set_tooltip_text: Some(if self.msg.starred { "Remove star" } else { "Star" }),
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleStar)),
-                            },
-                            gtk::Button {
-                                #[watch]
-                                set_icon_name: if self.msg.unread { "co.hyprlab.Vireo-mail-unread-symbolic" } else { "co.hyprlab.Vireo-mail-read-symbolic" },
-                                #[watch]
-                                set_tooltip_text: Some(if self.msg.unread { "Mark as read" } else { "Mark as unread" }),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleRead)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
-                                set_tooltip_text: Some("Mark as spam"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Spam)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
-                                set_tooltip_text: Some("Archive"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Archive)),
-                            },
-                            gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
-                                set_tooltip_text: Some("Delete"),
-                                add_css_class: "flat",
-                                connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Delete)),
-                            },
-                        },
-                    },
-
-                },
             },
             },
             },
@@ -594,7 +700,57 @@ impl FactoryComponent for MessageRow {
         }
     }
 
-    fn init_model(init: Self::Init, _index: &DynamicIndex, sender: FactorySender<Self>) -> Self {
+    fn post_view() {
+        // Slide the palette open/shut by animating the spacer that gives the
+        // clip Overlay its width — driven here (not a GtkRevealer) because
+        // revealer transitions don't repaint inside an Overlay's overlay
+        // child. Runs on every view update; only a change in target width
+        // starts a new animation.
+        widgets.palette_clip.set_clip_overlay(&widgets.palette_inner, true);
+        if self.palette_open {
+            widgets.palette_inner.set_visible(true);
+        }
+        let (inner_w, inner_h) = (
+            widgets.palette_inner.measure(gtk::Orientation::Horizontal, -1).1,
+            widgets.palette_inner.measure(gtk::Orientation::Vertical, -1).1,
+        );
+        widgets.palette_spacer.set_height_request(inner_h);
+        let target = if self.palette_open { inner_w } else { 0 };
+        if self.palette_target.get() != target {
+            self.palette_target.set(target);
+            let spacer = widgets.palette_spacer.clone();
+            let from = spacer.width() as f64;
+            let setter = {
+                let spacer = spacer.clone();
+                adw::CallbackAnimationTarget::new(move |v| spacer.set_width_request(v as i32))
+            };
+            // Bound to the line (mapped: it holds the visible toggle), NOT
+            // the spacer — adw skips animations on unmapped widgets, and the
+            // zero-width spacer counts as one, which made the slide jump
+            // straight to its end value.
+            let anim =
+                adw::TimedAnimation::new(&widgets.actions_line, from, target as f64, 180, setter);
+            anim.set_easing(adw::Easing::EaseOutCubic);
+            if target == 0 {
+                // Sliding shut: hide only once fully back in the button, so
+                // the close still reads as a slide.
+                let inner = widgets.palette_inner.downgrade();
+                anim.connect_done(move |_| {
+                    if let Some(inner) = inner.upgrade() {
+                        inner.set_visible(false);
+                    }
+                });
+            }
+            if let Some(old) = self.palette_anim.borrow_mut().replace(anim) {
+                old.pause();
+            }
+            if let Some(a) = self.palette_anim.borrow().as_ref() {
+                a.play();
+            }
+        }
+    }
+
+    fn init_model(init: Self::Init, index: &DynamicIndex, sender: FactorySender<Self>) -> Self {
         let RowInit {
             msg,
             gravatar,
@@ -607,6 +763,7 @@ impl FactoryComponent for MessageRow {
             show_palette,
             thread_count,
             is_thread_child,
+            is_last_child,
             thread_expanded,
             thread_expandable,
             thread_key,
@@ -633,6 +790,7 @@ impl FactoryComponent for MessageRow {
             show_palette,
             thread_count,
             is_thread_child,
+            is_last_child,
             thread_expanded,
             thread_expandable,
             thread_key,
@@ -640,6 +798,9 @@ impl FactoryComponent for MessageRow {
             thread_unread,
             drag_keys,
             revealed,
+            index: index.clone(),
+            palette_target: std::cell::Cell::new(0),
+            palette_anim: std::cell::RefCell::new(None),
         };
 
         // No point fetching anything for a circle that isn't drawn — and a
@@ -670,7 +831,12 @@ impl FactoryComponent for MessageRow {
                 // and arms the usual collapse timeout on leave.
                 if self.palette_hover.get() {
                     if over {
-                        self.palette_open = true;
+                        if !self.palette_open {
+                            self.palette_open = true;
+                            let _ = sender.output(MessageRowOutput::PaletteOpened(
+                                self.index.current_index(),
+                            ));
+                        }
                         self.cancel_collapse();
                     } else if self.palette_open {
                         self.arm_collapse(&sender);
@@ -685,6 +851,15 @@ impl FactoryComponent for MessageRow {
                     self.palette_open = true;
                     // Persist briefly; moving onto the palette cancels this.
                     self.arm_collapse(&sender);
+                    // One palette at a time: the list folds the others.
+                    let _ = sender
+                        .output(MessageRowOutput::PaletteOpened(self.index.current_index()));
+                }
+            }
+            MessageRowInput::ClosePalette => {
+                if self.palette_open {
+                    self.palette_open = false;
+                    self.cancel_collapse();
                 }
             }
             MessageRowInput::PaletteEnter => self.cancel_collapse(),
@@ -892,6 +1067,11 @@ impl MessageRow {
         }
         if let Some(tex) = crate::logo::cached(email) {
             self.avatar_texture = Some(tex);
+            // A week-old stored icon still shows, but this new message from
+            // the sender is the cue to look for a fresh one in the background.
+            if crate::logo::wants_refresh(email) {
+                sender.oneshot_command(find_logo(email.to_string()));
+            }
             return;
         }
         self.avatar_texture = None;
@@ -916,6 +1096,12 @@ impl MessageRow {
         if !self.show_palette {
             v.push("no-palette");
         }
+        // Previews off leaves a two-line row: too short for the ⋯ to clear
+        // the sender circle's bottom edge — reserve just enough height that
+        // they never collide (see `.message-row.palette-room`).
+        if self.show_palette && self.avatars && self.preview_lines == 0 {
+            v.push("palette-room");
+        }
         v
     }
 
@@ -929,6 +1115,9 @@ impl MessageRow {
         }
         if self.is_thread_child {
             v.push("thread-child");
+        }
+        if self.is_last_child {
+            v.push("thread-last");
         }
         v
     }
@@ -1147,6 +1336,13 @@ pub struct MessageList {
     reader_keys: Vec<(u32, u32)>,
     /// How many rows are currently selected (drives the bulk-action bar).
     selection_count: usize,
+    /// Which way the user last moved through the list: +1 down, -1 up.
+    /// Deleting the viewed message advances in this direction (like Apple
+    /// Mail): triaging downward selects the message below the deleted one,
+    /// and after moving up the list, deletion selects the one above instead.
+    /// Updated only by the user's own selection movement — the programmatic
+    /// post-delete advance keeps its index and never flips it.
+    nav_direction: i32,
     /// Conversation keys the user has toggled away from the default state
     /// (expanded when the default is collapsed, and vice versa).
     expanded_threads: std::collections::HashSet<(u32, String)>,
@@ -1302,10 +1498,20 @@ pub enum MessageListInput {
     MoveSelection(i32),
     /// Add or remove the focused row from the selection, without opening it.
     ToggleSelection,
-    /// Put keyboard focus on the list (so the arrow keys work again).
+    /// Put keyboard focus on the list (so the arrow keys work again),
+    /// deliberately scrolling back to the selected row — the "back to list"
+    /// shortcut.
     FocusList,
+    /// Housekeeping focus restore (e.g. after a compose window closes) that
+    /// doesn't scroll the viewport, unlike `FocusList`.
+    ReclaimFocus,
     /// Put the cursor in the search field.
     FocusSearch,
+    /// Showcase staging: open row N's Actions Palette (screenshot hook only —
+    /// see VIREO_SHOWCASE_PALETTE in app.rs).
+    DebugOpenPalette(usize),
+    /// A row's palette opened; fold every other row's.
+    PaletteOpened(usize),
     /// Expand/collapse a conversation thread.
     ToggleThread((u32, String)),
     /// A collapsing thread's replies have finished sliding shut — drop them
@@ -1608,6 +1814,7 @@ impl SimpleComponent for MessageList {
                     MessageListInput::RowAction { action, message }
                 }
                 MessageRowOutput::ToggleThread(key) => MessageListInput::ToggleThread(key),
+                MessageRowOutput::PaletteOpened(idx) => MessageListInput::PaletteOpened(idx),
             });
 
         let color_provider = gtk::CssProvider::new();
@@ -1648,6 +1855,7 @@ impl SimpleComponent for MessageList {
             selected_id: None,
             selected_ids: Vec::new(),
             selection_count: 0,
+            nav_direction: 1,
             from_reader: 0,
             reader_keys: Vec::new(),
             expanded_threads: std::collections::HashSet::new(),
@@ -2034,6 +2242,19 @@ impl SimpleComponent for MessageList {
                         // it's already the viewed row (e.g. programmatic restore
                         // after a rebuild) so it isn't needlessly reloaded.
                         if self.selected_id != Some(*key) {
+                            // Which way did the user move? Only a change with a
+                            // known previous row says anything — the post-delete
+                            // advance clears selected_id first, so it can never
+                            // flip the direction it is itself steering by.
+                            let pos =
+                                |k: &(u32, u32)| self.shown.iter().position(|m| (m.account_id, m.id) == *k);
+                            if let (Some(old), Some(new)) =
+                                (self.selected_id.as_ref().and_then(&pos), pos(key))
+                            {
+                                if new != old {
+                                    self.nav_direction = if new > old { 1 } else { -1 };
+                                }
+                            }
                             self.selected_id = Some(*key);
                             if let Some(m) = self
                                 .shown
@@ -2066,15 +2287,27 @@ impl SimpleComponent for MessageList {
                 if !messages.is_empty() {
                     let _ = sender.output(MessageListOutput::Bulk { action, messages });
                 }
-                self.rows.widget().unselect_all();
-                self.selected_id = None;
-                self.selected_ids.clear();
-                self.selection_count = 0;
+                // Row-removing actions keep the selection: the RemoveMany that
+                // follows reads it to know the viewed message is going away and
+                // to advance the selection (and reader) in its place — clearing
+                // here left the reader stale on the deleted message. In-place
+                // actions (read/flag) drop the selection as before, dismissing
+                // the bulk bar.
+                if matches!(action, BulkAction::MarkRead | BulkAction::MarkUnread | BulkAction::Flag)
+                {
+                    self.rows.widget().unselect_all();
+                    self.selected_id = None;
+                    self.selected_ids.clear();
+                    self.selection_count = 0;
+                }
             }
             MessageListInput::MoveSelection(delta) => {
                 let list = self.rows.widget();
                 if self.shown.is_empty() {
                     return;
+                }
+                if delta != 0 {
+                    self.nav_direction = delta.signum();
                 }
                 // From the current row, or from the top/bottom when nothing is
                 // selected yet, so the first keypress always lands somewhere.
@@ -2106,6 +2339,9 @@ impl SimpleComponent for MessageList {
             }
 
             MessageListInput::FocusList => {
+                // The "back to list" shortcut: deliberately returns to the
+                // selected row (that's the point — resume j/k navigation
+                // from what you were reading), so it's allowed to scroll.
                 let list = self.rows.widget();
                 let row = list
                     .selected_rows()
@@ -2115,6 +2351,25 @@ impl SimpleComponent for MessageList {
                 if let Some(row) = row {
                     row.grab_focus();
                 }
+            }
+            MessageListInput::ReclaimFocus => {
+                // Housekeeping focus restore (e.g. after a compose window
+                // closes) so keyboard shortcuts keep targeting the list —
+                // unlike `FocusList`, this isn't a "go back to what I was
+                // reading" action, so it shouldn't scroll the viewport away
+                // from wherever the user was browsing.
+                self.preserving_scroll(|this| {
+                    let list = this.rows.widget();
+                    let row = list
+                        .selected_rows()
+                        .first()
+                        .cloned()
+                        .or_else(|| list.row_at_index(0));
+                    if let Some(row) = row {
+                        row.grab_focus();
+                    }
+                });
+                self.hide_focus_ring();
             }
 
             MessageListInput::FocusSearch => {
@@ -2224,9 +2479,24 @@ impl SimpleComponent for MessageList {
                 self.selected_ids.retain(|(_, i)| *i != id);
                 self.all.retain(|m| m.id != id);
                 let removed_idx = self.shown.iter().position(|m| m.id == id);
+                // Was the row about to be destroyed the one holding keyboard
+                // focus? If so, and it isn't the viewed row handled below,
+                // we'll need to reclaim focus ourselves after it's gone —
+                // otherwise GTK picks a fallback of its own (often the
+                // selected row, wherever that is) and scrolls there.
+                let had_focus = removed_idx
+                    .and_then(|idx| self.rows.widget().row_at_index(idx as i32))
+                    .is_some_and(|row| row.has_focus());
                 if let Some(idx) = removed_idx {
-                    self.shown.remove(idx);
-                    self.rows.guard().remove(idx);
+                    // Removing a row can make GTK scroll the *selected* row
+                    // back into view on its own, even though this row isn't
+                    // it — pin the viewport so an unrelated deletion further
+                    // down the list doesn't yank the user back to whatever
+                    // they're reading.
+                    self.preserving_scroll(|this| {
+                        this.shown.remove(idx);
+                        this.rows.guard().remove(idx);
+                    });
                     self.publish_drag_keys();
                     // The surgical removal skips the rebuild that normally
                     // recomputes these — keep the header count honest.
@@ -2236,16 +2506,24 @@ impl SimpleComponent for MessageList {
 
                 if was_viewed {
                     match removed_idx {
-                        // Select the row now at the removed slot (or the new last
-                        // row if we deleted the bottom one). Selecting it fires
-                        // SelectionChanged, which loads it in the reader.
+                        // Advance in the direction the user was triaging: the
+                        // row now at the removed slot when moving down the
+                        // list, the one above it when moving up (Apple Mail's
+                        // behaviour). Selecting it fires SelectionChanged,
+                        // which loads it in the reader.
                         Some(idx) if !self.shown.is_empty() => {
-                            let next = idx.min(self.shown.len() - 1);
+                            let next = self.advance_index(idx);
                             self.select_and_focus(next);
                         }
                         // Nothing left to show → clear the reader.
                         _ => {
                             let _ = sender.output(MessageListOutput::SelectionCleared);
+                        }
+                    }
+                } else if had_focus {
+                    if let Some(idx) = removed_idx {
+                        if !self.shown.is_empty() {
+                            self.focus_only(self.advance_index(idx));
                         }
                     }
                 }
@@ -2263,21 +2541,32 @@ impl SimpleComponent for MessageList {
                 self.all.retain(|m| !set.contains(&m.id));
                 // Where the first removed row sat, so we can re-select in its place.
                 let first_removed = self.shown.iter().position(|m| set.contains(&m.id));
+                // Did any row about to be destroyed hold keyboard focus? If
+                // so, and it isn't the viewed row handled below, reclaim
+                // focus ourselves afterward — otherwise GTK's own fallback
+                // can land on the selected row and scroll the list there.
+                let list = self.rows.widget();
+                let had_focus = (0..self.shown.len()).any(|idx| {
+                    set.contains(&self.shown[idx].id)
+                        && list.row_at_index(idx as i32).is_some_and(|row| row.has_focus())
+                });
                 // Remove all matching rows in one guarded batch (a single widget
                 // update) instead of one render cycle per message. Walk back-to-front
-                // so indices stay valid.
+                // so indices stay valid. Pinned so GTK scrolling the selected row
+                // back into view (see `preserving_scroll`) doesn't yank the user
+                // away from browsing an unrelated part of the list.
                 let shown_before = self.shown.len();
-                {
-                    let mut guard = self.rows.guard();
-                    let mut idx = self.shown.len();
+                self.preserving_scroll(|this| {
+                    let mut guard = this.rows.guard();
+                    let mut idx = this.shown.len();
                     while idx > 0 {
                         idx -= 1;
-                        if set.contains(&self.shown[idx].id) {
-                            self.shown.remove(idx);
+                        if set.contains(&this.shown[idx].id) {
+                            this.shown.remove(idx);
                             guard.remove(idx);
                         }
                     }
-                }
+                });
                 self.publish_drag_keys();
                 self.selection_count = self.selected_ids.len();
                 // Keep the header count honest when no rebuild follows (the
@@ -2297,11 +2586,17 @@ impl SimpleComponent for MessageList {
                 if was_viewed {
                     match first_removed {
                         Some(idx) if !self.shown.is_empty() => {
-                            let next = idx.min(self.shown.len() - 1);
+                            let next = self.advance_index(idx);
                             self.select_and_focus(next);
                         }
                         _ => {
                             let _ = sender.output(MessageListOutput::SelectionCleared);
+                        }
+                    }
+                } else if had_focus {
+                    if let Some(idx) = first_removed {
+                        if !self.shown.is_empty() {
+                            self.focus_only(self.advance_index(idx));
                         }
                     }
                 }
@@ -2331,11 +2626,47 @@ impl SimpleComponent for MessageList {
                     }
                 }
             }
+            MessageListInput::DebugOpenPalette(idx) => {
+                self.rows.send(idx, MessageRowInput::TogglePalette);
+            }
+            MessageListInput::PaletteOpened(idx) => {
+                for i in 0..self.shown.len() {
+                    if i != idx {
+                        self.rows.send(i, MessageRowInput::ClosePalette);
+                    }
+                }
+            }
             MessageListInput::SelectAndLoad(key) => {
                 if let Some(m) = self.shown.iter().find(|m| (m.account_id, m.id) == key).cloned() {
                     self.selected_id = Some(key);
                     self.selected_ids = vec![key];
+                    // The list is in Multiple selection mode, so selecting the
+                    // target only ADDS it — anything already selected (e.g. the
+                    // row the last deletion advanced to) would stay lit and turn
+                    // this into a two-row selection the reader ignores.
+                    self.rows.widget().unselect_all();
                     self.select_current();
+                    // These arrive from outside the list (a notification
+                    // click, an undo) where the row can be far outside the
+                    // viewport — bring it into view. In an idle so a rebuild
+                    // queued just before this (and its own scroll restore)
+                    // has laid the rows out first; the focus grab is what
+                    // scrolls, and the selection pill is the indicator.
+                    if let Some(idx) =
+                        self.shown.iter().position(|m| (m.account_id, m.id) == key)
+                    {
+                        let list = self.rows.widget().clone();
+                        gtk::glib::idle_add_local_once(move || {
+                            if let Some(row) = list.row_at_index(idx as i32) {
+                                row.grab_focus();
+                            }
+                            if let Some(win) =
+                                list.root().and_then(|r| r.downcast::<gtk::Window>().ok())
+                            {
+                                win.set_focus_visible(false);
+                            }
+                        });
+                    }
                     let (thread, solo) = self.conversation_for(&m);
                     let _ = sender.output(MessageListOutput::Selected { message: m, thread, solo });
                 }
@@ -2474,15 +2805,40 @@ impl MessageList {
         self.loaded && self.shown.is_empty() && self.query.is_empty() && self.index_complete
     }
 
+    /// Runs `f` (typically some change to the rows in `self.rows`/`self.shown`)
+    /// without letting the scroll position move — including a scroll GTK
+    /// performs on its own to keep the *selected* row in view whenever the
+    /// list's contents change, even if that row was never touched by `f`.
+    /// Saves the current position, pins the adjustment there through every
+    /// change `f` (or GTK) makes, and does a final restore once layout has
+    /// had a tick to settle — a single restore right after `f` can lose the
+    /// race against GTK's own scroll, which can land after this returns.
+    fn preserving_scroll(&mut self, f: impl FnOnce(&mut Self)) {
+        let Some(scroller) = self.scroller.clone() else {
+            f(self);
+            return;
+        };
+        let adj = scroller.vadjustment();
+        let pos = adj.value();
+        let hid = adj.connect_notify_local(Some("value"), move |adj, _| {
+            if (adj.value() - pos).abs() > f64::EPSILON {
+                adj.set_value(pos);
+            }
+        });
+        f(self);
+        let adj2 = adj.clone();
+        gtk::glib::idle_add_local_once(move || {
+            adj2.set_value(pos);
+            adj2.disconnect(hid);
+        });
+    }
+
     /// A full rebuild that keeps the current scroll offset (a plain rebuild jumps
-    /// to the top). Used when growing the list beneath the user.
+    /// to the top). Used when growing the list beneath the user, and for any
+    /// background re-render (e.g. a folder re-sync) so it doesn't disturb
+    /// someone browsing further down.
     fn rebuild_preserving_scroll(&mut self) {
-        let saved = self.scroller.as_ref().map(|s| s.vadjustment().value());
-        self.rebuild();
-        if let (Some(pos), Some(scroller)) = (saved, self.scroller.clone()) {
-            let adj = scroller.vadjustment();
-            gtk::glib::idle_add_local_once(move || adj.set_value(pos));
-        }
+        self.preserving_scroll(Self::rebuild);
     }
 
     /// A message's read state changed: recompute its conversation's aggregate
@@ -2608,6 +2964,7 @@ impl MessageList {
                         show_palette: self.list_palette,
                         thread_count: 0,
                         is_thread_child: true,
+                        is_last_child: i == children.len() - 1,
                         thread_expanded: false,
                         thread_expandable: self.thread_expansion,
                         thread_key: None,
@@ -2745,6 +3102,7 @@ impl MessageList {
         struct RowMeta {
             count: usize,
             is_child: bool,
+            is_last: bool,
             expanded: bool,
             key: Option<(u32, String)>,
             unread: bool,
@@ -2793,17 +3151,21 @@ impl MessageList {
             metas.push(RowMeta {
                 count,
                 is_child: false,
+                is_last: false,
                 expanded,
                 key: if count > 1 { Some(key.clone()) } else { None },
                 unread: any_unread,
                 latest,
             });
             if expanded {
-                for child in it {
+                let rest: Vec<Message> = it.collect();
+                let n = rest.len();
+                for (j, child) in rest.into_iter().enumerate() {
                     shown.push(child);
                     metas.push(RowMeta {
                         count: 0,
                         is_child: true,
+                        is_last: j + 1 == n,
                         expanded: false,
                         key: None,
                         unread: false,
@@ -2848,6 +3210,7 @@ impl MessageList {
                     show_palette: self.list_palette,
                     thread_count: meta.count,
                     is_thread_child: meta.is_child,
+                    is_last_child: meta.is_last,
                     thread_expanded: meta.expanded,
                     thread_expandable: self.thread_expansion,
                     thread_key: meta.key,
@@ -2928,6 +3291,43 @@ impl MessageList {
         if let Some(row) = list.row_at_index(idx as i32) {
             list.select_row(Some(&row));
             row.grab_focus();
+        }
+    }
+
+    /// Where deletion advances to, once the row at `idx` is gone: the row now
+    /// occupying that slot when the user was moving down the list, the row
+    /// above it when they were moving up. Clamped to the list either way.
+    fn advance_index(&self, idx: usize) -> usize {
+        let next = if self.nav_direction < 0 { idx.saturating_sub(1) } else { idx };
+        next.min(self.shown.len().saturating_sub(1))
+    }
+
+    /// Put keyboard focus on row `idx` without touching selection — the
+    /// counterpart to `select_and_focus` for a row that wasn't the one being
+    /// viewed. Used when a removed row held focus but wasn't the viewed
+    /// message (e.g. deleted via its own row action while browsing further
+    /// down the list): without this, GTK's own fallback focus assignment
+    /// scrolls the list away to wherever it lands instead of staying put.
+    fn focus_only(&self, idx: usize) {
+        let list = self.rows.widget();
+        if let Some(row) = list.row_at_index(idx as i32) {
+            row.grab_focus();
+        }
+        self.hide_focus_ring();
+    }
+
+    /// Drop the window's focus-visible flag after a *programmatic* focus grab:
+    /// the reclaimed row keeps keyboard focus (arrow keys resume from it), but
+    /// no accent focus ring appears around a row the user never navigated to.
+    /// The next real key press turns the ring back on, as normal.
+    fn hide_focus_ring(&self) {
+        if let Some(win) = self
+            .rows
+            .widget()
+            .root()
+            .and_then(|r| r.downcast::<gtk::Window>().ok())
+        {
+            win.set_focus_visible(false);
         }
     }
 
