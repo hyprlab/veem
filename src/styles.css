@@ -165,25 +165,24 @@ headerbar.rail-header {
   padding: 0;
 }
 
-/* Every sidebar row that can carry an unread pill reserves a fixed-width
-   lane after it (see `caret_slot()` in sidebar.rs) so every pill's right
-   edge lands on the same column, whether or not that row's lane holds a
-   disclosure chevron — only "All Inboxes" populates it today. The whole
-   "All Inboxes" row is one clickable target (like an account header), so
-   the lane holds a plain icon rather than its own button. */
-.caret-slot {
-  color: inherit;
+/* All Inboxes: its disclosure chevron lines up with the account headers'
+   below it. The account chevron's right edge sits at 6px (list margin) +
+   12px (header padding); here the row keeps no padding of its own, the
+   inner .folder-row provides the 12px, and the chevron button shrinks to
+   exactly its 16px icon. */
+.unified-row {
+  padding-right: 0;
 }
-
-/* All Inboxes' chevron button: a generous 32px hit target whose negative
-   margins net out to the caret lane's own 13px, so the button overhangs the
-   lane (into the row's slack) without widening it — the pill column stays
-   shared. The icon centres where the account headers' chevrons sit. */
+.unified-row .folder-row {
+  padding-right: 12px;
+}
+/* A generous hit target without moving the icon: the button grows to 32px
+   and the negative end margin slides its extra width into the row padding,
+   keeping the centred 16px icon exactly in the chevron column. */
 .unified-row .chevron-btn {
   min-width: 32px;
   min-height: 32px;
-  margin-left: -9px;
-  margin-right: -10px;
+  margin-right: -8px;
 }
 
 /* Draggable account rows in the Accounts window. */
