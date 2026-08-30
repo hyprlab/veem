@@ -64,6 +64,11 @@ pub struct RowInit {
     /// The newest member's display time (thread heads only): shown in place of
     /// the head's own — the row says when the conversation last moved.
     pub thread_date: Option<String>,
+    /// The newest member's sender name/address and preview (thread heads
+    /// only): the row surfaces the latest message, not the thread's opener —
+    /// display only, the row's identity stays the head.
+    pub thread_from: Option<(String, String)>,
+    pub thread_preview: Option<String>,
     /// Any message in this conversation is unread (thread heads only) — keeps
     /// the head marked unread while unread replies are hidden beneath it.
     pub thread_unread: bool,
@@ -192,6 +197,8 @@ pub struct MessageRow {
     thread_key: Option<(u32, String)>,
     /// Newest member's display time (thread heads only), shown as the row date.
     thread_date: Option<String>,
+    thread_from: Option<(String, String)>,
+    thread_preview: Option<String>,
     /// Any message in this conversation is unread (heads only).
     thread_unread: bool,
     /// Shared row keys, so a drag from this row can carry the whole selection.
@@ -677,7 +684,7 @@ impl FactoryComponent for MessageRow {
                 gtk::Label {
                     // 0 lines: previews are off, so the row gives them no space.
                     set_visible: self.preview_lines > 0,
-                    set_label: &self.msg.preview,
+                    set_label: self.thread_preview.as_deref().unwrap_or(&self.msg.preview),
                     // Fill (not Start): the layout width then matches the
                     // allocation exactly, so the ellipsis lands right where the
                     // text is cut instead of stranded at a stale layout edge.
@@ -773,6 +780,8 @@ impl FactoryComponent for MessageRow {
             thread_expandable,
             thread_key,
             thread_date,
+            thread_from,
+            thread_preview,
             thread_unread,
             drag_keys,
             show_recipient,
@@ -800,6 +809,8 @@ impl FactoryComponent for MessageRow {
             thread_expandable,
             thread_key,
             thread_date,
+            thread_from,
+            thread_preview,
             thread_unread,
             drag_keys,
             revealed,
@@ -1005,6 +1016,10 @@ impl MessageRow {
     /// went to, since every sender there is you (#27).
     fn name_line(&self) -> String {
         if !self.show_recipient {
+            // A thread head surfaces its NEWEST member's sender.
+            if let Some((name, _)) = &self.thread_from {
+                return name.clone();
+            }
             return self.msg.from_name.clone();
         }
         let names = recipient_names(&self.msg.to);
@@ -1026,6 +1041,9 @@ impl MessageRow {
                 }
             }
         }
+        if let Some((name, _)) = &self.thread_from {
+            return name.clone();
+        }
         self.msg.from_name.clone()
     }
 
@@ -1036,6 +1054,9 @@ impl MessageRow {
             if let Some(addr) = first_recipient_addr(&self.msg.to) {
                 return addr;
             }
+        }
+        if let Some((_, addr)) = &self.thread_from {
+            return addr.clone();
         }
         self.msg.from_addr.clone()
     }
@@ -2729,24 +2750,61 @@ impl MessageList {
             .icon(icon)
         };
 
+        let mut flag_section = vec![if msg.starred {
+            item(RowAction::ToggleStar, "Remove Star", "co.hyprlab.Vireo-non-starred-symbolic")
+        } else {
+            item(RowAction::ToggleStar, "Star", "co.hyprlab.Vireo-starred-symbolic")
+        }];
+
+        // A conversation row acts on the whole thread: its read entry marks
+        // every member, through the same bulk path as a multi-select, and the
+        // singular toggle is dropped (the row isn't a singular message).
+        // Expanded replies keep the singular toggle. Labels follow state, like
+        // the singular one: any unread member reads as an unread conversation.
+        let members = self.thread_members(msg);
+        let is_thread_head =
+            members.first().is_some_and(|h| (h.account_id, h.id) == (msg.account_id, msg.id));
+        if is_thread_head {
+            let any_unread = members.iter().any(|m| m.unread);
+            let s = sender.clone();
+            flag_section.push(
+                MenuEntry::new(
+                    if any_unread { "Mark All as Read" } else { "Mark All as Unread" },
+                    move || {
+                        let _ = s.output(MessageListOutput::Bulk {
+                            action: if any_unread {
+                                BulkAction::MarkRead
+                            } else {
+                                BulkAction::MarkUnread
+                            },
+                            messages: members.clone(),
+                        });
+                    },
+                )
+                .icon(if any_unread {
+                    "co.hyprlab.Vireo-mail-read-symbolic"
+                } else {
+                    "co.hyprlab.Vireo-mail-unread-symbolic"
+                }),
+            );
+        } else if msg.unread {
+            flag_section
+                .push(item(RowAction::ToggleRead, "Mark as Read", "co.hyprlab.Vireo-mail-read-symbolic"));
+        } else {
+            flag_section.push(item(
+                RowAction::ToggleRead,
+                "Mark as Unread",
+                "co.hyprlab.Vireo-mail-unread-symbolic",
+            ));
+        }
+
         let sections = vec![
             vec![
                 item(RowAction::Reply, "Reply", "co.hyprlab.Vireo-mail-reply-sender-symbolic"),
                 item(RowAction::ReplyAll, "Reply All", "co.hyprlab.Vireo-mail-reply-all-symbolic"),
                 item(RowAction::Forward, "Forward", "co.hyprlab.Vireo-mail-forward-symbolic"),
             ],
-            vec![
-                if msg.starred {
-                    item(RowAction::ToggleStar, "Remove Star", "co.hyprlab.Vireo-non-starred-symbolic")
-                } else {
-                    item(RowAction::ToggleStar, "Star", "co.hyprlab.Vireo-starred-symbolic")
-                },
-                if msg.unread {
-                    item(RowAction::ToggleRead, "Mark as Read", "co.hyprlab.Vireo-mail-read-symbolic")
-                } else {
-                    item(RowAction::ToggleRead, "Mark as Unread", "co.hyprlab.Vireo-mail-unread-symbolic")
-                },
-            ],
+            flag_section,
             vec![
                 item(RowAction::Spam, "Mark as Spam", "co.hyprlab.Vireo-mail-mark-junk-symbolic"),
                 item(RowAction::Archive, "Archive", "co.hyprlab.Vireo-mail-archive-symbolic"),
@@ -2974,6 +3032,8 @@ impl MessageList {
                         thread_expandable: self.thread_expansion,
                         thread_key: None,
                         thread_date: None,
+                        thread_from: None,
+                        thread_preview: None,
                         thread_unread: false,
                         drag_keys: self.drag_keys.clone(),
                         show_recipient: self.show_recipient,
@@ -3108,6 +3168,10 @@ impl MessageList {
             count: usize,
             is_child: bool,
             is_last: bool,
+            /// Newest member's (from_name, from_addr) and preview, surfaced on
+            /// the head row (display only; identity stays the head's).
+            from: Option<(String, String)>,
+            preview: Option<String>,
             expanded: bool,
             key: Option<(u32, String)>,
             unread: bool,
@@ -3150,6 +3214,18 @@ impl MessageList {
             let latest = (count > 1)
                 .then(|| msgs.last().map(|m| m.datetime_list()))
                 .flatten();
+            // The row surfaces the conversation's NEWEST message — its
+            // sender and preview — instead of re-showing the opener each
+            // time a reply lands.
+            let (latest_from, latest_preview) = if count > 1 {
+                let m = msgs.last().unwrap();
+                (
+                    Some((m.from_name.clone(), m.from_addr.clone())),
+                    Some(m.preview.clone()),
+                )
+            } else {
+                (None, None)
+            };
             let mut it = msgs.into_iter();
             let head = it.next().unwrap();
             shown.push(head);
@@ -3157,6 +3233,8 @@ impl MessageList {
                 count,
                 is_child: false,
                 is_last: false,
+                from: latest_from,
+                preview: latest_preview,
                 expanded,
                 key: if count > 1 { Some(key.clone()) } else { None },
                 unread: any_unread,
@@ -3171,6 +3249,8 @@ impl MessageList {
                         count: 0,
                         is_child: true,
                         is_last: j + 1 == n,
+                        from: None,
+                        preview: None,
                         expanded: false,
                         key: None,
                         unread: false,
@@ -3220,6 +3300,8 @@ impl MessageList {
                     thread_expandable: self.thread_expansion,
                     thread_key: meta.key,
                     thread_date: meta.latest,
+                    thread_from: meta.from,
+                    thread_preview: meta.preview,
                     thread_unread: meta.unread,
                     drag_keys: self.drag_keys.clone(),
                     show_recipient: self.show_recipient,
@@ -3243,6 +3325,30 @@ impl MessageList {
             .iter()
             .map(|m| (m.account_id, m.folder_id, m.uid, m.id))
             .collect();
+    }
+
+    /// Every on-screen member of `m`'s conversation (oldest first) — from any
+    /// member, head or reply. Empty when threading is off or `m` stands alone,
+    /// so callers can treat non-empty as "this is a real thread".
+    fn thread_members(&self, m: &Message) -> Vec<Message> {
+        if !self.threading {
+            return Vec::new();
+        }
+        let source = self.active_source();
+        let keys = compute_thread_keys(source, &self.thread_links);
+        let Some(key) = keys.get(&(m.account_id, m.id)).cloned() else {
+            return Vec::new();
+        };
+        let mut members: Vec<Message> = source
+            .iter()
+            .filter(|x| keys.get(&(x.account_id, x.id)) == Some(&key))
+            .cloned()
+            .collect();
+        if members.len() <= 1 {
+            return Vec::new();
+        }
+        members.sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then(a.uid.cmp(&b.uid)));
+        members
     }
 
     /// The conversation to show for a selected message: when `m` is the oldest
