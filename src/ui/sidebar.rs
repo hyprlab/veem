@@ -352,7 +352,7 @@ impl Component for Sidebar {
             sections: Vec::new(),
             show_unified: false,
             show_unified_chip: true,
-            chevrons_left: true,
+            chevrons_left: false,
             revealers: HashMap::new(),
             chevrons: HashMap::new(),
             folder_lists: HashMap::new(),
