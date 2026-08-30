@@ -1246,6 +1246,9 @@ impl Sidebar {
                 let sub = gtk::ListBox::new();
                 sub.set_selection_mode(gtk::SelectionMode::Single);
                 sub.add_css_class("navigation-sidebar");
+                // Breathing room between the expanded sub-list and the first
+                // account section below; folds away with the revealer.
+                sub.set_margin_bottom(14);
                 for section in &sections {
                     let Some(inbox) =
                         section.folders.iter().find(|f| f.kind == FolderKind::Inbox)

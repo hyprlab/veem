@@ -169,10 +169,15 @@ headerbar.rail-header {
    margins tuck the excess into the row padding, so its centred 16px icon
    lines up with the account headers' leading chevrons below. */
 .unified-row .chevron-btn {
-  min-width: 32px;
+  min-width: 24px;
   min-height: 32px;
-  margin-left: -8px;
-  margin-right: -8px;
+  margin-left: -14px;
+  margin-right: 0;
+}
+
+/* Tuck the "All Inboxes" label 4px closer to its inbox icon. */
+.unified-row .folder-icon {
+  margin-right: -4px;
 }
 
 /* The account headers' leading chevrons sit on the same vertical line as
@@ -180,8 +185,8 @@ headerbar.rail-header {
    is nudged right by exactly that; the negative end margin keeps the
    avatar where it was). */
 .leading-chevron {
-  margin-left: 4px;
-  margin-right: -4px;
+  margin-left: -6px;
+  margin-right: 0;
 }
 
 /* Draggable account rows in the Accounts window. */

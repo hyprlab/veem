@@ -5339,7 +5339,7 @@ impl AppModel {
         // doesn't fall back to fake content).
         if self.config.is_empty() {
             if demo_mode() {
-                for account_id in [1, 2] {
+                for account_id in [1, 2, 3] {
                     self.workers.insert(account_id, Self::spawn_worker(account_id, None, sender));
                 }
             }
@@ -5430,6 +5430,7 @@ impl AppModel {
             return match account_id {
                 1 => Some("🚀".into()),
                 2 => Some("🦀".into()),
+                3 => Some("🌿".into()),
                 _ => None,
             };
         }

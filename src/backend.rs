@@ -45,6 +45,13 @@ impl MockBackend {
                 label: "hello@hyprlab.dev".into(),
                 accent: "#2ec27e".into(),
             },
+            Account {
+                id: 3,
+                name: "Jason (Personal)".into(),
+                email: "jason.m@fastmail.com".into(),
+                label: "jason.m@fastmail.com".into(),
+                accent: "#9141ac".into(),
+            },
         ];
 
         // Folder ids: 1–7 for account 1, 11–17 for account 2. Inbox ids 1 and 11.
@@ -63,6 +70,13 @@ impl MockBackend {
             folder(15, 2, "Archive", FolderKind::Archive, 0),
             folder(16, 2, "Junk", FolderKind::Junk, 0),
             folder(17, 2, "Trash", FolderKind::Trash, 0),
+            folder(21, 3, "Inbox", FolderKind::Inbox, 3),
+            folder(22, 3, "Starred", FolderKind::Starred, 0),
+            folder(23, 3, "Sent", FolderKind::Sent, 0),
+            folder(24, 3, "Drafts", FolderKind::Drafts, 0),
+            folder(25, 3, "Archive", FolderKind::Archive, 0),
+            folder(26, 3, "Junk", FolderKind::Junk, 1),
+            folder(27, 3, "Trash", FolderKind::Trash, 0),
         ];
 
         Self {
@@ -161,6 +175,7 @@ fn build(s: &Spec) -> Message {
 fn sample_messages() -> Vec<Message> {
     const ME: &str = "jason@vireo.hyprlab.co";
     const LAB: &str = "hello@hyprlab.dev";
+    const PERSONAL: &str = "jason.m@fastmail.com";
     let specs = [
         // ---- Account 1 · Inbox · a deep conversation (ids 1–6, oldest = 6) ----
         // Timestamps derive from the id (smaller id = newer), so the thread owns
@@ -273,6 +288,27 @@ fn sample_messages() -> Vec<Message> {
             preview: "Highlights from across the GNOME project: new adaptive widgets, shell performance work, and a wave of app releases…",
             body: "This Week in GNOME\n\nHighlights this week:\n  • New adaptive widgets in libadwaita\n  • Shell performance improvements\n  • A fresh wave of app releases\n\nRead the full issue online.",
             date: "Fri", unread: false, starred: false, has_attachment: false, in_reply_to: None },
+        // ---- Account 3 · Inbox ----
+        Spec { id: 40, account_id: 3, folder_id: 21, from_name: "Elena Ruiz", from_addr: "elena.ruiz@gmail.com", to: PERSONAL,
+            subject: "Cabin weekend — final headcount?",
+            preview: "Locking the booking tonight! Are you and Sam still in for the 19th? We're at nine people if so, which…",
+            body: "Hey!\n\nLocking the booking tonight! Are you and Sam still in for the 19th? We're at nine people if so, which means the bigger cabin.\n\nBring the good coffee ☕\n\nElena",
+            date: "11:02 AM", unread: true, starred: true, has_attachment: false, in_reply_to: None },
+        Spec { id: 41, account_id: 3, folder_id: 21, from_name: "Fastmail", from_addr: "support@fastmail.com", to: PERSONAL,
+            subject: "Your storage is 80% full",
+            preview: "Your mailbox is approaching its storage limit. Consider archiving old attachments or upgrading your plan…",
+            body: "Hello,\n\nYour mailbox is approaching its storage limit (80% of 30 GB used).\n\nConsider archiving old attachments or upgrading your plan.\n\n— The Fastmail team",
+            date: "9:47 AM", unread: true, starred: false, has_attachment: false, in_reply_to: None },
+        Spec { id: 42, account_id: 3, folder_id: 21, from_name: "City Library", from_addr: "noreply@citylibrary.org", to: PERSONAL,
+            subject: "Hold ready for pickup: \"The Pragmatic Programmer\"",
+            preview: "Good news — an item you placed on hold is ready for pickup at the Central branch. Please collect it within…",
+            body: "Good news — an item you placed on hold is ready for pickup at the Central branch:\n\n  The Pragmatic Programmer (20th Anniversary Edition)\n\nPlease collect it within 7 days.\n\nCity Library",
+            date: "Yesterday", unread: true, starred: false, has_attachment: false, in_reply_to: None },
+        Spec { id: 43, account_id: 3, folder_id: 21, from_name: "Ridgeline Cycles", from_addr: "service@ridgelinecycles.com", to: PERSONAL,
+            subject: "Your tune-up is complete",
+            preview: "Your bike is ready! We replaced the chain, trued the rear wheel, and bled the rear brake. Total comes to…",
+            body: "Your bike is ready!\n\nWork done:\n  • New chain\n  • Trued rear wheel\n  • Rear brake bleed\n\nTotal: $86.40 — payable at pickup.\n\nRidgeline Cycles",
+            date: "Thu", unread: false, starred: false, has_attachment: true, in_reply_to: None },
     ];
     specs.iter().map(build).collect()
 }
