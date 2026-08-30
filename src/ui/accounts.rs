@@ -99,6 +99,12 @@ fn provider_at(idx: u32) -> &'static Provider {
 pub struct AccountsWindow {
     /// Accounts in display order.
     accounts: Vec<AccountConfig>,
+    /// Each account's live folder list (path, display name), for the editor's
+    /// Special Folders combos — pushed by the app, keyed by account email.
+    folders_by_email: std::collections::HashMap<String, Vec<(String, String)>>,
+    /// Paths behind the currently-open editor's folder combos (index 0 in the
+    /// combo is "Automatic"; entry N here is combo index N + 1).
+    folder_paths: Vec<String>,
     /// Index being edited; `None` while adding a new account.
     editing: Option<usize>,
     /// Emoji currently chosen in the editor (`None` → use initials).
@@ -138,6 +144,8 @@ struct AliasDialog {
 
 #[derive(Debug)]
 pub enum AccountsInput {
+    /// The app's live folder lists per account email (for Special Folders).
+    SetFolderChoices(std::collections::HashMap<String, Vec<(String, String)>>),
     AddAccount,
     EditAccount(usize),
     /// The email field changed — mirror it into the (auto-filled) label field.
@@ -588,6 +596,27 @@ impl Component for AccountsWindow {
                                 },
                             },
 
+                            // Manual special-folder mapping (#82): for servers
+                            // whose Sent/Trash/… aren't detected, pin each role
+                            // to one of the account's real folders.
+                            add = &adw::PreferencesGroup {
+                                set_title: "Special Folders",
+                                set_description: Some(
+                                    "Where sent, deleted and junk mail goes. Automatic                                      follows the server's own markings; pick a folder                                      when a role isn't detected or lands wrong."
+                                ),
+
+                                #[name = "folder_sent_row"]
+                                adw::ComboRow { set_title: "Sent" },
+                                #[name = "folder_drafts_row"]
+                                adw::ComboRow { set_title: "Drafts" },
+                                #[name = "folder_trash_row"]
+                                adw::ComboRow { set_title: "Trash" },
+                                #[name = "folder_junk_row"]
+                                adw::ComboRow { set_title: "Junk" },
+                                #[name = "folder_archive_row"]
+                                adw::ComboRow { set_title: "Archive" },
+                            },
+
                             add = &adw::PreferencesGroup {
                                 set_title: "Signature",
                                 set_description: Some(
@@ -650,6 +679,8 @@ impl Component for AccountsWindow {
             alias_edits: Vec::new(),
             alias_editing: None,
             alias_dialog: None,
+            folders_by_email: std::collections::HashMap::new(),
+            folder_paths: Vec::new(),
         };
 
         let widgets = view_output!();
@@ -719,6 +750,7 @@ impl Component for AccountsWindow {
                 self.alias_edits.clear();
                 self.rebuild_alias_list(&widgets.aliases_list, &sender);
                 clear_editor(widgets);
+                self.populate_folder_combos(widgets, None);
                 set_connection_editable(widgets, true);
                 widgets.goa_banner.set_visible(false);
                 self.apply_provider(widgets);
@@ -741,6 +773,7 @@ impl Component for AccountsWindow {
                 self.alias_edits = acc.aliases.clone();
                 self.rebuild_alias_list(&widgets.aliases_list, &sender);
                 fill_editor(widgets, &acc);
+                self.populate_folder_combos(widgets, Some(&acc));
                 self.apply_provider(widgets);
                 // Label mirrors the email until customized.
                 self.label_synced = acc.email.clone();
@@ -967,10 +1000,14 @@ impl Component for AccountsWindow {
                     .extract_html(move |html| s.input(AccountsInput::SaveWithSig(html)));
             }
 
+            AccountsInput::SetFolderChoices(map) => {
+                self.folders_by_email = map;
+            }
             AccountsInput::SaveWithSig(sig_html) => {
                 widgets.host_row.remove_css_class("error");
                 let mut account = read_account(widgets, self.emoji.clone());
                 account.aliases = self.alias_edits.clone();
+                account.folder_roles = self.read_folder_roles(widgets);
                 let sig = sig_html.trim();
                 account.signature = if signature_is_empty(sig) {
                     None
@@ -1515,6 +1552,59 @@ impl AccountsWindow {
     }
 
     /// Rebuild the draggable account list.
+    /// Fill the editor's Special Folders combos (#82) for `acc` (None = a new
+    /// account, whose folders aren't known yet): "Automatic" plus the account's
+    /// live folder list, with any saved assignment selected.
+    fn populate_folder_combos(&mut self, widgets: &AccountsWindowWidgets, acc: Option<&AccountConfig>) {
+        let choices = acc
+            .and_then(|a| self.folders_by_email.get(&a.email))
+            .cloned()
+            .unwrap_or_default();
+        let mut labels: Vec<&str> = vec!["Automatic"];
+        labels.extend(choices.iter().map(|(_, display)| display.as_str()));
+        self.folder_paths = choices.iter().map(|(path, _)| path.clone()).collect();
+        for (role, row) in [
+            ("sent", &widgets.folder_sent_row),
+            ("drafts", &widgets.folder_drafts_row),
+            ("trash", &widgets.folder_trash_row),
+            ("junk", &widgets.folder_junk_row),
+            ("archive", &widgets.folder_archive_row),
+        ] {
+            row.set_model(Some(&gtk::StringList::new(&labels)));
+            row.set_list_factory(Some(&non_ellipsizing_factory()));
+            let selected = acc
+                .and_then(|a| a.folder_roles.get(role))
+                .and_then(|path| self.folder_paths.iter().position(|p| p == path))
+                .map(|i| i as u32 + 1)
+                .unwrap_or(0);
+            row.set_selected(selected);
+        }
+    }
+
+    /// The Special Folders combos' current assignments: role → folder path,
+    /// omitting everything left on Automatic.
+    fn read_folder_roles(
+        &self,
+        widgets: &AccountsWindowWidgets,
+    ) -> std::collections::BTreeMap<String, String> {
+        let mut roles = std::collections::BTreeMap::new();
+        for (role, row) in [
+            ("sent", &widgets.folder_sent_row),
+            ("drafts", &widgets.folder_drafts_row),
+            ("trash", &widgets.folder_trash_row),
+            ("junk", &widgets.folder_junk_row),
+            ("archive", &widgets.folder_archive_row),
+        ] {
+            let sel = row.selected();
+            if sel > 0 {
+                if let Some(path) = self.folder_paths.get(sel as usize - 1) {
+                    roles.insert(role.to_string(), path.clone());
+                }
+            }
+        }
+        roles
+    }
+
     fn rebuild_account_list(&self, list: &gtk::ListBox, sender: &ComponentSender<Self>) {
         while let Some(child) = list.first_child() {
             list.remove(&child);
@@ -1890,6 +1980,8 @@ fn read_account(widgets: &AccountsWindowWidgets, emoji: Option<String>) -> Accou
         oauth: false,
         oauth_settings: None,
         oauth_refresh: String::new(),
+        // Assigned by SaveWithSig from the Special Folders combos.
+        folder_roles: Default::default(),
     }
 }
 

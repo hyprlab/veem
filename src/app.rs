@@ -655,6 +655,7 @@ pub enum AppMsg {
     Forward,
     AddToContacts,
     AddContactAddr(String),
+    OpenMailto(String),
     ContactAdded(Result<crate::contacts::AddOutcome, String>),
     ViewSource,
     /// User clicked "Load attachments" for a message whose attachments weren't
@@ -2480,6 +2481,13 @@ impl SimpleComponent for AppModel {
             widgets.list_sort_btn.set_menu_model(Some(&menu));
         }
 
+        // mailto: URIs can arrive (via GApplication `open`) before this init
+        // ran — install the live sender and drain anything that queued early.
+        let _ = MAILTO_SENDER.set(sender.input_sender().clone());
+        for uri in MAILTO_PENDING.lock().unwrap().drain(..) {
+            sender.input(AppMsg::OpenMailto(uri));
+        }
+
         ComponentParts { model, widgets }
     }
 
@@ -4036,6 +4044,24 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::OpenMailto(uri) => {
+                // A mailto: link from anywhere on the system (the desktop file
+                // registers the scheme). Same open-composer flow as ComposeTo,
+                // with the URI's subject/cc/bcc/body carried along.
+                let Some(prefill) = parse_mailto(&uri) else { return };
+                self.showing_gallery = false;
+                let account = self
+                    .current
+                    .as_ref()
+                    .map(|m| m.account_id)
+                    .unwrap_or_else(|| self.active_account());
+                if self.compose_inline {
+                    self.open_inline_reply(account, prefill, &sender);
+                } else {
+                    self.open_compose(account, prefill, &sender);
+                }
+            }
+
             AppMsg::SendMessage(out) => {
                 let account_id = out.from_account_id;
                 let sent_path = self
@@ -4166,6 +4192,16 @@ impl SimpleComponent for AppModel {
                             }
                         }
                         self.save_sidebar_state();
+                        // Changed Special Folders assignments (#82) land on the
+                        // live lists at once; the reconnect's fresh LIST then
+                        // confirms them (and restores auto-detection for any
+                        // role set back to Automatic).
+                        for (i, cfg) in self.config.iter().enumerate() {
+                            if let Some(folders) = self.folders.get_mut(&(i as u32 + 1)) {
+                                apply_folder_roles(&cfg.folder_roles, folders);
+                            }
+                        }
+                        self.rebuild_sidebar();
                         self.reconnect_all(&sender);
                     }
                     Err(e) => self.notifications.emit(NotifyInput::Push {
@@ -4340,6 +4376,18 @@ impl SimpleComponent for AppModel {
                     && self.folders.get(&account_id).is_some_and(|old| !old.is_empty())
                 {
                     return;
+                }
+                // Manual special-folder assignments (#82) ride over whatever
+                // the worker detected.
+                let mut folders = folders;
+                if let Some(cfg) = self.config.get(account_id as usize - 1) {
+                    apply_folder_roles(&cfg.folder_roles.clone(), &mut folders);
+                }
+                // Keep the settings editor's folder choices current while open.
+                if let Some(acc) = &self.accounts_win {
+                    acc.emit(crate::ui::accounts::AccountsInput::SetFolderChoices(
+                        self.folder_choice_map_with(account_id, &folders),
+                    ));
                 }
                 // Merge unread counts by PATH, and never let a zero overwrite
                 // a known count: a refresh's per-folder STATUS can fail
@@ -5824,6 +5872,41 @@ impl AppModel {
 
     /// Push the current accounts + folders to the sidebar, in the user's chosen
     /// order and with each account's collapsed state.
+    /// The Special Folders choices per account email (#82): every folder of
+    /// every configured account, for the settings editor's combos.
+    fn folder_choice_map(
+        &self,
+    ) -> std::collections::HashMap<String, Vec<(String, String)>> {
+        let mut map = std::collections::HashMap::new();
+        for (i, cfg) in self.config.iter().enumerate() {
+            let id = i as u32 + 1;
+            let list = self
+                .folders
+                .get(&id)
+                .map(|fs| fs.iter().map(|f| (f.path.clone(), f.name.clone())).collect())
+                .unwrap_or_default();
+            map.insert(cfg.email.clone(), list);
+        }
+        map
+    }
+
+    /// [`folder_choice_map`], but with `account_id`'s list taken from `fresh`
+    /// (a SetFolders payload not yet stored on self).
+    fn folder_choice_map_with(
+        &self,
+        account_id: u32,
+        fresh: &[Folder],
+    ) -> std::collections::HashMap<String, Vec<(String, String)>> {
+        let mut map = self.folder_choice_map();
+        if let Some(cfg) = self.config.get(account_id as usize - 1) {
+            map.insert(
+                cfg.email.clone(),
+                fresh.iter().map(|f| (f.path.clone(), f.name.clone())).collect(),
+            );
+        }
+        map
+    }
+
     fn rebuild_sidebar(&self) {
         let order = self.ordered_emails();
         let sections: Vec<SectionData> = order
@@ -7955,6 +8038,9 @@ impl AppModel {
                 PrefOutput::Closed => AppMsg::ClosePreferences,
             });
         prefs.widget().present();
+        accounts.emit(crate::ui::accounts::AccountsInput::SetFolderChoices(
+            self.folder_choice_map(),
+        ));
         self.accounts_win = Some(accounts);
         self.prefs = Some(prefs);
     }
@@ -8856,6 +8942,135 @@ fn demo_mode() -> bool {
     std::env::var_os("VIREO_DEMO").is_some()
 }
 
+/// The [`FolderKind`] behind a Special Folders role key (#82).
+fn role_kind(role: &str) -> Option<FolderKind> {
+    match role {
+        "sent" => Some(FolderKind::Sent),
+        "drafts" => Some(FolderKind::Drafts),
+        "trash" => Some(FolderKind::Trash),
+        "junk" => Some(FolderKind::Junk),
+        "archive" => Some(FolderKind::Archive),
+        _ => None,
+    }
+}
+
+/// Apply an account's manual special-folder assignments (#82) over the
+/// auto-detected kinds: the chosen folder takes the role, whatever held it
+/// demotes to Custom, and the list re-sorts into the fixed role order.
+/// Folder ids are untouched — they are referenced from cached messages.
+fn apply_folder_roles(
+    roles: &std::collections::BTreeMap<String, String>,
+    folders: &mut Vec<Folder>,
+) {
+    if roles.is_empty() {
+        return;
+    }
+    for (role, path) in roles {
+        let Some(kind) = role_kind(role) else { continue };
+        if !folders.iter().any(|f| &f.path == path) {
+            // The assigned folder vanished server-side: leave detection alone.
+            continue;
+        }
+        for f in folders.iter_mut() {
+            if f.kind == kind {
+                f.kind = FolderKind::Custom;
+            }
+        }
+        if let Some(f) = folders.iter_mut().find(|f| &f.path == path) {
+            f.kind = kind;
+        }
+    }
+    folders.sort_by(|a, b| {
+        crate::worker::folder_order(a.kind)
+            .cmp(&crate::worker::folder_order(b.kind))
+            .then_with(|| a.path.to_lowercase().cmp(&b.path.to_lowercase()))
+    });
+}
+
+/// A `mailto:` handed to the app before its component was up. `queue_mailto`
+/// runs on GApplication's `open` signal, which can fire before `AppModel::init`
+/// installs the sender — anything early waits here and is drained by init.
+static MAILTO_PENDING: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static MAILTO_SENDER: std::sync::OnceLock<relm4::Sender<AppMsg>> = std::sync::OnceLock::new();
+
+/// Route a `mailto:` URI to the app (from main's `connect_open`).
+pub fn queue_mailto(uri: String) {
+    match MAILTO_SENDER.get() {
+        Some(s) => {
+            let _ = s.send(AppMsg::OpenMailto(uri));
+        }
+        None => MAILTO_PENDING.lock().unwrap().push(uri),
+    }
+}
+
+/// Percent-decode for mailto components (RFC 6068): `%XX` only — `+` stays
+/// literal, because plus-addressing (`user+tag@example.com`) is a real thing.
+fn pct_decode_mailto(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Turn a `mailto:` URI into a composer prefill (RFC 6068: address part plus
+/// to/cc/bcc/subject/body query keys, all percent-encoded).
+fn parse_mailto(uri: &str) -> Option<crate::ui::compose::ComposePrefill> {
+    let rest = uri.strip_prefix("mailto:")?;
+    let (addr, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let mut to = pct_decode_mailto(addr);
+    let (mut cc, mut bcc, mut subject, mut body) =
+        (String::new(), String::new(), String::new(), String::new());
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        let v = pct_decode_mailto(v);
+        match k.to_ascii_lowercase().as_str() {
+            // A second `to` joins the address part, comma-separated.
+            "to" if !v.is_empty() => {
+                if !to.is_empty() {
+                    to.push_str(", ");
+                }
+                to.push_str(&v);
+            }
+            "cc" => cc = v,
+            "bcc" => bcc = v,
+            "subject" => subject = v,
+            "body" => body = v,
+            _ => {}
+        }
+    }
+    // The rich editor takes HTML; the mailto body is plain text.
+    let body_html = if body.is_empty() {
+        String::new()
+    } else {
+        body.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace("\r\n", "\n")
+            .replace('\n', "<br>")
+    };
+    Some(crate::ui::compose::ComposePrefill {
+        to,
+        cc,
+        bcc,
+        subject,
+        body_html,
+        ..Default::default()
+    })
+}
+
 /// Render the window's widget tree to a PNG at 2x (crisp text for marketing
 /// shots). Content only — the compositor's shadow/frame is not part of the
 /// tree, which is exactly what the site and store screenshots want.
@@ -9502,6 +9717,66 @@ fn next_after_vanish(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn folder_roles_override_detection_and_demote_the_old_holder() {
+        use crate::models::{Folder, FolderKind};
+        let f = |id: u32, path: &str, kind: FolderKind| Folder {
+            id,
+            account_id: 1,
+            name: path.to_string(),
+            path: path.to_string(),
+            kind,
+            unread: 0,
+        };
+        let mut folders = vec![
+            f(1, "INBOX", FolderKind::Inbox),
+            f(2, "Sent Items", FolderKind::Custom),
+            f(3, "Sent", FolderKind::Sent),
+            f(4, "Rubbish", FolderKind::Custom),
+        ];
+        let roles: std::collections::BTreeMap<String, String> = [
+            ("sent".to_string(), "Sent Items".to_string()),
+            ("trash".to_string(), "Rubbish".to_string()),
+            // A mapping whose folder no longer exists changes nothing.
+            ("junk".to_string(), "Gone".to_string()),
+        ]
+        .into();
+        super::apply_folder_roles(&roles, &mut folders);
+        let kind_of = |path: &str| folders.iter().find(|f| f.path == path).unwrap().kind;
+        assert_eq!(kind_of("Sent Items"), FolderKind::Sent);
+        assert_eq!(kind_of("Sent"), FolderKind::Custom, "old holder demotes");
+        assert_eq!(kind_of("Rubbish"), FolderKind::Trash);
+        assert_eq!(kind_of("INBOX"), FolderKind::Inbox);
+        // Ids survive the re-sort (cached messages reference them).
+        assert_eq!(folders.iter().find(|f| f.path == "Sent Items").unwrap().id, 2);
+    }
+
+    #[test]
+    fn mailto_uris_become_composer_prefills() {
+        let p = super::parse_mailto("mailto:ann@example.com").unwrap();
+        assert_eq!(p.to, "ann@example.com");
+        assert!(p.subject.is_empty() && p.body_html.is_empty());
+
+        let p = super::parse_mailto(
+            "mailto:ann@example.com?subject=Hi%20there&cc=bob@x.org&body=line%20one%0Aline%20two",
+        )
+        .unwrap();
+        assert_eq!(p.to, "ann@example.com");
+        assert_eq!(p.subject, "Hi there");
+        assert_eq!(p.cc, "bob@x.org");
+        assert_eq!(p.body_html, "line one<br>line two");
+
+        // Plus-addressing survives: '+' is literal in mailto, never a space.
+        let p = super::parse_mailto("mailto:user%2Btag@example.com?to=a+b@x.org").unwrap();
+        assert_eq!(p.to, "user+tag@example.com, a+b@x.org");
+
+        // A body with markup arrives escaped, not interpreted.
+        let p = super::parse_mailto("mailto:a@b.c?body=%3Cscript%3E").unwrap();
+        assert_eq!(p.body_html, "&lt;script&gt;");
+
+        assert!(super::parse_mailto("https://example.com").is_none());
+    }
+
     #[test]
     fn forward_sanitizer_strips_active_content() {
         use super::sanitize_forward_html;

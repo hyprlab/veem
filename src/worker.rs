@@ -7615,6 +7615,7 @@ mod tests {
 
     fn sample_account() -> AccountConfig {
         AccountConfig {
+            folder_roles: Default::default(),
             name: String::new(),
             email: "me@example.com".into(),
             protocol: crate::config::Protocol::Imap,

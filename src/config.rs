@@ -187,6 +187,11 @@ pub struct AccountConfig {
     /// memory (like `password`); stored on save.
     #[serde(default, skip_serializing)]
     pub oauth_refresh: String,
+    /// Manual special-folder assignments (#82), applied over auto-detection:
+    /// role → full folder path. Roles: "sent", "drafts", "trash", "junk",
+    /// "archive". Empty = fully automatic.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub folder_roles: std::collections::BTreeMap<String, String>,
 }
 
 /// A send-as alias (#34): an extra From identity the composer offers. By

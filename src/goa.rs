@@ -52,6 +52,7 @@ impl GoaMailAccount {
     /// (the token is fetched from GOA at connect time).
     pub fn to_config(&self, password: String, oauth: bool) -> AccountConfig {
         AccountConfig {
+            folder_roles: Default::default(),
             name: if self.name.trim().is_empty() {
                 self.email.clone()
             } else {

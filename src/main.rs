@@ -74,7 +74,25 @@ fn main() {
 
     let adw_app = adw::Application::builder()
         .application_id(APP_ID)
+        // mailto: links land here (the desktop file registers the scheme) —
+        // both on a fresh launch and relayed from a second invocation.
+        .flags(gtk::gio::ApplicationFlags::HANDLES_OPEN)
         .build();
+    {
+        use gtk::gio::prelude::*;
+        adw_app.connect_open(|app, files, _hint| {
+            for f in files {
+                let uri = f.uri().to_string();
+                if uri.starts_with("mailto:") {
+                    app::queue_mailto(uri);
+                }
+            }
+            // `open` replaces `activate` when a URI is passed: activate
+            // explicitly so the window (and on first launch, the whole UI)
+            // still comes up, with the composer opening over it.
+            app.activate();
+        });
+    }
     // The embedded icon gresource lives at /co/hyprlab/Vireo regardless of the
     // channel; pin the base path so the beta's app ID (co.hyprlab.Vireo.Beta)
     // doesn't derive a base the bundled symbolic icons aren't under.
@@ -83,10 +101,81 @@ fn main() {
         adw_app.set_resource_base_path(Some("/co/hyprlab/Vireo"));
     }
 
+    // A second launch (a mailto: link, or just opening the app again) must
+    // hand off to the running instance and exit. RelmApp's run loop is built
+    // for the primary only (a remote instance never leaves it), and the app
+    // must NOT be registered early either — relm4 builds the whole UI in a
+    // `startup` handler it connects inside run(), and registration is what
+    // emits `startup`. So remoteness is checked bus-side, touching nothing.
+    if primary_instance_running() {
+        relay_to_primary(&args);
+        return;
+    }
+
     let app = RelmApp::from_app(adw_app)
         .with_args(args)
         .visible_on_activate(!hidden);
     app.run::<AppModel>(());
+}
+
+/// Whether another instance already owns the app's D-Bus name.
+fn primary_instance_running() -> bool {
+    use gtk::glib::prelude::ToVariant;
+    let Ok(conn) = gtk::gio::bus_get_sync(gtk::gio::BusType::Session, gtk::gio::Cancellable::NONE)
+    else {
+        return false;
+    };
+    conn.call_sync(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "NameHasOwner",
+        Some(&(APP_ID,).to_variant()),
+        None,
+        gtk::gio::DBusCallFlags::NONE,
+        3000,
+        gtk::gio::Cancellable::NONE,
+    )
+    .ok()
+    .and_then(|v| v.get::<(bool,)>())
+    .is_some_and(|(owned,)| owned)
+}
+
+/// Forward this invocation to the running primary instance over D-Bus and
+/// return once it has been accepted: `Open` with any mailto: URIs, plain
+/// `Activate` (present the window) otherwise.
+fn relay_to_primary(args: &[String]) {
+    use gtk::glib::prelude::ToVariant;
+    let uris: Vec<String> =
+        args.iter().skip(1).filter(|a| a.starts_with("mailto:")).cloned().collect();
+    let conn = match gtk::gio::bus_get_sync(gtk::gio::BusType::Session, gtk::gio::Cancellable::NONE)
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("could not reach the session bus to hand off: {e}");
+            return;
+        }
+    };
+    let path = format!("/{}", APP_ID.replace('.', "/"));
+    let platform: std::collections::HashMap<String, gtk::glib::Variant> = Default::default();
+    let (method, params) = if uris.is_empty() {
+        ("Activate", (platform,).to_variant())
+    } else {
+        ("Open", (uris, String::new(), platform).to_variant())
+    };
+    if let Err(e) = conn.call_sync(
+        Some(APP_ID),
+        &path,
+        "org.gtk.Application",
+        method,
+        Some(&params),
+        None,
+        gtk::gio::DBusCallFlags::NONE,
+        5000,
+        gtk::gio::Cancellable::NONE,
+    ) {
+        tracing::warn!("hand-off to the running instance failed: {e}");
+    }
 }
 
 /// One-time migration for the 1.6.0 rename (Veem → Vireo): if an old config or
