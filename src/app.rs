@@ -659,6 +659,9 @@ pub enum AppMsg {
     AddToContacts,
     AddContactAddr(String),
     OpenMailto(String),
+    /// Files handed in from outside the app (a file manager's "Open With
+    /// Vireo"/"Send To"): open a fresh composer with them attached.
+    OpenWithFiles(Vec<std::path::PathBuf>),
     ContactAdded(Result<crate::contacts::AddOutcome, String>),
     ViewSource,
     /// User clicked "Load attachments" for a message whose attachments weren't
@@ -2420,6 +2423,9 @@ impl SimpleComponent for AppModel {
         for uri in MAILTO_PENDING.lock().unwrap().drain(..) {
             sender.input(AppMsg::OpenMailto(uri));
         }
+        for paths in ATTACH_PENDING.lock().unwrap().drain(..) {
+            sender.input(AppMsg::OpenWithFiles(paths));
+        }
 
         ComponentParts { model, widgets }
     }
@@ -3996,6 +4002,26 @@ impl SimpleComponent for AppModel {
                     .as_ref()
                     .map(|m| m.account_id)
                     .unwrap_or_else(|| self.active_account());
+                if self.compose_inline {
+                    self.open_inline_reply(account, prefill, &sender);
+                } else {
+                    self.open_compose(account, prefill, &sender);
+                }
+            }
+
+            AppMsg::OpenWithFiles(paths) => {
+                // Same open-composer flow as ComposeTo/OpenMailto, with the
+                // handed-in files pre-attached.
+                self.showing_gallery = false;
+                let account = self
+                    .current
+                    .as_ref()
+                    .map(|m| m.account_id)
+                    .unwrap_or_else(|| self.active_account());
+                let prefill = ComposePrefill {
+                    attachments: paths,
+                    ..Default::default()
+                };
                 if self.compose_inline {
                     self.open_inline_reply(account, prefill, &sender);
                 } else {
@@ -8957,6 +8983,11 @@ fn apply_folder_roles(
 /// installs the sender — anything early waits here and is drained by init.
 static MAILTO_PENDING: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 static MAILTO_SENDER: std::sync::OnceLock<relm4::Sender<AppMsg>> = std::sync::OnceLock::new();
+/// Files handed in (via `connect_open`) before the app's component was up —
+/// same early-arrival race as `MAILTO_PENDING`, queued separately since each
+/// batch opens its own composer.
+static ATTACH_PENDING: std::sync::Mutex<Vec<Vec<std::path::PathBuf>>> =
+    std::sync::Mutex::new(Vec::new());
 
 /// Route a `mailto:` URI to the app (from main's `connect_open`).
 pub fn queue_mailto(uri: String) {
@@ -8965,6 +8996,16 @@ pub fn queue_mailto(uri: String) {
             let _ = s.send(AppMsg::OpenMailto(uri));
         }
         None => MAILTO_PENDING.lock().unwrap().push(uri),
+    }
+}
+
+/// Route files to attach to a fresh composer (from main's `connect_open`).
+pub fn queue_attach_files(paths: Vec<std::path::PathBuf>) {
+    match MAILTO_SENDER.get() {
+        Some(s) => {
+            let _ = s.send(AppMsg::OpenWithFiles(paths));
+        }
+        None => ATTACH_PENDING.lock().unwrap().push(paths),
     }
 }
 
@@ -8994,10 +9035,18 @@ fn pct_decode_mailto(s: &str) -> String {
 /// to/cc/bcc/subject/body query keys, all percent-encoded).
 fn parse_mailto(uri: &str) -> Option<crate::ui::compose::ComposePrefill> {
     let rest = uri.strip_prefix("mailto:")?;
+    // `mailto:` has no hierarchical authority, but GIO's generic URI parser
+    // (used for `File::for_commandline_arg`, which the desktop file's `%u`
+    // and D-Bus hand-off both go through) doesn't know that and normalizes
+    // e.g. `mailto:?attach=...` into `mailto:///?attach=...` — an empty
+    // authority plus a bare `/` path. Strip that noise before parsing the
+    // address, or it ends up quoted straight into the To field.
+    let rest = rest.trim_start_matches('/');
     let (addr, query) = rest.split_once('?').unwrap_or((rest, ""));
     let mut to = pct_decode_mailto(addr);
     let (mut cc, mut bcc, mut subject, mut body) =
         (String::new(), String::new(), String::new(), String::new());
+    let mut attachments = Vec::new();
     for pair in query.split('&').filter(|p| !p.is_empty()) {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
         let v = pct_decode_mailto(v);
@@ -9013,6 +9062,15 @@ fn parse_mailto(uri: &str) -> Option<crate::ui::compose::ComposePrefill> {
             "bcc" => bcc = v,
             "subject" => subject = v,
             "body" => body = v,
+            // Non-standard (RFC 6068 has no attachment mechanism), but the
+            // convention GNOME's "send to" file-manager action and other
+            // mail clients (Thunderbird, Evolution) use: one `attach=`
+            // per file, each a `file://` URI.
+            "attach" if !v.is_empty() => {
+                if let Some(path) = gtk::gio::File::for_uri(&v).path() {
+                    attachments.push(path);
+                }
+            }
             _ => {}
         }
     }
@@ -9032,6 +9090,7 @@ fn parse_mailto(uri: &str) -> Option<crate::ui::compose::ComposePrefill> {
         bcc,
         subject,
         body_html,
+        attachments,
         ..Default::default()
     })
 }
@@ -9740,6 +9799,41 @@ mod tests {
         assert_eq!(p.body_html, "&lt;script&gt;");
 
         assert!(super::parse_mailto("https://example.com").is_none());
+    }
+
+    #[test]
+    fn mailto_attach_becomes_composer_attachments() {
+        // GNOME's file-manager "send to" action (and Thunderbird/Evolution)
+        // pass attachments as one non-standard `attach=` query param per file.
+        let p = super::parse_mailto("mailto:?attach=file:///home/ann/report.pdf").unwrap();
+        assert_eq!(p.attachments, vec![std::path::PathBuf::from("/home/ann/report.pdf")]);
+
+        let p = super::parse_mailto(
+            "mailto:?attach=file:///home/ann/a.pdf&attach=file:///home/ann/b.pdf",
+        )
+        .unwrap();
+        assert_eq!(
+            p.attachments,
+            vec![
+                std::path::PathBuf::from("/home/ann/a.pdf"),
+                std::path::PathBuf::from("/home/ann/b.pdf"),
+            ]
+        );
+
+        let p = super::parse_mailto("mailto:ann@example.com").unwrap();
+        assert!(p.attachments.is_empty());
+
+        // `File::for_commandline_arg` (used for the desktop file's `%u` and
+        // the D-Bus hand-off) normalizes `mailto:` into an empty-authority
+        // form (`mailto:///...`) regardless of whether an address follows —
+        // that noise must not leak into the To field or the address.
+        let p =
+            super::parse_mailto("mailto:///?attach=file:///home/ann/report.pdf").unwrap();
+        assert_eq!(p.to, "");
+        assert_eq!(p.attachments, vec![std::path::PathBuf::from("/home/ann/report.pdf")]);
+
+        let p = super::parse_mailto("mailto:///ann@example.com").unwrap();
+        assert_eq!(p.to, "ann@example.com");
     }
 
     #[test]

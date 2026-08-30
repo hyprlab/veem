@@ -78,11 +78,20 @@ fn main() {
     {
         use gtk::gio::prelude::*;
         adw_app.connect_open(|app, files, _hint| {
+            let mut attach_paths = Vec::new();
             for f in files {
                 let uri = f.uri().to_string();
                 if uri.starts_with("mailto:") {
                     app::queue_mailto(uri);
+                } else if let Some(path) = f.path() {
+                    // A file handed in from a file manager's "Open With" (or
+                    // "Send To"): open a fresh composer with it attached,
+                    // same as picking it from the attach-file dialog.
+                    attach_paths.push(path);
                 }
+            }
+            if !attach_paths.is_empty() {
+                app::queue_attach_files(attach_paths);
             }
             // `open` replaces `activate` when a URI is passed: activate
             // explicitly so the window (and on first launch, the whole UI)
@@ -139,12 +148,25 @@ fn primary_instance_running() -> bool {
 }
 
 /// Forward this invocation to the running primary instance over D-Bus and
-/// return once it has been accepted: `Open` with any mailto: URIs, plain
+/// return once it has been accepted: `Open` with any mailto: URIs or files
+/// (e.g. a file manager's "Open With Vireo" on an attachment), plain
 /// `Activate` (present the window) otherwise.
 fn relay_to_primary(args: &[String]) {
+    use gtk::gio::prelude::FileExt;
     use gtk::glib::prelude::ToVariant;
-    let uris: Vec<String> =
-        args.iter().skip(1).filter(|a| a.starts_with("mailto:")).cloned().collect();
+    let uris: Vec<String> = args
+        .iter()
+        .skip(1)
+        .map(|a| {
+            if a.starts_with("mailto:") {
+                a.clone()
+            } else {
+                // A plain path or a non-mailto URI (e.g. file://): normalize
+                // to a URI the same way GLib does for HANDLES_OPEN arguments.
+                gtk::gio::File::for_commandline_arg(a).uri().to_string()
+            }
+        })
+        .collect();
     let conn = match gtk::gio::bus_get_sync(gtk::gio::BusType::Session, gtk::gio::Cancellable::NONE)
     {
         Ok(c) => c,
