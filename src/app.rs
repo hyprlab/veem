@@ -3922,7 +3922,7 @@ impl SimpleComponent for AppModel {
 
             AppMsg::ComposeClosed(id) => {
                 self.close_compose(id);
-                self.message_list.emit(MessageListInput::FocusList);
+                self.message_list.emit(MessageListInput::ReclaimFocus);
             }
 
             AppMsg::ComposeToggleWindow(id) => self.toggle_compose_window(id, &sender),

@@ -1302,8 +1302,13 @@ pub enum MessageListInput {
     MoveSelection(i32),
     /// Add or remove the focused row from the selection, without opening it.
     ToggleSelection,
-    /// Put keyboard focus on the list (so the arrow keys work again).
+    /// Put keyboard focus on the list (so the arrow keys work again),
+    /// deliberately scrolling back to the selected row — the "back to list"
+    /// shortcut.
     FocusList,
+    /// Housekeeping focus restore (e.g. after a compose window closes) that
+    /// doesn't scroll the viewport, unlike `FocusList`.
+    ReclaimFocus,
     /// Put the cursor in the search field.
     FocusSearch,
     /// Expand/collapse a conversation thread.
@@ -2106,6 +2111,9 @@ impl SimpleComponent for MessageList {
             }
 
             MessageListInput::FocusList => {
+                // The "back to list" shortcut: deliberately returns to the
+                // selected row (that's the point — resume j/k navigation
+                // from what you were reading), so it's allowed to scroll.
                 let list = self.rows.widget();
                 let row = list
                     .selected_rows()
@@ -2115,6 +2123,24 @@ impl SimpleComponent for MessageList {
                 if let Some(row) = row {
                     row.grab_focus();
                 }
+            }
+            MessageListInput::ReclaimFocus => {
+                // Housekeeping focus restore (e.g. after a compose window
+                // closes) so keyboard shortcuts keep targeting the list —
+                // unlike `FocusList`, this isn't a "go back to what I was
+                // reading" action, so it shouldn't scroll the viewport away
+                // from wherever the user was browsing.
+                self.preserving_scroll(|this| {
+                    let list = this.rows.widget();
+                    let row = list
+                        .selected_rows()
+                        .first()
+                        .cloned()
+                        .or_else(|| list.row_at_index(0));
+                    if let Some(row) = row {
+                        row.grab_focus();
+                    }
+                });
             }
 
             MessageListInput::FocusSearch => {
@@ -2224,9 +2250,24 @@ impl SimpleComponent for MessageList {
                 self.selected_ids.retain(|(_, i)| *i != id);
                 self.all.retain(|m| m.id != id);
                 let removed_idx = self.shown.iter().position(|m| m.id == id);
+                // Was the row about to be destroyed the one holding keyboard
+                // focus? If so, and it isn't the viewed row handled below,
+                // we'll need to reclaim focus ourselves after it's gone —
+                // otherwise GTK picks a fallback of its own (often the
+                // selected row, wherever that is) and scrolls there.
+                let had_focus = removed_idx
+                    .and_then(|idx| self.rows.widget().row_at_index(idx as i32))
+                    .is_some_and(|row| row.has_focus());
                 if let Some(idx) = removed_idx {
-                    self.shown.remove(idx);
-                    self.rows.guard().remove(idx);
+                    // Removing a row can make GTK scroll the *selected* row
+                    // back into view on its own, even though this row isn't
+                    // it — pin the viewport so an unrelated deletion further
+                    // down the list doesn't yank the user back to whatever
+                    // they're reading.
+                    self.preserving_scroll(|this| {
+                        this.shown.remove(idx);
+                        this.rows.guard().remove(idx);
+                    });
                     self.publish_drag_keys();
                     // The surgical removal skips the rebuild that normally
                     // recomputes these — keep the header count honest.
@@ -2248,6 +2289,12 @@ impl SimpleComponent for MessageList {
                             let _ = sender.output(MessageListOutput::SelectionCleared);
                         }
                     }
+                } else if had_focus {
+                    if let Some(idx) = removed_idx {
+                        if !self.shown.is_empty() {
+                            self.focus_only(idx.min(self.shown.len() - 1));
+                        }
+                    }
                 }
             }
             MessageListInput::RemoveMany(ids) => {
@@ -2263,21 +2310,32 @@ impl SimpleComponent for MessageList {
                 self.all.retain(|m| !set.contains(&m.id));
                 // Where the first removed row sat, so we can re-select in its place.
                 let first_removed = self.shown.iter().position(|m| set.contains(&m.id));
+                // Did any row about to be destroyed hold keyboard focus? If
+                // so, and it isn't the viewed row handled below, reclaim
+                // focus ourselves afterward — otherwise GTK's own fallback
+                // can land on the selected row and scroll the list there.
+                let list = self.rows.widget();
+                let had_focus = (0..self.shown.len()).any(|idx| {
+                    set.contains(&self.shown[idx].id)
+                        && list.row_at_index(idx as i32).is_some_and(|row| row.has_focus())
+                });
                 // Remove all matching rows in one guarded batch (a single widget
                 // update) instead of one render cycle per message. Walk back-to-front
-                // so indices stay valid.
+                // so indices stay valid. Pinned so GTK scrolling the selected row
+                // back into view (see `preserving_scroll`) doesn't yank the user
+                // away from browsing an unrelated part of the list.
                 let shown_before = self.shown.len();
-                {
-                    let mut guard = self.rows.guard();
-                    let mut idx = self.shown.len();
+                self.preserving_scroll(|this| {
+                    let mut guard = this.rows.guard();
+                    let mut idx = this.shown.len();
                     while idx > 0 {
                         idx -= 1;
-                        if set.contains(&self.shown[idx].id) {
-                            self.shown.remove(idx);
+                        if set.contains(&this.shown[idx].id) {
+                            this.shown.remove(idx);
                             guard.remove(idx);
                         }
                     }
-                }
+                });
                 self.publish_drag_keys();
                 self.selection_count = self.selected_ids.len();
                 // Keep the header count honest when no rebuild follows (the
@@ -2302,6 +2360,12 @@ impl SimpleComponent for MessageList {
                         }
                         _ => {
                             let _ = sender.output(MessageListOutput::SelectionCleared);
+                        }
+                    }
+                } else if had_focus {
+                    if let Some(idx) = first_removed {
+                        if !self.shown.is_empty() {
+                            self.focus_only(idx.min(self.shown.len() - 1));
                         }
                     }
                 }
@@ -2474,15 +2538,40 @@ impl MessageList {
         self.loaded && self.shown.is_empty() && self.query.is_empty() && self.index_complete
     }
 
+    /// Runs `f` (typically some change to the rows in `self.rows`/`self.shown`)
+    /// without letting the scroll position move — including a scroll GTK
+    /// performs on its own to keep the *selected* row in view whenever the
+    /// list's contents change, even if that row was never touched by `f`.
+    /// Saves the current position, pins the adjustment there through every
+    /// change `f` (or GTK) makes, and does a final restore once layout has
+    /// had a tick to settle — a single restore right after `f` can lose the
+    /// race against GTK's own scroll, which can land after this returns.
+    fn preserving_scroll(&mut self, f: impl FnOnce(&mut Self)) {
+        let Some(scroller) = self.scroller.clone() else {
+            f(self);
+            return;
+        };
+        let adj = scroller.vadjustment();
+        let pos = adj.value();
+        let hid = adj.connect_notify_local(Some("value"), move |adj, _| {
+            if (adj.value() - pos).abs() > f64::EPSILON {
+                adj.set_value(pos);
+            }
+        });
+        f(self);
+        let adj2 = adj.clone();
+        gtk::glib::idle_add_local_once(move || {
+            adj2.set_value(pos);
+            adj2.disconnect(hid);
+        });
+    }
+
     /// A full rebuild that keeps the current scroll offset (a plain rebuild jumps
-    /// to the top). Used when growing the list beneath the user.
+    /// to the top). Used when growing the list beneath the user, and for any
+    /// background re-render (e.g. a folder re-sync) so it doesn't disturb
+    /// someone browsing further down.
     fn rebuild_preserving_scroll(&mut self) {
-        let saved = self.scroller.as_ref().map(|s| s.vadjustment().value());
-        self.rebuild();
-        if let (Some(pos), Some(scroller)) = (saved, self.scroller.clone()) {
-            let adj = scroller.vadjustment();
-            gtk::glib::idle_add_local_once(move || adj.set_value(pos));
-        }
+        self.preserving_scroll(Self::rebuild);
     }
 
     /// A message's read state changed: recompute its conversation's aggregate
@@ -2927,6 +3016,19 @@ impl MessageList {
         let list = self.rows.widget();
         if let Some(row) = list.row_at_index(idx as i32) {
             list.select_row(Some(&row));
+            row.grab_focus();
+        }
+    }
+
+    /// Put keyboard focus on row `idx` without touching selection — the
+    /// counterpart to `select_and_focus` for a row that wasn't the one being
+    /// viewed. Used when a removed row held focus but wasn't the viewed
+    /// message (e.g. deleted via its own row action while browsing further
+    /// down the list): without this, GTK's own fallback focus assignment
+    /// scrolls the list away to wherever it lands instead of staying put.
+    fn focus_only(&self, idx: usize) {
+        let list = self.rows.widget();
+        if let Some(row) = list.row_at_index(idx as i32) {
             row.grab_focus();
         }
     }
