@@ -151,6 +151,12 @@ pub async fn find_logo(email: String) -> FaceCmd {
 /// One message summary row.
 pub struct MessageRow {
     msg: Message,
+    /// This row's live position, for telling the list which palette opened.
+    index: DynamicIndex,
+    /// The palette clip's current animation target width (interior-mutable:
+    /// update_view only has &self). -0 sentinel not needed — starts closed.
+    palette_target: std::cell::Cell<i32>,
+    palette_anim: std::cell::RefCell<Option<adw::TimedAnimation>>,
     gravatar: bool,
     avatars: bool,
     sender_logos: bool,
@@ -200,6 +206,8 @@ pub enum MessageRowInput {
     SetHasAttachment(bool),
     /// The pointer entered/left the row — fade the chevron in/out.
     SetRowHover(bool),
+    /// Another row's palette opened — fold this one if it is out.
+    ClosePalette,
     /// The chevron was clicked — slide the Actions Palette open or shut.
     TogglePalette,
     /// The cursor moved onto the palette — keep it open (cancel auto-collapse).
@@ -226,6 +234,8 @@ pub enum MessageRowInput {
 pub enum MessageRowOutput {
     Action { action: RowAction, message: Box<Message> },
     ToggleThread((u32, String)),
+    /// This row's palette just opened — the list closes every other one.
+    PaletteOpened(usize),
 }
 
 /// The keys of every selected row in the ListBox this drag started from, in list
@@ -344,9 +354,19 @@ impl FactoryComponent for MessageRow {
             // room in the row: the text sits centred in the pill whether the
             // palette preference is on or off (the reserved line used to read
             // as a lopsided empty band under the text — yioannides, #81).
-            #[name = "actions_line"]
+            //
+            // The outer holder has a FIXED width: overlay children are only
+            // re-allocated lazily, so a container that grows with the slide
+            // animation snaps in whenever the next relayout happens instead
+            // of animating. Constant allocation outside, free growth inside.
             add_overlay = &gtk::Box {
-                    set_spacing: 2,
+                set_width_request: 320,
+                set_halign: gtk::Align::Start,
+                set_valign: gtk::Align::End,
+
+                #[name = "actions_line"]
+                gtk::Box {
+                    set_spacing: 0,
                     set_halign: gtk::Align::Start,
                     set_valign: gtk::Align::End,
                     // With sender circles on, the ⋯ centres under the avatar:
@@ -366,7 +386,14 @@ impl FactoryComponent for MessageRow {
                     // of the pill's own bottom edge (the pill's 2px outer
                     // margin sits inside this overlay's bounds).
                     set_margin_bottom: if self.avatars { 3 } else { 4 },
-                    add_css_class: "actions-line",
+                    // Open, the whole line — ⋯ and icons — sits on one card
+                    // surface; the ⋯ is the card's left cap.
+                    #[watch]
+                    set_css_classes: if self.palette_open {
+                        &["actions-line", "open"]
+                    } else {
+                        &["actions-line"]
+                    },
                     // Preference: no palette at all — the line (and the space
                     // it reserves under the preview) goes away entirely.
                     set_visible: self.show_palette,
@@ -385,17 +412,34 @@ impl FactoryComponent for MessageRow {
                         connect_clicked[sender] => move |_| sender.input(MessageRowInput::TogglePalette),
                     },
 
-                    gtk::Revealer {
-                        set_transition_type: gtk::RevealerTransitionType::SlideRight,
-                        set_transition_duration: 180,
-                        #[watch]
-                        set_reveal_child: self.palette_open,
+                    // Not a GtkRevealer: inside an Overlay's overlay child
+                    // its slide never repainted frame-by-frame (the palette
+                    // just popped in at the end). Instead the palette hangs
+                    // as a clipped overlay over a spacer whose width is the
+                    // one thing animated (post_view): the spacer is a hard
+                    // cap — a Box's width_request is only a floor, and the
+                    // palette at natural width would simply ignore it.
+                    #[name = "palette_clip"]
+                    gtk::Overlay {
+                        #[wrap(Some)]
+                        set_child = &gtk::Box {
+                            #[name = "palette_spacer"]
+                            gtk::Box {
+                                set_width_request: 0,
+                            },
+                        },
 
-                        gtk::Box {
+                        #[name = "palette_inner"]
+                        add_overlay = &gtk::Box {
                             add_css_class: "actions-palette",
                             set_halign: gtk::Align::Start,
                             set_valign: gtk::Align::Center,
                             set_spacing: 0,
+                            // Hidden until the first open: rows that never
+                            // process an update never run post_view, so the
+                            // clip isn't armed yet — an unclipped palette
+                            // would paint over every row (which it did).
+                            set_visible: false,
 
                             // Keep the palette open while the cursor is over it.
                             add_controller = gtk::EventControllerMotion {
@@ -475,6 +519,7 @@ impl FactoryComponent for MessageRow {
                     },
 
                 },
+            },
 
 
             #[wrap(Some)]
@@ -633,7 +678,57 @@ impl FactoryComponent for MessageRow {
         }
     }
 
-    fn init_model(init: Self::Init, _index: &DynamicIndex, sender: FactorySender<Self>) -> Self {
+    fn post_view() {
+        // Slide the palette open/shut by animating the spacer that gives the
+        // clip Overlay its width — driven here (not a GtkRevealer) because
+        // revealer transitions don't repaint inside an Overlay's overlay
+        // child. Runs on every view update; only a change in target width
+        // starts a new animation.
+        widgets.palette_clip.set_clip_overlay(&widgets.palette_inner, true);
+        if self.palette_open {
+            widgets.palette_inner.set_visible(true);
+        }
+        let (inner_w, inner_h) = (
+            widgets.palette_inner.measure(gtk::Orientation::Horizontal, -1).1,
+            widgets.palette_inner.measure(gtk::Orientation::Vertical, -1).1,
+        );
+        widgets.palette_spacer.set_height_request(inner_h);
+        let target = if self.palette_open { inner_w } else { 0 };
+        if self.palette_target.get() != target {
+            self.palette_target.set(target);
+            let spacer = widgets.palette_spacer.clone();
+            let from = spacer.width() as f64;
+            let setter = {
+                let spacer = spacer.clone();
+                adw::CallbackAnimationTarget::new(move |v| spacer.set_width_request(v as i32))
+            };
+            // Bound to the line (mapped: it holds the visible toggle), NOT
+            // the spacer — adw skips animations on unmapped widgets, and the
+            // zero-width spacer counts as one, which made the slide jump
+            // straight to its end value.
+            let anim =
+                adw::TimedAnimation::new(&widgets.actions_line, from, target as f64, 180, setter);
+            anim.set_easing(adw::Easing::EaseOutCubic);
+            if target == 0 {
+                // Sliding shut: hide only once fully back in the button, so
+                // the close still reads as a slide.
+                let inner = widgets.palette_inner.downgrade();
+                anim.connect_done(move |_| {
+                    if let Some(inner) = inner.upgrade() {
+                        inner.set_visible(false);
+                    }
+                });
+            }
+            if let Some(old) = self.palette_anim.borrow_mut().replace(anim) {
+                old.pause();
+            }
+            if let Some(a) = self.palette_anim.borrow().as_ref() {
+                a.play();
+            }
+        }
+    }
+
+    fn init_model(init: Self::Init, index: &DynamicIndex, sender: FactorySender<Self>) -> Self {
         let RowInit {
             msg,
             gravatar,
@@ -679,6 +774,9 @@ impl FactoryComponent for MessageRow {
             thread_unread,
             drag_keys,
             revealed,
+            index: index.clone(),
+            palette_target: std::cell::Cell::new(0),
+            palette_anim: std::cell::RefCell::new(None),
         };
 
         // No point fetching anything for a circle that isn't drawn — and a
@@ -709,7 +807,12 @@ impl FactoryComponent for MessageRow {
                 // and arms the usual collapse timeout on leave.
                 if self.palette_hover.get() {
                     if over {
-                        self.palette_open = true;
+                        if !self.palette_open {
+                            self.palette_open = true;
+                            let _ = sender.output(MessageRowOutput::PaletteOpened(
+                                self.index.current_index(),
+                            ));
+                        }
                         self.cancel_collapse();
                     } else if self.palette_open {
                         self.arm_collapse(&sender);
@@ -724,6 +827,15 @@ impl FactoryComponent for MessageRow {
                     self.palette_open = true;
                     // Persist briefly; moving onto the palette cancels this.
                     self.arm_collapse(&sender);
+                    // One palette at a time: the list folds the others.
+                    let _ = sender
+                        .output(MessageRowOutput::PaletteOpened(self.index.current_index()));
+                }
+            }
+            MessageRowInput::ClosePalette => {
+                if self.palette_open {
+                    self.palette_open = false;
+                    self.cancel_collapse();
                 }
             }
             MessageRowInput::PaletteEnter => self.cancel_collapse(),
@@ -1371,6 +1483,8 @@ pub enum MessageListInput {
     /// Showcase staging: open row N's Actions Palette (screenshot hook only —
     /// see VIREO_SHOWCASE_PALETTE in app.rs).
     DebugOpenPalette(usize),
+    /// A row's palette opened; fold every other row's.
+    PaletteOpened(usize),
     /// Expand/collapse a conversation thread.
     ToggleThread((u32, String)),
     /// A collapsing thread's replies have finished sliding shut — drop them
@@ -1673,6 +1787,7 @@ impl SimpleComponent for MessageList {
                     MessageListInput::RowAction { action, message }
                 }
                 MessageRowOutput::ToggleThread(key) => MessageListInput::ToggleThread(key),
+                MessageRowOutput::PaletteOpened(idx) => MessageListInput::PaletteOpened(idx),
             });
 
         let color_provider = gtk::CssProvider::new();
@@ -2486,6 +2601,13 @@ impl SimpleComponent for MessageList {
             }
             MessageListInput::DebugOpenPalette(idx) => {
                 self.rows.send(idx, MessageRowInput::TogglePalette);
+            }
+            MessageListInput::PaletteOpened(idx) => {
+                for i in 0..self.shown.len() {
+                    if i != idx {
+                        self.rows.send(i, MessageRowInput::ClosePalette);
+                    }
+                }
             }
             MessageListInput::SelectAndLoad(key) => {
                 if let Some(m) = self.shown.iter().find(|m| (m.account_id, m.id) == key).cloned() {

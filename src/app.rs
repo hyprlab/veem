@@ -2399,8 +2399,36 @@ impl SimpleComponent for AppModel {
                         std::env::var("VIREO_SHOWCASE_PALETTE").ok().map(|v| v.parse())
                     {
                         let list = model.message_list.sender().clone();
+                        let burst = std::env::var("VIREO_SHOWCASE_BURST").ok();
+                        let win = root.clone();
+                        {
+                            // An occluded window's frame clock is suspended
+                            // and animations cannot progress — raise it well
+                            // ahead so the slide actually runs for the burst.
+                            let win = win.clone();
+                            gtk::glib::timeout_add_seconds_local_once(5, move || {
+                                win.present();
+                            });
+                        }
                         gtk::glib::timeout_add_seconds_local_once(7, move || {
                             let _ = list.send(MessageListInput::DebugOpenPalette(idx));
+                            // TEMP: frame burst right after the open, to see
+                            // the slide animation (or its absence) in stills.
+                            if let Some(base) = burst.clone() {
+                                for (i, ms) in [40u64, 90, 140, 240].iter().enumerate() {
+                                    let win = win.clone();
+                                    let path = format!("{base}.{i}.png");
+                                    gtk::glib::timeout_add_local_once(
+                                        std::time::Duration::from_millis(*ms),
+                                        move || {
+                                            showcase_capture(
+                                                win.upcast_ref::<gtk::Widget>(),
+                                                &path,
+                                            );
+                                        },
+                                    );
+                                }
+                            }
                         });
                     }
                     let view = model.message_view.sender().clone();

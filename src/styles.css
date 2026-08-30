@@ -593,15 +593,29 @@ button.star-active {
   background-color: alpha(@accent_bg_color, 0.5);
 }
 
-/* The Actions Palette: quick-action buttons that slide in from the chevron.
-   The whole line floats in an overlay over the pill's bottom-left corner, so
-   neither the ⋯ nor the opened palette takes any room in the row — the open
-   palette reads as a small floating toolbar over the text instead. */
-.actions-palette {
-  background: @view_bg_color;
+/* The Actions Palette: quick-action buttons that expand rightward out of the
+   ⋯. The whole line floats in an overlay over the pill's bottom-left corner,
+   taking no room in the row. Open, the container itself is the card — the ⋯
+   is its left cap and the icons continue on the same surface, no seam. */
+.actions-line {
   border-radius: 8px;
-  padding: 1px 4px;
+}
+
+.actions-line.open {
+  background: @view_bg_color;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+/* On the shared card the toggle drops its own wash and dimming. */
+.actions-line.open .palette-toggle,
+.actions-line.open .palette-toggle.revealed,
+.actions-line.open .palette-toggle.revealed:hover {
+  background: none;
+  opacity: 1;
+}
+
+.actions-palette {
+  padding: 1px 4px 1px 0;
 }
 
 .actions-palette button {
@@ -626,17 +640,17 @@ button.star-active {
   transition: opacity 200ms ease-in-out;
 }
 
-/* Revealed (row hovered), the ⋯ is bare — no ground of its own, so it never
-   reads as a chip colliding with the sender circle. Only when the pointer
-   reaches the button itself does a translucent wash lift it for the click. */
+/* Revealed (row hovered) but collapsed: the bare ⋯ — no ground of its own.
+   The semi-opaque wash appears only under the pointer itself, and the full
+   card surface only while open (the .actions-line.open rules above). */
 .palette-toggle.revealed {
   opacity: 0.85;
+  border-radius: 8px;
 }
 
 .palette-toggle.revealed:hover {
   opacity: 1;
-  background: alpha(@view_bg_color, 0.65);
-  border-radius: 8px;
+  background: alpha(@view_bg_color, 0.55);
 }
 
 .palette-toggle.revealed:hover {
