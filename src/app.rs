@@ -5488,23 +5488,34 @@ impl AppModel {
             // visible beneath the animation. The snapshot was cached on
             // pointer-enter (before the expand click could rebuild the rows);
             // a live capture is only the fallback.
-            if let Some(ghost) = self.peek_rail_ghost.clone() {
+            // Snapshot first (while the rail is still live), but flip the
+            // ghost visible in the same breath as the collapse below — with
+            // both in one layout pass, the rail is swapped for its frozen
+            // pixels with zero net movement. Setting the overlay width or
+            // showing the ghost while the sidebar is still docked each used
+            // to buy a one-frame layout shift underneath the panel.
+            let ghost_img = self.peek_rail_ghost.clone().map(|ghost| {
                 use gtk::gdk::prelude::PaintableExt;
                 let img = self.rail_snapshot.borrow().clone().or_else(|| {
                     split
                         .sidebar()
                         .map(|side| gtk::WidgetPaintable::new(Some(&side)).current_image())
                 });
-                ghost.set_paintable(img.as_ref());
-                ghost.set_visible(true);
-            }
+                (ghost, img)
+            });
             if sync_rows {
                 self.sidebar.emit(SidebarInput::SetCollapsed(false));
             }
             self.peek_sidebar_header();
+            if let Some((ghost, img)) = ghost_img {
+                ghost.set_paintable(img.as_ref());
+                ghost.set_visible(true);
+            }
+            split.set_collapsed(true);
+            // Only now that the sidebar is out of the layout: the overlay
+            // panel's width. On a docked split this would widen the rail.
             split.set_min_sidebar_width(280.0);
             split.set_max_sidebar_width(280.0);
-            split.set_collapsed(true);
             if animate {
                 // Show on the next loop iteration, once the hidden collapsed
                 // state has settled — flipping both in one go skips the
