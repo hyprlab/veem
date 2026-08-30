@@ -399,9 +399,10 @@ impl FactoryComponent for MessageRow {
                             set_spacing: 2,
                             // Centred in the pill: with the caret hidden
                             // (expansion off) the bare count must not sit
-                            // against the chip's left edge.
+                            // against the chip's left edge. Alignment only —
+                            // hexpand here propagates up and stretches the
+                            // whole chip across the header line.
                             set_halign: gtk::Align::Center,
-                            set_hexpand: true,
                             gtk::Label {
                                 set_label: &self.thread_count.to_string(),
                             },
