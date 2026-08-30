@@ -56,6 +56,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.18.4" date="2026-08-30">
+
+      <description><p>Composer attachment pills shrink to their content, and files opened with Vireo from a file manager or the command line attach to a fresh composer.</p></description>
+
+    </release>
     <release version="1.18.3" date="2026-08-30">
 
       <description><p>Folder clicks can no longer be wedged by a stalled IMAP IDLE, push becomes a per-account setting, Nautilus's Send by email attaches the files, and the sender seal renders correctly under GNOME text scaling.</p></description>
