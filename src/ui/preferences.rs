@@ -51,6 +51,8 @@ pub struct PrefInit {
     pub notification_content: bool,
     pub show_attachments: bool,
     pub show_contacts: bool,
+    pub show_unified: bool,
+    pub unified_chip: bool,
     pub sidebar_hover_expand: bool,
     pub preview_lines: u32,
     pub single_key_shortcuts: bool,
@@ -153,6 +155,7 @@ pub struct Preferences {
     /// Mirrors the notifications switch, so the "show sender and subject" row
     /// below it can grey out when nothing is being posted at all.
     notifications: bool,
+    show_unified: bool,
     /// Mirrors the threading switch, so the "threaded message list" row below
     /// it can grey out when conversations aren't grouped at all.
     threading: bool,
@@ -199,6 +202,8 @@ pub enum PrefInput {
     ToggleNotificationContent(bool),
     ToggleAttachmentsRow(bool),
     ToggleContactsRow(bool),
+    ToggleShowUnified(bool),
+    ToggleUnifiedChip(bool),
     ToggleSidebarHoverExpand(bool),
     ChangePreviewLines(u32),
     ToggleSingleKey(bool),
@@ -245,6 +250,8 @@ pub enum PrefOutput {
     SetNotificationContent(bool),
     SetAttachmentsRow(bool),
     SetContactsRow(bool),
+    SetShowUnified(bool),
+    SetUnifiedChip(bool),
     SetSidebarHoverExpand(bool),
     SetAppTheme(AppTheme),
     /// The "this window opens to" choice changed (true = Accounts).
@@ -352,6 +359,29 @@ impl Component for Preferences {
 
                     add = &adw::PreferencesGroup {
                         set_title: "Sidebar",
+
+                        #[name = "show_unified_row"]
+                        adw::SwitchRow {
+                            set_title: "All Inboxes",
+                            set_subtitle: "A unified inbox combining every account, at the top \
+                                           of the sidebar. Only shown with more than one \
+                                           account.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleShowUnified(row.is_active()));
+                            },
+                        },
+
+                        #[name = "unified_chip_row"]
+                        adw::SwitchRow {
+                            #[watch]
+                            set_sensitive: model.show_unified,
+                            set_title: "All Inboxes unread count",
+                            set_subtitle: "Show the combined unread chip next to All Inboxes \
+                                           while its per-account list is folded up.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleUnifiedChip(row.is_active()));
+                            },
+                        },
 
                         #[name = "show_attachments_row"]
                         adw::SwitchRow {
@@ -811,6 +841,7 @@ impl Component for Preferences {
             blacklist,
             blacklist_addrs: Vec::new(),
             notifications: init.notifications,
+            show_unified: init.show_unified,
             threading: init.threading,
             thread_expansion: init.thread_expansion,
             list_palette: init.list_palette,
@@ -855,6 +886,8 @@ impl Component for Preferences {
         widgets.notification_content_row.set_active(init.notification_content);
         widgets.show_attachments_row.set_active(init.show_attachments);
         widgets.show_contacts_row.set_active(init.show_contacts);
+        widgets.show_unified_row.set_active(init.show_unified);
+        widgets.unified_chip_row.set_active(init.unified_chip);
         widgets.sidebar_hover_expand_row.set_active(init.sidebar_hover_expand);
         let preview_labels = ["Off", "1 line", "2 lines", "3 lines"];
         widgets
@@ -1061,6 +1094,13 @@ impl Component for Preferences {
             }
             PrefInput::ToggleAttachmentsRow(on) => {
                 let _ = sender.output(PrefOutput::SetAttachmentsRow(on));
+            }
+            PrefInput::ToggleShowUnified(on) => {
+                self.show_unified = on;
+                let _ = sender.output(PrefOutput::SetShowUnified(on));
+            }
+            PrefInput::ToggleUnifiedChip(on) => {
+                let _ = sender.output(PrefOutput::SetUnifiedChip(on));
             }
             PrefInput::ToggleContactsRow(on) => {
                 let _ = sender.output(PrefOutput::SetContactsRow(on));

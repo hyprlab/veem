@@ -892,6 +892,11 @@ impl MessageRow {
         }
         if let Some(tex) = crate::logo::cached(email) {
             self.avatar_texture = Some(tex);
+            // A week-old stored icon still shows, but this new message from
+            // the sender is the cue to look for a fresh one in the background.
+            if crate::logo::wants_refresh(email) {
+                sender.oneshot_command(find_logo(email.to_string()));
+            }
             return;
         }
         self.avatar_texture = None;

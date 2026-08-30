@@ -91,6 +91,8 @@ pub enum MessageWindowInput {
     ContactFor(Box<Message>),
     /// An email address in a card header was clicked — compose to it.
     ComposeTo(String),
+    /// "Add to Contacts" from an address's right-click menu.
+    AddContactAddr(String),
 }
 
 #[derive(Debug)]
@@ -264,6 +266,9 @@ impl Component for MessageWindow {
                 MessageViewOutput::MarkSeen { .. } => MessageWindowInput::Ignore,
                 MessageViewOutput::SelectCards(_) => MessageWindowInput::Ignore,
                 MessageViewOutput::ComposeTo(addr) => MessageWindowInput::ComposeTo(addr),
+                MessageViewOutput::AddContactAddr(addr) => {
+                    MessageWindowInput::AddContactAddr(addr)
+                }
             });
         // Apply the message-content theme before the first render.
         view.emit(MessageViewInput::SetContentTheme(init.content_dark));
@@ -404,6 +409,12 @@ impl Component for MessageWindow {
             }
             MessageWindowInput::CardAction { action, message } => {
                 let _ = sender.output(MessageWindowOutput::Action { action, message });
+            }
+            MessageWindowInput::AddContactAddr(addr) => {
+                let _ = sender.output(MessageWindowOutput::AddToContacts {
+                    name: String::new(),
+                    email: addr,
+                });
             }
             MessageWindowInput::ContactFor(m) => {
                 let _ = sender.output(MessageWindowOutput::AddToContacts {

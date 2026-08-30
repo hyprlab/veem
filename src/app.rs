@@ -358,6 +358,10 @@ pub struct AppModel {
     thread_newest_first: bool,
     /// Reader always shows the recipients line under the sender.
     always_show_recipients: bool,
+    /// Whether the sidebar offers the unified "All Inboxes" section at all.
+    show_unified_pref: bool,
+    /// Whether the collapsed "All Inboxes" row wears its total-unread chip.
+    unified_chip: bool,
     /// Lone messages render as inset cards (#57).
     single_message_card: bool,
     /// Whether conversation rows may expand into their members in the list
@@ -620,6 +624,8 @@ pub enum AppMsg {
     SetNotificationContent(bool),
     SetAttachmentsRow(bool),
     SetContactsRow(bool),
+    SetShowUnified(bool),
+    SetUnifiedChip(bool),
     /// The message list's visible-count text changed.
     ListCount(String),
     /// Preference: hovering the narrow-window rail floats the sidebar out.
@@ -648,6 +654,7 @@ pub enum AppMsg {
     ReplyAll,
     Forward,
     AddToContacts,
+    AddContactAddr(String),
     ContactAdded(Result<crate::contacts::AddOutcome, String>),
     ViewSource,
     /// User clicked "Load attachments" for a message whose attachments weren't
@@ -1096,17 +1103,9 @@ impl SimpleComponent for AppModel {
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleStar),
                                 },
-                                pack_start = &gtk::Button {
-                                    set_icon_name: "co.hyprlab.Vireo-contact-new-symbolic",
-                                    set_tooltip_text: Some("Add sender to Contacts"),
-                                    add_css_class: "flat",
-                                    #[watch]
-                                    set_visible: !model.showing_outbox && !model.reader_actions_collapsed
-                                        && model.reader_compose.is_none(),
-                                    #[watch]
-                                    set_sensitive: model.reply_target().is_some(),
-                                    connect_clicked[sender] => move |_| sender.input(AppMsg::AddToContacts),
-                                },
+                                // (No Add-to-Contacts button here: the action
+                                // lives on the address itself — right-click any
+                                // address in a message header.)
                                 // pack_end fills right-to-left, so these are declared
                                 // in reverse of their visual order. Left to right:
                                 // Archive, Delete, Spam, Print, sender check.
@@ -1518,6 +1517,7 @@ impl SimpleComponent for AppModel {
                     }
                     MessageViewOutput::SelectCards(keys) => AppMsg::SelectCards(keys),
                     MessageViewOutput::ComposeTo(addr) => AppMsg::ComposeTo(addr),
+                    MessageViewOutput::AddContactAddr(addr) => AppMsg::AddContactAddr(addr),
                 });
 
         // The drawer owns a Paned whose top pane is the reader body, so hand it
@@ -1739,6 +1739,8 @@ impl SimpleComponent for AppModel {
             threads_expanded: config::load_threads_expanded(),
             thread_newest_first: config::load_thread_newest_first(),
             always_show_recipients: config::load_always_show_recipients(),
+            show_unified_pref: config::load_show_unified(),
+            unified_chip: config::load_unified_chip(),
             single_message_card: config::load_single_message_card(),
             thread_expansion: config::load_thread_expansion(),
             confirm_thread_delete: config::load_confirm_thread_delete(),
@@ -3447,6 +3449,12 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::AddContactAddr(addr) => {
+                // From an address's right-click menu: only the address is
+                // known; the dialog's name field starts blank for the user.
+                self.show_add_contact_dialog("", &addr, &sender);
+            }
+
             AppMsg::ContactAdded(result) => {
                 use crate::contacts::AddOutcome;
                 let (text, error) = match result {
@@ -3766,6 +3774,23 @@ impl SimpleComponent for AppModel {
                     self.show_contacts = show;
                     self.save_settings();
                     self.sidebar.emit(SidebarInput::SetContactsRow(show));
+                }
+            }
+
+            AppMsg::SetShowUnified(show) => {
+                if self.show_unified_pref != show {
+                    self.show_unified_pref = show;
+                    self.save_settings();
+                    // Rebuilds the sidebar with or without the unified section.
+                    self.rebuild_sidebar();
+                }
+            }
+
+            AppMsg::SetUnifiedChip(show) => {
+                if self.unified_chip != show {
+                    self.unified_chip = show;
+                    self.save_settings();
+                    self.rebuild_sidebar();
                 }
             }
 
@@ -4982,6 +5007,8 @@ impl AppModel {
             self.show_remote_banner,
             self.sidebar_hover_expand,
             self.app_theme,
+            self.show_unified_pref,
+            self.unified_chip,
         );
     }
 
@@ -5794,14 +5821,16 @@ impl AppModel {
         // single-account — its default selection then landed on that account's
         // inbox (possibly inside a collapsed section, so nothing visibly
         // highlighted) instead of the "All Inboxes" the app should open with.
-        let show_unified = self.config.iter().filter(|c| c.enabled).count() > 1
-            // The demo has no config-file accounts, but its two mock accounts
-            // deserve the same All Inboxes opening as a real multi-account setup.
-            || (demo_mode() && self.accounts.len() > 1);
+        let show_unified = self.show_unified_pref
+            && (self.config.iter().filter(|c| c.enabled).count() > 1
+                // The demo has no config-file accounts, but its two mock accounts
+                // deserve the same All Inboxes opening as a real multi-account setup.
+                || (demo_mode() && self.accounts.len() > 1));
         let unified_unread = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
         self.sidebar.emit(SidebarInput::SetContents {
             sections,
             show_unified,
+            unified_chip: self.unified_chip,
             unified_unread,
         });
 
@@ -5975,7 +6004,6 @@ impl AppModel {
                     } else {
                         entry!("Mark as Unread", "mail-unread", AppMsg::ToggleReadCurrent, acts)
                     },
-                    entry!("Add to Contacts", "contact-new", AppMsg::AddToContacts, acts),
                     if starred {
                         entry!("Remove Flag", "non-starred", AppMsg::ToggleStar, acts)
                     } else {
@@ -7804,6 +7832,8 @@ impl AppModel {
             notification_content: self.notification_content,
             show_attachments: self.show_attachments,
             show_contacts: self.show_contacts,
+            show_unified: self.show_unified_pref,
+            unified_chip: self.unified_chip,
             settings_open_accounts: self.settings_open_accounts,
             sidebar_hover_expand: self.sidebar_hover_expand,
             card_actions_hover: self.card_actions_hover,
@@ -7857,6 +7887,8 @@ impl AppModel {
                 }
                 PrefOutput::SetAttachmentsRow(show) => AppMsg::SetAttachmentsRow(show),
                 PrefOutput::SetContactsRow(show) => AppMsg::SetContactsRow(show),
+                PrefOutput::SetShowUnified(show) => AppMsg::SetShowUnified(show),
+                PrefOutput::SetUnifiedChip(show) => AppMsg::SetUnifiedChip(show),
                 PrefOutput::SetSidebarHoverExpand(on) => {
                     AppMsg::SetSidebarHoverExpand(on)
                 }
