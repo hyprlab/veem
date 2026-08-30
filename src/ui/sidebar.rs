@@ -1150,13 +1150,14 @@ impl Sidebar {
             } else {
                 hbox.append(&img);
                 let label = gtk::Label::new(Some("All Inboxes"));
+                label.set_hexpand(true);
                 label.set_halign(gtk::Align::Start);
                 label.add_css_class("account-name");
                 hbox.append(&label);
-                // The total-unread chip sits right of the label and grows into
-                // the row's empty middle, so it can never crowd the chevron.
-                // While the sub-list is expanded the per-inbox rows carry the
-                // counts, so the total is redundant and hidden.
+                // The label absorbs the row's slack, same as every other
+                // row, so this pill's right edge lands in the same column as
+                // theirs. While the sub-list is expanded the per-inbox rows
+                // carry the counts, so the total is redundant and hidden.
                 let badge = gtk::Label::new(Some(&self.unified_unread.to_string()));
                 badge.add_css_class("unread-badge");
                 badge.set_valign(gtk::Align::Center);
@@ -1165,27 +1166,26 @@ impl Sidebar {
                 );
                 hbox.append(&badge);
                 self.unified_badge = Some(badge);
-                let spring = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-                spring.set_hexpand(true);
-                hbox.append(&spring);
 
-                // Disclosure chevron toggling the per-account inbox sub-list.
+                // Disclosure chevron for the per-account inbox sub-list. It's
+                // a plain icon, not its own button — like an account header,
+                // the whole row is one clickable target (see
+                // `list.connect_row_activated` below), so a separate nested
+                // button here would only shrink that target back down to the
+                // icon itself. The slot is the same fixed width as every
+                // other row's (so this row's pill still lands in the shared
+                // column); `unified-row-chevron`'s CSS margin nudges only the
+                // icon inside it, to line up with the account headers'
+                // chevrons below without disturbing that width.
+                let slot = caret_slot(CARET_SLOT_WIDTH);
                 let chevron = gtk::Image::from_icon_name(if self.unified_expanded {
                     "co.hyprlab.Vireo-pan-down-symbolic"
                 } else {
                     "co.hyprlab.Vireo-pan-end-symbolic"
                 });
-                let chev_btn = gtk::Button::new();
-                chev_btn.set_child(Some(&chevron));
-                chev_btn.add_css_class("flat");
-                chev_btn.add_css_class("chevron-btn");
-                chev_btn.set_valign(gtk::Align::Center);
-                chev_btn.set_tooltip_text(Some("Show each inbox"));
-                let cs = sender.input_sender().clone();
-                chev_btn.connect_clicked(move |_| {
-                    let _ = cs.send(SidebarInput::ToggleUnifiedExpand);
-                });
-                hbox.append(&chev_btn);
+                chevron.add_css_class("unified-row-chevron");
+                slot.append(&chevron);
+                hbox.append(&slot);
                 self.unified_chevron = Some(chevron);
             }
             row.set_child(Some(&hbox));
@@ -1196,6 +1196,13 @@ impl Sidebar {
                 if row.is_some() {
                     let _ = s.send(SidebarInput::UnifiedRowSelected);
                 }
+            });
+            // The row is one clickable target, like an account header: a
+            // single click both selects the unified view (row-selected,
+            // above) and toggles the per-account inbox sub-list open.
+            let cs = sender.input_sender().clone();
+            list.connect_row_activated(move |_, _| {
+                let _ = cs.send(SidebarInput::ToggleUnifiedExpand);
             });
             // Right-click "All Inboxes": act on every inbox at once.
             let click = gtk::GestureClick::new();
@@ -1443,6 +1450,7 @@ impl Sidebar {
                 label.add_css_class("account-name");
                 hbox.append(&label);
                 hbox.append(&badge);
+                hbox.append(&caret_slot(CARET_SLOT_WIDTH));
             }
             row.set_child(Some(&hbox));
             list.append(&row);
@@ -2281,6 +2289,7 @@ fn build_unified_inbox_row(
         badge.set_valign(gtk::Align::Center);
         badge.set_visible(inbox.unread > 0);
         hbox.append(&badge);
+        hbox.append(&caret_slot(UNIFIED_SUBROW_CARET_SLOT_WIDTH));
         badge
     };
 
@@ -2323,6 +2332,26 @@ fn folder_depth(folder: &Folder, all: &[&Folder]) -> usize {
                 && matches!(folder.path.as_bytes()[g.path.len()], b'/' | b'.' | b'\\')
         })
         .count()
+}
+
+/// Width of the reserved trailing lane on rows whose own box spacing matches
+/// `build_folder_row`'s (12px). `build_unified_inbox_row`'s tighter 10px
+/// spacing uses `UNIFIED_SUBROW_CARET_SLOT_WIDTH` instead, so that row's
+/// total inset — right-padding + spacing + slot width — still comes out
+/// identical to this one's, even though the boxes themselves aren't.
+const CARET_SLOT_WIDTH: i32 = 13;
+const UNIFIED_SUBROW_CARET_SLOT_WIDTH: i32 = 15;
+
+/// A fixed-width lane reserved at the end of every non-collapsed pill-bearing
+/// row, so every row's unread pill lands on the same column whether or not
+/// that row has a disclosure chevron to put in it — only the "All Inboxes"
+/// row populates it today.
+fn caret_slot(width: i32) -> gtk::Box {
+    let slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    slot.add_css_class("caret-slot");
+    slot.set_size_request(width, -1);
+    slot.set_valign(gtk::Align::Center);
+    slot
 }
 
 /// Build one folder row. `depth` indents sub-folders to mirror the server's
@@ -2387,6 +2416,7 @@ fn build_folder_row(
         badge.set_valign(gtk::Align::Center);
         badge.set_visible(folder.unread > 0);
         hbox.append(&badge);
+        hbox.append(&caret_slot(CARET_SLOT_WIDTH));
         Some(badge)
     };
 
