@@ -1648,12 +1648,18 @@ impl MessageView {
                   offers Copy / New Message. */\
                /* Sender-authentication seal (#88): invisible until a\
                   verdict arrives; a pass wears Bazaar's fixed blue (never the\
-                  system accent), problems the warning/error reds. */\
+                  system accent), problems the warning/error reds.\
+                  Sized in em and anchored to the text baseline, then eased\
+                  down to the name's optical centre with an em transform\
+                  (margins can't move it: WebKit synthesizes the missing\
+                  baseline before they apply) — a fixed centred pixel box sat\
+                  visibly low whenever a GNOME text scaling factor shrank the\
+                  type around it. */\
                .vireo-verify{{display:none;background:none;border:none;\
                  padding:0 2px;margin-left:2px;cursor:pointer;line-height:0;\
-                 align-self:center;flex:none;}}\
+                 align-self:baseline;transform:translateY(0.18em);flex:none;}}\
                .vireo-verify.on{{display:inline-flex;}}\
-               .vireo-verify svg{{width:14px;height:14px;display:block;}}\
+               .vireo-verify svg{{width:0.95em;height:0.95em;display:block;}}\
                .vireo-verify svg,.vireo-verify svg *{{fill:currentColor;}}\
                .vireo-verify.trust-pass{{color:#3584e4;}}\
                .vireo-verify.trust-unverified{{color:currentColor;opacity:0.4;}}\
