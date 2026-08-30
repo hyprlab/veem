@@ -2376,7 +2376,7 @@ fn build_unified_inbox_row(
         badge
     } else {
         if inset {
-            circle.set_margin_start(ROW_LEFT_INSET + 2);
+            circle.set_margin_start(ROW_LEFT_INSET - 6);
         }
         hbox.append(&circle);
 
