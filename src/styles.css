@@ -165,24 +165,23 @@ headerbar.rail-header {
   padding: 0;
 }
 
-/* All Inboxes: its disclosure chevron lines up with the account headers'
-   below it. The account chevron's right edge sits at 6px (list margin) +
-   12px (header padding); here the row keeps no padding of its own, the
-   inner .folder-row provides the 12px, and the chevron button shrinks to
-   exactly its 16px icon. */
-.unified-row {
-  padding-right: 0;
-}
-.unified-row .folder-row {
-  padding-right: 12px;
-}
-/* A generous hit target without moving the icon: the button grows to 32px
-   and the negative end margin slides its extra width into the row padding,
-   keeping the centred 16px icon exactly in the chevron column. */
+/* All Inboxes' leading chevron: a generous 32px hit target whose negative
+   margins tuck the excess into the row padding, so its centred 16px icon
+   lines up with the account headers' leading chevrons below. */
 .unified-row .chevron-btn {
   min-width: 32px;
   min-height: 32px;
+  margin-left: -8px;
   margin-right: -8px;
+}
+
+/* The account headers' leading chevrons sit on the same vertical line as
+   All Inboxes' (their header padding starts 4px further left, so the icon
+   is nudged right by exactly that; the negative end margin keeps the
+   avatar where it was). */
+.leading-chevron {
+  margin-left: 4px;
+  margin-right: -4px;
 }
 
 /* Draggable account rows in the Accounts window. */

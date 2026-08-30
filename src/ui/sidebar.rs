@@ -1148,28 +1148,10 @@ impl Sidebar {
                 hbox.append(&overlay);
                 self.unified_badge = Some(badge);
             } else {
-                hbox.append(&img);
-                let label = gtk::Label::new(Some("All Inboxes"));
-                label.set_halign(gtk::Align::Start);
-                label.add_css_class("account-name");
-                hbox.append(&label);
-                // The total-unread chip sits right of the label and grows into
-                // the row's empty middle, so it can never crowd the chevron.
-                // While the sub-list is expanded the per-inbox rows carry the
-                // counts, so the total is redundant and hidden.
-                let badge = gtk::Label::new(Some(&self.unified_unread.to_string()));
-                badge.add_css_class("unread-badge");
-                badge.set_valign(gtk::Align::Center);
-                badge.set_visible(
-                    self.unified_unread > 0 && !self.unified_expanded && self.show_unified_chip,
-                );
-                hbox.append(&badge);
-                self.unified_badge = Some(badge);
-                let spring = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-                spring.set_hexpand(true);
-                hbox.append(&spring);
-
-                // Disclosure chevron toggling the per-account inbox sub-list.
+                // Leading disclosure chevron (like the account headers and
+                // the folder tree's expanders), toggling the per-account
+                // inbox sub-list — still its own button: selecting the
+                // unified view and expanding it stay separate actions.
                 let chevron = gtk::Image::from_icon_name(if self.unified_expanded {
                     "co.hyprlab.Vireo-pan-down-symbolic"
                 } else {
@@ -1187,6 +1169,25 @@ impl Sidebar {
                 });
                 hbox.append(&chev_btn);
                 self.unified_chevron = Some(chevron);
+
+                hbox.append(&img);
+                let label = gtk::Label::new(Some("All Inboxes"));
+                label.set_halign(gtk::Align::Start);
+                label.set_hexpand(true);
+                label.add_css_class("account-name");
+                hbox.append(&label);
+                // The total-unread chip right-aligns like every folder row's,
+                // one shared column down the sidebar. While the sub-list is
+                // expanded the per-inbox rows carry the counts, so the total
+                // is redundant and hidden.
+                let badge = gtk::Label::new(Some(&self.unified_unread.to_string()));
+                badge.add_css_class("unread-badge");
+                badge.set_valign(gtk::Align::Center);
+                badge.set_visible(
+                    self.unified_unread > 0 && !self.unified_expanded && self.show_unified_chip,
+                );
+                hbox.append(&badge);
+                self.unified_badge = Some(badge);
             }
             row.set_child(Some(&hbox));
             list.append(&row);
@@ -1515,21 +1516,25 @@ impl Sidebar {
             circle_overlay.set_hexpand(false);
             circle_badge.set_visible(section.collapsed && inbox_unread > 0);
             self.account_circle_badges.insert(id, circle_badge);
-            hbox.append(&circle_overlay);
 
             // Chevron is tracked even when collapsed so per-account toggles still
-            // update an icon; it's only shown in the expanded layout.
+            // update an icon; it's only shown in the expanded layout, LEADING
+            // the row (before the avatar) like the folder tree's expanders.
             let chevron = gtk::Image::from_icon_name(if section.collapsed {
                 "co.hyprlab.Vireo-pan-end-symbolic"
             } else {
                 "co.hyprlab.Vireo-pan-down-symbolic"
             });
             chevron.set_valign(gtk::Align::Center);
+            chevron.add_css_class("leading-chevron");
 
             if self.collapsed {
+                hbox.append(&circle_overlay);
                 hbox.set_halign(gtk::Align::Center);
                 header.set_tooltip_text(Some(&name_str));
             } else {
+                hbox.append(&chevron);
+                hbox.append(&circle_overlay);
                 let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
                 vbox.set_hexpand(true);
                 vbox.set_valign(gtk::Align::Center);
@@ -1544,7 +1549,6 @@ impl Sidebar {
                 vbox.append(&name);
                 vbox.append(&email);
                 hbox.append(&vbox);
-                hbox.append(&chevron);
             }
 
             header.set_child(Some(&hbox));
