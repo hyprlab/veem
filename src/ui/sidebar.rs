@@ -1575,7 +1575,7 @@ impl Sidebar {
                 vbox.set_valign(gtk::Align::Center);
                 // Clearance for the unread chip that overlays the circle's
                 // corner while the section is collapsed.
-                vbox.set_margin_start(4);
+                vbox.set_margin_start(6);
                 let name = gtk::Label::new(Some(&name_str));
                 name.set_halign(gtk::Align::Start);
                 name.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -2316,7 +2316,7 @@ fn build_unified_inbox_row(
         hbox.append(&circle);
 
         let name = gtk::Label::new(Some(&name_str));
-        name.set_margin_start(4);
+        name.set_margin_start(6);
         name.set_hexpand(true);
         name.set_halign(gtk::Align::Start);
         name.set_ellipsize(gtk::pango::EllipsizeMode::End);
