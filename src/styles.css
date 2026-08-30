@@ -9,11 +9,12 @@
 /* The sidebar's "New message" action: a standing accent button shaped like a
    row — full width, rounded like the row highlights, icon column aligned with
    the rows below. Text and icon in plain white on the accent. */
+/* Same inner geometry as the All Inboxes row (the adwaita nav-sidebar row
+   padding + .folder-row padding), so the two accent-and-highlight pills
+   line up exactly; only the colours differ. */
 row.compose-row {
   background-color: @accent_bg_color;
   color: white;
-  padding-top: 2px;
-  padding-bottom: 2px;
 }
 
 /* The icon-only rail centres a lone icon — no text to pad around. */
