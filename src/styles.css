@@ -165,25 +165,28 @@ headerbar.rail-header {
   padding: 0;
 }
 
-/* Every sidebar row that can carry an unread pill reserves a fixed-width
-   lane after it (see `caret_slot()` in sidebar.rs) so every pill's right
-   edge lands on the same column, whether or not that row's lane holds a
-   disclosure chevron — only "All Inboxes" populates it today. The whole
-   "All Inboxes" row is one clickable target (like an account header), so
-   the lane holds a plain icon rather than its own button. */
-.caret-slot {
-  color: inherit;
+/* All Inboxes' leading chevron: a generous 32px hit target whose negative
+   margins tuck the excess into the row padding, so its centred 16px icon
+   lines up with the account headers' leading chevrons below. */
+.unified-row .chevron-btn {
+  min-width: 24px;
+  min-height: 32px;
+  margin-left: -14px;
+  margin-right: 0;
 }
 
-/* All Inboxes' chevron button: a generous 32px hit target whose negative
-   margins net out to the caret lane's own 13px, so the button overhangs the
-   lane (into the row's slack) without widening it — the pill column stays
-   shared. The icon centres where the account headers' chevrons sit. */
-.unified-row .chevron-btn {
-  min-width: 32px;
-  min-height: 32px;
-  margin-left: -9px;
-  margin-right: -10px;
+/* Tuck the "All Inboxes" label 4px closer to its inbox icon. */
+.unified-row .folder-icon {
+  margin-right: -4px;
+}
+
+/* The account headers' leading chevrons sit on the same vertical line as
+   All Inboxes' (their header padding starts 4px further left, so the icon
+   is nudged right by exactly that; the negative end margin keeps the
+   avatar where it was). */
+.leading-chevron {
+  margin-left: -6px;
+  margin-right: 0;
 }
 
 /* Draggable account rows in the Accounts window. */
@@ -491,7 +494,7 @@ button.star-active {
   color: @accent_bg_color;
 }
 
-/* Sender circles off (#29): the unread dot leads the row, so it gets the same
+/* Avatars off (#29): the unread dot leads the row, so it gets the same
    gap on each side — 12px to the list's edge (6px margin + 6px padding), and
    8px of box spacing plus this margin to the sender's name. */
 .message-row.no-avatar {
@@ -500,9 +503,12 @@ button.star-active {
 
 .message-row.no-avatar .unread-dot {
   margin-right: 4px;
+  /* Valign Start plus this nudge centres the 10px dot on the sender name's
+     ~20px first line (with avatars on, the dot centres in the row instead). */
+  margin-top: 5px;
 }
 
-/* Palette + sender circles + previews off: a two-line row is too short for
+/* Palette + avatars + previews off: a two-line row is too short for
    the floating ⋯ to clear the circle, so the pill reserves exactly the height
    the pair needs — centred 38px circle, 2px air, the ⋯ riding 1px off the
    pill's bottom edge — and not a pixel more. Rows with a preview are already

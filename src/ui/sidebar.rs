@@ -1083,7 +1083,6 @@ impl Sidebar {
                 // The rail has no room for a label; the icon carries it there.
                 let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-message-new-symbolic");
                 img.add_css_class("folder-icon");
-                pin_icon_size(&img);
                 hbox.set_halign(gtk::Align::Center);
                 row.set_tooltip_text(Some("New Message"));
                 hbox.append(&img);
@@ -1133,7 +1132,6 @@ impl Sidebar {
             hbox.add_css_class("folder-row");
             let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-inbox-symbolic");
             img.add_css_class("folder-icon");
-            pin_icon_size(&img);
             if self.collapsed {
                 hbox.set_halign(gtk::Align::Center);
                 row.set_tooltip_text(Some(&if self.unified_unread > 0 {
@@ -1150,34 +1148,10 @@ impl Sidebar {
                 hbox.append(&overlay);
                 self.unified_badge = Some(badge);
             } else {
-                img.set_margin_start(ROW_LEFT_INSET);
-                hbox.append(&img);
-                let label = gtk::Label::new(Some("All Inboxes"));
-                label.set_hexpand(true);
-                label.set_halign(gtk::Align::Start);
-                label.add_css_class("account-name");
-                hbox.append(&label);
-                // The label absorbs the row's slack, same as every other
-                // row, so this pill's right edge lands in the same column as
-                // theirs. While the sub-list is expanded the per-inbox rows
-                // carry the counts, so the total is redundant and hidden.
-                let badge = gtk::Label::new(Some(&self.unified_unread.to_string()));
-                badge.add_css_class("unread-badge");
-                badge.set_valign(gtk::Align::Center);
-                badge.set_visible(
-                    self.unified_unread > 0 && !self.unified_expanded && self.show_unified_chip,
-                );
-                hbox.append(&badge);
-                self.unified_badge = Some(badge);
-
-                // Disclosure chevron toggling the per-account inbox
-                // sub-list. Still its own button (selecting All Inboxes and
-                // expanding it stay separate actions — deliberate), but it
-                // now lives inside the shared caret lane: the lane keeps the
-                // pill column aligned, and the button's negative CSS margins
-                // (`.unified-row .chevron-btn`) let its generous hit target
-                // overhang the lane without widening it.
-                let slot = caret_slot(CARET_SLOT_WIDTH);
+                // Leading disclosure chevron (like the account headers and
+                // the folder tree's expanders), toggling the per-account
+                // inbox sub-list — still its own button: selecting the
+                // unified view and expanding it stay separate actions.
                 let chevron = gtk::Image::from_icon_name(if self.unified_expanded {
                     "co.hyprlab.Vireo-pan-down-symbolic"
                 } else {
@@ -1188,15 +1162,32 @@ impl Sidebar {
                 chev_btn.add_css_class("flat");
                 chev_btn.add_css_class("chevron-btn");
                 chev_btn.set_valign(gtk::Align::Center);
-                chev_btn.set_halign(gtk::Align::Center);
                 chev_btn.set_tooltip_text(Some("Show each inbox"));
                 let cs = sender.input_sender().clone();
                 chev_btn.connect_clicked(move |_| {
                     let _ = cs.send(SidebarInput::ToggleUnifiedExpand);
                 });
-                slot.append(&chev_btn);
-                hbox.append(&slot);
+                hbox.append(&chev_btn);
                 self.unified_chevron = Some(chevron);
+
+                hbox.append(&img);
+                let label = gtk::Label::new(Some("All Inboxes"));
+                label.set_halign(gtk::Align::Start);
+                label.set_hexpand(true);
+                label.add_css_class("account-name");
+                hbox.append(&label);
+                // The total-unread chip right-aligns like every folder row's,
+                // one shared column down the sidebar. While the sub-list is
+                // expanded the per-inbox rows carry the counts, so the total
+                // is redundant and hidden.
+                let badge = gtk::Label::new(Some(&self.unified_unread.to_string()));
+                badge.add_css_class("unread-badge");
+                badge.set_valign(gtk::Align::Center);
+                badge.set_visible(
+                    self.unified_unread > 0 && !self.unified_expanded && self.show_unified_chip,
+                );
+                hbox.append(&badge);
+                self.unified_badge = Some(badge);
             }
             row.set_child(Some(&hbox));
             list.append(&row);
@@ -1255,6 +1246,9 @@ impl Sidebar {
                 let sub = gtk::ListBox::new();
                 sub.set_selection_mode(gtk::SelectionMode::Single);
                 sub.add_css_class("navigation-sidebar");
+                // Breathing room between the expanded sub-list and the first
+                // account section below; folds away with the revealer.
+                sub.set_margin_bottom(14);
                 for section in &sections {
                     let Some(inbox) =
                         section.folders.iter().find(|f| f.kind == FolderKind::Inbox)
@@ -1348,7 +1342,6 @@ impl Sidebar {
                 let img =
                     gtk::Image::from_icon_name("co.hyprlab.Vireo-x-office-address-book-symbolic");
                 img.add_css_class("folder-icon");
-                pin_icon_size(&img);
                 if self.collapsed {
                     hbox.set_halign(gtk::Align::Center);
                     row.set_tooltip_text(Some("Contacts"));
@@ -1392,7 +1385,6 @@ impl Sidebar {
                 hbox.add_css_class("folder-row");
                 let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-attachment-symbolic");
                 img.add_css_class("folder-icon");
-                pin_icon_size(&img);
                 if self.collapsed {
                     hbox.set_halign(gtk::Align::Center);
                     row.set_tooltip_text(Some("Attachments"));
@@ -1437,7 +1429,6 @@ impl Sidebar {
             hbox.add_css_class("folder-row");
             let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-send-symbolic");
             img.add_css_class("folder-icon");
-            pin_icon_size(&img);
             let badge = gtk::Label::new(Some(&self.outbox_count.to_string()));
             badge.add_css_class("unread-badge");
             badge.set_valign(gtk::Align::Center);
@@ -1449,7 +1440,6 @@ impl Sidebar {
                 )));
                 hbox.append(&img);
             } else {
-                img.set_margin_start(ROW_LEFT_INSET);
                 hbox.append(&img);
                 let label = gtk::Label::new(Some("Outbox"));
                 label.set_hexpand(true);
@@ -1457,7 +1447,6 @@ impl Sidebar {
                 label.add_css_class("account-name");
                 hbox.append(&label);
                 hbox.append(&badge);
-                hbox.append(&caret_slot(CARET_SLOT_WIDTH));
             }
             row.set_child(Some(&hbox));
             list.append(&row);
@@ -1530,21 +1519,25 @@ impl Sidebar {
             circle_overlay.set_hexpand(false);
             circle_badge.set_visible(section.collapsed && inbox_unread > 0);
             self.account_circle_badges.insert(id, circle_badge);
-            hbox.append(&circle_overlay);
 
             // Chevron is tracked even when collapsed so per-account toggles still
-            // update an icon; it's only shown in the expanded layout.
+            // update an icon; it's only shown in the expanded layout, LEADING
+            // the row (before the avatar) like the folder tree's expanders.
             let chevron = gtk::Image::from_icon_name(if section.collapsed {
                 "co.hyprlab.Vireo-pan-end-symbolic"
             } else {
                 "co.hyprlab.Vireo-pan-down-symbolic"
             });
             chevron.set_valign(gtk::Align::Center);
+            chevron.add_css_class("leading-chevron");
 
             if self.collapsed {
+                hbox.append(&circle_overlay);
                 hbox.set_halign(gtk::Align::Center);
                 header.set_tooltip_text(Some(&name_str));
             } else {
+                hbox.append(&chevron);
+                hbox.append(&circle_overlay);
                 let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
                 vbox.set_hexpand(true);
                 vbox.set_valign(gtk::Align::Center);
@@ -1559,7 +1552,6 @@ impl Sidebar {
                 vbox.append(&name);
                 vbox.append(&email);
                 hbox.append(&vbox);
-                hbox.append(&chevron);
             }
 
             header.set_child(Some(&hbox));
@@ -2283,7 +2275,6 @@ fn build_unified_inbox_row(
         hbox.append(&overlay);
         badge
     } else {
-        circle.set_margin_start(ROW_LEFT_INSET);
         hbox.append(&circle);
 
         let name = gtk::Label::new(Some(&name_str));
@@ -2297,25 +2288,11 @@ fn build_unified_inbox_row(
         badge.set_valign(gtk::Align::Center);
         badge.set_visible(inbox.unread > 0);
         hbox.append(&badge);
-        hbox.append(&caret_slot(UNIFIED_SUBROW_CARET_SLOT_WIDTH));
         badge
     };
 
     row.set_child(Some(&hbox));
     (row, badge)
-}
-
-/// Pins a symbolic icon to an exact, deterministic 16px box so it centers on
-/// the same column as the rail's avatar circles. Left to GTK's default
-/// icon-size resolution, a plain `gtk::Image`'s natural size can round to a
-/// fraction of a pixel off from the circles' hand-pinned, always-even
-/// `set_size_request` — `Align::Center` then centers that slightly-off box
-/// exactly as asked, reading as the icon column drifting right of the
-/// avatar column.
-fn pin_icon_size(icon: &gtk::Image) {
-    icon.set_pixel_size(16);
-    icon.set_halign(gtk::Align::Center);
-    icon.set_valign(gtk::Align::Center);
 }
 
 /// Wrap `child` in an overlay with a small unread chip pinned to its top-right
@@ -2355,31 +2332,6 @@ fn folder_depth(folder: &Folder, all: &[&Folder]) -> usize {
         .count()
 }
 
-/// Width of the reserved trailing lane on rows whose own box spacing matches
-/// `build_folder_row`'s (12px). `build_unified_inbox_row`'s tighter 10px
-/// spacing uses `UNIFIED_SUBROW_CARET_SLOT_WIDTH` instead, so that row's
-/// total inset — right-padding + spacing + slot width — still comes out
-/// identical to this one's, even though the boxes themselves aren't.
-const CARET_SLOT_WIDTH: i32 = 13;
-const UNIFIED_SUBROW_CARET_SLOT_WIDTH: i32 = 15;
-
-/// Extra left inset on every non-collapsed row's leading icon, balancing the
-/// reserved caret lane's empty space on the right — without it, rows read as
-/// shoved left, with icons hugging the edge but pills sitting well short of it.
-const ROW_LEFT_INSET: i32 = 8;
-
-/// A fixed-width lane reserved at the end of every non-collapsed pill-bearing
-/// row, so every row's unread pill lands on the same column whether or not
-/// that row has a disclosure chevron to put in it — only the "All Inboxes"
-/// row populates it today.
-fn caret_slot(width: i32) -> gtk::Box {
-    let slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    slot.add_css_class("caret-slot");
-    slot.set_size_request(width, -1);
-    slot.set_valign(gtk::Align::Center);
-    slot
-}
-
 /// Build one folder row. `depth` indents sub-folders to mirror the server's
 /// hierarchy (0 = top level; only meaningful for custom folders).
 fn build_folder_row(
@@ -2413,7 +2365,6 @@ fn build_folder_row(
 
     let img = gtk::Image::from_icon_name(folder.kind.icon());
     img.add_css_class("folder-icon");
-    pin_icon_size(&img);
 
     let badge = if collapsed {
         hbox.set_halign(gtk::Align::Center);
@@ -2429,7 +2380,6 @@ fn build_folder_row(
         hbox.append(&overlay);
         Some(badge)
     } else {
-        img.set_margin_start(ROW_LEFT_INSET);
         hbox.append(&img);
         let name = gtk::Label::new(Some(&folder.name));
         name.set_hexpand(true);
@@ -2444,7 +2394,6 @@ fn build_folder_row(
         badge.set_valign(gtk::Align::Center);
         badge.set_visible(folder.unread > 0);
         hbox.append(&badge);
-        hbox.append(&caret_slot(CARET_SLOT_WIDTH));
         Some(badge)
     };
 
