@@ -758,6 +758,14 @@ struct PrivacyFile {
     /// counts granularly and the total is never shown).
     #[serde(default = "default_unified_chip")]
     unified_chip: bool,
+    /// Whether the sidebar's disclosure chevrons (All Inboxes, account
+    /// headers) LEAD their rows; off puts them back at the row's end.
+    #[serde(default = "default_chevrons_left")]
+    chevrons_left: bool,
+}
+
+fn default_chevrons_left() -> bool {
+    true
 }
 
 fn default_show_unified() -> bool {
@@ -850,6 +858,7 @@ impl Default for PrivacyFile {
             show_remote_banner: default_show_remote_banner(),
             show_unified: default_show_unified(),
             unified_chip: default_unified_chip(),
+            chevrons_left: default_chevrons_left(),
             gravatar: false,
             avatars: default_avatars(),
             sender_logos: false,
@@ -981,6 +990,10 @@ pub fn load_show_unified() -> bool {
 
 pub fn load_unified_chip() -> bool {
     load_privacy().unified_chip
+}
+
+pub fn load_chevrons_left() -> bool {
+    load_privacy().chevrons_left
 }
 
 pub fn load_single_message_card() -> bool {
@@ -1121,6 +1134,7 @@ pub fn save_privacy(
     app_theme: AppTheme,
     show_unified: bool,
     unified_chip: bool,
+    chevrons_left: bool,
 ) {
     let Some(path) = privacy_path() else {
         return;
@@ -1167,6 +1181,7 @@ pub fn save_privacy(
         app_theme,
         show_unified,
         unified_chip,
+        chevrons_left,
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {

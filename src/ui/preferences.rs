@@ -53,6 +53,7 @@ pub struct PrefInit {
     pub show_contacts: bool,
     pub show_unified: bool,
     pub unified_chip: bool,
+    pub chevrons_left: bool,
     pub sidebar_hover_expand: bool,
     pub preview_lines: u32,
     pub single_key_shortcuts: bool,
@@ -204,6 +205,7 @@ pub enum PrefInput {
     ToggleContactsRow(bool),
     ToggleShowUnified(bool),
     ToggleUnifiedChip(bool),
+    ChangeChevronSide(u32),
     ToggleSidebarHoverExpand(bool),
     ChangePreviewLines(u32),
     ToggleSingleKey(bool),
@@ -252,6 +254,7 @@ pub enum PrefOutput {
     SetContactsRow(bool),
     SetShowUnified(bool),
     SetUnifiedChip(bool),
+    SetChevronsLeft(bool),
     SetSidebarHoverExpand(bool),
     SetAppTheme(AppTheme),
     /// The "this window opens to" choice changed (true = Accounts).
@@ -380,6 +383,16 @@ impl Component for Preferences {
                                            while its per-account list is folded up.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleUnifiedChip(row.is_active()));
+                            },
+                        },
+
+                        #[name = "chevron_side_row"]
+                        adw::ComboRow {
+                            set_title: "Chevron placement",
+                            set_subtitle: "Which side of All Inboxes and the account rows \
+                                           their expand/collapse chevrons sit on.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeChevronSide(row.selected()));
                             },
                         },
 
@@ -903,6 +916,7 @@ impl Component for Preferences {
             &widgets.settings_open_row,
             &widgets.date_style_row,
             &widgets.clock_style_row,
+            &widgets.chevron_side_row,
         ] {
             no_truncate(row);
         }
@@ -928,6 +942,8 @@ impl Component for Preferences {
         widgets.show_contacts_row.set_active(init.show_contacts);
         widgets.show_unified_row.set_active(init.show_unified);
         widgets.unified_chip_row.set_active(init.unified_chip);
+        widgets.chevron_side_row.set_model(Some(&gtk::StringList::new(&["Left", "Right"])));
+        widgets.chevron_side_row.set_selected(if init.chevrons_left { 0 } else { 1 });
         widgets.sidebar_hover_expand_row.set_active(init.sidebar_hover_expand);
         let preview_labels = ["Off", "1 line", "2 lines", "3 lines"];
         widgets
@@ -1141,6 +1157,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleUnifiedChip(on) => {
                 let _ = sender.output(PrefOutput::SetUnifiedChip(on));
+            }
+            PrefInput::ChangeChevronSide(idx) => {
+                let _ = sender.output(PrefOutput::SetChevronsLeft(idx == 0));
             }
             PrefInput::ToggleContactsRow(on) => {
                 let _ = sender.output(PrefOutput::SetContactsRow(on));

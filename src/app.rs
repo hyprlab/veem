@@ -362,6 +362,8 @@ pub struct AppModel {
     show_unified_pref: bool,
     /// Whether the collapsed "All Inboxes" row wears its total-unread chip.
     unified_chip: bool,
+    /// Whether the sidebar's disclosure chevrons lead their rows.
+    chevrons_left: bool,
     /// Lone messages render as inset cards (#57).
     single_message_card: bool,
     /// Whether conversation rows may expand into their members in the list
@@ -626,6 +628,7 @@ pub enum AppMsg {
     SetContactsRow(bool),
     SetShowUnified(bool),
     SetUnifiedChip(bool),
+    SetChevronsLeft(bool),
     /// The message list's visible-count text changed.
     ListCount(String),
     /// Preference: hovering the narrow-window rail floats the sidebar out.
@@ -1670,6 +1673,7 @@ impl SimpleComponent for AppModel {
             always_show_recipients: config::load_always_show_recipients(),
             show_unified_pref: config::load_show_unified(),
             unified_chip: config::load_unified_chip(),
+            chevrons_left: config::load_chevrons_left(),
             single_message_card: config::load_single_message_card(),
             thread_expansion: config::load_thread_expansion(),
             confirm_thread_delete: config::load_confirm_thread_delete(),
@@ -3781,6 +3785,14 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetChevronsLeft(left) => {
+                if self.chevrons_left != left {
+                    self.chevrons_left = left;
+                    self.save_settings();
+                    self.rebuild_sidebar();
+                }
+            }
+
             AppMsg::SetThreading(on) => {
                 if self.threading != on {
                     self.threading = on;
@@ -5054,6 +5066,7 @@ impl AppModel {
             self.app_theme,
             self.show_unified_pref,
             self.unified_chip,
+            self.chevrons_left,
         );
     }
 
@@ -5912,6 +5925,7 @@ impl AppModel {
             sections,
             show_unified,
             unified_chip: self.unified_chip,
+            chevrons_left: self.chevrons_left,
             unified_unread,
         });
 
@@ -7916,6 +7930,7 @@ impl AppModel {
             show_contacts: self.show_contacts,
             show_unified: self.show_unified_pref,
             unified_chip: self.unified_chip,
+            chevrons_left: self.chevrons_left,
             settings_open_accounts: self.settings_open_accounts,
             sidebar_hover_expand: self.sidebar_hover_expand,
             card_actions_hover: self.card_actions_hover,
@@ -7971,6 +7986,7 @@ impl AppModel {
                 PrefOutput::SetContactsRow(show) => AppMsg::SetContactsRow(show),
                 PrefOutput::SetShowUnified(show) => AppMsg::SetShowUnified(show),
                 PrefOutput::SetUnifiedChip(show) => AppMsg::SetUnifiedChip(show),
+                PrefOutput::SetChevronsLeft(left) => AppMsg::SetChevronsLeft(left),
                 PrefOutput::SetSidebarHoverExpand(on) => {
                     AppMsg::SetSidebarHoverExpand(on)
                 }
