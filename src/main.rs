@@ -32,13 +32,10 @@ const APP_ID: &str =
 /// The user-visible application name.
 pub const APP_NAME: &str = if cfg!(feature = "beta") { "Vireo (beta)" } else { "Vireo" };
 
-/// The user-visible version: the crate version, with a "b" suffix on the beta
-/// channel (1.17.1 builds as 1.17.1b).
-pub const VERSION: &str = if cfg!(feature = "beta") {
-    concat!(env!("CARGO_PKG_VERSION"), "b")
-} else {
-    env!("CARGO_PKG_VERSION")
-};
+/// The user-visible version — the crate version verbatim. Beta builds carry a
+/// semver prerelease in Cargo.toml itself (e.g. "1.18.2-beta.2" on the beta
+/// branch), so no suffix is bolted on here.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Command-line flag for starting without a window (used by the autostart entry
 /// the background portal writes).

@@ -1,10 +1,10 @@
 # Changelog
 
-## 1.18.2b — 2026-08-30
+## 1.18.2-beta.2 — 2026-08-30
 
-The 1.18.2 preview cycle (refreshed through the cycle; thanks
-@taprobane99 and @thecalamityjoe87). Includes everything in stable
-1.18.1, plus:
+The 1.18.2 preview continues (thanks @taprobane99 and
+@thecalamityjoe87). Beta versions now follow semver prerelease style —
+1.18.2-beta.2 means the second beta of the 1.18.2 cycle.
 
 - **The sender seal moves into the message header (#88).** The
   verified-sender indicator leaves the reader toolbar for the spot it
@@ -21,6 +21,12 @@ The 1.18.2 preview cycle (refreshed through the cycle; thanks
   16px boxes so the icon column can't drift. One departure from the
   PR: the All Inboxes chevron stays its own button — selecting the
   unified view and expanding its sub-list remain separate actions.
+
+## 1.18.2-beta.1 — 2026-08-30
+
+Opened the 1.18.2 beta cycle as the catch-up to stable 1.18.1 — same
+code, beta app ID. (Shipped displaying "1.18.2b", before the
+prerelease naming above was adopted.)
 
 ## 1.18.1 — 2026-08-30
 

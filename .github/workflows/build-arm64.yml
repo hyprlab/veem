@@ -13,8 +13,10 @@ on:
   push:
     tags:
       - 'v*'
-      # The beta channel (vX.Y.Zb tags) ships x86_64 only — no ARM build.
+      # The beta channel ships x86_64 only — no ARM build (old vX.Y.Zb
+      # tags and the current vX.Y.Z-beta.N scheme alike).
       - '!v*b'
+      - '!v*-beta.*'
   workflow_dispatch:
     inputs:
       ref:
