@@ -1108,80 +1108,9 @@ impl SimpleComponent for AppModel {
                                 // address in a message header.)
                                 // pack_end fills right-to-left, so these are declared
                                 // in reverse of their visual order. Left to right:
-                                // Archive, Delete, Spam, Print, sender check.
-                                // (View Source lives in the context menu only.)
-                                pack_end = &gtk::MenuButton {
-                                    set_icon_name: "co.hyprlab.Vireo-verified-checkmark-symbolic",
-                                    add_css_class: "flat",
-                                    add_css_class: "image-button",
-                                    // Composing clears the whole toolbar — only
-                                    // the window decorations stay.
-                                    #[watch]
-                                    set_visible: model.reader_compose.is_none(),
-                                    // Always on screen so the toolbar's icons never
-                                    // shift; greyed out like its neighbours until a
-                                    // verdict for the open message has arrived.
-                                    #[watch]
-                                    set_sensitive: model.sender_verdict().is_some(),
-                                    #[watch]
-                                    set_css_classes: &model.sender_badge_classes(),
-                                    #[watch]
-                                    set_tooltip_text: Some(if model.sender_verdict().is_some() {
-                                        model.sender_trust().label()
-                                    } else {
-                                        "Sender authentication"
-                                    }),
-                                    #[wrap(Some)]
-                                    set_popover = &gtk::Popover {
-                                        set_width_request: 380,
-                                        gtk::Box {
-                                            set_orientation: gtk::Orientation::Vertical,
-                                            set_spacing: 10,
-                                            add_css_class: "sender-detail",
-
-                                            gtk::Label {
-                                                #[watch]
-                                                set_label: model.sender_trust().label(),
-                                                set_halign: gtk::Align::Start,
-                                                add_css_class: "heading",
-                                            },
-                                            gtk::Label {
-                                                #[watch]
-                                                set_label: &model
-                                                    .sender_verdict()
-                                                    .map(|c| c.summary.clone())
-                                                    .unwrap_or_default(),
-                                                set_halign: gtk::Align::Start,
-                                                set_wrap: true,
-                                                set_xalign: 0.0,
-                                                set_max_width_chars: 44,
-                                            },
-                                            gtk::Separator {},
-                                            gtk::Label {
-                                                #[watch]
-                                                set_label: &model
-                                                    .sender_verdict()
-                                                    .map(|c| c.findings.join("\n"))
-                                                    .unwrap_or_default(),
-                                                set_halign: gtk::Align::Start,
-                                                set_wrap: true,
-                                                set_xalign: 0.0,
-                                                set_max_width_chars: 44,
-                                                add_css_class: "dim-label",
-                                            },
-                                            gtk::Label {
-                                                set_label: "A pass proves the address wasn't forged — not that the message is safe.",
-                                                set_halign: gtk::Align::Start,
-                                                set_wrap: true,
-                                                set_xalign: 0.0,
-                                                set_max_width_chars: 44,
-                                                add_css_class: "dim-label",
-                                                add_css_class: "caption",
-                                            },
-                                        },
-                                    },
-                                },
-                                pack_end = &gtk::Button {
+                                // Archive, Delete, Spam, Print. (The sender-check
+                                // seal lives in the message header now — #88.)
+                                                                pack_end = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-printer-symbolic",
                                     set_tooltip_text: Some("Print Preview (Ctrl+Shift+P)"),
                                     add_css_class: "flat",
@@ -4629,6 +4558,24 @@ impl SimpleComponent for AppModel {
                     self.message_view
                         .emit(MessageViewInput::SetSenderCheck(check.clone()));
                 }
+                // Light the header seal on whichever on-screen card this
+                // verdict belongs to (#88) — the open single message included
+                // (it never fills current_thread).
+                if self
+                    .current_thread
+                    .iter()
+                    .any(|m| m.account_id == account_id && m.id == message_id)
+                    || self
+                        .current
+                        .as_ref()
+                        .is_some_and(|c| c.id == message_id && c.account_id == account_id)
+                {
+                    self.message_view.emit(MessageViewInput::SenderCheckFor {
+                        account_id,
+                        id: message_id,
+                        check: check.clone(),
+                    });
+                }
                 if let Some(p) = self.popouts.get(&(account_id, message_id)) {
                     p.controller.emit(MessageWindowInput::SetSenderCheck(check));
                 }
@@ -6326,6 +6273,7 @@ impl AppModel {
             self.message_view
                 .emit(MessageViewInput::SetSenderCheck(check));
         }
+        self.push_member_checks();
     }
 
     /// Render the current conversation (thread) in the reader, newest first.
@@ -6392,6 +6340,7 @@ impl AppModel {
             // and its bodies are in hand.
             instant: self.thread_painted && !loading,
         });
+        self.push_member_checks();
     }
 
     /// Name the folder each conversation message came from, for the ones that
@@ -6553,15 +6502,29 @@ impl AppModel {
         self.popouts.insert(key, PopOut { window, controller });
     }
 
-    /// The sender verdict for the message on screen, if one has arrived.
-    fn sender_verdict(&self) -> Option<&crate::models::SenderCheck> {
-        let m = self.current.as_ref()?;
-        self.sender_cache.get(&(m.account_id, m.id)).map(|c| &**c)
+    /// Push every cached sender verdict for the on-screen conversation into
+    /// the reader, so each card's header seal lights up (#88).
+    fn push_member_checks(&self) {
+        // A single message never fills current_thread — the open message
+        // itself is the one card then.
+        let mut keys: Vec<(u32, u32)> =
+            self.current_thread.iter().map(|m| (m.account_id, m.id)).collect();
+        if let Some(c) = &self.current {
+            if keys.is_empty() {
+                keys.push((c.account_id, c.id));
+            }
+        }
+        for key in keys {
+            if let Some(check) = self.sender_cache.get(&key) {
+                self.message_view.emit(MessageViewInput::SenderCheckFor {
+                    account_id: key.0,
+                    id: key.1,
+                    check: check.clone(),
+                });
+            }
+        }
     }
 
-    /// CSS classes for the sender-check badge. The verdict tint is only added
-    /// once a verdict exists — without one the button is insensitive and should
-    /// grey out exactly like the other toolbar icons.
     /// Tooltip for the toolbar's trash button: says when it will delete the
     /// whole multi-selection rather than just the open message.
     fn delete_tooltip(&self) -> String {
@@ -6569,21 +6532,6 @@ impl AppModel {
             n if n > 1 => format!("Delete {n} messages"),
             _ => "Delete".to_string(),
         }
-    }
-
-    fn sender_badge_classes(&self) -> Vec<&'static str> {
-        let mut classes = vec!["flat", "image-button"];
-        if let Some(check) = self.sender_verdict() {
-            classes.push(check.trust.css_class());
-        }
-        classes
-    }
-
-    /// That verdict's trust level, defaulting to "unverified".
-    fn sender_trust(&self) -> crate::models::SenderTrust {
-        self.sender_verdict()
-            .map(|c| c.trust)
-            .unwrap_or(crate::models::SenderTrust::Unverified)
     }
 
     /// Whether the given folder is the account's Drafts folder.

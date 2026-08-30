@@ -101,12 +101,82 @@ pub struct MessageView {
     /// Whether the current message's From: address survived its provider's
     /// authentication checks. `None` until the verdict arrives with the body.
     sender_check: Option<crate::models::SenderCheck>,
+    /// Per-member verdicts for the conversation on screen, behind each card's
+    /// header seal (#88). Keyed (account_id, id); cleared on Show.
+    member_checks: std::collections::HashMap<(u32, u32), crate::models::SenderCheck>,
     /// Full URL of the link under the pointer, shown in a corner overlay so a
     /// link's real destination is visible before it is clicked.
     link_preview: gtk::Label,
 }
 
 impl MessageView {
+    /// Light the header seal for one member with its verdict class + tooltip.
+    fn patch_verify_badge(&self, account_id: u32, id: u32) {
+        let Some(check) = self.member_checks.get(&(account_id, id)) else { return };
+        let js = format!(
+            "(function(){{\
+             var b=document.querySelector('.vireo-verify[data-key=\"{account_id}:{id}\"]');\
+             if(!b)return;b.className='vireo-verify on {cls}';b.title={title:?};}})()",
+            cls = check.trust.css_class(),
+            title = check.trust.label(),
+        );
+        self.webview
+            .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+    }
+
+    /// The verdict-details popover, anchored where the seal was clicked
+    /// (webview coordinates). The old toolbar button's popover, reparented.
+    fn show_sender_popover(&self, account_id: u32, id: u32, rect: (f64, f64, f64, f64)) {
+        let Some(check) = self.member_checks.get(&(account_id, id)) else { return };
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        content.add_css_class("sender-detail");
+        let heading = gtk::Label::new(Some(check.trust.label()));
+        heading.set_halign(gtk::Align::Start);
+        heading.add_css_class("heading");
+        content.append(&heading);
+        let summary = gtk::Label::new(Some(&check.summary));
+        summary.set_halign(gtk::Align::Start);
+        summary.set_wrap(true);
+        summary.set_xalign(0.0);
+        summary.set_max_width_chars(44);
+        content.append(&summary);
+        if !check.findings.is_empty() {
+            content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+            let findings = gtk::Label::new(Some(&check.findings.join("\n")));
+            findings.set_halign(gtk::Align::Start);
+            findings.set_wrap(true);
+            findings.set_xalign(0.0);
+            findings.set_max_width_chars(44);
+            findings.add_css_class("dim-label");
+            content.append(&findings);
+        }
+        let footnote = gtk::Label::new(Some(
+            "A pass proves the address wasn't forged — not that the message is safe.",
+        ));
+        footnote.set_halign(gtk::Align::Start);
+        footnote.set_wrap(true);
+        footnote.set_xalign(0.0);
+        footnote.set_max_width_chars(44);
+        footnote.add_css_class("dim-label");
+        footnote.add_css_class("caption");
+        content.append(&footnote);
+
+        let popover = gtk::Popover::new();
+        popover.set_child(Some(&content));
+        popover.set_parent(&self.webview);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+            rect.0 as i32,
+            rect.1 as i32,
+            (rect.2 as i32).max(1),
+            (rect.3 as i32).max(1),
+        )));
+        popover.connect_closed(|p| {
+            let p = p.clone();
+            gtk::glib::idle_add_local_once(move || p.unparent());
+        });
+        popover.popup();
+    }
+
     /// The current verdict, defaulting to "unverified" before one arrives.
     fn trust(&self) -> crate::models::SenderTrust {
         self.sender_check
@@ -168,6 +238,12 @@ pub enum MessageViewInput {
     Rendered,
     /// The sender-authentication verdict for the message now on screen.
     SetSenderCheck(Box<crate::models::SenderCheck>),
+    /// A member's sender verdict, for its header seal (#88). Patched into the
+    /// live document; queued until the document reports ready.
+    SenderCheckFor { account_id: u32, id: u32, check: Box<crate::models::SenderCheck> },
+    /// The header seal was clicked — show the verdict details anchored on the
+    /// seal's own rect (x, y, w, h in document coordinates).
+    SenderInfoAt { account_id: u32, id: u32, rect: (f64, f64, f64, f64) },
     /// A conversation message header was double-clicked — open that message in
     /// its own window.
     OpenHeader { account_id: u32, id: u32 },
@@ -489,6 +565,7 @@ impl Component for MessageView {
             webview_ready: false,
             webview,
             sender_check: None,
+            member_checks: std::collections::HashMap::new(),
             link_preview: link_preview.clone(),
             seq: std::cell::Cell::new(0),
             content_dark: None,
@@ -552,6 +629,20 @@ impl Component for MessageView {
                             if let Some(display) = gtk::gdk::Display::default() {
                                 display.clipboard().set_text(addr);
                             }
+                        }
+                    }
+                    // The header's verification seal was clicked; extra is
+                    // the seal's own rect, so the popover centres on it.
+                    "senderinfo" => {
+                        let nums: Vec<f64> = extra
+                            .map(|e| e.split(',').filter_map(|n| n.parse().ok()).collect())
+                            .unwrap_or_default();
+                        if let [x, y, w, h] = nums[..] {
+                            open_sender.input(MessageViewInput::SenderInfoAt {
+                                account_id,
+                                id,
+                                rect: (x, y, w, h),
+                            });
                         }
                     }
                     "sel" => {
@@ -678,6 +769,7 @@ impl Component for MessageView {
                 );
                 if !same_message {
                     self.sender_check = None;
+                    self.member_checks.clear();
                 }
                 self.link_preview.set_visible(false);
                 self.current = shown;
@@ -790,8 +882,23 @@ impl Component for MessageView {
                 self.sender_check = Some(*check);
             }
 
+            MessageViewInput::SenderCheckFor { account_id, id, check } => {
+                self.member_checks.insert((account_id, id), *check);
+                if self.webview_ready {
+                    self.patch_verify_badge(account_id, id);
+                }
+            }
+
+            MessageViewInput::SenderInfoAt { account_id, id, rect } => {
+                self.show_sender_popover(account_id, id, rect);
+            }
+
             MessageViewInput::Rendered => {
                 self.webview_ready = true;
+                // Verdicts that arrived while the document was still loading.
+                for (aid, id) in self.member_checks.keys().copied().collect::<Vec<_>>() {
+                    self.patch_verify_badge(aid, id);
+                }
             }
             MessageViewInput::SuppressAutoRead { account_id, id } => {
                 self.no_autoread.insert((account_id, id));
@@ -1200,7 +1307,7 @@ impl MessageView {
                        <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
                          <div class=\"vireo-hdr-line\">\
-                           {ava}{dot}<span class=\"vireo-from\">{from}</span>{addr}\
+                           {ava}{dot}<span class=\"vireo-from\">{from}</span>{verify}{addr}\
                            <span class=\"vireo-hdr-meta\">{folder}{rcpt_toggle}\
                              <span class=\"vireo-date\">{date}</span></span>\
                            {acts_toggle}{acts}\
@@ -1274,6 +1381,16 @@ impl MessageView {
                     // so any byte sequence can be delivered), and this document
                     // is the trusted wrapper — not a sandboxed message frame.
                     from = escape_text(&m.from_name),
+                    // The sender-authentication seal (#88): hidden until a
+                    // verdict arrives (SenderCheckFor patches it live), then
+                    // tinted by trust — Bazaar's fixed blue for a pass.
+                    verify = format!(
+                        "<button type=\"button\" class=\"vireo-verify\" data-key=\"{aid}:{id}\" \
+                         title=\"\">{svg}</button>",
+                        aid = m.account_id,
+                        id = m.id,
+                        svg = inline_icon_svg("verified-checkmark-symbolic"),
+                    ),
                     // An initials circle, tinted per sender address, so who
                     // wrote each card — and which cards are your own replies —
                     // reads at a glance (#22). Pure markup: no texture crosses
@@ -1505,6 +1622,19 @@ impl MessageView {
                  z-index:6;}}\
                /* Addresses act as links: click composes to them, right-click\
                   offers Copy / New Message. */\
+               /* Sender-authentication seal (#88): invisible until a\
+                  verdict arrives; a pass wears Bazaar's fixed blue (never the\
+                  system accent), problems the warning/error reds. */\
+               .vireo-verify{{display:none;background:none;border:none;\
+                 padding:0 2px;margin-left:2px;cursor:pointer;line-height:0;\
+                 align-self:center;flex:none;}}\
+               .vireo-verify.on{{display:inline-flex;}}\
+               .vireo-verify svg{{width:14px;height:14px;display:block;}}\
+               .vireo-verify svg,.vireo-verify svg *{{fill:currentColor;}}\
+               .vireo-verify.trust-pass{{color:#3584e4;}}\
+               .vireo-verify.trust-unverified{{color:currentColor;opacity:0.4;}}\
+               .vireo-verify.trust-suspicious{{color:#cd9309;}}\
+               .vireo-verify.trust-fail{{color:#c01c28;}}\
                .vireo-mail{{cursor:pointer;}}\
                .vireo-mail:hover{{text-decoration:underline;}}\
                /* Styled after the app's own context menus (context_menu.rs +\
@@ -3145,6 +3275,12 @@ document.addEventListener('click',function(e){\
 var t=e.target&&e.target.closest?e.target.closest('.vireo-mail'):null;\
 if(!t||!t.dataset.mail)return;\
 e.preventDefault();e.stopPropagation();mailMsg(t.dataset.mail);},true);\
+document.addEventListener('click',function(e){\
+var v=e.target&&e.target.closest?e.target.closest('.vireo-verify'):null;\
+if(!v||!v.dataset.key)return;e.preventDefault();e.stopPropagation();\
+var r=v.getBoundingClientRect();\
+try{window.webkit.messageHandlers.vireo.postMessage(\
+'senderinfo:'+v.dataset.key+':'+Math.round(r.left)+','+Math.round(r.top)+','+Math.round(r.width)+','+Math.round(r.height));}catch(_){}},true);\
 document.addEventListener('contextmenu',function(e){\
 var t=e.target&&e.target.closest?e.target.closest('.vireo-mail'):null;\
 if(!t||!t.dataset.mail)return;\
