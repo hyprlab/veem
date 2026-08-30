@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.18.2-beta.3" date="2026-08-30" type="development">
+
+      <description><p>Leading sidebar chevrons on one aligned column, right-aligned unread chips, the Sender avatars rename, and unread-dot alignment without avatars.</p></description>
+
+    </release>
     <release version="1.18.2-beta.2" date="2026-08-30" type="development">
 
       <description><p>The 1.18.2 preview: everything in stable 1.18.1, plus the verified-sender seal in the message header and aligned sidebar unread counts.</p></description>

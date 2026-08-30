@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.18.2-beta.3 — 2026-08-30
+
+- Sidebar disclosure chevrons lead their rows: All Inboxes and the
+  account headers put the chevron first, pixel-aligned on one column,
+  matching the folder tree's expanders. Every unread chip right-aligns
+  on one shared edge. All Inboxes' chevron stays its own button
+  (selecting the unified view and expanding its sub-list are separate
+  actions), with a 24px hit target and tightened gaps; the expanded
+  sub-list gets 14px of air before the first account section.
+- The avatar switch is titled "Sender avatars" (wording swept
+  app-wide). With avatars off, the message list's unread dot aligns
+  with the sender name's line instead of floating mid-row, and the
+  Actions Palette button sits 10px further left.
+- Demo mode gains a third account for multi-account screenshots.
+
 ## 1.18.2-beta.2 — 2026-08-30
 
 The 1.18.2 preview continues (thanks @taprobane99 and
