@@ -97,10 +97,11 @@ pub struct Sidebar {
     custom_chevrons: HashMap<u32, gtk::Image>,
     /// The unified-row list box (one row), when shown.
     unified_list: Option<gtk::ListBox>,
-    /// The "Attachments" row list box (one row), when shown.
-    attachments_list: Option<gtk::ListBox>,
-    /// The "Contacts" row list box (one row), when shown.
-    contacts_list: Option<gtk::ListBox>,
+    /// The pinned footer's single list box (Contacts + Attachments rows) and
+    /// the rows themselves, for selection management.
+    footer_list: Option<gtk::ListBox>,
+    attachments_row: Option<gtk::ListBoxRow>,
+    contacts_row: Option<gtk::ListBoxRow>,
     /// Refresh/spinner stack + spinner beside the "New Message" button.
     sync_stack: Option<gtk::Stack>,
     sync_spinner: Option<gtk::Spinner>,
@@ -355,8 +356,9 @@ impl Component for Sidebar {
             custom_revealers: HashMap::new(),
             custom_chevrons: HashMap::new(),
             unified_list: None,
-            attachments_list: None,
-            contacts_list: None,
+            footer_list: None,
+            attachments_row: None,
+            contacts_row: None,
             sync_stack: None,
             sync_spinner: None,
             busy: false,
@@ -949,8 +951,9 @@ impl Sidebar {
         self.custom_revealers.clear();
         self.custom_chevrons.clear();
         self.unified_list = None;
-        self.attachments_list = None;
-        self.contacts_list = None;
+        self.footer_list = None;
+        self.attachments_row = None;
+        self.contacts_row = None;
         self.outbox_list = None;
         self.folder_badges.clear();
         self.tree_chevrons.clear();
@@ -1051,9 +1054,9 @@ impl Sidebar {
                 self.sync_spinner = Some(spinner);
             }
 
-            // The compose pill, drawn like a row so it matches the sidebar's
-            // look; expanded, it hugs its text (plus the row's own padding)
-            // and centres in the bar rather than stretching across it.
+            // The compose button, drawn like a row so it matches the
+            // sidebar's look. Expanded: full width like the rows below, icon
+            // and label centred. The collapsed rail shows the icon alone.
             let list = gtk::ListBox::new();
             list.set_selection_mode(gtk::SelectionMode::None);
             list.add_css_class("navigation-sidebar");
@@ -1091,11 +1094,10 @@ impl Sidebar {
             });
 
             if !self.collapsed {
-                // Hexpand still claims the bar's width; Center then gives the
-                // list its natural (text-hugging) width within it, while
-                // narrow sidebars can still squeeze it (the label ellipsizes).
+                // Full width, like the rows below it; the centred label
+                // carries the action on its own.
                 list.set_hexpand(true);
-                list.set_halign(gtk::Align::Center);
+                list.set_halign(gtk::Align::Fill);
             }
             bar.append(&list);
             pinned.append(&bar);
@@ -1289,103 +1291,100 @@ impl Sidebar {
         // Contacts and Attachments live in the pinned footer against the
         // sidebar's bottom edge — they keep out of the way of the account
         // list and never scroll off. A faint rule sets them apart from
-        // whatever the scroller above ends on.
+        // whatever the scroller above ends on. ONE list box holds both rows,
+        // so they read as one gapless section (beta 1.18.0b feedback) and
+        // selecting one automatically clears the other.
         if self.show_contacts || self.show_attachments {
             let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
             sep.add_css_class("footer-separator");
             footer.append(&sep);
-        }
 
-        // "Contacts" row — shows the in-app contacts view in the content area
-        // (a selection, like Attachments). Right-click offers a jump straight
-        // to the GNOME Contacts app.
-        if self.show_contacts {
             let list = gtk::ListBox::new();
             list.set_selection_mode(gtk::SelectionMode::Single);
             list.add_css_class("navigation-sidebar");
 
-            let row = gtk::ListBoxRow::new();
-            let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            hbox.add_css_class("folder-row");
-            let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-x-office-address-book-symbolic");
-            img.add_css_class("folder-icon");
-            if self.collapsed {
-                hbox.set_halign(gtk::Align::Center);
-                row.set_tooltip_text(Some("Contacts"));
-                hbox.append(&img);
-            } else {
-                hbox.append(&img);
-                let label = gtk::Label::new(Some("Contacts"));
-                label.set_hexpand(true);
-                label.set_halign(gtk::Align::Start);
-                label.add_css_class("account-name");
-                hbox.append(&label);
-            }
-            row.set_child(Some(&hbox));
-            list.append(&row);
-
-            let s = sender.clone();
-            list.connect_row_selected(move |_, row| {
-                if row.is_some() {
-                    s.input(SidebarInput::ContactsRowClicked);
+            // "Contacts" row — shows the in-app contacts view. Right-click
+            // offers a jump straight to the GNOME Contacts app.
+            if self.show_contacts {
+                let row = gtk::ListBoxRow::new();
+                let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+                hbox.add_css_class("folder-row");
+                let img =
+                    gtk::Image::from_icon_name("co.hyprlab.Vireo-x-office-address-book-symbolic");
+                img.add_css_class("folder-icon");
+                if self.collapsed {
+                    hbox.set_halign(gtk::Align::Center);
+                    row.set_tooltip_text(Some("Contacts"));
+                    hbox.append(&img);
+                } else {
+                    hbox.append(&img);
+                    let label = gtk::Label::new(Some("Contacts"));
+                    label.set_hexpand(true);
+                    label.set_halign(gtk::Align::Start);
+                    label.add_css_class("account-name");
+                    hbox.append(&label);
                 }
-            });
-            let right_click = gtk::GestureClick::new();
-            right_click.set_button(3);
-            let s = sender.clone();
-            right_click.connect_pressed(move |gesture, _, x, y| {
-                let Some(widget) = gesture.widget() else { return };
-                let s2 = s.clone();
-                show_context_menu(
-                    &widget,
-                    x,
-                    y,
-                    vec![vec![MenuEntry::new("Open GNOME Contacts", move || {
-                        let _ = s2.output(SidebarOutput::OpenGnomeContacts);
-                    })
-                    .icon("co.hyprlab.Vireo-adw-external-link-symbolic")]],
-                );
-            });
-            list.add_controller(right_click);
-            footer.append(&list);
-            self.contacts_list = Some(list);
-        }
+                row.set_child(Some(&hbox));
 
-        // "Attachments" row — a gallery of every inbox attachment. The very
-        // last row in the sidebar, below Contacts.
-        if self.show_attachments {
-            let list = gtk::ListBox::new();
-            list.set_selection_mode(gtk::SelectionMode::Single);
-            list.add_css_class("navigation-sidebar");
-
-            let row = gtk::ListBoxRow::new();
-            let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            hbox.add_css_class("folder-row");
-            let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-attachment-symbolic");
-            img.add_css_class("folder-icon");
-            if self.collapsed {
-                hbox.set_halign(gtk::Align::Center);
-                row.set_tooltip_text(Some("Attachments"));
-                hbox.append(&img);
-            } else {
-                hbox.append(&img);
-                let label = gtk::Label::new(Some("Attachments"));
-                label.set_hexpand(true);
-                label.set_halign(gtk::Align::Start);
-                label.add_css_class("account-name");
-                hbox.append(&label);
+                let right_click = gtk::GestureClick::new();
+                right_click.set_button(3);
+                let s = sender.clone();
+                right_click.connect_pressed(move |gesture, _, x, y| {
+                    let Some(widget) = gesture.widget() else { return };
+                    let s2 = s.clone();
+                    show_context_menu(
+                        &widget,
+                        x,
+                        y,
+                        vec![vec![MenuEntry::new("Open GNOME Contacts", move || {
+                            let _ = s2.output(SidebarOutput::OpenGnomeContacts);
+                        })
+                        .icon("co.hyprlab.Vireo-adw-external-link-symbolic")]],
+                    );
+                });
+                row.add_controller(right_click);
+                list.append(&row);
+                self.contacts_row = Some(row);
             }
-            row.set_child(Some(&hbox));
-            list.append(&row);
+
+            // "Attachments" row — a gallery of every inbox attachment. The
+            // very last row in the sidebar, below Contacts.
+            if self.show_attachments {
+                let row = gtk::ListBoxRow::new();
+                let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+                hbox.add_css_class("folder-row");
+                let img = gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-attachment-symbolic");
+                img.add_css_class("folder-icon");
+                if self.collapsed {
+                    hbox.set_halign(gtk::Align::Center);
+                    row.set_tooltip_text(Some("Attachments"));
+                    hbox.append(&img);
+                } else {
+                    hbox.append(&img);
+                    let label = gtk::Label::new(Some("Attachments"));
+                    label.set_hexpand(true);
+                    label.set_halign(gtk::Align::Start);
+                    label.add_css_class("account-name");
+                    hbox.append(&label);
+                }
+                row.set_child(Some(&hbox));
+                list.append(&row);
+                self.attachments_row = Some(row);
+            }
 
             let s = sender.clone();
+            let contacts_row = self.contacts_row.clone();
+            let attachments_row = self.attachments_row.clone();
             list.connect_row_selected(move |_, row| {
-                if row.is_some() {
+                let Some(row) = row else { return };
+                if Some(row) == contacts_row.as_ref() {
+                    s.input(SidebarInput::ContactsRowClicked);
+                } else if Some(row) == attachments_row.as_ref() {
                     s.input(SidebarInput::AttachmentsRowSelected);
                 }
             });
             footer.append(&list);
-            self.attachments_list = Some(list);
+            self.footer_list = Some(list);
         }
 
         // "Outbox" row — only while something is waiting to be sent. It sits
@@ -1896,13 +1895,10 @@ impl Sidebar {
                 l.unselect_all();
             }
         }
-        if keep != Sel::Attachments {
-            if let Some(l) = &self.attachments_list {
-                l.unselect_all();
-            }
-        }
-        if keep != Sel::Contacts {
-            if let Some(l) = &self.contacts_list {
+        // One list holds both footer rows; single-selection makes them
+        // mutually exclusive, so it only needs clearing when neither is kept.
+        if keep != Sel::Attachments && keep != Sel::Contacts {
+            if let Some(l) = &self.footer_list {
                 l.unselect_all();
             }
         }
@@ -1939,18 +1935,14 @@ impl Sidebar {
     }
 
     fn select_attachments(&self) {
-        if let Some(list) = &self.attachments_list {
-            if let Some(row) = list.row_at_index(0) {
-                list.select_row(Some(&row));
-            }
+        if let (Some(list), Some(row)) = (&self.footer_list, &self.attachments_row) {
+            list.select_row(Some(row));
         }
     }
 
     fn select_contacts(&self) {
-        if let Some(list) = &self.contacts_list {
-            if let Some(row) = list.row_at_index(0) {
-                list.select_row(Some(&row));
-            }
+        if let (Some(list), Some(row)) = (&self.footer_list, &self.contacts_row) {
+            list.select_row(Some(row));
         }
     }
 

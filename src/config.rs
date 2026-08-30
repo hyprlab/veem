@@ -49,10 +49,33 @@ fn write_private(path: &std::path::Path, contents: &str) -> std::io::Result<()> 
 fn shared_base(own: fn() -> Option<PathBuf>, sub: &str) -> Option<PathBuf> {
     if cfg!(feature = "beta")
         && std::env::var("FLATPAK_ID").is_ok_and(|id| id == "co.hyprlab.Vireo.Beta")
+        && stable_data_present()
     {
         return Some(dirs::home_dir()?.join(".var/app/co.hyprlab.Vireo").join(sub));
     }
     own()
+}
+
+/// Whether the shared flatpak directory is actually reachable. Flatpak
+/// silently SKIPS a `--filesystem` grant whose host path doesn't exist, which
+/// left `~/.var/app/co.hyprlab.Vireo` pointing at the sandbox's throwaway
+/// tmpfs on beta-only installs — accounts "saved" there and vanished on quit
+/// (issue #83). The real fix is the manifest's `:create` suffix, which makes
+/// flatpak create the host directory itself — a beta-first install thereby
+/// establishes the standard persistent home a later stable install picks up,
+/// in either install order. This check remains as defence in depth: should
+/// the mount ever be missing anyway (an old manifest, a stripped-down
+/// installation), the beta falls back to its own persistent home rather than
+/// writing into the tmpfs. Decided once at first use, so our own writes
+/// creating the path on the tmpfs mid-session can't flip it.
+fn stable_data_present() -> bool {
+    use std::sync::OnceLock;
+    static PRESENT: OnceLock<bool> = OnceLock::new();
+    *PRESENT.get_or_init(|| {
+        dirs::home_dir()
+            .map(|h| h.join(".var/app/co.hyprlab.Vireo").is_dir())
+            .unwrap_or(false)
+    })
 }
 
 pub fn config_base() -> Option<PathBuf> {
@@ -637,6 +660,16 @@ struct PrivacyFile {
     /// thread itself opens only in the reading pane's cards.
     #[serde(default = "default_thread_expansion")]
     thread_expansion: bool,
+    /// Whether the reading pane shows a conversation newest-message-first.
+    #[serde(default)]
+    thread_newest_first: bool,
+    /// Whether the reader always shows the recipients line under the sender.
+    #[serde(default)]
+    always_show_recipients: bool,
+    /// Whether a lone message renders as an inset card like a conversation's
+    /// messages (#57); off keeps the full-bleed view.
+    #[serde(default)]
+    single_message_card: bool,
     /// Whether deleting a whole selected conversation asks for confirmation
     /// first.
     #[serde(default = "default_confirm_thread_delete")]
@@ -799,6 +832,9 @@ impl Default for PrivacyFile {
             threading: default_threading(),
             threads_expanded: false,
             thread_expansion: default_thread_expansion(),
+            thread_newest_first: false,
+            always_show_recipients: false,
+            single_message_card: false,
             confirm_thread_delete: default_confirm_thread_delete(),
             message_theme: MessageTheme::default(),
             notifications: default_notifications(),
@@ -901,6 +937,18 @@ pub fn load_threads_expanded() -> bool {
 }
 
 /// Whether conversation rows can expand into their members in the list.
+pub fn load_thread_newest_first() -> bool {
+    load_privacy().thread_newest_first
+}
+
+pub fn load_always_show_recipients() -> bool {
+    load_privacy().always_show_recipients
+}
+
+pub fn load_single_message_card() -> bool {
+    load_privacy().single_message_card
+}
+
 pub fn load_thread_expansion() -> bool {
     load_privacy().thread_expansion
 }
@@ -1011,6 +1059,9 @@ pub fn save_privacy(
     threading: bool,
     threads_expanded: bool,
     thread_expansion: bool,
+    thread_newest_first: bool,
+    always_show_recipients: bool,
+    single_message_card: bool,
     confirm_thread_delete: bool,
     message_theme: MessageTheme,
     notifications: bool,
@@ -1052,6 +1103,9 @@ pub fn save_privacy(
         threading,
         threads_expanded,
         thread_expansion,
+        thread_newest_first,
+        always_show_recipients,
+        single_message_card,
         confirm_thread_delete,
         message_theme,
         notifications,

@@ -85,13 +85,13 @@ signed Flatpak repo. Installing from the repo picks the right architecture on
 its own:
 
 ```sh
-flatpak install --from https://vireo.hyprlab.co/flatpak/co.hyprlab.Vireo.flatpakref
+flatpak install --user --from https://vireo.hyprlab.co/flatpak/co.hyprlab.Vireo.flatpakref
 ```
 
 Prefer a direct download? Each release carries `Vireo-x86_64.flatpak` and
 `Vireo-aarch64.flatpak`; grab the one matching `uname -m` from the
 [latest release](https://github.com/hyprlab/vireo/releases/latest) and run
-`flatpak install ./Vireo-*.flatpak` — the bundle carries the repo address and
+`flatpak install --user ./Vireo-*.flatpak` — the bundle carries the repo address and
 signing key, so it still receives updates from the official repo. (A bundle
 holds a single architecture; the repo above holds both.)
 
@@ -100,6 +100,16 @@ holds a single architecture; the repo above holds both.)
 
 ```sh
 sudo dnf install ./vireo-*.x86_64.rpm
+```
+
+**Gentoo** — a community-maintained ebuild lives in
+[bennypowers' overlay](https://github.com/bennypowers/gentoo-overlay)
+(thanks @bennypowers):
+
+```sh
+eselect repository enable bennypowers
+emaint sync -r bennypowers
+emerge -av mail-client/vireo
 ```
 
 Arch, Debian/Ubuntu and Snap packages were discontinued after 1.7.0 — use the

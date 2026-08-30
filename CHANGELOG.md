@@ -1,5 +1,80 @@
 # Changelog
 
+## 1.18.0 — 2026-08-29
+
+The beta-tested 1.18 feature release (previewed as 1.18.0b, hardened by
+the community's feedback in discussion #81 — thanks @p-mitana,
+@thecalamityjoe87, @frenchy82, @yioannides).
+
+- **Contacts move into the app.** The sidebar's Contacts row opens a
+  full view in the content area: a searchable, sortable list
+  (first/last name or email, live count, resizable pane, accent
+  selection) beside a full contact card — photo (expandable to the
+  lightbox; iCloud photos render now), labelled emails (compose or
+  copy), phones, postal addresses, websites, birthday, notes, and which
+  address book the entry lives in. Contacts can be edited, created and
+  deleted right here — writes go through EDS D-Bus so GNOME Contacts
+  and CardDAV stay in sync, and edits patch the stored vCard so
+  unedited properties survive. Composing from a contact slides the
+  composer down over the card; GNOME Contacts stays one click (or
+  right-click) away. Address books removed or contacts-disabled in GOA
+  disappear (liveness comes from the EDS source registry).
+- **One Settings window.** Accounts and Settings share a window behind
+  an AdwViewSwitcher; a preference picks the opening view; every option
+  regrouped into focused sections; a GOA account's editor hides the
+  GNOME-owned connection fields entirely.
+- **Bulk actions stop blocking.** Rows leave the list instantly, server
+  work runs invisibly in the workers, and nothing waits. The refresh
+  button spins while background work runs; the status bar narrates it
+  and gains two new routes in (long-press Refresh, Ctrl+Shift+S). Bulk
+  removals backfill the rendered window; deletes keep the header count
+  honest.
+- **All Inboxes is instant at launch** — folders, unread counts and
+  inbox slices paint straight from the disk cache before any worker
+  starts; each account's catch-up sync lands behind. Empty folders show
+  a proper "No Messages" page, and Graph/POP3 folders finally report
+  their index complete (no more stuck "Loading more…").
+- **Threads slide open and shut** in the message list — per-row
+  revealers with surgical row insert/remove and a rotating caret
+  (thanks @thecalamityjoe87, PR #79). Conversations land on their first
+  unread, support thread-wide delete (optional confirmation), Ctrl+A,
+  threaded popouts, and an optional newest-message-first reading order
+  (#70). "Single messages as cards" (#57) optionally renders a lone
+  message exactly like a one-message conversation.
+- **Composer**: a Reply-To field behind the To row's "More" (#58),
+  written as a proper wire header for SMTP and Graph alike; forwards
+  keep their formatting — bodies pass through an HTML sanitizer
+  (ammonia) that strips scripts, handlers, styles and dangerous URLs
+  while tables, links, headings and images survive (#52); the editor no
+  longer flashes dark on open.
+- **Reader**: an "Always show recipients" preference keeps the To/Cc
+  line open under each sender (single-recipient chip dropped as
+  redundant) (#40); header polish (pinned palette corner, address
+  links, honest previews, full-strength icons); Space previews the
+  highlighted attachment (#37).
+- **Sidebar**: Contacts and Attachments pin to the bottom edge in one
+  gapless footer section (from @thecalamityjoe87's PR #80, issue #78);
+  the All Inboxes chevron aligns with the account chevrons and gets a
+  32px hit target; account headers honour the configured label; the
+  menu gains section breaks; the gallery header gets the sidebar
+  toggle.
+- **Fixes from beta feedback**: encoded-word sender names with illegal
+  interior spaces decode ("…DPD ?="); the message count updates on
+  delete; GNOME notifications clear when mail is read in the app (#41);
+  bold pane titles; the contact editor's title sits between Cancel and
+  Save; matching AdwStatusPage placeholders; the conversation count
+  chip hides its caret when expansion is off and centres its number.
+- **Beta infrastructure** (#83): the beta's shared-data grant now
+  creates the stable directory on the host (`:create`), so a beta-first
+  install establishes the persistent home a later stable install picks
+  up — in either order — with a mounted-check fallback so accounts can
+  never land on the sandbox tmpfs again.
+- **Under the hood**: per-folder IMAP IDLE watchers keep subfolder
+  unread chips near-instant on a one-hour activity lease; the sidebar
+  peek self-heals; demo mode gains a sample address book; the README
+  documents @bennypowers' community Gentoo overlay (#53) and the
+  --user flatpak install flag (thanks @yioannides, PR #75).
+
 ## 1.18.0b — 2026-08-29
 
 - **Contacts move into the app.** The sidebar's Contacts row now opens a

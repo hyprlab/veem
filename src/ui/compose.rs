@@ -158,11 +158,11 @@ pub struct Compose {
 pub enum ComposeInput {
     Send,
     /// The editor's HTML + plain text came back asynchronously — finish sending.
-    SendBody { html: String, text: String, to: String, cc: String, bcc: String, subject: String, from_account_id: u32, from_alias: Option<String> },
+    SendBody { html: String, text: String, to: String, cc: String, bcc: String, reply_to: String, subject: String, from_account_id: u32, from_alias: Option<String> },
     /// Save the current message to Drafts.
     SaveDraft,
     /// The editor content came back — finish saving the draft.
-    SaveDraftBody { html: String, text: String, to: String, cc: String, bcc: String, subject: String, from_account_id: u32, from_alias: Option<String> },
+    SaveDraftBody { html: String, text: String, to: String, cc: String, bcc: String, reply_to: String, subject: String, from_account_id: u32, from_alias: Option<String> },
     Cancel,
     /// The user clicked the inline/window toggle button.
     ToggleWindowed,
@@ -293,6 +293,11 @@ impl Component for Compose {
                             set_title: "Bcc",
                             set_input_purpose: gtk::InputPurpose::Email,
                         },
+                        #[name = "reply_to_row"]
+                        adw::EntryRow {
+                            set_title: "Reply-To",
+                            set_input_purpose: gtk::InputPurpose::Email,
+                        },
                         #[name = "subject_row"]
                         adw::EntryRow {
                             set_title: "Subject",
@@ -399,23 +404,27 @@ impl Component for Compose {
         let subject_shown = !model.can_toggle;
         widgets.cc_row.set_visible(cc_shown);
         widgets.bcc_row.set_visible(bcc_shown);
+        // Reply-To (#58) is rare enough to always start hidden behind "More".
+        widgets.reply_to_row.set_visible(false);
         widgets.subject_row.set_visible(subject_shown);
-        if !(cc_shown && bcc_shown && subject_shown) {
+        {
             let more = gtk::Button::with_label("More");
             more.add_css_class("flat");
             more.set_valign(gtk::Align::Center);
             more.set_tooltip_text(Some(if subject_shown {
-                "Show Cc and Bcc"
+                "Show Cc, Bcc and Reply-To"
             } else {
-                "Show Cc, Bcc and Subject"
+                "Show Cc, Bcc, Reply-To and Subject"
             }));
             let cc = widgets.cc_row.clone();
             let bcc = widgets.bcc_row.clone();
+            let reply_to = widgets.reply_to_row.clone();
             let subject = widgets.subject_row.clone();
             let btn = more.clone();
             more.connect_clicked(move |_| {
                 cc.set_visible(true);
                 bcc.set_visible(true);
+                reply_to.set_visible(true);
                 subject.set_visible(true);
                 btn.set_visible(false);
             });
@@ -720,6 +729,7 @@ impl Component for Compose {
                 }
                 let cc = widgets.cc_row.text().trim().to_string();
                 let bcc = widgets.bcc_row.text().trim().to_string();
+                let reply_to = widgets.reply_to_row.text().trim().to_string();
                 let subject = widgets.subject_row.text().to_string();
                 let idx = widgets.from_row.selected() as usize;
                 let from_account_id = self.accounts.get(idx).map(|a| a.id).unwrap_or(1);
@@ -735,6 +745,7 @@ impl Component for Compose {
                         to: to.clone(),
                         cc: cc.clone(),
                         bcc: bcc.clone(),
+                        reply_to: reply_to.clone(),
                         subject: subject.clone(),
                         from_account_id,
                         from_alias: from_alias.clone(),
@@ -742,9 +753,9 @@ impl Component for Compose {
                 });
             }
 
-            ComposeInput::SendBody { html, text, to, cc, bcc, subject, from_account_id, from_alias } => {
-                let out =
-                    self.build_outgoing(from_account_id, from_alias, to, cc, bcc, subject, text, html);
+            ComposeInput::SendBody { html, text, to, cc, bcc, reply_to, subject, from_account_id, from_alias } => {
+                let out = self
+                    .build_outgoing(from_account_id, from_alias, to, cc, bcc, reply_to, subject, text, html);
                 let _ = sender.output(ComposeOutput::Send(Box::new(out)));
                 let _ = sender.output(ComposeOutput::Close(self.compose_id));
             }
@@ -754,6 +765,7 @@ impl Component for Compose {
                 let to = widgets.to_row.text().trim().to_string();
                 let cc = widgets.cc_row.text().trim().to_string();
                 let bcc = widgets.bcc_row.text().trim().to_string();
+                let reply_to = widgets.reply_to_row.text().trim().to_string();
                 let subject = widgets.subject_row.text().to_string();
                 let idx = widgets.from_row.selected() as usize;
                 let from_account_id = self.accounts.get(idx).map(|a| a.id).unwrap_or(1);
@@ -766,6 +778,7 @@ impl Component for Compose {
                         to: to.clone(),
                         cc: cc.clone(),
                         bcc: bcc.clone(),
+                        reply_to: reply_to.clone(),
                         subject: subject.clone(),
                         from_account_id,
                         from_alias: from_alias.clone(),
@@ -773,9 +786,9 @@ impl Component for Compose {
                 });
             }
 
-            ComposeInput::SaveDraftBody { html, text, to, cc, bcc, subject, from_account_id, from_alias } => {
-                let out =
-                    self.build_outgoing(from_account_id, from_alias, to, cc, bcc, subject, text, html);
+            ComposeInput::SaveDraftBody { html, text, to, cc, bcc, reply_to, subject, from_account_id, from_alias } => {
+                let out = self
+                    .build_outgoing(from_account_id, from_alias, to, cc, bcc, reply_to, subject, text, html);
                 let _ = sender.output(ComposeOutput::SaveDraft(Box::new(out)));
                 let _ = sender.output(ComposeOutput::Close(self.compose_id));
             }
@@ -794,6 +807,7 @@ impl Compose {
         to: String,
         cc: String,
         bcc: String,
+        reply_to: String,
         subject: String,
         text: String,
         html: String,
@@ -804,6 +818,7 @@ impl Compose {
             to,
             cc,
             bcc,
+            reply_to,
             subject,
             body: text,
             html,

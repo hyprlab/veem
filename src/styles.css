@@ -9,20 +9,20 @@
 /* The sidebar's "New message" action: a standing accent button shaped like a
    row — full width, rounded like the row highlights, icon column aligned with
    the rows below. Text and icon in plain white on the accent. */
+/* Row geometry plus extra vertical presence: 5px above and below the
+   shared .folder-row padding, so the accent button stands taller than a
+   plain row without changing its width alignment. */
 row.compose-row {
   background-color: @accent_bg_color;
   color: white;
-  padding-top: 2px;
-  padding-bottom: 2px;
-  /* The pill hugs its text now, so give it a button's breathing room. */
-  padding-left: 16px;
-  padding-right: 16px;
+  padding-top: 5px;
+  padding-bottom: 5px;
 }
 
-/* The icon-only rail centres a lone icon — no text to pad around. */
+/* The icon-only rail centres a lone icon — no text to pad around, and the
+   expanded button's extra vertical presence goes back to the default. */
 .rail-collapsed row.compose-row {
-  padding-left: 0;
-  padding-right: 0;
+  padding: 0;
 }
 
 row.compose-row:hover {
@@ -306,6 +306,12 @@ button.star-active {
 .add-folder-btn label,
 .add-folder-btn image {
   opacity: 0.6;
+}
+
+/* Pane header titles (Attachments, Contacts): bold, matching GNOME's
+   header-bar title convention. */
+.pane-title {
+  font-weight: 700;
 }
 
 /* ---- Contacts view ---- */
@@ -1130,4 +1136,13 @@ button.star-active {
 .attachment-drawer-flow flowboxchild:selected {
   background-color: alpha(@accent_bg_color, 0.18);
   border-radius: 10px;
+}
+
+/* The thread chip's caret spins between closed (pointing end) and open
+   (pointing down), same as the folder-tree expander. (PR #79) */
+.thread-toggle-icon {
+  transition: -gtk-icon-transform 200ms ease;
+}
+.thread-toggle-icon.open {
+  -gtk-icon-transform: rotate(90deg);
 }

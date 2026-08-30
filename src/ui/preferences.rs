@@ -25,6 +25,12 @@ pub struct PrefInit {
     pub palette_collapse_secs: u64,
     pub threading: bool,
     pub threads_expanded: bool,
+    /// Reading pane shows conversations newest-message-first.
+    pub thread_newest_first: bool,
+    /// Reader always shows the recipients line under the sender.
+    pub always_show_recipients: bool,
+    /// Lone messages render as inset cards, like conversation messages.
+    pub single_message_card: bool,
     /// Conversation rows may expand into their members in the message list.
     pub thread_expansion: bool,
     /// Deleting a whole selected conversation asks for confirmation.
@@ -178,6 +184,9 @@ pub enum PrefInput {
     ChangeClockStyle(u32),
     ToggleThreading(bool),
     ToggleThreadsExpanded(bool),
+    ToggleThreadNewestFirst(bool),
+    ToggleAlwaysShowRecipients(bool),
+    ToggleSingleMessageCard(bool),
     ToggleThreadExpansion(bool),
     ToggleConfirmThreadDelete(bool),
     ChangeCardActionsMode(u32),
@@ -221,6 +230,9 @@ pub enum PrefOutput {
     SetClockStyle(ClockStyle),
     SetThreading(bool),
     SetThreadsExpanded(bool),
+    SetThreadNewestFirst(bool),
+    SetAlwaysShowRecipients(bool),
+    SetSingleMessageCard(bool),
     SetThreadExpansion(bool),
     SetConfirmThreadDelete(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
@@ -260,7 +272,7 @@ impl Component for Preferences {
             // Remembered vertical size (tall by default) — resizing sticks
             // across restarts via the save on close below.
             set_default_height: crate::config::load_prefs_height(),
-            set_title: Some("Accounts & Preferences"),
+            set_title: Some("Settings"),
 
             connect_close_request[sender] => move |w| {
                 crate::config::save_prefs_height(w.height());
@@ -292,7 +304,7 @@ impl Component for Preferences {
                     add_titled[Some("accounts"), "Accounts"] = &adw::Bin {},
 
                     #[name = "prefs_page"]
-                    add_titled[Some("preferences"), "Preferences"] = &adw::PreferencesPage {
+                    add_titled[Some("preferences"), "Settings"] = &adw::PreferencesPage {
                     add = &adw::PreferencesGroup {
                         set_title: "General",
 
@@ -483,6 +495,17 @@ impl Component for Preferences {
                             },
                         },
 
+                        #[name = "thread_newest_first_row"]
+                        adw::SwitchRow {
+                            set_title: "Newest message first",
+                            set_subtitle: "Show a conversation's latest message at the top of \
+                                           the reading pane. Off reads oldest to newest, \
+                                           downward.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleThreadNewestFirst(row.is_active()));
+                            },
+                        },
+
                         #[name = "confirm_thread_delete_row"]
                         adw::SwitchRow {
                             set_title: "Confirm conversation deletion",
@@ -504,6 +527,28 @@ impl Component for Preferences {
                             set_subtitle: "Theme for email content only, not the app itself.",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeMessageTheme(row.selected()));
+                            },
+                        },
+
+                        #[name = "single_message_card_row"]
+                        adw::SwitchRow {
+                            set_title: "Single messages as cards",
+                            set_subtitle: "Show a lone message as an inset card with the same \
+                                           border as a conversation's messages. Off fills the \
+                                           pane edge to edge.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleSingleMessageCard(row.is_active()));
+                            },
+                        },
+
+                        #[name = "always_show_recipients_row"]
+                        adw::SwitchRow {
+                            set_title: "Always show recipients",
+                            set_subtitle: "Show who each message went to under its sender, \
+                                           without clicking the recipients chip. With one \
+                                           recipient the chip is dropped entirely.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleAlwaysShowRecipients(row.is_active()));
                             },
                         },
                     },
@@ -540,7 +585,7 @@ impl Component for Preferences {
                         #[name = "settings_open_row"]
                         adw::ComboRow {
                             set_title: "This window opens to",
-                            set_subtitle: "The view shown first when Accounts &amp; Preferences \
+                            set_subtitle: "The view shown first when Settings \
                                            is opened from the menu.",
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeSettingsOpen(row.selected()));
@@ -830,6 +875,9 @@ impl Component for Preferences {
         widgets.single_key_row.set_active(init.single_key_shortcuts);
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
+        widgets.thread_newest_first_row.set_active(init.thread_newest_first);
+        widgets.always_show_recipients_row.set_active(init.always_show_recipients);
+        widgets.single_message_card_row.set_active(init.single_message_card);
         widgets.thread_expansion_row.set_active(init.thread_expansion);
         widgets.confirm_thread_delete_row.set_active(init.confirm_thread_delete);
         widgets.card_actions_row.set_model(Some(&gtk::StringList::new(&[
@@ -898,7 +946,7 @@ impl Component for Preferences {
 
         widgets
             .settings_open_row
-            .set_model(Some(&gtk::StringList::new(&["Preferences", "Accounts"])));
+            .set_model(Some(&gtk::StringList::new(&["Settings", "Accounts"])));
         widgets
             .settings_open_row
             .set_selected(if init.settings_open_accounts { 1 } else { 0 });
@@ -963,6 +1011,15 @@ impl Component for Preferences {
             }
             PrefInput::ToggleThreadsExpanded(on) => {
                 let _ = sender.output(PrefOutput::SetThreadsExpanded(on));
+            }
+            PrefInput::ToggleThreadNewestFirst(on) => {
+                let _ = sender.output(PrefOutput::SetThreadNewestFirst(on));
+            }
+            PrefInput::ToggleAlwaysShowRecipients(on) => {
+                let _ = sender.output(PrefOutput::SetAlwaysShowRecipients(on));
+            }
+            PrefInput::ToggleSingleMessageCard(on) => {
+                let _ = sender.output(PrefOutput::SetSingleMessageCard(on));
             }
             PrefInput::ChangeCardActionsMode(index) => {
                 let (hover_toggle, hover_auto) = match index {

@@ -860,8 +860,8 @@ impl ContactsPage {
             .and_then(|i| self.contacts.get(i))
             .unwrap_or(&blank);
 
-        // ---- Cancel / Save bar ----
-        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        // ---- Cancel · title · Save bar (dialog-header layout) ----
+        let bar = gtk::CenterBox::new();
         let cancel = gtk::Button::with_label("Cancel");
         let s = sender.input_sender().clone();
         cancel.connect_clicked(move |_| {
@@ -873,21 +873,16 @@ impl ContactsPage {
         save.connect_clicked(move |_| {
             let _ = s.send(ContactsPageInput::SaveEdit);
         });
-        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
-        bar.append(&cancel);
-        bar.append(&spacer);
-        bar.append(&save);
-        detail.append(&bar);
-
         let heading = gtk::Label::new(Some(if self.editing_target.is_some() {
             "Edit Contact"
         } else {
             "New Contact"
         }));
-        heading.add_css_class("title-2");
-        heading.set_margin_top(10);
-        detail.append(&heading);
+        heading.add_css_class("title-4");
+        bar.set_start_widget(Some(&cancel));
+        bar.set_center_widget(Some(&heading));
+        bar.set_end_widget(Some(&save));
+        detail.append(&bar);
 
         // ---- identity fields ----
         let identity = group(detail, "Identity");

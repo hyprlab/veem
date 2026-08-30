@@ -24,7 +24,7 @@ const CONTRIBUTORS: &[(&str, &str, &str)] = &[
     (
         "Isaac",
         "thecalamityjoe87",
-        "PDF thumbnails, the attachment-opening fix, the reader's To line, remote-content option, GNOME-styled context menus",
+        "The sidebar's pinned footer, thread expand/collapse animations, PDF thumbnails, the attachment-opening fix, the reader's To line, remote-content option, GNOME-styled context menus",
     ),
     (
         "Alexander Lubovenko",
@@ -354,6 +354,12 @@ pub struct AppModel {
     thread_key: Option<(u32, u32)>,
     /// Whether conversation threads start expanded in the message list.
     threads_expanded: bool,
+    /// Reading pane shows conversations newest-message-first.
+    thread_newest_first: bool,
+    /// Reader always shows the recipients line under the sender.
+    always_show_recipients: bool,
+    /// Lone messages render as inset cards (#57).
+    single_message_card: bool,
     /// Whether conversation rows may expand into their members in the list
     /// (the row keeps its chip and chevron either way).
     thread_expansion: bool,
@@ -599,6 +605,9 @@ pub enum AppMsg {
     /// The thread-delete dialog was confirmed.
     DeleteThreadConfirmed(Vec<Message>),
     SetThreadsExpanded(bool),
+    SetThreadNewestFirst(bool),
+    SetAlwaysShowRecipients(bool),
+    SetSingleMessageCard(bool),
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
     SetListPalette(bool),
     SetListPaletteHover(bool),
@@ -1575,7 +1584,7 @@ impl SimpleComponent for AppModel {
         let menu = gtk::gio::Menu::new();
         {
             let settings = gtk::gio::Menu::new();
-            settings.append(Some("Accounts & Preferences"), Some("win.accounts"));
+            settings.append(Some("Accounts & Settings"), Some("win.accounts"));
             menu.append_section(None, &settings);
 
             let printing = gtk::gio::Menu::new();
@@ -1722,6 +1731,9 @@ impl SimpleComponent for AppModel {
             thread_cache_order: Vec::new(),
             thread_key: None,
             threads_expanded: config::load_threads_expanded(),
+            thread_newest_first: config::load_thread_newest_first(),
+            always_show_recipients: config::load_always_show_recipients(),
+            single_message_card: config::load_single_message_card(),
             thread_expansion: config::load_thread_expansion(),
             confirm_thread_delete: config::load_confirm_thread_delete(),
             selection_from_cards: false,
@@ -1814,6 +1826,12 @@ impl SimpleComponent for AppModel {
         model
             .message_view
             .emit(MessageViewInput::SetContentTheme(model.message_theme.dark_override()));
+        model
+            .message_view
+            .emit(MessageViewInput::SetAlwaysShowRecipients(model.always_show_recipients));
+        model
+            .message_view
+            .emit(MessageViewInput::SetSingleMessageCard(model.single_message_card));
         model.arm_auto_fetch(&sender);
 
         // The app-wide theme choice must be in force before the first frame.
@@ -3047,6 +3065,11 @@ impl SimpleComponent for AppModel {
                 if self.is_drafts_folder(m.account_id, m.folder_id) {
                     self.open_draft(m, &sender);
                 } else {
+                    // Popouts follow the reading pane's display order (#70).
+                    let mut thread = thread;
+                    if self.thread_newest_first {
+                        thread.reverse();
+                    }
                     self.open_message_window(m, thread, &sender);
                 }
             }
@@ -3731,6 +3754,47 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetThreadNewestFirst(on) => {
+                if self.thread_newest_first != on {
+                    self.thread_newest_first = on;
+                    self.save_settings();
+                    // Re-render an open conversation in the new order.
+                    if self.current_thread.len() > 1 {
+                        self.show_thread();
+                    }
+                }
+            }
+
+            AppMsg::SetAlwaysShowRecipients(on) => {
+                if self.always_show_recipients != on {
+                    self.always_show_recipients = on;
+                    self.save_settings();
+                    self.message_view.emit(MessageViewInput::SetAlwaysShowRecipients(on));
+                    // Re-render whatever is open so the header reflects it.
+                    if self.current_thread.len() > 1 {
+                        self.show_thread();
+                    } else if let Some(current) = self.current.clone() {
+                        let m = self.with_cached_body(current);
+                        self.show_message(Some(m), false);
+                    }
+                }
+            }
+
+            AppMsg::SetSingleMessageCard(on) => {
+                if self.single_message_card != on {
+                    self.single_message_card = on;
+                    self.save_settings();
+                    self.message_view.emit(MessageViewInput::SetSingleMessageCard(on));
+                    // Only lone messages change; re-render one if it's open.
+                    if self.current_thread.len() <= 1 {
+                        if let Some(current) = self.current.clone() {
+                            let m = self.with_cached_body(current);
+                            self.show_message(Some(m), false);
+                        }
+                    }
+                }
+            }
+
             AppMsg::SetPaletteCollapse(secs) => {
                 if self.palette_collapse_secs != secs {
                     self.palette_collapse_secs = secs;
@@ -4090,7 +4154,7 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            // Closing the combined Accounts & Preferences window drops both
+            // Closing the combined Settings window drops both
             // panels' components.
             AppMsg::ClosePreferences => {
                 self.prefs = None;
@@ -4797,6 +4861,9 @@ impl AppModel {
             self.threading,
             self.threads_expanded,
             self.thread_expansion,
+            self.thread_newest_first,
+            self.always_show_recipients,
+            self.single_message_card,
             self.confirm_thread_delete,
             self.message_theme,
             self.notifications_enabled,
@@ -4907,7 +4974,7 @@ impl AppModel {
 
         if !self.single_key.get() {
             let off = gtk::Label::new(Some(
-                "Single-key shortcuts are switched off. Turn them on in Preferences → Message List.",
+                "Single-key shortcuts are switched off. Turn them on in Settings → System & Appearance.",
             ));
             off.add_css_class("dim-label");
             off.set_wrap(true);
@@ -6021,8 +6088,15 @@ impl AppModel {
         } else {
             primary.body.is_empty()
         };
+        // Display order is a preference (#70): newest first flips the stored
+        // chronological order for rendering only — stepping (w/b) and the
+        // related-message bookkeeping stay chronological.
+        let mut thread = self.current_thread.clone();
+        if self.thread_newest_first {
+            thread.reverse();
+        }
         self.message_view.emit(MessageViewInput::Show {
-            thread: self.current_thread.clone(),
+            thread,
             allow_remote,
             account_name: Some(self.account_name(account_id)),
             account_color: Some(self.account_color(account_id)),
@@ -7362,6 +7436,9 @@ impl AppModel {
         }
         self.folder_unread.insert((account_id, folder_id), 0);
         self.send_to(account_id, MailRequest::MarkAllRead { folder_id, path });
+        // Everything here is read now — the account's new-mail notification
+        // included (issue #41).
+        crate::notify::withdraw_mail(account_id);
         self.refresh_list_display();
         self.push_unread_counts();
     }
@@ -7503,7 +7580,7 @@ impl AppModel {
         dialog.present();
     }
 
-    /// Open (or focus) the combined Accounts & Preferences window on the
+    /// Open (or focus) the combined Settings window on the
     /// requested panel. When `add_new`, jump straight to the "add account"
     /// form — used by the empty-state "Add first account" button.
     fn open_settings_window(
@@ -7593,6 +7670,9 @@ impl AppModel {
             palette_collapse_secs: self.palette_collapse_secs,
             threading: self.threading,
             threads_expanded: self.threads_expanded,
+            thread_newest_first: self.thread_newest_first,
+            always_show_recipients: self.always_show_recipients,
+            single_message_card: self.single_message_card,
             thread_expansion: self.thread_expansion,
             confirm_thread_delete: self.confirm_thread_delete,
             message_theme: self.message_theme,
@@ -7636,6 +7716,9 @@ impl AppModel {
                     AppMsg::SetConfirmThreadDelete(on)
                 }
                 PrefOutput::SetThreadsExpanded(on) => AppMsg::SetThreadsExpanded(on),
+                PrefOutput::SetThreadNewestFirst(on) => AppMsg::SetThreadNewestFirst(on),
+                PrefOutput::SetAlwaysShowRecipients(on) => AppMsg::SetAlwaysShowRecipients(on),
+                PrefOutput::SetSingleMessageCard(on) => AppMsg::SetSingleMessageCard(on),
                 PrefOutput::SetCardActionsMode { hover_toggle, hover_auto } => {
                     AppMsg::SetCardActionsMode { hover_toggle, hover_auto }
                 }
@@ -7944,6 +8027,12 @@ impl AppModel {
             return;
         };
         self.send_to(m.account_id, MailRequest::SetSeen { path, uid: m.uid, seen: read });
+        if read {
+            // The mail was read (or marked read) in the app — the desktop
+            // notification for this account's new mail is answered, clear it
+            // instead of leaving it stranded in the panel (issue #41).
+            crate::notify::withdraw_mail(m.account_id);
+        }
         self.message_list
             .emit(MessageListInput::SetRead { id: m.id, read });
         self.set_cached_unread(m.account_id, m.id, !read);
@@ -8908,18 +8997,64 @@ fn forward_prefill(m: &Message) -> ComposePrefill {
     } else {
         format!("Fwd: {}", m.subject)
     };
-    let text = message_text(&m.body);
     let header = format!(
         "---------- Forwarded message ----------\nFrom: {} <{}>\nDate: {}\nSubject: {}",
         m.from_name, m.from_addr, m.date, m.subject
     );
+    // Forward the body with its formatting, sanitized (issue #52): the
+    // original HTML is attacker-controlled, so it goes through ammonia —
+    // scripts, event handlers, styles and dangerous URLs are stripped; the
+    // structure (tables, links, headings, images) survives, so a forwarded
+    // invoice still looks like the invoice. Plain-text bodies keep the old
+    // escaped-text path.
+    let body_html = if m.body.contains('<') {
+        quote_block_html(&header, &sanitize_forward_html(&m.body))
+    } else {
+        quote_block(&header, &message_text(&m.body))
+    };
     ComposePrefill {
         to: String::new(),
         cc: String::new(),
         subject,
-        body_html: quote_block(&header, &text),
+        body_html,
         ..Default::default()
     }
+}
+
+/// Sanitize untrusted message HTML for the editable composer. Ammonia's
+/// (conservative) defaults, widened with the structural tags and presentation
+/// attributes mail bodies lean on — tables above all. No style attributes, no
+/// scripts/handlers ever, URLs limited to http/https/mailto.
+fn sanitize_forward_html(html: &str) -> String {
+    use std::collections::HashSet;
+    let mut b = ammonia::Builder::default();
+    b.add_tags(["table", "thead", "tbody", "tfoot", "tr", "td", "th", "font", "center", "u"])
+        .add_tag_attributes("table", ["width", "border", "cellpadding", "cellspacing", "align", "bgcolor"])
+        .add_tag_attributes("td", ["width", "height", "align", "valign", "colspan", "rowspan", "bgcolor"])
+        .add_tag_attributes("th", ["width", "height", "align", "valign", "colspan", "rowspan", "bgcolor"])
+        .add_tag_attributes("tr", ["align", "valign", "bgcolor"])
+        .add_tag_attributes("font", ["face", "size", "color"])
+        .add_tag_attributes("p", ["align"])
+        .add_tag_attributes("div", ["align"])
+        .add_tags(["img"])
+        .add_tag_attributes("img", ["src", "width", "height", "alt"])
+        .url_schemes(HashSet::from(["http", "https", "mailto"]));
+    b.clean(html).to_string()
+}
+
+/// Like [`quote_block`], but the quoted body is already-sanitized HTML.
+fn quote_block_html(attribution: &str, inner_html: &str) -> String {
+    let esc = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('\n', "<br>")
+    };
+    format!(
+        "<p class=\"vireo-quote-attr\">{}</p><blockquote>{}</blockquote>",
+        esc(attribution),
+        inner_html
+    )
 }
 
 /// Build the HTML quoted block (attribution line + blockquote) for a reply or
@@ -9149,6 +9284,37 @@ fn next_after_vanish(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn forward_sanitizer_strips_active_content() {
+        use super::sanitize_forward_html;
+        let dirty = r#"<table><tr><td onclick="evil()">Total: <b>$40</b></td></tr></table>
+            <script>steal()</script>
+            <img src="javascript:alert(1)">
+            <a href="https://example.com" onmouseover="x()">pay</a>
+            <div style="background:url(https://tracker.example/p.gif)">hi</div>"#;
+        let clean = sanitize_forward_html(dirty);
+        assert!(!clean.contains("script"), "{clean}");
+        assert!(!clean.contains("onclick") && !clean.contains("onmouseover"), "{clean}");
+        assert!(!clean.contains("javascript:"), "{clean}");
+        assert!(!clean.contains("style"), "{clean}");
+        // The structure and safe pieces survive.
+        assert!(clean.contains("<table>") && clean.contains("<b>$40</b>"), "{clean}");
+        assert!(clean.contains(r#"<a href="https://example.com""#), "{clean}");
+    }
+
+    #[test]
+    fn forward_sanitizer_keeps_presentation_attributes() {
+        use super::sanitize_forward_html;
+        let html = r##"<table width="600" border="0"><tr><td align="right" bgcolor="#eeeeee">
+            <font color="#333333" size="2">Invoice</font></td></tr></table>
+            <img src="https://example.com/logo.png" width="120" alt="logo">"##;
+        let clean = sanitize_forward_html(html);
+        for keep in ["width=\"600\"", "align=\"right\"", "bgcolor=\"#eeeeee\"",
+                     "color=\"#333333\"", "src=\"https://example.com/logo.png\""] {
+            assert!(clean.contains(keep), "missing {keep} in {clean}");
+        }
+    }
+
     #[test]
     fn identities_split_into_name_and_address() {
         use super::split_identity;
