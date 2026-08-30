@@ -2005,10 +2005,18 @@ impl SimpleComponent for AppModel {
                     // pointer this captures the expanded panel, but the cache
                     // is refreshed again on the next rail hover before it is
                     // ever shown.
+                    // Only cache while the pane really is the rail: the pane
+                    // also "enters" under a stationary pointer whenever the
+                    // peek panel slides in or out beneath it, and caching the
+                    // expanded panel here is what used to hand the ghost strip
+                    // an oversized snapshot (aspect-scaled to ~146px, shoving
+                    // the panes sideways on the next open).
                     if let Some(pane) = pane_weak.upgrade() {
-                        use gtk::gdk::prelude::PaintableExt;
-                        let live = gtk::WidgetPaintable::new(Some(&pane));
-                        *snap.borrow_mut() = Some(live.current_image());
+                        if pane.width() <= SIDEBAR_RAIL_WIDTH as i32 {
+                            use gtk::gdk::prelude::PaintableExt;
+                            let live = gtk::WidgetPaintable::new(Some(&pane));
+                            *snap.borrow_mut() = Some(live.current_image());
+                        }
                     }
                     if let Some(prev) = pending.borrow_mut().take() {
                         prev.remove();
@@ -5496,11 +5504,26 @@ impl AppModel {
             // to buy a one-frame layout shift underneath the panel.
             let ghost_img = self.peek_rail_ghost.clone().map(|ghost| {
                 use gtk::gdk::prelude::PaintableExt;
-                let img = self.rail_snapshot.borrow().clone().or_else(|| {
-                    split
-                        .sidebar()
-                        .map(|side| gtk::WidgetPaintable::new(Some(&side)).current_image())
-                });
+                // Reject a cached snapshot that isn't rail-shaped: the ghost's
+                // Picture aspect-scales its paintable, so anything wider than
+                // rail/height would grow the strip and shove the panes over.
+                let rail_shaped = |img: &gtk::gdk::Paintable| {
+                    let h = split.sidebar().map(|s| s.height()).unwrap_or(0);
+                    h <= 0
+                        || img.intrinsic_height() <= 0
+                        || img.intrinsic_width() * h
+                            <= (SIDEBAR_RAIL_WIDTH as i32 + 2) * img.intrinsic_height()
+                };
+                let img = self
+                    .rail_snapshot
+                    .borrow()
+                    .clone()
+                    .filter(rail_shaped)
+                    .or_else(|| {
+                        split
+                            .sidebar()
+                            .map(|side| gtk::WidgetPaintable::new(Some(&side)).current_image())
+                    });
                 (ghost, img)
             });
             if sync_rows {
