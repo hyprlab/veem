@@ -167,6 +167,13 @@ headerbar.rail-header {
   padding: 0;
 }
 
+/* Match the account headers' height below it (avatar + two-line name/email
+   push those taller than this row's single line of text would be on its
+   own) — content stays vertically centred within the extra room. */
+.unified-row {
+  min-height: 53px;
+}
+
 /* Header disclosure chevrons ("All Inboxes", each account) are overlaid on
    the row's left edge (see sidebar.rs) rather than packed into the row's
    own layout — they reserve no space of their own, so the icon/avatar and
@@ -176,7 +183,7 @@ headerbar.rail-header {
    bare icon like the account headers below, so it needs a bigger pull-in
    to land the icon — not just the button's own edge — on the same column. */
 .row-disclosure-chevron {
-  margin-left: -9px;
+  margin-left: -5px;
   opacity: 0.6;
 }
 
@@ -185,7 +192,7 @@ headerbar.rail-header {
    has no such wrapper padding, so left as-is the two chevrons land 12px
    apart. This pulls the header's back in to match. */
 .account-header .row-disclosure-chevron {
-  margin-left: -8px;
+  margin-left: -4px;
 }
 
 /* Draggable account rows in the Accounts window. */

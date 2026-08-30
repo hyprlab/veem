@@ -1150,12 +1150,16 @@ impl Sidebar {
                 hbox.append(&overlay);
                 self.unified_badge = Some(badge);
             } else {
-                img.set_margin_start(ROW_LEFT_INSET);
+                // Centers this 16px icon on the 30px avatar below it (rather
+                // than matching left edges), since a small icon flush with a
+                // much wider circle's left edge reads as off-centre next to it.
+                img.set_margin_start(ROW_LEFT_INSET + 9);
                 hbox.append(&img);
                 let label = gtk::Label::new(Some("All Inboxes"));
                 label.set_hexpand(true);
                 label.set_halign(gtk::Align::Start);
                 label.add_css_class("account-name");
+                label.set_margin_start(-2);
                 hbox.append(&label);
                 // The label absorbs the row's slack, same as every other
                 // row, so this pill's right edge lands in the same column as
@@ -1544,9 +1548,10 @@ impl Sidebar {
             circle_badge.set_visible(section.collapsed && inbox_unread > 0);
             self.account_circle_badges.insert(id, circle_badge);
             if !self.collapsed {
-                // Leaves room for the overlaid disclosure chevron below,
-                // which would otherwise sit right on top of the avatar.
-                circle_overlay.set_margin_start(ROW_LEFT_INSET + 4);
+                // Leaves room for the overlaid disclosure chevron, which
+                // would otherwise sit right on top of the avatar — a bit
+                // more than the minimum, so the two aren't touching.
+                circle_overlay.set_margin_start(ROW_LEFT_INSET + 8);
             }
             hbox.append(&circle_overlay);
 
@@ -1576,7 +1581,7 @@ impl Sidebar {
                 // avatar's corner and overhangs its right edge (see
                 // `.unread-badge-mini`'s negative margin), which this keeps
                 // clear of the name.
-                vbox.set_margin_start(6);
+                vbox.set_margin_start(8);
                 let name = gtk::Label::new(Some(&name_str));
                 name.set_halign(gtk::Align::Start);
                 name.set_ellipsize(gtk::pango::EllipsizeMode::End);
