@@ -7239,26 +7239,45 @@ impl AppModel {
     ) -> (u32, ComposeInit) {
         // Selectable "from" identities, in display order: each account, then
         // one entry per send-as alias it defines (#34) — same transport and
-        // signature, a different From on the wire.
-        let accounts: Vec<ComposeAccount> = self
-            .ordered_emails()
+        // signature, a different From on the wire. Built from the CONFIG, not
+        // the live account list: launched cold by a mailto/file hand-off
+        // (Nautilus's "Send by email", #105) the composer opens before any
+        // worker has connected, and the live list is still empty — which
+        // hid the From row entirely.
+        let mut emails: Vec<String> = Vec::new();
+        for email in &self.account_order {
+            if self.config.iter().any(|c| c.enabled && &c.email == email)
+                && !emails.contains(email)
+            {
+                emails.push(email.clone());
+            }
+        }
+        for c in self.config.iter().filter(|c| c.enabled) {
+            if !emails.contains(&c.email) {
+                emails.push(c.email.clone());
+            }
+        }
+        let accounts: Vec<ComposeAccount> = emails
             .iter()
             .flat_map(|email| {
-                let Some(a) = self.accounts.iter().find(|a| &a.email == email) else {
+                let Some((idx, cfg)) =
+                    self.config.iter().enumerate().find(|(_, c)| &c.email == email)
+                else {
                     return Vec::new();
                 };
-                let label = if a.name.trim().is_empty() {
-                    a.email.clone()
+                let id = idx as u32 + 1;
+                let label = if cfg.name.trim().is_empty() {
+                    cfg.email.clone()
                 } else {
-                    format!("{} <{}>", a.name, a.email)
+                    format!("{} <{}>", cfg.name, cfg.email)
                 };
-                let cfg = self.config.get(a.id.saturating_sub(1) as usize);
+                let cfg = Some(cfg);
                 let signature = cfg.and_then(|c| c.signature.clone()).unwrap_or_default();
                 let mut identities = vec![ComposeAccount {
-                    id: a.id,
+                    id,
                     label,
                     signature: signature.clone(),
-                    email: a.email.clone(),
+                    email: email.clone(),
                     alias_from: None,
                 }];
                 for alias in cfg.map(|c| c.aliases.as_slice()).unwrap_or_default() {
@@ -7272,7 +7291,7 @@ impl AppModel {
                         format!("{name} <{addr}>")
                     };
                     identities.push(ComposeAccount {
-                        id: a.id,
+                        id,
                         label: display.clone(),
                         signature: signature.clone(),
                         email: addr,
@@ -7301,7 +7320,7 @@ impl AppModel {
             .unwrap_or(0);
 
         // Exclude the user's own addresses from recipient suggestions.
-        let own: Vec<String> = self.accounts.iter().map(|a| a.email.clone()).collect();
+        let own: Vec<String> = self.config.iter().map(|c| c.email.clone()).collect();
         let id = self.next_compose_id;
         self.next_compose_id += 1;
         let init = ComposeInit {
