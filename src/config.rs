@@ -771,6 +771,9 @@ struct PrivacyFile {
     /// the status bar. Off by default.
     #[serde(default)]
     console_mode: bool,
+    /// Read-marking policy (#100).
+    #[serde(default)]
+    read_mark: ReadMark,
 }
 
 fn default_chevrons_left() -> bool {
@@ -872,6 +875,7 @@ impl Default for PrivacyFile {
             unified_chip: default_unified_chip(),
             chevrons_left: default_chevrons_left(),
             console_mode: false,
+            read_mark: ReadMark::default(),
             gravatar: false,
             avatars: default_avatars(),
             sender_logos: false,
@@ -1011,6 +1015,23 @@ pub fn load_chevrons_left() -> bool {
 
 pub fn load_console_mode() -> bool {
     load_privacy().console_mode
+}
+
+/// When an opened message is marked read (#100).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadMark {
+    /// The moment it is shown (conversation members as they scroll into view).
+    #[default]
+    Shown,
+    /// After it has been in view for a couple of seconds.
+    Delay,
+    /// Never automatically; only an explicit mark-as-read.
+    Manual,
+}
+
+pub fn load_read_mark() -> ReadMark {
+    load_privacy().read_mark
 }
 
 
@@ -1310,6 +1331,7 @@ pub fn save_privacy(
     unified_chip: bool,
     chevrons_left: bool,
     console_mode: bool,
+    read_mark: ReadMark,
 ) {
     let Some(path) = privacy_path() else {
         return;
@@ -1358,6 +1380,7 @@ pub fn save_privacy(
         unified_chip,
         chevrons_left,
         console_mode,
+        read_mark,
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {

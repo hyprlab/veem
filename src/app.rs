@@ -372,6 +372,8 @@ pub struct AppModel {
     chevrons_left: bool,
     /// Console mode offered in the status bar (Settings → System & Appearance).
     console_mode: bool,
+    /// Read-marking policy (#100).
+    read_mark: config::ReadMark,
     /// Mail filter rules (#47), applied to inbox syncs.
     filters: Vec<config::FilterRule>,
     /// Lone messages render as inset cards (#57).
@@ -712,6 +714,11 @@ pub enum AppMsg {
     SetConsoleMode(bool),
     /// The list header's unread quick filter (#97).
     SetUnreadFilter(bool),
+    /// Delay-policy read marking (#100): fires a couple of seconds after a
+    /// message opened; only applies if it is still the one on screen.
+    DeferredMarkRead { message: Box<Message> },
+    /// Settings → Reading → "Mark as read" changed.
+    SetReadMark(config::ReadMark),
     /// The list header's starred quick filter.
     SetStarredFilter(bool),
     /// Backup (#50): save/load the whole configuration as one file.
@@ -1743,6 +1750,7 @@ impl SimpleComponent for AppModel {
             unified_chip: config::load_unified_chip(),
             chevrons_left: config::load_chevrons_left(),
             console_mode: config::load_console_mode(),
+            read_mark: config::load_read_mark(),
             filters: config::load_filters(),
             single_message_card: config::load_single_message_card(),
             thread_expansion: config::load_thread_expansion(),
@@ -1835,6 +1843,9 @@ impl SimpleComponent for AppModel {
                 model.welcome = Some(welcome);
             }
         }
+        model
+            .message_view
+            .emit(MessageViewInput::SetReadMark(model.read_mark));
         model
             .message_list
             .emit(MessageListInput::SetGravatar(model.gravatar));
@@ -3143,19 +3154,21 @@ impl SimpleComponent for AppModel {
                 let needs_body = cached_body.is_none();
 
                 if m.unread {
-                    if let Some(path) = folder_path.clone() {
-                        self.send_to(account_id, MailRequest::SetSeen { path, uid: m.uid, seen: true });
+                    match self.read_mark {
+                        config::ReadMark::Shown => self.mark_opened_read(&m),
+                        config::ReadMark::Delay => {
+                            // Mark after a beat in view — navigating away
+                            // before then leaves it unread (#100).
+                            let s = sender.clone();
+                            let msg = m.clone();
+                            gtk::glib::timeout_add_seconds_local_once(2, move || {
+                                s.input(AppMsg::DeferredMarkRead {
+                                    message: Box::new(msg.clone()),
+                                });
+                            });
+                        }
+                        config::ReadMark::Manual => {}
                     }
-                    // Reading new mail clears that account's new-mail notification.
-                    crate::notify::withdraw_mail(account_id);
-                    self.message_list.emit(MessageListInput::MarkRead(m.id));
-                    self.mark_cached_read(account_id, m.id);
-                    // Optimistically drop the badge by one; the next server count
-                    // (after the sync below) reconciles any drift.
-                    if let Some(n) = self.folder_unread.get_mut(&(account_id, m.folder_id)) {
-                        *n = n.saturating_sub(1);
-                    }
-                    self.push_unread_counts();
                 }
 
                 let mut current = m.clone();
@@ -4423,6 +4436,24 @@ impl SimpleComponent for AppModel {
                 self.message_list.emit(MessageListInput::SetUnreadOnly(on));
             }
 
+            AppMsg::DeferredMarkRead { message } => {
+                let still_current = self
+                    .current
+                    .as_ref()
+                    .is_some_and(|c| c.id == message.id && c.account_id == message.account_id);
+                if still_current {
+                    self.mark_opened_read(&message);
+                }
+            }
+
+            AppMsg::SetReadMark(policy) => {
+                if self.read_mark != policy {
+                    self.read_mark = policy;
+                    self.save_settings();
+                    self.message_view.emit(MessageViewInput::SetReadMark(policy));
+                }
+            }
+
             AppMsg::SetStarredFilter(on) => {
                 self.message_list.emit(MessageListInput::SetStarredOnly(on));
             }
@@ -5109,6 +5140,9 @@ impl SimpleComponent for AppModel {
                 }
                 self.message_list.emit(MessageListInput::MarkRead(id));
                 self.mark_cached_read(account_id, id);
+                // The card's dot clears in place as the viewport observer
+                // marks it (#100) — this path never told the view before.
+                self.message_view.emit(MessageViewInput::ClearDot { account_id, id });
                 if let Some(n) = self.folder_unread.get_mut(&(account_id, folder_id)) {
                     *n = n.saturating_sub(1);
                 }
@@ -5458,6 +5492,7 @@ impl AppModel {
             self.unified_chip,
             self.chevrons_left,
             self.console_mode,
+            self.read_mark,
         );
     }
 
@@ -5934,6 +5969,25 @@ impl AppModel {
                 .cloned(),
             _ => None,
         }
+    }
+
+    /// The open-marks-read side effects for the just-selected message (#100):
+    /// server flag, list row, cached copy, badges, notification.
+    fn mark_opened_read(&mut self, m: &Message) {
+        let account_id = m.account_id;
+        if let Some(path) = self.resolve_folder_path(m) {
+            self.send_to(account_id, MailRequest::SetSeen { path, uid: m.uid, seen: true });
+        }
+        // Reading new mail clears that account's new-mail notification.
+        crate::notify::withdraw_mail(account_id);
+        self.message_list.emit(MessageListInput::MarkRead(m.id));
+        self.mark_cached_read(account_id, m.id);
+        // Optimistically drop the badge by one; the next server count
+        // reconciles any drift.
+        if let Some(n) = self.folder_unread.get_mut(&(account_id, m.folder_id)) {
+            *n = n.saturating_sub(1);
+        }
+        self.push_unread_counts();
     }
 
     /// Whether a star toggle aimed at `m` should act on the whole open
@@ -8379,6 +8433,7 @@ impl AppModel {
             unified_chip: self.unified_chip,
             chevrons_left: self.chevrons_left,
             console_mode: self.console_mode,
+            read_mark: self.read_mark,
             settings_open_accounts: self.settings_open_accounts,
             sidebar_hover_expand: self.sidebar_hover_expand,
             card_actions_hover: self.card_actions_hover,
@@ -8432,6 +8487,7 @@ impl AppModel {
                 PrefOutput::SetUnifiedChip(show) => AppMsg::SetUnifiedChip(show),
                 PrefOutput::SetChevronsLeft(left) => AppMsg::SetChevronsLeft(left),
                 PrefOutput::SetConsoleMode(on) => AppMsg::SetConsoleMode(on),
+                PrefOutput::SetReadMark(policy) => AppMsg::SetReadMark(policy),
                 PrefOutput::ExportSettings => AppMsg::ExportSettings,
                 PrefOutput::ImportSettings => AppMsg::ImportSettings,
                 PrefOutput::SetSidebarHoverExpand(on) => {

@@ -52,6 +52,7 @@ pub struct PrefInit {
     pub unified_chip: bool,
     pub chevrons_left: bool,
     pub console_mode: bool,
+    pub read_mark: crate::config::ReadMark,
     pub sidebar_hover_expand: bool,
     pub preview_lines: u32,
     pub single_key_shortcuts: bool,
@@ -200,6 +201,7 @@ pub enum PrefInput {
     ChangePreviewLines(u32),
     ToggleSingleKey(bool),
     ToggleConsoleMode(bool),
+    ChangeReadMark(u32),
     ExportSettings,
     ImportSettings,
     ToggleRunInBackground(bool),
@@ -245,6 +247,7 @@ pub enum PrefOutput {
     SetUnifiedChip(bool),
     SetChevronsLeft(bool),
     SetConsoleMode(bool),
+    SetReadMark(crate::config::ReadMark),
     ExportSettings,
     ImportSettings,
     SetSidebarHoverExpand(bool),
@@ -545,6 +548,17 @@ impl Component for Preferences {
 
                     add = &adw::PreferencesGroup {
                         set_title: "Reading",
+
+                        #[name = "read_mark_row"]
+                        adw::ComboRow {
+                            set_title: "Mark as read",
+                            set_subtitle: "When an opened message counts as read. \
+                                           Conversations mark each message as it \
+                                           comes into view.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeReadMark(row.selected()));
+                            },
+                        },
 
                         #[name = "message_theme_row"]
                         adw::ComboRow {
@@ -885,6 +899,17 @@ impl Component for Preferences {
         }
         widgets.single_key_row.set_active(init.single_key_shortcuts);
         widgets.console_mode_row.set_active(init.console_mode);
+        widgets.read_mark_row.set_model(Some(&gtk::StringList::new(&[
+            "When displayed",
+            "After two seconds",
+            "Manually",
+        ])));
+        no_truncate(&widgets.read_mark_row);
+        widgets.read_mark_row.set_selected(match init.read_mark {
+            crate::config::ReadMark::Shown => 0,
+            crate::config::ReadMark::Delay => 1,
+            crate::config::ReadMark::Manual => 2,
+        });
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
         widgets.thread_newest_first_row.set_active(init.thread_newest_first);
@@ -1095,6 +1120,14 @@ impl Component for Preferences {
             }
             PrefInput::ToggleConsoleMode(on) => {
                 let _ = sender.output(PrefOutput::SetConsoleMode(on));
+            }
+            PrefInput::ChangeReadMark(idx) => {
+                let policy = match idx {
+                    1 => crate::config::ReadMark::Delay,
+                    2 => crate::config::ReadMark::Manual,
+                    _ => crate::config::ReadMark::Shown,
+                };
+                let _ = sender.output(PrefOutput::SetReadMark(policy));
             }
             PrefInput::ExportSettings => {
                 let _ = sender.output(PrefOutput::ExportSettings);

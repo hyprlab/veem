@@ -35,6 +35,9 @@ pub struct MessageView {
     /// having them in view can't undo the thing the user just asked for. Cleared
     /// whenever a conversation is opened afresh.
     no_autoread: std::collections::HashSet<(u32, u32)>,
+    /// Read-marking policy (#100), stamped on the document for the
+    /// viewport observer.
+    read_mark: crate::config::ReadMark,
     /// Whether the blocked-content banner is shown at all. It gates only the notice: `blocked`
     /// still governs what is withheld, so hiding it never loads anything.
     show_banner: bool,
@@ -311,6 +314,8 @@ pub enum MessageViewInput {
     /// A message's star changed outside the card (list row, toolbar): sync
     /// the card's star button without a re-render.
     SetCardStar { account_id: u32, id: u32, starred: bool },
+    /// Read-marking policy changed (#100).
+    SetReadMark(crate::config::ReadMark),
     /// A split reply opened for this message (#86): scroll its card to the
     /// top of the (now shorter) reader and give it the selection outline, so
     /// the message being answered is the one in view.
@@ -573,6 +578,7 @@ impl Component for MessageView {
             folder_labels: std::collections::HashMap::new(),
             blocked: false,
             no_autoread: std::collections::HashSet::new(),
+            read_mark: crate::config::ReadMark::default(),
             show_banner: crate::config::load_show_remote_banner(),
             card_actions_hover: crate::config::load_card_actions_hover(),
             card_actions_auto: crate::config::load_card_actions_auto(),
@@ -1047,6 +1053,11 @@ impl Component for MessageView {
                 self.frame_heights.insert((account_id, id), height);
             }
             MessageViewInput::MarkSeen { account_id, id } => {
+                // A deliberate unread mark stands until the conversation is
+                // reopened — the viewport observer must not undo it.
+                if self.no_autoread.contains(&(account_id, id)) {
+                    return;
+                }
                 // Keep the local copy in step so a later re-render doesn't put
                 // the mark back on a message already read.
                 let mut found = false;
@@ -1110,6 +1121,14 @@ impl Component for MessageView {
                             tracing::warn!("clear-dot patch failed: {e}");
                         }
                     });
+            }
+            MessageViewInput::SetReadMark(policy) => {
+                if self.read_mark != policy {
+                    self.read_mark = policy;
+                    if self.current.is_some() && !self.loading {
+                        self.render();
+                    }
+                }
             }
             MessageViewInput::SetCardStar { account_id, id, starred } => {
                 for m in self.thread.iter_mut() {
@@ -1279,8 +1298,28 @@ impl MessageView {
             " data-vireo-actsdelay=\"{}\"",
             self.palette_collapse_secs.max(1) * 1000
         );
-        let html =
-            html.replacen("<body", &format!("<body{noscroll}{hover}{delay}"), 1);
+        // The newest member, for the open-scroll fallback (#101): with no
+        // unread mail the reader lands on the newest message rather than
+        // wherever the document happens to start.
+        let newest = self
+            .thread
+            .iter()
+            .max_by_key(|m| m.timestamp)
+            .filter(|_| self.thread.len() > 1)
+            .map(|m| format!(" data-vireo-newest=\"{}:{}\"", m.account_id, m.id))
+            .unwrap_or_default();
+        // Read-marking policy (#100): the observer marks conversation members
+        // as they come into view; "manual" installs no observer at all.
+        let readmark = match self.read_mark {
+            crate::config::ReadMark::Shown => " data-vireo-readmark=\"250\"",
+            crate::config::ReadMark::Delay => " data-vireo-readmark=\"2000\"",
+            crate::config::ReadMark::Manual => "",
+        };
+        let html = html.replacen(
+            "<body",
+            &format!("<body{noscroll}{hover}{delay}{newest}{readmark}"),
+            1,
+        );
         self.did_autoscroll = true;
         let n = self.seq.get().wrapping_add(1);
         self.seq.set(n);
@@ -2009,6 +2048,10 @@ fn new_webview() -> webkit6::WebView {
     // `sandbox`ed iframe WITHOUT `allow-scripts`, so message scripts never run.
     settings.set_enable_javascript(true);
     settings.set_enable_developer_extras(false);
+    // JS console output lands on stdout, where the tracing/console-mode
+    // pipeline can pick it up — a silent script error in the wrapper document
+    // otherwise kills card interactions with no trace at all.
+    settings.set_enable_write_console_messages_to_stdout(true);
     webview.set_settings(&settings);
 
     // "Save Image As…" on a right-clicked image. WebKit's own item hands the
@@ -3312,7 +3355,10 @@ setTimeout(pin,0);}}return;}\
 var ds=document.querySelectorAll('.vireo-msg .vireo-dot');\
 var d=ds.length?ds[0]:null;\
 if(d){var m=d.closest('.vireo-msg');\
-if(m)setTimeout(function(){try{follow=m;m.scrollIntoView({block:'start'});}catch(_){}},0);}}\
+if(m)setTimeout(function(){try{follow=m;m.scrollIntoView({block:'start'});}catch(_){}},0);}\
+else if(bd.vireoNewest){\
+var nm=document.querySelector('.vireo-msg[data-key=\"'+bd.vireoNewest+'\"]');\
+if(nm)setTimeout(function(){try{follow=nm;nm.scrollIntoView({block:'start'});}catch(_){}},0);}}\
 setTimeout(markClipped,0);setTimeout(markClipped,400);\
 if(!pend)ready();\
 for(var i=0;i<fs.length;i++){(function(f){var counted=false;\
@@ -3323,6 +3369,19 @@ setTimeout(ready,450);\
 var hs=document.querySelectorAll('.vireo-msg-hdr');\
 for(var j=0;j<hs.length;j++){hs[j].addEventListener('dblclick',function(){\
 try{window.webkit.messageHandlers.vireo.postMessage('open:'+this.dataset.key);}catch(_){}});}\
+var rbd=document.body.dataset;\
+if(rbd.vireoReadmark&&document.body.classList.contains('vireo-conv')){\
+var rdel=parseInt(rbd.vireoReadmark,10)||250;var rt={};\
+var rio=new IntersectionObserver(function(es){es.forEach(function(en){\
+var el=en.target,k=el.dataset.key;\
+var vis=en.intersectionRatio>=0.5||en.intersectionRect.height>window.innerHeight*0.6;\
+if(vis&&!rt[k]){rt[k]=setTimeout(function(){\
+try{window.webkit.messageHandlers.vireo.postMessage('seen:'+k);}catch(_){}\
+rio.unobserve(el);},rdel);}\
+else if(!vis&&rt[k]){clearTimeout(rt[k]);delete rt[k];}\
+});},{threshold:[0,0.25,0.5,0.75,1]});\
+var rsecs=document.querySelectorAll('.vireo-msg');\
+for(var ri=0;ri<rsecs.length;ri++){if(rsecs[ri].querySelector('.vireo-dot'))rio.observe(rsecs[ri]);}}\
 var rs=document.querySelectorAll('.vireo-rcpt-toggle');\
 for(var r=0;r<rs.length;r++){rs[r].addEventListener('click',function(e){\
 e.stopPropagation();e.preventDefault();\
@@ -3923,6 +3982,29 @@ mod tests {
         // The cards sit on the deeper page — the same colour the spinner and the
         // cover behind the WebView are painted, so the handover is invisible.
         assert!(doc.contains(&format!("background:{}", PAGE.0)), "page ground: {doc}");
+    }
+
+    #[test]
+    fn dump_doc_tmp() {
+        let mut first = msg_for_print();
+        first.body = "<p>opening</p>".into();
+        first.unread = true;
+        let mut second = msg_for_print();
+        second.id = 2;
+        second.body = "<p>reply</p>".into();
+        let doc = MessageView::conversation_document(
+            &[first, second],
+            &std::collections::HashMap::new(),
+            &Default::default(),
+            &Default::default(),
+            &[],
+            "#3584e4",
+            true,
+            false,
+            false,
+            false,
+        );
+        std::fs::write("/tmp/claude-1000/-home-jason-Dev-vireo/a13cb451-6479-4834-85d6-44ce8feadb9d/scratchpad/doc-dump.html", doc).unwrap();
     }
 
     /// Each card names everyone the message went to, collapsed behind a chip so
