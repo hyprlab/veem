@@ -369,6 +369,8 @@ pub struct AppModel {
     chevrons_left: bool,
     /// Console mode offered in the status bar (Settings → System & Appearance).
     console_mode: bool,
+    /// Mail filter rules (#47), applied to inbox syncs.
+    filters: Vec<config::FilterRule>,
     /// Lone messages render as inset cards (#57).
     single_message_card: bool,
     /// Whether conversation rows may expand into their members in the list
@@ -705,6 +707,15 @@ pub enum AppMsg {
     OpenConsole,
     /// Settings toggle for offering console mode at all.
     SetConsoleMode(bool),
+    /// Backup (#50): save/load the whole configuration as one file.
+    ExportSettings,
+    ImportSettings,
+    /// The filter rules changed in Settings (#47).
+    SetFilters(Vec<config::FilterRule>),
+    /// Second stage of ImportSettings: the chosen file, applied on a clean
+    /// main-loop turn (working inside the chooser's completion callback froze
+    /// the app when the confirmation dialog presented there).
+    ImportSettingsFrom(std::path::PathBuf),
     /// GNOME Online Accounts changed on the session bus. Carries the fresh live
     /// state, already fetched (debounced) on the watcher thread so the GTK main
     /// thread never does D-Bus I/O — re-reconcile against it.
@@ -1697,6 +1708,7 @@ impl SimpleComponent for AppModel {
             unified_chip: config::load_unified_chip(),
             chevrons_left: config::load_chevrons_left(),
             console_mode: config::load_console_mode(),
+            filters: config::load_filters(),
             single_message_card: config::load_single_message_card(),
             thread_expansion: config::load_thread_expansion(),
             confirm_thread_delete: config::load_confirm_thread_delete(),
@@ -4344,6 +4356,113 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetFilters(rules) => {
+                config::save_filters(&rules);
+                self.filters = rules;
+                // File whatever already sits in the inboxes under the new
+                // rules; reuses the blacklist's re-sync sweep.
+                self.sweep_blacklisted();
+            }
+
+            AppMsg::ExportSettings => {
+                let dialog = gtk::FileDialog::builder()
+                    .title("Export Settings")
+                    .initial_name("vireo-settings.toml")
+                    .build();
+                let win = self.window.clone();
+                let notif = self.notifications.sender().clone();
+                dialog.save(Some(&win), gtk::gio::Cancellable::NONE, move |res| {
+                    let Ok(file) = res else { return };
+                    let Some(path) = file.path() else { return };
+                    let outcome = crate::config::export_bundle()
+                        .and_then(|t| std::fs::write(&path, t).map_err(|e| e.to_string()));
+                    let _ = notif.send(match outcome {
+                        Ok(()) => NotifyInput::Push {
+                            text: format!("Settings exported to {}", path.display()),
+                            error: false,
+                            connectivity: false,
+                        },
+                        Err(e) => NotifyInput::Push {
+                            text: format!("Export failed: {e}"),
+                            error: true,
+                            connectivity: false,
+                        },
+                    });
+                });
+            }
+
+            AppMsg::ImportSettings => {
+                let dialog = gtk::FileDialog::builder().title("Import Settings").build();
+                let win = self.window.clone();
+                let s = sender.clone();
+                dialog.open(Some(&win), gtk::gio::Cancellable::NONE, move |res| {
+                    // Only carry the choice out of the chooser's callback —
+                    // the work (and any dialog) runs on a clean loop turn.
+                    if let Ok(file) = res {
+                        if let Some(path) = file.path() {
+                            s.input(AppMsg::ImportSettingsFrom(path));
+                        }
+                    }
+                });
+            }
+
+            AppMsg::ImportSettingsFrom(path) => {
+                let outcome = std::fs::read_to_string(&path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|t| crate::config::import_bundle(&t));
+                match outcome {
+                    Ok(n) => {
+                        // Imported files are on disk; the running model still
+                        // holds the old world, so a clean restart is the
+                        // honest way to apply everything at once.
+                        // Parent on whichever window is focused (Settings,
+                        // normally) — a modal behind the focused window reads
+                        // as a freeze.
+                        let parent = relm4::main_application()
+                            .active_window()
+                            .unwrap_or_else(|| self.window.clone().upcast());
+                        let alert = adw::MessageDialog::new(
+                            Some(&parent),
+                            Some("Settings Imported"),
+                            Some(&format!(
+                                "{n} account(s) and all preferences were imported. \
+                                 Restart Vireo to apply them. Account passwords are \
+                                 not part of a backup; re-enter them on first \
+                                 connection if this is a new machine."
+                            )),
+                        );
+                        alert.add_response("later", "Later");
+                        alert.add_response("restart", "Restart Vireo");
+                        alert
+                            .set_response_appearance("restart", adw::ResponseAppearance::Suggested);
+                        alert.connect_response(None, |_, resp| {
+                            if resp == "restart" {
+                                // A detached shell starts the next instance
+                                // once this one has quit and released its
+                                // D-Bus name (started immediately, the new
+                                // instance would just relay to the dying
+                                // primary and exit).
+                                if let Ok(exe) = std::env::current_exe() {
+                                    let _ = std::process::Command::new("sh")
+                                        .arg("-c")
+                                        .arg(format!("sleep 1.5; exec '{}'", exe.display()))
+                                        .spawn();
+                                }
+                                relm4::main_application().quit();
+                            }
+                        });
+                        alert.present();
+                    }
+                    Err(e) => {
+                        self.notifications.emit(NotifyInput::Push {
+                            text: format!("Import failed: {e}"),
+                            error: true,
+                            connectivity: false,
+                        });
+                    }
+                }
+            }
+
             AppMsg::SetConsoleMode(on) => {
                 if self.console_mode != on {
                     self.console_mode = on;
@@ -4610,6 +4729,7 @@ impl SimpleComponent for AppModel {
                 // Auto-delete blacklisted senders from the inbox before anything
                 // else sees them.
                 let messages = self.apply_blacklist(account_id, folder_id, messages);
+                let messages = self.apply_filters(account_id, folder_id, messages);
                 // Did this sync remove the message currently open in the reader
                 // (deleted/moved on another device)? Scope the check to the reader's
                 // own folder so a folder switch or another folder's sync doesn't
@@ -8140,6 +8260,9 @@ impl AppModel {
             unified_chip: self.unified_chip,
             chevrons_left: self.chevrons_left,
             console_mode: self.console_mode,
+            filters: self.filters.clone(),
+            filter_accounts: self.config.iter().map(|c| c.email.clone()).collect(),
+            filter_folders: self.folder_choice_map(),
             settings_open_accounts: self.settings_open_accounts,
             sidebar_hover_expand: self.sidebar_hover_expand,
             card_actions_hover: self.card_actions_hover,
@@ -8197,6 +8320,9 @@ impl AppModel {
                 PrefOutput::SetUnifiedChip(show) => AppMsg::SetUnifiedChip(show),
                 PrefOutput::SetChevronsLeft(left) => AppMsg::SetChevronsLeft(left),
                 PrefOutput::SetConsoleMode(on) => AppMsg::SetConsoleMode(on),
+                PrefOutput::ExportSettings => AppMsg::ExportSettings,
+                PrefOutput::ImportSettings => AppMsg::ImportSettings,
+                PrefOutput::SetFilters(rules) => AppMsg::SetFilters(rules),
                 PrefOutput::SetSidebarHoverExpand(on) => {
                     AppMsg::SetSidebarHoverExpand(on)
                 }
@@ -8716,6 +8842,67 @@ impl AppModel {
                 }
             } else {
                 kept.push(m);
+            }
+        }
+        kept
+    }
+
+    /// Apply the mail filter rules (#47) to an inbox sync, Evolution-style:
+    /// the first matching rule files the message into its folder; everything
+    /// else passes through. On-sight like the blacklist, so mail that arrived
+    /// while Vireo was closed still gets filed on the next sync.
+    fn apply_filters(
+        &self,
+        account_id: u32,
+        folder_id: u32,
+        messages: Vec<Message>,
+    ) -> Vec<Message> {
+        if self.filters.is_empty()
+            || self.inbox_of(account_id).map(|f| f.id) != Some(folder_id)
+        {
+            return messages;
+        }
+        let Some(email) = self.email_of(account_id) else { return messages };
+        let rules: Vec<&config::FilterRule> = self
+            .filters
+            .iter()
+            .filter(|r| r.account_email.eq_ignore_ascii_case(&email))
+            .collect();
+        if rules.is_empty() {
+            return messages;
+        }
+        let folders = self.folders.get(&account_id);
+        let src = folders
+            .and_then(|fs| fs.iter().find(|f| f.id == folder_id))
+            .map(|f| f.path.clone());
+        let known = |path: &str| folders.is_some_and(|fs| fs.iter().any(|f| f.path == path));
+        let mut kept = Vec::with_capacity(messages.len());
+        for m in messages {
+            let recipients = format!("{} {}", m.to, m.cc);
+            let hit = rules.iter().find(|r| {
+                r.matches(&m.from_addr, &m.from_name, &m.subject, &recipients)
+                    // A destination that vanished from the server keeps the
+                    // mail in the inbox rather than erroring it into limbo.
+                    && known(&r.dest_path)
+                    && src.as_deref() != Some(r.dest_path.as_str())
+            });
+            match (hit, &src) {
+                (Some(rule), Some(src)) => {
+                    tracing::info!(
+                        "filter: {} → {} ({:?} {:?} {:?})",
+                        m.from_addr,
+                        rule.dest_path,
+                        rule.field,
+                        rule.matcher,
+                        rule.value,
+                    );
+                    self.send_to(account_id, MailRequest::MoveMessage {
+                        path: src.clone(),
+                        uid: m.uid,
+                        dest: rule.dest_path.clone(),
+                    });
+                }
+                _ => kept.push(m),
             }
         }
         kept

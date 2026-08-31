@@ -1013,6 +1013,163 @@ pub fn load_console_mode() -> bool {
     load_privacy().console_mode
 }
 
+
+/// A mail filter rule (#47): file matching inbox arrivals into a folder,
+/// Evolution-style, applied client-side whenever Vireo syncs the inbox.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FilterRule {
+    /// The account this rule (and its destination folder) belongs to.
+    pub account_email: String,
+    /// Which header the rule inspects.
+    pub field: FilterField,
+    pub matcher: FilterMatch,
+    pub value: String,
+    /// Destination folder path on the account.
+    pub dest_path: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilterField {
+    FromAddress,
+    FromName,
+    Subject,
+    Recipients,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilterMatch {
+    Contains,
+    Equals,
+    StartsWith,
+    EndsWith,
+}
+
+impl FilterRule {
+    /// Case-insensitive match against a message's headers. `recipients`
+    /// should combine To and Cc.
+    pub fn matches(&self, from_addr: &str, from_name: &str, subject: &str, recipients: &str) -> bool {
+        let hay = match self.field {
+            FilterField::FromAddress => from_addr,
+            FilterField::FromName => from_name,
+            FilterField::Subject => subject,
+            FilterField::Recipients => recipients,
+        }
+        .to_lowercase();
+        let needle = self.value.to_lowercase();
+        if needle.is_empty() {
+            return false;
+        }
+        match self.matcher {
+            FilterMatch::Contains => hay.contains(&needle),
+            FilterMatch::Equals => hay == needle,
+            FilterMatch::StartsWith => hay.starts_with(&needle),
+            FilterMatch::EndsWith => hay.ends_with(&needle),
+        }
+    }
+}
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct FiltersFile {
+    #[serde(default)]
+    rules: Vec<FilterRule>,
+}
+
+fn filters_path() -> Option<PathBuf> {
+    Some(config_base()?.join("vireo").join("filters.toml"))
+}
+
+pub fn load_filters() -> Vec<FilterRule> {
+    let Some(path) = filters_path() else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+    toml::from_str::<FiltersFile>(&text).map(|f| f.rules).unwrap_or_default()
+}
+
+pub fn save_filters(rules: &[FilterRule]) {
+    let Some(path) = filters_path() else { return };
+    let file = FiltersFile { rules: rules.to_vec() };
+    match toml::to_string_pretty(&file) {
+        Ok(toml) => {
+            if let Err(e) = write_private(&path, &toml) {
+                tracing::warn!("could not save filters: {e}");
+            }
+        }
+        Err(e) => tracing::warn!("could not serialize filters: {e}"),
+    }
+}
+
+/// A portable settings bundle (#50): every configuration file Vireo keeps —
+/// preferences, accounts (colours, emoji, labels, aliases, folder roles and
+/// per-account push included), filters, sidebar layout, and window/pane
+/// state. Passwords and tokens never appear — their fields are
+/// skip_serializing, and they live in the keyring, not on disk.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SettingsBundle {
+    version: u32,
+    privacy: PrivacyFile,
+    #[serde(default)]
+    accounts: Vec<AccountConfig>,
+    #[serde(default)]
+    filters: Vec<FilterRule>,
+    #[serde(default)]
+    sidebar: Option<SidebarFile>,
+    #[serde(default)]
+    window: Option<WindowFile>,
+    #[serde(default)]
+    state: Option<StateFile>,
+}
+
+/// Parse one of the config directory's TOML files into its struct (None when
+/// absent or unreadable — the bundle simply omits it).
+fn read_file_struct<T: serde::de::DeserializeOwned>(path: Option<PathBuf>) -> Option<T> {
+    let text = std::fs::read_to_string(path?).ok()?;
+    toml::from_str(&text).ok()
+}
+
+/// Serialize a bundle section back to its config file.
+fn write_file_struct<T: serde::Serialize>(
+    path: Option<PathBuf>,
+    value: &Option<T>,
+) -> Result<(), String> {
+    let (Some(path), Some(value)) = (path, value) else { return Ok(()) };
+    let toml = toml::to_string_pretty(value).map_err(|e| e.to_string())?;
+    write_private(&path, &toml).map_err(|e| e.to_string())
+}
+
+/// The current configuration as a TOML bundle for Export Settings.
+pub fn export_bundle() -> Result<String, String> {
+    let bundle = SettingsBundle {
+        version: 1,
+        privacy: load_privacy(),
+        accounts: load().unwrap_or_default(),
+        filters: load_filters(),
+        sidebar: read_file_struct(sidebar_path()),
+        window: read_file_struct(window_path()),
+        state: read_file_struct(state_path()),
+    };
+    toml::to_string_pretty(&bundle).map_err(|e| e.to_string())
+}
+
+/// Parse and persist an exported bundle: privacy.toml and accounts.toml are
+/// replaced (via the same writers the app uses; the keyring is untouched
+/// since imported accounts carry no secrets). Returns the account count.
+pub fn import_bundle(text: &str) -> Result<usize, String> {
+    let bundle: SettingsBundle = toml::from_str(text).map_err(|e| e.to_string())?;
+    if bundle.version != 1 {
+        return Err(format!("unsupported bundle version {}", bundle.version));
+    }
+    let path = privacy_path().ok_or("no config directory")?;
+    let toml = toml::to_string_pretty(&bundle.privacy).map_err(|e| e.to_string())?;
+    write_private(&path, &toml).map_err(|e| e.to_string())?;
+    save(&bundle.accounts).map_err(|e| e.to_string())?;
+    save_filters(&bundle.filters);
+    write_file_struct(sidebar_path(), &bundle.sidebar)?;
+    write_file_struct(window_path(), &bundle.window)?;
+    write_file_struct(state_path(), &bundle.state)?;
+    Ok(bundle.accounts.len())
+}
+
 pub fn load_single_message_card() -> bool {
     load_privacy().single_message_card
 }
@@ -1693,5 +1850,101 @@ mod tests {
     fn notifications_can_be_disabled() {
         let p: PrivacyFile = toml::from_str("notifications = false").unwrap();
         assert!(!p.notifications);
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    fn rule(field: FilterField, matcher: FilterMatch, value: &str) -> FilterRule {
+        FilterRule {
+            account_email: "a@b.c".into(),
+            field,
+            matcher,
+            value: value.into(),
+            dest_path: "Archive".into(),
+        }
+    }
+
+    #[test]
+    fn filters_match_case_insensitively_per_field() {
+        let r = rule(FilterField::FromAddress, FilterMatch::Contains, "NEWS@");
+        assert!(r.matches("news@example.com", "", "", ""));
+        assert!(!r.matches("other@example.com", "News", "News", "News"));
+
+        let r = rule(FilterField::Subject, FilterMatch::StartsWith, "[list]");
+        assert!(r.matches("", "", "[LIST] hello", ""));
+        assert!(!r.matches("", "", "re: [list] hello", ""));
+
+        let r = rule(FilterField::Recipients, FilterMatch::Contains, "team@");
+        assert!(r.matches("", "", "", "me@x.org team@x.org"));
+
+        let r = rule(FilterField::FromName, FilterMatch::Equals, "Bank");
+        assert!(r.matches("", "bank", "", ""));
+        assert!(!r.matches("", "bankster", "", ""));
+
+        // An empty needle can never match (a half-filled rule stays inert).
+        let r = rule(FilterField::Subject, FilterMatch::Contains, "");
+        assert!(!r.matches("x", "x", "x", "x"));
+    }
+
+    #[test]
+    fn settings_bundle_roundtrip_parses() {
+        // Parse-and-serialize only (no disk, no keyring): the wire format
+        // itself must round-trip, secrets must never appear.
+        let mut acc = AccountConfig {
+            name: "A".into(),
+            email: "a@b.c".into(),
+            protocol: Default::default(),
+            imap_host: "imap.b.c".into(),
+            imap_port: 993,
+            smtp_host: String::new(),
+            smtp_port: 587,
+            username: "a@b.c".into(),
+            password: "SECRET".into(),
+            smtp_separate: false,
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+            color: None,
+            emoji: None,
+            signature: None,
+            signature_html: false,
+            label: None,
+            aliases: Vec::new(),
+            enabled: true,
+            goa_id: None,
+            goa_mail_disabled: false,
+            goa_enabled_before_mail_disabled: true,
+            oauth: false,
+            oauth_settings: None,
+            oauth_refresh: "TOKEN".into(),
+            push: None,
+            folder_roles: Default::default(),
+        };
+        acc.aliases = Vec::new();
+        let bundle = SettingsBundle {
+            version: 1,
+            privacy: PrivacyFile::default(),
+            accounts: vec![acc],
+            filters: Vec::new(),
+            sidebar: None,
+            window: None,
+            state: None,
+        };
+        let text = toml::to_string_pretty(&bundle).unwrap();
+        assert!(!text.contains("SECRET"));
+        assert!(!text.contains("TOKEN"));
+        let back: SettingsBundle = toml::from_str(&text).unwrap();
+        assert_eq!(back.accounts[0].email, "a@b.c");
+        assert!(back.accounts[0].password.is_empty());
+    }
+
+    #[test]
+    fn filter_rules_roundtrip_through_toml() {
+        let rules = vec![rule(FilterField::Subject, FilterMatch::EndsWith, "digest")];
+        let text = toml::to_string_pretty(&FiltersFile { rules: rules.clone() }).unwrap();
+        let back: FiltersFile = toml::from_str(&text).unwrap();
+        assert_eq!(back.rules, rules);
     }
 }
