@@ -936,14 +936,21 @@ impl Component for MessageView {
                 // blip ClearDot avoids in the other direction).
                 let js = format!(
                     "(function(){{\
+                     var s=document.querySelector('.vireo-msg[data-key=\"{account_id}:{id}\"]');\
+                     if(s)s.classList.add('unread');\
                      var h=document.querySelector('.vireo-msg-hdr[data-key=\"{account_id}:{id}\"]');\
                      if(!h||h.querySelector('.vireo-dot'))return;\
                      var d=document.createElement('span');d.className='vireo-dot';\
+                     d.setAttribute('data-key','{account_id}:{id}');\
                      var f=h.querySelector('.vireo-from');\
-                     if(f)h.insertBefore(d,f);else h.appendChild(d);}})()"
+                     if(f)f.parentNode.insertBefore(d,f);else h.appendChild(d);}})()"
                 );
                 self.webview
-                    .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+                    .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |r| {
+                        if let Err(e) = r {
+                            tracing::warn!("unread-dot patch failed: {e}");
+                        }
+                    });
             }
             MessageViewInput::ClearCards => {
                 if !self.selected_cards.is_empty() {
@@ -1084,10 +1091,18 @@ impl Component for MessageView {
                     }
                 }
                 let js = format!(
-                    "(function(){{var d=document.querySelector('.vireo-dot[data-key=\"{account_id}:{id}\"]');if(d)d.remove();}})()"
+                    "(function(){{\
+                     var d=document.querySelector('.vireo-dot[data-key=\"{account_id}:{id}\"]');\
+                     if(d)d.remove();\
+                     var s=document.querySelector('.vireo-msg[data-key=\"{account_id}:{id}\"]');\
+                     if(s)s.classList.remove('unread');}})()"
                 );
                 self.webview
-                    .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+                    .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |r| {
+                        if let Err(e) = r {
+                            tracing::warn!("clear-dot patch failed: {e}");
+                        }
+                    });
             }
             MessageViewInput::ScrollAnchor { account_id, id, offset } => {
                 self.saved_anchor = Some((account_id, id, offset));
@@ -1327,7 +1342,7 @@ impl MessageView {
             };
             if conversation {
                 sections.push_str(&format!(
-                    "<section class=\"vireo-msg{sel}\" data-key=\"{aid}:{id}\">\
+                    "<section class=\"vireo-msg{sel}{unread_cls}\" data-key=\"{aid}:{id}\">\
                        <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
                          <div class=\"vireo-hdr-line\">\
@@ -1368,12 +1383,19 @@ impl MessageView {
                             card_action_button(key, "replyall", "mail-reply-all-symbolic", "Reply to everyone on this message"),
                             card_action_button(key, "forward", "mail-forward-symbolic", "Forward this message"),
                             // Action-showing icon (read envelope = "mark as
-                            // read"), like the menus and toolbar.
-                            if m.unread {
-                                card_action_button(key, "toggleread", "mail-read-symbolic", "Mark as Read")
-                            } else {
-                                card_action_button(key, "toggleread", "mail-unread-symbolic", "Mark as Unread")
-                            },
+                            // read"), like the menus and toolbar. Both icons
+                            // are baked in; the section's `unread` class picks
+                            // one, so marking read/unread flips in place.
+                            format!(
+                                "<button type=\"button\" class=\"vireo-act\" data-act=\"toggleread\" \
+                                 data-key=\"{aid}:{id}\" title=\"Mark as read or unread\">\
+                                 <span class=\"tr-when-unread\">{read_svg}</span>\
+                                 <span class=\"tr-when-read\">{unread_svg}</span></button>",
+                                aid = key.0,
+                                id = key.1,
+                                read_svg = inline_icon_svg("mail-read-symbolic"),
+                                unread_svg = inline_icon_svg("mail-unread-symbolic"),
+                            ),
                             // The star keeps one glyph; the flagged state is
                             // colour alone (`.on`, toggled optimistically on
                             // click too).
@@ -1399,6 +1421,7 @@ impl MessageView {
                     } else {
                         ""
                     },
+                    unread_cls = if m.unread { " unread" } else { "" },
                     // `escape_text`, not `attr_escape`: these land in element
                     // text content, where `<` and `>` are structural. A `From:`
                     // display name is attacker-controlled (and RFC 2047-decoded,
@@ -1697,6 +1720,11 @@ impl MessageView {
                .vireo-quote:hover{{opacity:0.95;background:rgba(128,128,128,0.28);}}\
                .vireo-quote.open{{opacity:0.95;}}\
                .vireo-acts{{display:flex;gap:2px;flex:none;align-self:center;margin-left:4px;}}\
+               /* Read-toggle: the icon showing is the ACTION (read envelope\
+                  means mark-as-read); the section's unread class decides. */\
+               .vireo-act .tr-when-unread,.vireo-act .tr-when-read{{display:none;line-height:0;}}\
+               .vireo-msg.unread .vireo-act[data-act=\"toggleread\"] .tr-when-unread{{display:inline-flex;}}\
+               .vireo-msg:not(.unread) .vireo-act[data-act=\"toggleread\"] .tr-when-read{{display:inline-flex;}}\
                .vireo-act{{color:inherit;background:none;border:none;border-radius:6px;\
                  padding:5px 8px;cursor:pointer;opacity:0.7;\
                  transition:opacity 120ms ease,background 120ms ease;}}\

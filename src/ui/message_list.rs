@@ -1403,6 +1403,8 @@ pub struct MessageList {
     scroller: Option<gtk::ScrolledWindow>,
     /// Current sort order for the list.
     sort: SortOrder,
+    /// Quick filter (#97): show only unread messages.
+    unread_only: bool,
     /// The last count string sent to the header bar, to emit only on change.
     last_count: String,
     /// Group messages into conversation threads (user preference).
@@ -1461,6 +1463,8 @@ pub enum BulkAction {
 
 #[derive(Debug)]
 pub enum MessageListInput {
+    /// The header's quick filter (#97): scope the list to unread mail.
+    SetUnreadOnly(bool),
     SetMessages { messages: Vec<Message> },
     /// Merge more indexed messages into the current list (background backfill),
     /// preserving the current search query and view.
@@ -1894,6 +1898,7 @@ impl SimpleComponent for MessageList {
             rendered_count: 0,
             scroller: None,
             sort: SortOrder::DateNewest,
+            unread_only: false,
             last_count: String::new(),
             threading: true,
             thread_expansion: true,
@@ -2363,6 +2368,13 @@ impl SimpleComponent for MessageList {
                     list.unselect_row(&row);
                 } else {
                     list.select_row(Some(&row));
+                }
+            }
+
+            MessageListInput::SetUnreadOnly(on) => {
+                if self.unread_only != on {
+                    self.unread_only = on;
+                    self.rebuild_preserving_scroll();
                 }
             }
 
@@ -3121,6 +3133,7 @@ impl MessageList {
         let mut matches: Vec<&Message> = self
             .active_source()
             .iter()
+            .filter(|m| !self.unread_only || m.unread)
             .filter(|m| {
                 q.is_empty()
                     || m.subject.to_lowercase().contains(&q)

@@ -707,6 +707,8 @@ pub enum AppMsg {
     OpenConsole,
     /// Settings toggle for offering console mode at all.
     SetConsoleMode(bool),
+    /// The list header's unread quick filter (#97).
+    SetUnreadFilter(bool),
     /// Backup (#50): save/load the whole configuration as one file.
     ExportSettings,
     ImportSettings,
@@ -982,6 +984,18 @@ impl SimpleComponent for AppModel {
                                 // message count and the sort menu (moved out of
                                 // the list's own toolbar to reclaim a row).
                                 // pack_end packs right-to-left: sort rightmost.
+                                // Quick filter (#97): unread only. Session
+                                // state, like Mail.app's filter bar.
+                                pack_end = &gtk::ToggleButton {
+                                    set_icon_name: "co.hyprlab.Vireo-mail-unread-symbolic",
+                                    set_tooltip_text: Some("Show only unread"),
+                                    set_valign: gtk::Align::Center,
+                                    add_css_class: "flat",
+                                    connect_toggled[sender] => move |btn| {
+                                        sender.input(AppMsg::SetUnreadFilter(btn.is_active()));
+                                    },
+                                },
+
                                 #[name = "list_sort_btn"]
                                 pack_end = &gtk::MenuButton {
                                     set_icon_name: "co.hyprlab.Vireo-view-sort-descending-symbolic",
@@ -4362,6 +4376,10 @@ impl SimpleComponent for AppModel {
                 // File whatever already sits in the inboxes under the new
                 // rules; reuses the blacklist's re-sync sweep.
                 self.sweep_blacklisted();
+            }
+
+            AppMsg::SetUnreadFilter(on) => {
+                self.message_list.emit(MessageListInput::SetUnreadOnly(on));
             }
 
             AppMsg::ExportSettings => {
