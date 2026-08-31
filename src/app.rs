@@ -69,6 +69,7 @@ relm4::new_stateless_action!(PrintPreviewAction, WindowActionGroup, "print-previ
 relm4::new_stateless_action!(StatusBarAction, WindowActionGroup, "status-bar");
 relm4::new_stateless_action!(ConsoleAction, WindowActionGroup, "console");
 relm4::new_stateless_action!(FindAction, WindowActionGroup, "find");
+relm4::new_stateless_action!(WizardAction, WindowActionGroup, "wizard");
 
 use crate::config::{self, split_identity, AccountConfig};
 use crate::models::{Account, Attachment, Folder, FolderKind, Message};
@@ -719,6 +720,8 @@ pub enum AppMsg {
     OpenListSearch,
     /// Open the reader's in-message find bar (#103).
     OpenReaderFind,
+    /// Beta-only burger entry: show the welcome wizard for review.
+    OpenWizardMenu,
     /// Delay-policy read marking (#100): fires a couple of seconds after a
     /// message opened; only applies if it is still the one on screen.
     DeferredMarkRead { message: Box<Message> },
@@ -1845,31 +1848,7 @@ impl SimpleComponent for AppModel {
             // VIREO_WELCOME=1 forces the wizard over an existing config, for
             // design review and screenshots.
             if !demo_mode() || std::env::var("VIREO_WELCOME").is_ok() {
-                use crate::ui::welcome::{Welcome, WelcomeOutput};
-                let welcome = Welcome::builder().launch(()).forward(
-                    sender.input_sender(),
-                    |out| match out {
-                        WelcomeOutput::AddAccount(account) => {
-                            AppMsg::AccountSaved { original_email: None, account }
-                        }
-                        WelcomeOutput::ImportGoa(account) => AppMsg::ImportGoaAccount(account),
-                        WelcomeOutput::Prefs(p) => AppMsg::ApplyWelcomePrefs(p),
-                        WelcomeOutput::Done => AppMsg::PresentWindow,
-                    },
-                );
-                welcome.widget().set_transient_for(Some(&root));
-                welcome.widget().set_modal(true);
-                // On a true first run the main window stays hidden (see
-                // main.rs) until the wizard finishes — or is dismissed.
-                {
-                    let s = sender.clone();
-                    welcome.widget().connect_close_request(move |_| {
-                        s.input(AppMsg::PresentWindow);
-                        gtk::glib::Propagation::Proceed
-                    });
-                }
-                welcome.widget().present();
-                model.welcome = Some(welcome);
+                model.open_wizard(&sender);
             }
         }
         model
@@ -2349,6 +2328,12 @@ impl SimpleComponent for AppModel {
             let s = sender.clone();
             group.add_action(RelmAction::<FindAction>::new_stateless(move |_| {
                 s.input(AppMsg::OpenListSearch);
+            }));
+        }
+        {
+            let s = sender.clone();
+            group.add_action(RelmAction::<WizardAction>::new_stateless(move |_| {
+                s.input(AppMsg::OpenWizardMenu);
             }));
         }
         group.add_action(RelmAction::<StatusBarAction>::new_stateless(move |_| {
@@ -4486,6 +4471,10 @@ impl SimpleComponent for AppModel {
                 self.message_view.emit(MessageViewInput::OpenFind);
             }
 
+            AppMsg::OpenWizardMenu => {
+                self.open_wizard(&sender);
+            }
+
             AppMsg::SetUnreadFilter(on) => {
                 self.message_list.emit(MessageListInput::SetUnreadOnly(on));
             }
@@ -5499,6 +5488,11 @@ impl AppModel {
         if self.console_mode {
             self.help_menu.append(Some("Console"), Some("win.console"));
         }
+        // Beta builds carry a wizard entry so testers can review the
+        // first-run experience without wiping their config.
+        if cfg!(feature = "beta") {
+            self.help_menu.append(Some("Welcome Wizard"), Some("win.wizard"));
+        }
         self.help_menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
         self.help_menu
             .append(Some(format!("About {}", crate::APP_NAME).as_str()), Some("win.about"));
@@ -6023,6 +6017,39 @@ impl AppModel {
                 .cloned(),
             _ => None,
         }
+    }
+
+    /// Launch (or re-present) the welcome wizard: the first run's greeting,
+    /// the VIREO_WELCOME review mode, and — on beta builds only — the burger
+    /// menu's Welcome Wizard entry for testers.
+    fn open_wizard(&mut self, sender: &ComponentSender<Self>) {
+        use crate::ui::welcome::{Welcome, WelcomeOutput};
+        if let Some(w) = self.welcome.as_ref().filter(|w| w.widget().is_visible()) {
+            w.widget().present();
+            return;
+        }
+        let welcome =
+            Welcome::builder().launch(()).forward(sender.input_sender(), |out| match out {
+                WelcomeOutput::AddAccount(account) => {
+                    AppMsg::AccountSaved { original_email: None, account }
+                }
+                WelcomeOutput::ImportGoa(account) => AppMsg::ImportGoaAccount(account),
+                WelcomeOutput::Prefs(p) => AppMsg::ApplyWelcomePrefs(p),
+                WelcomeOutput::Done => AppMsg::PresentWindow,
+            });
+        welcome.widget().set_transient_for(Some(&self.window));
+        welcome.widget().set_modal(true);
+        // On a true first run the main window stays hidden (see main.rs)
+        // until the wizard finishes — or is dismissed.
+        {
+            let s = sender.clone();
+            welcome.widget().connect_close_request(move |_| {
+                s.input(AppMsg::PresentWindow);
+                gtk::glib::Propagation::Proceed
+            });
+        }
+        welcome.widget().present();
+        self.welcome = Some(welcome);
     }
 
     /// The open-marks-read side effects for the just-selected message (#100):
