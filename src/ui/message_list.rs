@@ -72,6 +72,8 @@ pub struct RowInit {
     /// Any message in this conversation is unread (thread heads only) — keeps
     /// the head marked unread while unread replies are hidden beneath it.
     pub thread_unread: bool,
+    /// Any message in this conversation is starred (thread heads only).
+    pub thread_starred: bool,
     /// Every currently shown row as (account, folder, uid, id), in list order.
     /// Shared with the list so a drag can turn the ListBox's selected row
     /// *indices* into message ids and carry the whole selection (#23).
@@ -201,6 +203,7 @@ pub struct MessageRow {
     thread_preview: Option<String>,
     /// Any message in this conversation is unread (heads only).
     thread_unread: bool,
+    thread_starred: bool,
     /// Shared row keys, so a drag from this row can carry the whole selection.
     drag_keys: DragKeys,
     /// Drives the row's own Revealer — false only for the brief window a
@@ -231,6 +234,7 @@ pub enum MessageRowInput {
     ToggleThreadClicked,
     /// The thread's aggregate unread state changed (a hidden reply was read).
     SetThreadUnread(bool),
+    SetThreadStarred(bool),
     /// Drive the row's own Revealer directly — used to slide a reply open
     /// right after it's inserted, or shut just before it's removed.
     SetRevealed(bool),
@@ -509,9 +513,9 @@ impl FactoryComponent for MessageRow {
                             gtk::Button {
                                 set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
                                 #[watch]
-                                set_css_classes: if self.msg.starred { &["flat", "star-active"] } else { &["flat"] },
+                                set_css_classes: if self.msg.starred || self.thread_starred { &["flat", "star-active"] } else { &["flat"] },
                                 #[watch]
-                                set_tooltip_text: Some(if self.msg.starred { "Remove star" } else { "Star" }),
+                                set_tooltip_text: Some(if self.msg.starred || self.thread_starred { "Remove star" } else { "Star" }),
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleStar)),
                             },
                             gtk::Button {
@@ -578,15 +582,14 @@ impl FactoryComponent for MessageRow {
                 set_custom_image: self.avatar_texture.as_ref(),
             },
 
-            // Faded rather than hidden: a hidden widget gives up its slot in the
-            // box, so every read row's sender and preview would sit 18px further
-            // left than an unread one's and the column would jitter as mail is
-            // read. The space is always reserved; only the dot's ink changes.
-            //
-            // With avatars on, the dot centres in the row beside the circle;
-            // without them it leads the row, so it aligns with the sender
-            // name's line instead (the .no-avatar margin in styles.css puts
-            // it on that line's centre).
+            // Faded rather than hidden: a hidden widget gives up its slot in
+            // the box, so read rows' text would sit left of unread rows' and
+            // the column would jitter as mail is read — the slot is always
+            // reserved and only the dot's ink changes (re-affirmed in #99:
+            // collapsing it was tried and the shifting read worse). With
+            // avatars on the dot centres beside the circle; without them it
+            // leads the row on the sender name's line (the .no-avatar margin
+            // in styles.css).
             gtk::Box {
                 add_css_class: "unread-dot",
                 set_valign: if self.avatars { gtk::Align::Center } else { gtk::Align::Start },
@@ -598,7 +601,10 @@ impl FactoryComponent for MessageRow {
                 set_orientation: gtk::Orientation::Vertical,
                 set_spacing: 2,
                 set_hexpand: true,
-                set_valign: gtk::Align::Center,
+                // Beside an avatar the text block centres on the circle; with
+                // avatars off it anchors to the pill's top, under the corner
+                // radius (#99) — the pill's own padding provides the inset.
+                set_valign: if self.avatars { gtk::Align::Center } else { gtk::Align::Start },
 
                 gtk::Box {
                     set_spacing: 6,
@@ -619,7 +625,7 @@ impl FactoryComponent for MessageRow {
                     gtk::Image {
                         set_icon_name: Some("co.hyprlab.Vireo-starred-symbolic"),
                         #[watch]
-                        set_visible: self.msg.starred,
+                        set_visible: self.msg.starred || self.thread_starred,
                         add_css_class: "star-icon",
                     },
                     gtk::Label {
@@ -783,6 +789,7 @@ impl FactoryComponent for MessageRow {
             thread_from,
             thread_preview,
             thread_unread,
+            thread_starred,
             drag_keys,
             show_recipient,
             revealed,
@@ -812,6 +819,7 @@ impl FactoryComponent for MessageRow {
             thread_from,
             thread_preview,
             thread_unread,
+            thread_starred,
             drag_keys,
             revealed,
             index: index.clone(),
@@ -900,6 +908,7 @@ impl FactoryComponent for MessageRow {
                 }
             }
             MessageRowInput::SetThreadUnread(unread) => self.thread_unread = unread,
+            MessageRowInput::SetThreadStarred(starred) => self.thread_starred = starred,
             MessageRowInput::SetRevealed(revealed) => self.revealed = revealed,
             MessageRowInput::SetThreadExpanded(expanded) => self.thread_expanded = expanded,
         }
@@ -1316,6 +1325,11 @@ pub struct MessageList {
     scope: SearchScope,
     /// The search field widget, kept so a folder switch can clear its text.
     search_entry: Option<gtk::SearchEntry>,
+    /// The search toolbar is hidden until asked for (#102).
+    search_open: bool,
+    /// When the search closed itself (empty entry losing focus): the button
+    /// click that caused that blur arrives right after and must not reopen.
+    search_closed_at: Option<std::time::Instant>,
     /// Currently displayed (post-filter, capped) messages, aligned with rows.
     shown: Vec<Message>,
     /// Total messages matching the current filter (may exceed what's rendered).
@@ -1401,6 +1415,10 @@ pub struct MessageList {
     scroller: Option<gtk::ScrolledWindow>,
     /// Current sort order for the list.
     sort: SortOrder,
+    /// Quick filter (#97): show only unread messages.
+    unread_only: bool,
+    /// Quick filter: show only starred messages.
+    starred_only: bool,
     /// The last count string sent to the header bar, to emit only on change.
     last_count: String,
     /// Group messages into conversation threads (user preference).
@@ -1452,6 +1470,9 @@ pub enum BulkAction {
     MarkRead,
     MarkUnread,
     Flag,
+    /// Remove the star from every selected/threaded message (the bulk bar
+    /// itself only offers Flag; conversations need the inverse too).
+    Unflag,
     Archive,
     Spam,
     Delete,
@@ -1459,6 +1480,10 @@ pub enum BulkAction {
 
 #[derive(Debug)]
 pub enum MessageListInput {
+    /// The header's quick filter (#97): scope the list to unread mail.
+    SetUnreadOnly(bool),
+    /// The header's starred quick filter.
+    SetStarredOnly(bool),
     SetMessages { messages: Vec<Message> },
     /// Merge more indexed messages into the current list (background backfill),
     /// preserving the current search query and view.
@@ -1533,6 +1558,9 @@ pub enum MessageListInput {
     ReclaimFocus,
     /// Put the cursor in the search field.
     FocusSearch,
+    /// Close and clear the search toolbar (#102): Esc, empty focus-out, or
+    /// the header button while open.
+    CloseSearch,
     /// Showcase staging: open row N's Actions Palette (screenshot hook only —
     /// see VIREO_SHOWCASE_PALETTE in app.rs).
     DebugOpenPalette(usize),
@@ -1628,9 +1656,16 @@ impl SimpleComponent for MessageList {
                 set_spacing: 8,
 
                 // The folder name, count and sort control live in the pane's
-                // header bar now (app.rs) — only search needs this toolbar.
+                // header bar now (app.rs) — only search needs this toolbar,
+                // and it stays hidden until asked for (#102).
+                gtk::Revealer {
+                    set_transition_type: gtk::RevealerTransitionType::SlideDown,
+                    #[watch]
+                    set_reveal_child: model.search_open,
+
                 gtk::Box {
                     set_spacing: 6,
+                    add_css_class: "list-search-row",
 
                     #[name = "search_entry"]
                     gtk::SearchEntry {
@@ -1641,6 +1676,22 @@ impl SimpleComponent for MessageList {
                         set_placeholder_text: Some(model.search_placeholder()),
                         connect_search_changed[sender] => move |entry| {
                             sender.input(MessageListInput::Search(entry.text().to_string()));
+                        },
+                        // Esc closes (SearchEntry's own stop signal).
+                        connect_stop_search[sender] => move |_| {
+                            sender.input(MessageListInput::CloseSearch);
+                        },
+                        // Leaving an empty entry closes too.
+                        add_controller = gtk::EventControllerFocus {
+                            connect_leave[sender] => move |ctl| {
+                                let empty = ctl
+                                    .widget()
+                                    .and_downcast_ref::<gtk::SearchEntry>()
+                                    .is_some_and(|e| e.text().trim().is_empty());
+                                if empty {
+                                    sender.input(MessageListInput::CloseSearch);
+                                }
+                            },
                         },
                     },
 
@@ -1660,6 +1711,7 @@ impl SimpleComponent for MessageList {
                             sender.input(MessageListInput::SetScope(scope));
                         },
                     },
+                },
                 },
             },
 
@@ -1858,6 +1910,8 @@ impl SimpleComponent for MessageList {
             search_pool: Vec::new(),
             scope: SearchScope::AllFolders,
             search_entry: None,
+            search_open: false,
+            search_closed_at: None,
             shown: Vec::new(),
             total_matches: 0,
             render_limit: RENDER_CAP,
@@ -1892,6 +1946,8 @@ impl SimpleComponent for MessageList {
             rendered_count: 0,
             scroller: None,
             sort: SortOrder::DateNewest,
+            unread_only: false,
+            starred_only: false,
             last_count: String::new(),
             threading: true,
             thread_expansion: true,
@@ -2319,7 +2375,13 @@ impl SimpleComponent for MessageList {
                 // here left the reader stale on the deleted message. In-place
                 // actions (read/flag) drop the selection as before, dismissing
                 // the bulk bar.
-                if matches!(action, BulkAction::MarkRead | BulkAction::MarkUnread | BulkAction::Flag)
+                if matches!(
+                    action,
+                    BulkAction::MarkRead
+                        | BulkAction::MarkUnread
+                        | BulkAction::Flag
+                        | BulkAction::Unflag
+                )
                 {
                     self.rows.widget().unselect_all();
                     self.selected_id = None;
@@ -2364,6 +2426,20 @@ impl SimpleComponent for MessageList {
                 }
             }
 
+            MessageListInput::SetUnreadOnly(on) => {
+                if self.unread_only != on {
+                    self.unread_only = on;
+                    self.rebuild_preserving_scroll();
+                }
+            }
+
+            MessageListInput::SetStarredOnly(on) => {
+                if self.starred_only != on {
+                    self.starred_only = on;
+                    self.rebuild_preserving_scroll();
+                }
+            }
+
             MessageListInput::FocusList => {
                 // The "back to list" shortcut: deliberately returns to the
                 // selected row (that's the point — resume j/k navigation
@@ -2399,9 +2475,36 @@ impl SimpleComponent for MessageList {
             }
 
             MessageListInput::FocusSearch => {
-                if let Some(entry) = &self.search_entry {
-                    entry.grab_focus();
+                // Toggle (#102): the header button closes an open search too.
+                if self.search_open {
+                    sender.input(MessageListInput::CloseSearch);
+                    return;
                 }
+                // Clicking the button blurs an empty entry, whose focus-leave
+                // just closed the bar — that same click must not reopen it.
+                if self
+                    .search_closed_at
+                    .take()
+                    .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(300))
+                {
+                    return;
+                }
+                self.search_open = true;
+                if let Some(entry) = &self.search_entry {
+                    let entry = entry.clone();
+                    // After the revealer maps it; focusing an unmapped entry
+                    // is a no-op.
+                    gtk::glib::idle_add_local_once(move || {
+                        entry.grab_focus();
+                    });
+                }
+            }
+
+            MessageListInput::CloseSearch => {
+                self.search_open = false;
+                self.search_closed_at = Some(std::time::Instant::now());
+                self.clear_search();
+                self.rebuild_preserving_scroll();
             }
 
             MessageListInput::ClearSelection => {
@@ -2485,6 +2588,7 @@ impl SimpleComponent for MessageList {
                     self.shown[idx].starred = starred;
                     self.rows.send(idx, MessageRowInput::SetStarred(starred));
                 }
+                self.refresh_thread_star(id);
             }
             MessageListInput::SetHasAttachment { id, has } => {
                 if let Some(m) = self.all.iter_mut().find(|m| m.id == id) {
@@ -2628,6 +2732,27 @@ impl SimpleComponent for MessageList {
                 }
             }
             MessageListInput::RowAction { action, message } => {
+                // Starring a conversation row stars the conversation (#star):
+                // every member together, toggled as a unit — individual
+                // members keep their own stars via their own rows/cards.
+                if matches!(action, RowAction::ToggleStar) {
+                    let members = self.thread_members(&message);
+                    let is_head = members.first().is_some_and(|h| {
+                        (h.account_id, h.id) == (message.account_id, message.id)
+                    });
+                    if is_head && members.len() > 1 {
+                        // ANY starred member reads as a starred conversation
+                        // (matching the head's indicator), so the toggle can
+                        // always clear — all-starred semantics deadlocked the
+                        // moment one member was individually unstarred.
+                        let any = members.iter().any(|m| m.starred);
+                        let _ = sender.output(MessageListOutput::Bulk {
+                            action: if any { BulkAction::Unflag } else { BulkAction::Flag },
+                            messages: members,
+                        });
+                        return;
+                    }
+                }
                 let _ = sender.output(MessageListOutput::Action { action, message });
             }
             MessageListInput::SetPaletteCollapse(secs) => self.palette_collapse_secs.set(secs),
@@ -2750,7 +2875,32 @@ impl MessageList {
             .icon(icon)
         };
 
-        let mut flag_section = vec![if msg.starred {
+        // (computed early: the star entry needs it too)
+        let members_for_star = self.thread_members(msg);
+        let star_is_head = members_for_star
+            .first()
+            .is_some_and(|h| (h.account_id, h.id) == (msg.account_id, msg.id));
+        let mut flag_section = vec![if star_is_head && members_for_star.len() > 1 {
+            // A conversation row's star acts on the whole thread, like its
+            // read toggle below.
+            let any = members_for_star.iter().any(|m| m.starred);
+            let s = sender.clone();
+            let members = members_for_star.clone();
+            MenuEntry::new(
+                if any { "Remove Stars" } else { "Star Conversation" },
+                move || {
+                    let _ = s.output(MessageListOutput::Bulk {
+                        action: if any { BulkAction::Unflag } else { BulkAction::Flag },
+                        messages: members.clone(),
+                    });
+                },
+            )
+            .icon(if any {
+                "co.hyprlab.Vireo-non-starred-symbolic"
+            } else {
+                "co.hyprlab.Vireo-starred-symbolic"
+            })
+        } else if msg.starred {
             item(RowAction::ToggleStar, "Remove Star", "co.hyprlab.Vireo-non-starred-symbolic")
         } else {
             item(RowAction::ToggleStar, "Star", "co.hyprlab.Vireo-starred-symbolic")
@@ -2935,6 +3085,35 @@ impl MessageList {
         }
     }
 
+    /// Mirror of [`refresh_thread_unread`] for the star: the head shows a
+    /// conversation as starred while any member is.
+    fn refresh_thread_star(&mut self, id: u32) {
+        let Some(key) = self
+            .all
+            .iter()
+            .find(|m| m.id == id)
+            .map(|m| (m.account_id, m.id))
+        else {
+            return;
+        };
+        let Some(tkey) = self.msg_thread.get(&key) else {
+            return;
+        };
+        let Some(members) = self.thread_members.get(tkey).cloned() else {
+            return;
+        };
+        let any = members
+            .iter()
+            .any(|k| self.all.iter().any(|m| (m.account_id, m.id) == *k && m.starred));
+        if let Some(idx) = self
+            .shown
+            .iter()
+            .position(|m| members.contains(&(m.account_id, m.id)))
+        {
+            self.rows.send(idx, MessageRowInput::SetThreadStarred(any));
+        }
+    }
+
 
     /// Begin collapsing a thread: slide its currently-visible replies shut
     /// (they stay exactly where they are in `self.rows`/`self.shown` — only
@@ -3035,6 +3214,7 @@ impl MessageList {
                         thread_from: None,
                         thread_preview: None,
                         thread_unread: false,
+                        thread_starred: false,
                         drag_keys: self.drag_keys.clone(),
                         show_recipient: self.show_recipient,
                         revealed: false,
@@ -3119,6 +3299,8 @@ impl MessageList {
         let mut matches: Vec<&Message> = self
             .active_source()
             .iter()
+            .filter(|m| !self.unread_only || m.unread)
+            .filter(|m| !self.starred_only || m.starred)
             .filter(|m| {
                 q.is_empty()
                     || m.subject.to_lowercase().contains(&q)
@@ -3175,6 +3357,7 @@ impl MessageList {
             expanded: bool,
             key: Option<(u32, String)>,
             unread: bool,
+            starred: bool,
             /// The newest member's display time (thread heads only): the head
             /// row says when the conversation last moved, not when it began.
             latest: Option<String>,
@@ -3226,6 +3409,7 @@ impl MessageList {
             } else {
                 (None, None)
             };
+            let any_starred = count > 1 && msgs.iter().any(|m| m.starred);
             let mut it = msgs.into_iter();
             let head = it.next().unwrap();
             shown.push(head);
@@ -3238,6 +3422,7 @@ impl MessageList {
                 expanded,
                 key: if count > 1 { Some(key.clone()) } else { None },
                 unread: any_unread,
+                starred: any_starred,
                 latest,
             });
             if expanded {
@@ -3254,6 +3439,7 @@ impl MessageList {
                         expanded: false,
                         key: None,
                         unread: false,
+                        starred: false,
                         latest: None,
                     });
                 }
@@ -3303,6 +3489,7 @@ impl MessageList {
                     thread_from: meta.from,
                     thread_preview: meta.preview,
                     thread_unread: meta.unread,
+                    thread_starred: meta.starred,
                     drag_keys: self.drag_keys.clone(),
                     show_recipient: self.show_recipient,
                     // A full rebuild never needs a row to mount closed —

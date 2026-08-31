@@ -121,11 +121,12 @@ headerbar.rail-header {
    little low and left of the visible ink, so each glyph type/size is nudged back
    up and right independently (initials and emoji tuned separately). */
 
-/* Large header circle — emoji nudged; initials centre fine on their own. */
+/* Large header circle — emoji get their own centring: the glyphs sit high
+   in their font box, so unlike initials they need no upward nudge at all. */
 .account-circle label.account-emoji {
   font-size: 1.05em;
   font-weight: 400;
-  margin-bottom: 2px;
+  margin-top: 2px;
   margin-left: 2px;
 }
 
@@ -148,7 +149,7 @@ headerbar.rail-header {
 .account-circle-sm label.account-emoji {
   font-size: 0.85em;
   font-weight: 400;
-  margin-bottom: 1px;
+  margin-top: 1px;
   margin-left: 1px;
 }
 
@@ -405,6 +406,15 @@ button.star-active {
 /* ---- Message list ---- */
 
 .list-toolbar {
+  /* No padding of its own: search hides by default (#102), and dead
+     padding here floated the first row ~32px low. The revealed search row
+     carries its own inset instead; the negative margin buys the rows two
+     more pixels. */
+  padding: 0;
+  margin-bottom: 2px;
+}
+
+.list-search-row {
   padding: 8px 12px 10px 12px;
 }
 
@@ -513,15 +523,27 @@ button.star-active {
   color: @accent_bg_color;
 }
 
-/* Avatars off (#29): the unread dot leads the row, so it gets the same
-   gap on each side — 12px to the list's edge (6px margin + 6px padding), and
-   8px of box spacing plus this margin to the sender's name. */
+/* Avatars off (#29, #99): read rows collapse the dot's slot entirely (see
+   the row template), so the text block starts here — 8px, matching the
+   pill's right padding for equal margins. Unread rows lead with the dot. */
 .message-row.no-avatar {
-  padding-left: 6px;
+  padding-left: 8px;
+  /* Text anchors to the pill's top (#99): a tighter top inset reads as
+     top-aligned, and the freed room stays at the bottom where the floating
+     Actions Palette rides. */
+  padding-top: 6px;
+}
+
+/* With the palette on, the no-avatar pill grows at the bottom so the
+   floating ⋯ clears the text; palette off, the room isn't needed
+   (.no-palette rows keep the plain padding). */
+.message-row.no-avatar:not(.no-palette) {
+  padding-bottom: 18px;
 }
 
 .message-row.no-avatar .unread-dot {
-  margin-right: 4px;
+  margin-left: 1px;
+  margin-right: -2px;
   /* Valign Start plus this nudge centres the 10px dot on the sender name's
      ~20px first line (with avatars on, the dot centres in the row instead). */
   margin-top: 5px;
@@ -1229,3 +1251,149 @@ headerbar.reader-toolbar button.image-button {
 .thread-toggle-icon.open {
   -gtk-icon-transform: rotate(90deg);
 }
+
+/* ---- First-run welcome wizard (welcome.rs) ---- */
+
+/* The whole window wears the icon's yellow; every page floats on it. */
+window.welcome-window,
+.welcome-window > * {
+  background-color: #ffc600;
+}
+.welcome-window headerbar {
+  background: transparent;
+  box-shadow: none;
+  border: none;
+}
+.welcome-window headerbar button {
+  color: rgba(0, 0, 0, 0.75);
+}
+
+.welcome-title {
+  font-size: 1.7em;
+  font-weight: 800;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.welcome-tagline {
+  font-size: 1.02em;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.welcome-section {
+  font-weight: 700;
+  font-size: 0.9em;
+  color: rgba(0, 0, 0, 0.6);
+  margin-left: 6px;
+}
+
+/* Content cards: the app's own surface colour, lifted off the yellow. */
+.welcome-card {
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+
+.welcome-pill {
+  padding: 12px 28px;
+  min-height: 0;
+  font-weight: 700;
+}
+
+/* Wizard action buttons wear the wordmark's own blue (#006dff), not the
+   theme accent, so button and lettering read as one design. */
+.welcome-window button.suggested-action {
+  background-color: #006dff;
+  color: #ffffff;
+}
+.welcome-window button.suggested-action:hover {
+  background-color: shade(#006dff, 1.12);
+}
+.welcome-window button.suggested-action:active {
+  background-color: shade(#006dff, 0.9);
+}
+
+.welcome-hint {
+  font-size: 0.9em;
+  color: rgba(0, 0, 0, 0.6);
+}
+.welcome-hint.error {
+  color: #a51d2d;
+  font-weight: 600;
+}
+.welcome-hint.success {
+  color: #1a5f2a;
+  font-weight: 600;
+}
+
+.welcome-added {
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.8);
+}
+
+.welcome-check {
+  color: #006dff;
+}
+
+.welcome-link {
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.8);
+}
+
+.welcome-window carouselindicatordots {
+  color: rgba(0, 0, 0, 0.8);
+}
+
+/* ---- Console mode (notifications.rs): dracula on an old tube ---- */
+
+/* The bar fades between its normal colours and the terminal's. */
+.notify-area {
+  transition: background-color 0.4s ease, color 0.4s ease;
+}
+.notify-area.console-on {
+  background-color: #282a36;
+  color: #f8f8f2;
+}
+.notify-area.console-on .notify-bar {
+  color: #f8f8f2;
+}
+
+textview.console-view,
+textview.console-view text {
+  background-color: #282a36;
+  color: #f8f8f2;
+  font-family: "Source Code Pro", "JetBrains Mono", "DejaVu Sans Mono", monospace;
+  font-size: 0.82em;
+}
+textview.console-view text selection {
+  background-color: #44475a;
+  color: #f8f8f2;
+}
+
+/* Scanlines: thin dark lines every few pixels, CSS-only. */
+.console-scanlines {
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.14) 0px,
+    rgba(0, 0, 0, 0.14) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+/* Console resize grip: a slim rail with a pill handle. */
+.console-grip {
+  background-color: #21222c;
+  min-height: 10px;
+}
+.console-grip-bar {
+  background-color: #44475a;
+  min-width: 36px;
+  min-height: 4px;
+  border-radius: 2px;
+}
+
+/* In-message find bar (#103). */
+.reader-find {
+  padding: 6px 10px;
+  border-bottom: 1px solid alpha(currentColor, 0.1);
+}
+

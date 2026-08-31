@@ -7,6 +7,7 @@ mod backend;
 mod cache;
 mod color;
 mod config;
+mod console_log;
 mod contacts;
 mod datefmt;
 mod goa;
@@ -46,12 +47,25 @@ pub const HIDDEN_FLAG: &str = "--hidden";
 pub static HIDDEN_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    // Two log sinks: stderr honours RUST_LOG as before, and the console-mode
+    // ring buffer (console_log.rs) always runs verbose so the status bar's
+    // console has everything under the hood to show.
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::Layer;
+        use tracing_subscriber::util::SubscriberInitExt;
+        let stderr = tracing_subscriber::fmt::layer().with_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "vireo=info".into()),
-        )
-        .init();
+        );
+        let console = tracing_subscriber::fmt::layer()
+            .with_writer(console_log::ConsoleWriter)
+            .with_ansi(false)
+            .with_target(false)
+            .compact()
+            .with_filter(tracing_subscriber::EnvFilter::new("vireo=debug"));
+        tracing_subscriber::registry().with(stderr).with(console).init();
+    }
 
     migrate_legacy_dirs();
     // Attachments the user opened in a previous session were decrypted to a temp
@@ -119,9 +133,14 @@ fn main() {
         return;
     }
 
+    // A brand-new install (no accounts, not the demo) is greeted by the
+    // welcome wizard alone; the main window appears when the wizard finishes
+    // or is closed (app.rs presents it from the wizard's hand-off).
+    let first_run = std::env::var("VIREO_DEMO").is_err()
+        && config::load().unwrap_or_default().is_empty();
     let app = RelmApp::from_app(adw_app)
         .with_args(args)
-        .visible_on_activate(!hidden);
+        .visible_on_activate(!hidden && !first_run);
     app.run::<AppModel>(());
 }
 

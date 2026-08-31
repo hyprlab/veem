@@ -35,6 +35,9 @@ pub struct MessageView {
     /// having them in view can't undo the thing the user just asked for. Cleared
     /// whenever a conversation is opened afresh.
     no_autoread: std::collections::HashSet<(u32, u32)>,
+    /// Read-marking policy (#100), stamped on the document for the
+    /// viewport observer.
+    read_mark: crate::config::ReadMark,
     /// Whether the blocked-content banner is shown at all. It gates only the notice: `blocked`
     /// still governs what is withheld, so hiding it never loads anything.
     show_banner: bool,
@@ -89,6 +92,13 @@ pub struct MessageView {
     /// False from when a render starts until the WebView reports it finished
     /// loading — a themed cover hides the WebView's white inter-document gap.
     webview_ready: bool,
+    /// In-message find (#103).
+    find_open: bool,
+    find_matches: Option<(u32, u32)>,
+    find_entry: Option<gtk::SearchEntry>,
+    /// When find last closed itself (empty entry blur) — the toolbar click
+    /// that caused the blur must not instantly reopen it.
+    find_closed_at: Option<std::time::Instant>,
     /// Which message the document currently on screen was rendered for, so an
     webview: webkit6::WebView,
     /// Bumped per render: each load gets a unique base URI so WebKit treats it
@@ -122,6 +132,16 @@ impl MessageView {
         );
         self.webview
             .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+    }
+
+    /// Run one of the in-message find engine's calls (#103), logging failures.
+    fn eval_find(&self, js: &str) {
+        self.webview
+            .evaluate_javascript(js, None, None, None::<&gtk::gio::Cancellable>, |r| {
+                if let Err(e) = r {
+                    tracing::warn!("find js failed: {e}");
+                }
+            });
     }
 
     /// The verdict-details popover, anchored where the seal was clicked.
@@ -308,6 +328,22 @@ pub enum MessageViewInput {
     /// A conversation message was read: clear its card's unread dot in place,
     /// without reloading the document.
     ClearDot { account_id: u32, id: u32 },
+    /// A message's star changed outside the card (list row, toolbar): sync
+    /// the card's star button without a re-render.
+    SetCardStar { account_id: u32, id: u32, starred: bool },
+    /// Read-marking policy changed (#100).
+    SetReadMark(crate::config::ReadMark),
+    /// In-message find (#103): open/close the bar, run/step the search.
+    OpenFind,
+    CloseFind,
+    FindChanged(String),
+    FindNext,
+    FindPrev,
+    FindCounted { current: u32, total: u32 },
+    /// A split reply opened for this message (#86): scroll its card to the
+    /// top of the (now shorter) reader and give it the selection outline, so
+    /// the message being answered is the one in view.
+    FocusCard { account_id: u32, id: u32 },
     /// The wrapper document reported its scroll anchor (throttled): the card at
     /// the viewport top and the offset into it — kept so a re-render can put
     /// the reader back where they were.
@@ -435,6 +471,74 @@ impl Component for MessageView {
                     },
                 },
 
+                // In-message find (#103): WebKit's FindController does the
+                // matching and highlighting; this bar just drives it.
+                gtk::Revealer {
+                    set_transition_type: gtk::RevealerTransitionType::SlideDown,
+                    #[watch]
+                    set_reveal_child: model.find_open,
+
+                    gtk::Box {
+                        add_css_class: "reader-find",
+                        set_spacing: 6,
+
+                        #[name = "find_entry"]
+                        gtk::SearchEntry {
+                            set_hexpand: true,
+                            set_placeholder_text: Some("Find in message"),
+                            connect_search_changed[sender] => move |entry| {
+                                sender.input(MessageViewInput::FindChanged(entry.text().to_string()));
+                            },
+                            connect_activate[sender] => move |_| {
+                                sender.input(MessageViewInput::FindNext);
+                            },
+                            connect_stop_search[sender] => move |_| {
+                                sender.input(MessageViewInput::CloseFind);
+                            },
+                            add_controller = gtk::EventControllerFocus {
+                                connect_leave[sender] => move |ctl| {
+                                    let empty = ctl
+                                        .widget()
+                                        .and_downcast_ref::<gtk::SearchEntry>()
+                                        .is_some_and(|e| e.text().trim().is_empty());
+                                    if empty {
+                                        sender.input(MessageViewInput::CloseFind);
+                                    }
+                                },
+                            },
+                        },
+
+                        gtk::Label {
+                            add_css_class: "dim-label",
+                            #[watch]
+                            set_label: &match model.find_matches {
+                                Some((_, 0)) => "No matches".to_string(),
+                                Some((cur, total)) => format!("{cur} of {total}"),
+                                None => String::new(),
+                            },
+                        },
+
+                        gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-pan-up-symbolic",
+                            set_tooltip_text: Some("Previous match"),
+                            add_css_class: "flat",
+                            connect_clicked => MessageViewInput::FindPrev,
+                        },
+                        gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-pan-down-symbolic",
+                            set_tooltip_text: Some("Next match"),
+                            add_css_class: "flat",
+                            connect_clicked => MessageViewInput::FindNext,
+                        },
+                        gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-window-close-symbolic",
+                            set_tooltip_text: Some("Close find"),
+                            add_css_class: "flat",
+                            connect_clicked => MessageViewInput::CloseFind,
+                        },
+                    },
+                },
+
                 gtk::Box {
                     add_css_class: "reader-header",
                     set_orientation: gtk::Orientation::Vertical,
@@ -558,7 +662,7 @@ impl Component for MessageView {
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
             );
         }
-        let model = MessageView {
+        let mut model = MessageView {
             always_show_recipients: false,
             single_message_card: false,
             current: None,
@@ -566,6 +670,7 @@ impl Component for MessageView {
             folder_labels: std::collections::HashMap::new(),
             blocked: false,
             no_autoread: std::collections::HashSet::new(),
+            read_mark: crate::config::ReadMark::default(),
             show_banner: crate::config::load_show_remote_banner(),
             card_actions_hover: crate::config::load_card_actions_hover(),
             card_actions_auto: crate::config::load_card_actions_auto(),
@@ -582,6 +687,10 @@ impl Component for MessageView {
             selected_cards: Vec::new(),
             loading: false,
             webview_ready: false,
+            find_open: false,
+            find_matches: None,
+            find_entry: None,
+            find_closed_at: None,
             webview,
             sender_check: None,
             member_checks: std::collections::HashMap::new(),
@@ -692,6 +801,14 @@ impl Component for MessageView {
                     }
                     "open" => open_sender.input(MessageViewInput::OpenHeader { account_id, id }),
                     "seen" => open_sender.input(MessageViewInput::MarkSeen { account_id, id }),
+                    "found" => {
+                        let (cur, total) = extra
+                            .and_then(|e| e.split_once(','))
+                            .and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))
+                            .unwrap_or((0, 0));
+                        open_sender
+                            .input(MessageViewInput::FindCounted { current: cur, total });
+                    }
                     "reply" => open_sender.input(MessageViewInput::CardAction {
                         action: RowAction::Reply,
                         account_id,
@@ -765,6 +882,7 @@ impl Component for MessageView {
         });
 
         let widgets = view_output!();
+        model.find_entry = Some(widgets.find_entry.clone());
         let body_overlay = gtk::Overlay::new();
         body_overlay.set_child(Some(&model.webview));
         body_overlay.add_overlay(&link_preview);
@@ -936,14 +1054,21 @@ impl Component for MessageView {
                 // blip ClearDot avoids in the other direction).
                 let js = format!(
                     "(function(){{\
+                     var s=document.querySelector('.vireo-msg[data-key=\"{account_id}:{id}\"]');\
+                     if(s)s.classList.add('unread');\
                      var h=document.querySelector('.vireo-msg-hdr[data-key=\"{account_id}:{id}\"]');\
                      if(!h||h.querySelector('.vireo-dot'))return;\
                      var d=document.createElement('span');d.className='vireo-dot';\
+                     d.setAttribute('data-key','{account_id}:{id}');\
                      var f=h.querySelector('.vireo-from');\
-                     if(f)h.insertBefore(d,f);else h.appendChild(d);}})()"
+                     if(f)f.parentNode.insertBefore(d,f);else h.appendChild(d);}})()"
                 );
                 self.webview
-                    .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+                    .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |r| {
+                        if let Err(e) = r {
+                            tracing::warn!("unread-dot patch failed: {e}");
+                        }
+                    });
             }
             MessageViewInput::ClearCards => {
                 if !self.selected_cards.is_empty() {
@@ -1033,6 +1158,11 @@ impl Component for MessageView {
                 self.frame_heights.insert((account_id, id), height);
             }
             MessageViewInput::MarkSeen { account_id, id } => {
+                // A deliberate unread mark stands until the conversation is
+                // reopened — the viewport observer must not undo it.
+                if self.no_autoread.contains(&(account_id, id)) {
+                    return;
+                }
                 // Keep the local copy in step so a later re-render doesn't put
                 // the mark back on a message already read.
                 let mut found = false;
@@ -1084,10 +1214,121 @@ impl Component for MessageView {
                     }
                 }
                 let js = format!(
-                    "(function(){{var d=document.querySelector('.vireo-dot[data-key=\"{account_id}:{id}\"]');if(d)d.remove();}})()"
+                    "(function(){{\
+                     var d=document.querySelector('.vireo-dot[data-key=\"{account_id}:{id}\"]');\
+                     if(d)d.remove();\
+                     var s=document.querySelector('.vireo-msg[data-key=\"{account_id}:{id}\"]');\
+                     if(s)s.classList.remove('unread');}})()"
                 );
                 self.webview
-                    .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+                    .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |r| {
+                        if let Err(e) = r {
+                            tracing::warn!("clear-dot patch failed: {e}");
+                        }
+                    });
+            }
+            MessageViewInput::SetReadMark(policy) => {
+                if self.read_mark != policy {
+                    self.read_mark = policy;
+                    if self.current.is_some() && !self.loading {
+                        self.render();
+                    }
+                }
+            }
+            MessageViewInput::OpenFind => {
+                // The toolbar button toggles: a second press collapses the bar.
+                if self.find_open {
+                    sender.input(MessageViewInput::CloseFind);
+                    return;
+                }
+                if self
+                    .find_closed_at
+                    .take()
+                    .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(300))
+                {
+                    return;
+                }
+                self.find_open = true;
+                if let Some(entry) = self.find_entry.clone() {
+                    gtk::glib::idle_add_local_once(move || {
+                        entry.grab_focus();
+                    });
+                }
+            }
+            MessageViewInput::CloseFind => {
+                self.find_open = false;
+                self.find_closed_at = Some(std::time::Instant::now());
+                self.find_matches = None;
+                if let Some(entry) = &self.find_entry {
+                    entry.set_text("");
+                }
+                self.eval_find("vireoFindClear()");
+            }
+            MessageViewInput::FindChanged(text) => {
+                let text = text.trim();
+                if text.is_empty() {
+                    self.find_matches = None;
+                    self.eval_find("vireoFindClear()");
+                    return;
+                }
+                // Into a JS single-quoted string: backslashes and quotes only.
+                let quoted = text.replace('\\', "\\\\").replace('\'', "\\'");
+                self.eval_find(&format!("vireoFind('{quoted}')"));
+            }
+            MessageViewInput::FindNext => self.eval_find("vireoFindStep(1)"),
+            MessageViewInput::FindPrev => self.eval_find("vireoFindStep(-1)"),
+            MessageViewInput::FindCounted { current, total } => {
+                self.find_matches = Some((current, total));
+            }
+            MessageViewInput::SetCardStar { account_id, id, starred } => {
+                for m in self.thread.iter_mut() {
+                    if m.account_id == account_id && m.id == id {
+                        m.starred = starred;
+                    }
+                }
+                let js = format!(
+                    "(function(){{\
+                     var b=document.querySelector('.vireo-act[data-act=\"star\"][data-key=\"{account_id}:{id}\"]');\
+                     if(b)b.classList.{}('on');}})()",
+                    if starred { "add" } else { "remove" },
+                );
+                self.webview
+                    .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |r| {
+                        if let Err(e) = r {
+                            tracing::warn!("card star patch failed: {e}");
+                        }
+                    });
+            }
+            MessageViewInput::FocusCard { account_id, id } => {
+                let webview = self.webview.clone();
+                // Let the split's 300ms slide finish first — scrolling while
+                // the viewport is still shrinking lands somewhere else.
+                gtk::glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(380),
+                    move || {
+                        let js = format!(
+                            "(function(){{\
+                             if(!document.body.classList.contains('vireo-conv'))return;\
+                             var s=document.querySelector('.vireo-msg[data-key=\"{account_id}:{id}\"]');\
+                             if(!s)return;\
+                             document.querySelectorAll('.vireo-msg.selected').forEach(function(e){{e.classList.remove('selected');}});\
+                             s.classList.add('selected');\
+                             s.style.scrollMarginTop='14px';\
+                             s.scrollIntoView({{behavior:'smooth',block:'start'}});}})()"
+                        );
+                        webview.evaluate_javascript(
+                            &js,
+                            None,
+                            None,
+                            None::<&gtk::gio::Cancellable>,
+                            |r| {
+                                if let Err(e) = r {
+                                    tracing::warn!("focus-card scroll failed: {e}");
+                                }
+                            },
+                        );
+                    },
+                );
             }
             MessageViewInput::ScrollAnchor { account_id, id, offset } => {
                 self.saved_anchor = Some((account_id, id, offset));
@@ -1207,8 +1448,28 @@ impl MessageView {
             " data-vireo-actsdelay=\"{}\"",
             self.palette_collapse_secs.max(1) * 1000
         );
-        let html =
-            html.replacen("<body", &format!("<body{noscroll}{hover}{delay}"), 1);
+        // The newest member, for the open-scroll fallback (#101): with no
+        // unread mail the reader lands on the newest message rather than
+        // wherever the document happens to start.
+        let newest = self
+            .thread
+            .iter()
+            .max_by_key(|m| m.timestamp)
+            .filter(|_| self.thread.len() > 1)
+            .map(|m| format!(" data-vireo-newest=\"{}:{}\"", m.account_id, m.id))
+            .unwrap_or_default();
+        // Read-marking policy (#100): the observer marks conversation members
+        // as they come into view; "manual" installs no observer at all.
+        let readmark = match self.read_mark {
+            crate::config::ReadMark::Shown => " data-vireo-readmark=\"250\"",
+            crate::config::ReadMark::Delay => " data-vireo-readmark=\"2000\"",
+            crate::config::ReadMark::Manual => "",
+        };
+        let html = html.replacen(
+            "<body",
+            &format!("<body{noscroll}{hover}{delay}{newest}{readmark}"),
+            1,
+        );
         self.did_autoscroll = true;
         let n = self.seq.get().wrapping_add(1);
         self.seq.set(n);
@@ -1327,7 +1588,7 @@ impl MessageView {
             };
             if conversation {
                 sections.push_str(&format!(
-                    "<section class=\"vireo-msg{sel}\" data-key=\"{aid}:{id}\">\
+                    "<section class=\"vireo-msg{sel}{unread_cls}\" data-key=\"{aid}:{id}\">\
                        <header class=\"vireo-msg-hdr\" data-key=\"{aid}:{id}\" \
                          title=\"Double-click to open in a new window\">\
                          <div class=\"vireo-hdr-line\">\
@@ -1368,12 +1629,19 @@ impl MessageView {
                             card_action_button(key, "replyall", "mail-reply-all-symbolic", "Reply to everyone on this message"),
                             card_action_button(key, "forward", "mail-forward-symbolic", "Forward this message"),
                             // Action-showing icon (read envelope = "mark as
-                            // read"), like the menus and toolbar.
-                            if m.unread {
-                                card_action_button(key, "toggleread", "mail-read-symbolic", "Mark as Read")
-                            } else {
-                                card_action_button(key, "toggleread", "mail-unread-symbolic", "Mark as Unread")
-                            },
+                            // read"), like the menus and toolbar. Both icons
+                            // are baked in; the section's `unread` class picks
+                            // one, so marking read/unread flips in place.
+                            format!(
+                                "<button type=\"button\" class=\"vireo-act\" data-act=\"toggleread\" \
+                                 data-key=\"{aid}:{id}\" title=\"Mark as read or unread\">\
+                                 <span class=\"tr-when-unread\">{read_svg}</span>\
+                                 <span class=\"tr-when-read\">{unread_svg}</span></button>",
+                                aid = key.0,
+                                id = key.1,
+                                read_svg = inline_icon_svg("mail-read-symbolic"),
+                                unread_svg = inline_icon_svg("mail-unread-symbolic"),
+                            ),
                             // The star keeps one glyph; the flagged state is
                             // colour alone (`.on`, toggled optimistically on
                             // click too).
@@ -1399,6 +1667,7 @@ impl MessageView {
                     } else {
                         ""
                     },
+                    unread_cls = if m.unread { " unread" } else { "" },
                     // `escape_text`, not `attr_escape`: these land in element
                     // text content, where `<` and `>` are structural. A `From:`
                     // display name is attacker-controlled (and RFC 2047-decoded,
@@ -1697,6 +1966,11 @@ impl MessageView {
                .vireo-quote:hover{{opacity:0.95;background:rgba(128,128,128,0.28);}}\
                .vireo-quote.open{{opacity:0.95;}}\
                .vireo-acts{{display:flex;gap:2px;flex:none;align-self:center;margin-left:4px;}}\
+               /* Read-toggle: the icon showing is the ACTION (read envelope\
+                  means mark-as-read); the section's unread class decides. */\
+               .vireo-act .tr-when-unread,.vireo-act .tr-when-read{{display:none;line-height:0;}}\
+               .vireo-msg.unread .vireo-act[data-act=\"toggleread\"] .tr-when-unread{{display:inline-flex;}}\
+               .vireo-msg:not(.unread) .vireo-act[data-act=\"toggleread\"] .tr-when-read{{display:inline-flex;}}\
                .vireo-act{{color:inherit;background:none;border:none;border-radius:6px;\
                  padding:5px 8px;cursor:pointer;opacity:0.7;\
                  transition:opacity 120ms ease,background 120ms ease;}}\
@@ -1924,6 +2198,10 @@ fn new_webview() -> webkit6::WebView {
     // `sandbox`ed iframe WITHOUT `allow-scripts`, so message scripts never run.
     settings.set_enable_javascript(true);
     settings.set_enable_developer_extras(false);
+    // JS console output lands on stdout, where the tracing/console-mode
+    // pipeline can pick it up — a silent script error in the wrapper document
+    // otherwise kills card interactions with no trace at all.
+    settings.set_enable_write_console_messages_to_stdout(true);
     webview.set_settings(&settings);
 
     // "Save Image As…" on a right-clicked image. WebKit's own item hands the
@@ -3227,7 +3505,10 @@ setTimeout(pin,0);}}return;}\
 var ds=document.querySelectorAll('.vireo-msg .vireo-dot');\
 var d=ds.length?ds[0]:null;\
 if(d){var m=d.closest('.vireo-msg');\
-if(m)setTimeout(function(){try{follow=m;m.scrollIntoView({block:'start'});}catch(_){}},0);}}\
+if(m)setTimeout(function(){try{follow=m;m.scrollIntoView({block:'start'});}catch(_){}},0);}\
+else if(bd.vireoNewest){\
+var nm=document.querySelector('.vireo-msg[data-key=\"'+bd.vireoNewest+'\"]');\
+if(nm)setTimeout(function(){try{follow=nm;nm.scrollIntoView({block:'start'});}catch(_){}},0);}}\
 setTimeout(markClipped,0);setTimeout(markClipped,400);\
 if(!pend)ready();\
 for(var i=0;i<fs.length;i++){(function(f){var counted=false;\
@@ -3238,6 +3519,69 @@ setTimeout(ready,450);\
 var hs=document.querySelectorAll('.vireo-msg-hdr');\
 for(var j=0;j<hs.length;j++){hs[j].addEventListener('dblclick',function(){\
 try{window.webkit.messageHandlers.vireo.postMessage('open:'+this.dataset.key);}catch(_){}});}\
+var rbd=document.body.dataset;\
+if(rbd.vireoReadmark&&document.body.classList.contains('vireo-conv')){\
+var rdel=parseInt(rbd.vireoReadmark,10)||250;var rt={};\
+var rio=new IntersectionObserver(function(es){es.forEach(function(en){\
+var el=en.target,k=el.dataset.key;\
+var vis=en.intersectionRatio>=0.5||en.intersectionRect.height>window.innerHeight*0.6;\
+if(vis&&!rt[k]){rt[k]=setTimeout(function(){\
+try{window.webkit.messageHandlers.vireo.postMessage('seen:'+k);}catch(_){}\
+rio.unobserve(el);},rdel);}\
+else if(!vis&&rt[k]){clearTimeout(rt[k]);delete rt[k];}\
+});},{threshold:[0,0.25,0.5,0.75,1]});\
+var rsecs=document.querySelectorAll('.vireo-msg');\
+for(var ri=0;ri<rsecs.length;ri++){if(rsecs[ri].querySelector('.vireo-dot'))rio.observe(rsecs[ri]);}}\
+window.vf={marks:[],cur:-1};\
+window.vfDocs=function(){var ds=[document];var fs=document.querySelectorAll('iframe');\
+for(var i=0;i<fs.length;i++){try{if(fs[i].contentDocument)ds.push(fs[i].contentDocument);}catch(_){}}return ds;};\
+window.vfCss=function(d){if(d.getElementById('vireo-find-css'))return;\
+var st=d.createElement('style');st.id='vireo-find-css';\
+st.textContent='.vireo-find{background:rgba(255,198,0,0.5);color:#000;border-radius:5px;box-shadow:0 0 0 2px rgba(255,198,0,0.5);}.vireo-find.current{background:#ffc600;box-shadow:0 0 0 2px #ffc600;}';\
+(d.head||d.documentElement).appendChild(st);};\
+window.vireoFindClear=function(){for(var i=0;i<vf.marks.length;i++){var m=vf.marks[i];\
+var p=m.parentNode;if(!p)continue;while(m.firstChild)p.insertBefore(m.firstChild,m);p.removeChild(m);p.normalize();}\
+vf.marks=[];vf.cur=-1;};\
+window.vfPost=function(){try{window.webkit.messageHandlers.vireo.postMessage(\
+'found:0:0:'+(vf.marks.length?vf.cur+1:0)+','+vf.marks.length);}catch(_){}};\
+window.vfShow=function(){for(var i=0;i<vf.marks.length;i++)vf.marks[i].className='vireo-find'+(i===vf.cur?' current':'');\
+vfPost();\
+var m=vf.marks[vf.cur];if(!m)return;\
+var d=m.ownerDocument;\
+if(d===document){m.scrollIntoView({block:'center'});}\
+else{var fs=document.querySelectorAll('iframe');\
+for(var j=0;j<fs.length;j++){if(fs[j].contentDocument===d){\
+var r=m.getBoundingClientRect(),fr=fs[j].getBoundingClientRect();\
+window.scrollTo({top:window.scrollY+fr.top+r.top-window.innerHeight/2});break;}}}};\
+window.vfY=function(m){var d=m.ownerDocument,r=m.getBoundingClientRect();\
+if(d===document)return r.top+window.scrollY;\
+var fs=document.querySelectorAll('iframe');\
+for(var j=0;j<fs.length;j++){if(fs[j].contentDocument===d)\
+return fs[j].getBoundingClientRect().top+window.scrollY+r.top;}\
+return r.top;};\
+window.vireoFindStep=function(dir){if(!vf.marks.length)return;\
+vf.cur=(vf.cur+dir+vf.marks.length)%vf.marks.length;vfShow();};\
+window.vireoFind=function(q){vireoFindClear();q=(q||'').toLowerCase();\
+if(q){var docs=vfDocs();\
+for(var di=0;di<docs.length;di++){var d=docs[di];vfCss(d);\
+var w=d.createTreeWalker(d.body||d.documentElement,NodeFilter.SHOW_TEXT,null);\
+var nodes=[];var n;\
+while((n=w.nextNode())){var pn=n.parentNode&&n.parentNode.nodeName;\
+if(pn==='SCRIPT'||pn==='STYLE')continue;\
+if(n.nodeValue&&n.nodeValue.toLowerCase().indexOf(q)>=0)nodes.push(n);}\
+for(var ni=0;ni<nodes.length;ni++){var node=nodes[ni];\
+var text=node.nodeValue,lower=text.toLowerCase(),pos=0,idx;\
+var frag=d.createDocumentFragment(),had=false;\
+while((idx=lower.indexOf(q,pos))>=0){had=true;\
+frag.appendChild(d.createTextNode(text.slice(pos,idx)));\
+var sp=d.createElement('span');sp.className='vireo-find';\
+sp.textContent=text.slice(idx,idx+q.length);\
+frag.appendChild(sp);vf.marks.push(sp);pos=idx+q.length;}\
+frag.appendChild(d.createTextNode(text.slice(pos)));\
+if(had)node.parentNode.replaceChild(frag,node);}}\
+vf.marks=vf.marks.filter(function(m){return m.getClientRects().length>0;});\
+if(vf.marks.length){vf.marks.sort(function(a,b){return vfY(a)-vfY(b);});\
+vf.cur=0;vfShow();}else{vfPost();}}else{vfPost();}};\
 var rs=document.querySelectorAll('.vireo-rcpt-toggle');\
 for(var r=0;r<rs.length;r++){rs[r].addEventListener('click',function(e){\
 e.stopPropagation();e.preventDefault();\

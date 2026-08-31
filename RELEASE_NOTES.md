@@ -2,6 +2,21 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.18.4
+
+Composer attachment fixes from Isaac's PR #96 (@thecalamityjoe87). Attachment pills in the composer now shrink to their content instead of stretching the full row, and files opened with Vireo from a file manager or the command line attach to a fresh composer.
+
+## What's new in 1.18.3
+
+Fix release for #90 and #91, both reported by @frenchy82, plus sender-seal corrections under GNOME text scaling.
+
+A folder click can no longer be swallowed by a stalled IMAP IDLE: the IDLE handshakes now time out and the click completes over a fresh connection. Push becomes a per-account setting (each account's editor gains Syncing → Instant new mail), so one server that mishandles IDLE no longer costs the others their instant delivery. GNOME Files' "Send by email" now attaches the selected files. The sender seal and its popover render correctly at any GNOME text scaling factor.
+## What's new in 1.19.0-beta.1
+
+The 1.19 feature preview, built with the community: mail filters (#47, requested by @mfreeman72), settings backup (#50, @doodoobug-dot), notification actions (#38, @isorropisths), split replies (#86, @yioannides), quick filters (#97, @Toxblh), the read-marking and search work (#99 through #103, @p-mitana and @yioannides), and the Nautilus From-field fix (#105, @frenchy82).
+
+New: a first-run welcome wizard, a status-bar console mode, per-account mail filters, one-file settings backup and restore, notification action buttons, split replies that keep the conversation in view, collapsible list search plus find-in-message with highlights, unread/starred quick filters, viewport-based read marking with a policy setting, conversation-level starring, and threads that surface their newest message in the list.
+
 ## What's new in 1.18.5-beta.1
 
 The beta channel catches up with stable 1.18.4: the composer attachment-pill fix and files opened with Vireo attaching to a fresh composer. No beta-only changes.

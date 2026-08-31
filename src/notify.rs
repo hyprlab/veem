@@ -13,6 +13,10 @@ pub const PRESENT_ACTION: &str = "present-window";
 /// App action (bare name) that raises the window and opens a specific message.
 /// Its target is a `(account_id, folder_id, message_id)` `(uuu)` variant.
 pub const OPEN_MESSAGE_ACTION: &str = "open-message";
+/// Notification button actions (#38): act on the notified message without
+/// raising the window. Same `(uuu)` target as [`OPEN_MESSAGE_ACTION`].
+pub const MARK_READ_ACTION: &str = "notify-mark-read";
+pub const ARCHIVE_ACTION: &str = "notify-archive";
 
 /// Build the (title, body) for a new-mail notification. `others` is how many
 /// *additional* new messages arrived beyond the newest one shown.
@@ -79,6 +83,21 @@ pub fn new_mail(
     n.set_priority(gio::NotificationPriority::Normal);
     let target = (account_id, folder_id, message_id).to_variant();
     n.set_default_action_and_target_value(&format!("app.{OPEN_MESSAGE_ACTION}"), Some(&target));
+    // Action buttons (#38), only when the notification covers exactly one
+    // message — on a "3 new messages" summary, "Mark as Read" acting on just
+    // the newest would do less than it says.
+    if others == 0 {
+        n.add_button_with_target_value(
+            "Mark as Read",
+            &format!("app.{MARK_READ_ACTION}"),
+            Some(&target),
+        );
+        n.add_button_with_target_value(
+            "Archive",
+            &format!("app.{ARCHIVE_ACTION}"),
+            Some(&target),
+        );
+    }
     send(&mail_id(account_id), &n);
 }
 

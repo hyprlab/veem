@@ -3,7 +3,6 @@
 //! Account credentials are managed in their own window (see `ui/accounts.rs`).
 
 use adw::prelude::*;
-use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
 
 use crate::config::{AppTheme, ClockStyle, DateStyle, MessageTheme};
@@ -11,7 +10,6 @@ use crate::config::{AppTheme, ClockStyle, DateStyle, MessageTheme};
 /// Initial data for the settings window.
 #[derive(Debug)]
 pub struct PrefInit {
-    pub allowed_senders: Vec<String>,
     pub auto_remote_content: bool,
     pub show_remote_banner: bool,
     pub gravatar: bool,
@@ -21,7 +19,6 @@ pub struct PrefInit {
     pub clock_style: ClockStyle,
     pub fetch_interval_secs: u64,
     pub push: bool,
-    pub blacklist: Vec<String>,
     pub palette_collapse_secs: u64,
     pub threading: bool,
     pub threads_expanded: bool,
@@ -54,6 +51,8 @@ pub struct PrefInit {
     pub show_unified: bool,
     pub unified_chip: bool,
     pub chevrons_left: bool,
+    pub console_mode: bool,
+    pub read_mark: crate::config::ReadMark,
     pub sidebar_hover_expand: bool,
     pub preview_lines: u32,
     pub single_key_shortcuts: bool,
@@ -149,10 +148,6 @@ impl FactoryComponent for SenderRow {
 // ---- Preferences window -----------------------------------------------------
 
 pub struct Preferences {
-    senders: FactoryVecDeque<SenderRow>,
-    sender_addrs: Vec<String>,
-    blacklist: FactoryVecDeque<SenderRow>,
-    blacklist_addrs: Vec<String>,
     /// Mirrors the notifications switch, so the "show sender and subject" row
     /// below it can grey out when nothing is being posted at all.
     notifications: bool,
@@ -175,11 +170,7 @@ pub struct Preferences {
 
 #[derive(Debug)]
 pub enum PrefInput {
-    AddSenderText(String),
-    RemoveSenderRow(String),
     ToggleShowRemoteBanner(bool),
-    AddBlacklistText(String),
-    RemoveBlacklistRow(String),
     ToggleAutoRemoteContent(bool),
     ToggleGravatar(bool),
     ToggleAvatars(bool),
@@ -209,6 +200,10 @@ pub enum PrefInput {
     ToggleSidebarHoverExpand(bool),
     ChangePreviewLines(u32),
     ToggleSingleKey(bool),
+    ToggleConsoleMode(bool),
+    ChangeReadMark(u32),
+    ExportSettings,
+    ImportSettings,
     ToggleRunInBackground(bool),
     ToggleAutostart(bool),
     ChangePaletteCollapse(u64),
@@ -224,10 +219,6 @@ pub enum PrefInput {
 
 #[derive(Debug)]
 pub enum PrefOutput {
-    AddSender(String),
-    RemoveSender(String),
-    AddBlacklist(String),
-    RemoveBlacklist(String),
     SetAutoRemoteContent(bool),
     SetShowRemoteBanner(bool),
     SetGravatar(bool),
@@ -255,6 +246,10 @@ pub enum PrefOutput {
     SetShowUnified(bool),
     SetUnifiedChip(bool),
     SetChevronsLeft(bool),
+    SetConsoleMode(bool),
+    SetReadMark(crate::config::ReadMark),
+    ExportSettings,
+    ImportSettings,
     SetSidebarHoverExpand(bool),
     SetAppTheme(AppTheme),
     /// The "this window opens to" choice changed (true = Accounts).
@@ -554,6 +549,17 @@ impl Component for Preferences {
                     add = &adw::PreferencesGroup {
                         set_title: "Reading",
 
+                        #[name = "read_mark_row"]
+                        adw::ComboRow {
+                            set_title: "Mark as read",
+                            set_subtitle: "When an opened message counts as read. \
+                                           Conversations mark each message as it \
+                                           comes into view.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeReadMark(row.selected()));
+                            },
+                        },
+
                         #[name = "message_theme_row"]
                         adw::ComboRow {
                             set_title: "Message appearance",
@@ -665,6 +671,46 @@ impl Component for Preferences {
                                 sender.input(PrefInput::ToggleSingleKey(row.is_active()));
                             },
                         },
+
+                        #[name = "console_mode_row"]
+                        adw::SwitchRow {
+                            set_title: "Console mode",
+                            set_subtitle: "A verbose live console in the status bar showing \
+                                           everything Vireo is doing under the hood.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleConsoleMode(row.is_active()));
+                            },
+                        },
+                    },
+
+                    add = &adw::PreferencesGroup {
+                        set_title: "Backup",
+                        set_description: Some(
+                            "Accounts and preferences as one file. Passwords stay in the \
+                             system keyring and are never exported."
+                        ),
+
+                        adw::ActionRow {
+                            set_title: "Export settings",
+                            set_activatable: true,
+                            connect_activated => PrefInput::ExportSettings,
+                            add_suffix = &gtk::Image {
+                                set_icon_name: Some("co.hyprlab.Vireo-go-next-symbolic"),
+                            },
+                        },
+
+                        adw::ActionRow {
+                            set_title: "Import settings",
+                            set_subtitle: "Replaces the current accounts and preferences in \
+                                           place. Don't remove accounts first: removal also \
+                                           deletes their keyring passwords, which no backup \
+                                           carries.",
+                            set_activatable: true,
+                            connect_activated => PrefInput::ImportSettings,
+                            add_suffix = &gtk::Image {
+                                set_icon_name: Some("co.hyprlab.Vireo-go-next-symbolic"),
+                            },
+                        },
                     },
 
                     add = &adw::PreferencesGroup {
@@ -748,84 +794,6 @@ impl Component for Preferences {
 
                     },
 
-                    add = &adw::PreferencesGroup {
-                        set_title: "Allowed Senders",
-                        set_description: Some(
-                            "Messages from these senders load remote content automatically."
-                        ),
-
-                        #[name = "add_sender_row"]
-                        adw::EntryRow {
-                            set_title: "Email address",
-                            set_input_purpose: gtk::InputPurpose::Email,
-                            // The + is the apply button, so there is only one way
-                            // to add and it reads the same in both lists.
-                            set_show_apply_button: false,
-                            connect_entry_activated[sender] => move |row| {
-                                sender.input(PrefInput::AddSenderText(row.text().to_string()));
-                                row.set_text("");
-                            },
-
-                            add_suffix = &gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-list-add-symbolic",
-                                set_tooltip_text: Some("Allow this sender"),
-                                set_valign: gtk::Align::Center,
-                                add_css_class: "flat",
-                                connect_clicked[sender, add_sender_row] => move |_| {
-                                    sender.input(PrefInput::AddSenderText(
-                                        add_sender_row.text().to_string(),
-                                    ));
-                                    add_sender_row.set_text("");
-                                },
-                            },
-                        },
-
-                        #[local_ref]
-                        senders_box -> gtk::ListBox {
-                            add_css_class: "boxed-list",
-                            add_css_class: "sender-list",
-                            set_selection_mode: gtk::SelectionMode::None,
-                        },
-                    },
-
-                    add = &adw::PreferencesGroup {
-                        set_title: "Blacklist",
-                        set_description: Some(
-                            "Incoming mail from these senders is deleted automatically \
-                             (moved to Trash). Enter an email address, or a whole domain \
-                             like \"example.com\" to block every sender there."
-                        ),
-
-                        #[name = "add_blacklist_row"]
-                        adw::EntryRow {
-                            set_title: "Address or domain",
-                            set_show_apply_button: false,
-                            connect_entry_activated[sender] => move |row| {
-                                sender.input(PrefInput::AddBlacklistText(row.text().to_string()));
-                                row.set_text("");
-                            },
-
-                            add_suffix = &gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-list-add-symbolic",
-                                set_tooltip_text: Some("Block this sender"),
-                                set_valign: gtk::Align::Center,
-                                add_css_class: "flat",
-                                connect_clicked[sender, add_blacklist_row] => move |_| {
-                                    sender.input(PrefInput::AddBlacklistText(
-                                        add_blacklist_row.text().to_string(),
-                                    ));
-                                    add_blacklist_row.set_text("");
-                                },
-                            },
-                        },
-
-                        #[local_ref]
-                        blacklist_box -> gtk::ListBox {
-                            add_css_class: "boxed-list",
-                            add_css_class: "sender-list",
-                            set_selection_mode: gtk::SelectionMode::None,
-                        },
-                    },
                 },
                 },
             },
@@ -837,22 +805,7 @@ impl Component for Preferences {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let senders = FactoryVecDeque::builder()
-            .launch(gtk::ListBox::new())
-            .forward(sender.input_sender(), |out| match out {
-                SenderRowOutput::Remove(addr) => PrefInput::RemoveSenderRow(addr),
-            });
-        let blacklist = FactoryVecDeque::builder()
-            .launch(gtk::ListBox::new())
-            .forward(sender.input_sender(), |out| match out {
-                SenderRowOutput::Remove(addr) => PrefInput::RemoveBlacklistRow(addr),
-            });
-
         let mut model = Preferences {
-            senders,
-            sender_addrs: Vec::new(),
-            blacklist,
-            blacklist_addrs: Vec::new(),
             notifications: init.notifications,
             show_unified: init.show_unified,
             threading: init.threading,
@@ -862,23 +815,6 @@ impl Component for Preferences {
             host_header: None,
         };
 
-        {
-            let mut guard = model.senders.guard();
-            for addr in &init.allowed_senders {
-                model.sender_addrs.push(addr.clone());
-                guard.push_back(addr.clone());
-            }
-        }
-        {
-            let mut guard = model.blacklist.guard();
-            for addr in &init.blacklist {
-                model.blacklist_addrs.push(addr.clone());
-                guard.push_back(addr.clone());
-            }
-        }
-
-        let senders_box = model.senders.widget();
-        let blacklist_box = model.blacklist.widget();
         let widgets = view_output!();
 
         // Settings never truncates. AdwComboRow's DEFAULT item factory builds
@@ -962,6 +898,18 @@ impl Component for Preferences {
             });
         }
         widgets.single_key_row.set_active(init.single_key_shortcuts);
+        widgets.console_mode_row.set_active(init.console_mode);
+        widgets.read_mark_row.set_model(Some(&gtk::StringList::new(&[
+            "When displayed",
+            "After two seconds",
+            "Manually",
+        ])));
+        no_truncate(&widgets.read_mark_row);
+        widgets.read_mark_row.set_selected(match init.read_mark {
+            crate::config::ReadMark::Shown => 0,
+            crate::config::ReadMark::Delay => 1,
+            crate::config::ReadMark::Manual => 2,
+        });
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
         widgets.thread_newest_first_row.set_active(init.thread_newest_first);
@@ -1170,6 +1118,23 @@ impl Component for Preferences {
             PrefInput::ToggleSingleKey(on) => {
                 let _ = sender.output(PrefOutput::SetSingleKey(on));
             }
+            PrefInput::ToggleConsoleMode(on) => {
+                let _ = sender.output(PrefOutput::SetConsoleMode(on));
+            }
+            PrefInput::ChangeReadMark(idx) => {
+                let policy = match idx {
+                    1 => crate::config::ReadMark::Delay,
+                    2 => crate::config::ReadMark::Manual,
+                    _ => crate::config::ReadMark::Shown,
+                };
+                let _ = sender.output(PrefOutput::SetReadMark(policy));
+            }
+            PrefInput::ExportSettings => {
+                let _ = sender.output(PrefOutput::ExportSettings);
+            }
+            PrefInput::ImportSettings => {
+                let _ = sender.output(PrefOutput::ImportSettings);
+            }
             PrefInput::ToggleRunInBackground(on) => {
                 let _ = sender.output(PrefOutput::SetRunInBackground(on));
             }
@@ -1211,42 +1176,10 @@ impl Component for Preferences {
                     .unwrap_or_default();
                 let _ = sender.output(PrefOutput::SetMessageTheme(theme));
             }
-            PrefInput::AddSenderText(text) => {
-                let addr = text.trim().to_lowercase();
-                if !addr.is_empty() && !self.sender_addrs.contains(&addr) {
-                    self.sender_addrs.push(addr.clone());
-                    self.senders.guard().push_back(addr.clone());
-                    let _ = sender.output(PrefOutput::AddSender(addr));
-                }
-            }
-
-            PrefInput::RemoveSenderRow(addr) => {
-                if let Some(pos) = self.sender_addrs.iter().position(|s| *s == addr) {
-                    self.sender_addrs.remove(pos);
-                    self.senders.guard().remove(pos);
-                    let _ = sender.output(PrefOutput::RemoveSender(addr));
-                }
-            }
-
             PrefInput::ToggleShowRemoteBanner(on) => {
                 let _ = sender.output(PrefOutput::SetShowRemoteBanner(on));
-            }
-            PrefInput::AddBlacklistText(text) => {
-                let addr = text.trim().to_lowercase();
-                if !addr.is_empty() && !self.blacklist_addrs.contains(&addr) {
-                    self.blacklist_addrs.push(addr.clone());
-                    self.blacklist.guard().push_back(addr.clone());
-                    let _ = sender.output(PrefOutput::AddBlacklist(addr));
-                }
-            }
-
-            PrefInput::RemoveBlacklistRow(addr) => {
-                if let Some(pos) = self.blacklist_addrs.iter().position(|s| *s == addr) {
-                    self.blacklist_addrs.remove(pos);
-                    self.blacklist.guard().remove(pos);
-                    let _ = sender.output(PrefOutput::RemoveBlacklist(addr));
-                }
             }
         }
     }
 }
+

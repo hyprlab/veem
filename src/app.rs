@@ -67,6 +67,9 @@ relm4::new_stateless_action!(ShortcutsAction, WindowActionGroup, "shortcuts");
 relm4::new_stateless_action!(PrintAction, WindowActionGroup, "print");
 relm4::new_stateless_action!(PrintPreviewAction, WindowActionGroup, "print-preview");
 relm4::new_stateless_action!(StatusBarAction, WindowActionGroup, "status-bar");
+relm4::new_stateless_action!(ConsoleAction, WindowActionGroup, "console");
+relm4::new_stateless_action!(FindAction, WindowActionGroup, "find");
+relm4::new_stateless_action!(WizardAction, WindowActionGroup, "wizard");
 
 use crate::config::{self, split_identity, AccountConfig};
 use crate::models::{Account, Attachment, Folder, FolderKind, Message};
@@ -148,12 +151,17 @@ pub struct AppModel {
     draining_composers: Vec<(u32, Controller<Compose>)>,
     /// SlideDown revealer under the reader toolbar that hosts the inline pane.
     reader_compose_revealer: gtk::Revealer,
+    /// Split-reply slot (#86): a reply slides down from the pane's top and
+    /// the message(s) stay below it, visible and interactive.
+    reader_split_top: gtk::Revealer,
     /// Same idea over the contacts view's detail pane: composing from a
     /// contact slides down right there instead of yanking the mail view back.
     contacts_compose_revealer: gtk::Revealer,
     /// Monotonic id source for composers.
     next_compose_id: u32,
     menu: gtk::gio::Menu,
+    /// The burger menu's help section, rebuilt when Console mode toggles.
+    help_menu: gtk::gio::Menu,
     /// All known accounts, ordered by id.
     accounts: Vec<Account>,
     /// account_id → that account's folders.
@@ -364,6 +372,12 @@ pub struct AppModel {
     unified_chip: bool,
     /// Whether the sidebar's disclosure chevrons lead their rows.
     chevrons_left: bool,
+    /// Console mode offered in the status bar (Settings → System & Appearance).
+    console_mode: bool,
+    /// Read-marking policy (#100).
+    read_mark: config::ReadMark,
+    /// Mail filter rules (#47), applied to inbox syncs.
+    filters: Vec<config::FilterRule>,
     /// Lone messages render as inset cards (#57).
     single_message_card: bool,
     /// Whether conversation rows may expand into their members in the list
@@ -391,6 +405,8 @@ pub struct AppModel {
     /// The repeating auto-fetch timer, if armed.
     auto_fetch_source: Option<gtk::glib::SourceId>,
     notifications: Controller<NotificationCenter>,
+    /// The first-run welcome wizard, alive while it's on screen.
+    welcome: Option<Controller<crate::ui::welcome::Welcome>>,
     notify_count: usize,
     /// Accounts currently performing network activity (drives the spinner).
     busy: HashSet<u32>,
@@ -517,6 +533,10 @@ pub enum AppMsg {
     MessageSelected { message: Message, thread: Vec<Message>, solo: bool },
     /// A new-mail desktop notification was clicked — open that message.
     OpenMessageFromNotification { account_id: u32, folder_id: u32, message_id: u32 },
+    /// A notification action button (#38): mark the notified message read, or
+    /// archive it, without raising the window.
+    NotificationMarkRead { account_id: u32, folder_id: u32, message_id: u32 },
+    NotificationArchive { account_id: u32, folder_id: u32, message_id: u32 },
     /// The search field became active/inactive — supply or drop the cross-folder
     /// search pool (every folder's messages, so search can span the mailbox).
     SearchActive(bool),
@@ -685,6 +705,39 @@ pub enum AppMsg {
     AccountRemoved { email: String },
     AccountEnabledChanged { email: String, enabled: bool },
     ImportGoaAccount(Box<AccountConfig>),
+    /// The welcome wizard's privacy/personalize choices: fan out through the
+    /// existing Set* handlers so every side effect stays in one place.
+    ApplyWelcomePrefs(crate::ui::welcome::WelcomePrefs),
+    /// Raise and focus the main window (welcome wizard hand-off).
+    PresentWindow,
+    /// Open the status bar straight into console mode (button / burger menu).
+    OpenConsole,
+    /// Settings toggle for offering console mode at all.
+    SetConsoleMode(bool),
+    /// The list header's unread quick filter (#97).
+    SetUnreadFilter(bool),
+    /// Reveal (or toggle away) the message list's search bar (#102).
+    OpenListSearch,
+    /// Open the reader's in-message find bar (#103).
+    OpenReaderFind,
+    /// Beta-only burger entry: show the welcome wizard for review.
+    OpenWizardMenu,
+    /// Delay-policy read marking (#100): fires a couple of seconds after a
+    /// message opened; only applies if it is still the one on screen.
+    DeferredMarkRead { message: Box<Message> },
+    /// Settings → Reading → "Mark as read" changed.
+    SetReadMark(config::ReadMark),
+    /// The list header's starred quick filter.
+    SetStarredFilter(bool),
+    /// Backup (#50): save/load the whole configuration as one file.
+    ExportSettings,
+    ImportSettings,
+    /// The filter rules changed in Settings (#47).
+    SetFilters(Vec<config::FilterRule>),
+    /// Second stage of ImportSettings: the chosen file, applied on a clean
+    /// main-loop turn (working inside the chooser's completion callback froze
+    /// the app when the confirmation dialog presented there).
+    ImportSettingsFrom(std::path::PathBuf),
     /// GNOME Online Accounts changed on the session bus. Carries the fresh live
     /// state, already fetched (debounced) on the watcher thread so the GTK main
     /// thread never does D-Bus I/O — re-reconcile against it.
@@ -947,10 +1000,41 @@ impl SimpleComponent for AppModel {
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleSidebar),
                                 },
+                                // Search lives behind this button (#102);
+                                // Ctrl+F and / open it too.
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-system-search-symbolic",
+                                    set_tooltip_text: Some("Search messages (Ctrl+F)"),
+                                    add_css_class: "flat",
+                                    connect_clicked[sender] => move |_| {
+                                        sender.input(AppMsg::OpenListSearch);
+                                    },
+                                },
                                 // Across from the sidebar toggle: the visible
                                 // message count and the sort menu (moved out of
                                 // the list's own toolbar to reclaim a row).
                                 // pack_end packs right-to-left: sort rightmost.
+                                // Quick filters (#97): unread / starred only.
+                                // Session state, like Mail.app's filter bar.
+                                pack_end = &gtk::ToggleButton {
+                                    set_icon_name: "co.hyprlab.Vireo-mail-unread-symbolic",
+                                    set_tooltip_text: Some("Show only unread"),
+                                    set_valign: gtk::Align::Center,
+                                    add_css_class: "flat",
+                                    connect_toggled[sender] => move |btn| {
+                                        sender.input(AppMsg::SetUnreadFilter(btn.is_active()));
+                                    },
+                                },
+                                pack_end = &gtk::ToggleButton {
+                                    set_icon_name: "co.hyprlab.Vireo-starred-symbolic",
+                                    set_tooltip_text: Some("Show only starred"),
+                                    set_valign: gtk::Align::Center,
+                                    add_css_class: "flat",
+                                    connect_toggled[sender] => move |btn| {
+                                        sender.input(AppMsg::SetStarredFilter(btn.is_active()));
+                                    },
+                                },
+
                                 #[name = "list_sort_btn"]
                                 pack_end = &gtk::MenuButton {
                                     set_icon_name: "co.hyprlab.Vireo-view-sort-descending-symbolic",
@@ -1098,7 +1182,7 @@ impl SimpleComponent for AppModel {
                                     // icon; the flagged state carries colour only.
                                     set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
                                     #[watch]
-                                    set_css_classes: if model.reply_target().is_some_and(|m| m.starred) {
+                                    set_css_classes: if model.toolbar_star_lit() {
                                         &["flat", "star-active"]
                                     } else {
                                         &["flat"]
@@ -1109,6 +1193,20 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleStar),
+                                },
+                                // In-message find (#103), right of the star.
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-system-search-symbolic",
+                                    set_tooltip_text: Some("Find in message (Ctrl+F)"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox
+                                        && model.current.is_some()
+                                        && model.reader_compose.is_none()
+                                        && !model.reader_actions_collapsed,
+                                    connect_clicked[sender] => move |_| {
+                                        sender.input(AppMsg::OpenReaderFind);
+                                    },
                                 },
                                 // (No Add-to-Contacts button here: the action
                                 // lives on the address itself — right-click any
@@ -1524,6 +1622,7 @@ impl SimpleComponent for AppModel {
 
         // Sectioned: settings / printing / window & help / quit.
         let menu = gtk::gio::Menu::new();
+        let help_menu = gtk::gio::Menu::new();
         {
             let settings = gtk::gio::Menu::new();
             settings.append(Some("Accounts & Settings"), Some("win.accounts"));
@@ -1534,11 +1633,7 @@ impl SimpleComponent for AppModel {
             printing.append(Some("Print Message…"), Some("win.print"));
             menu.append_section(None, &printing);
 
-            let help = gtk::gio::Menu::new();
-            help.append(Some("Reveal Status Bar"), Some("win.status-bar"));
-            help.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
-            help.append(Some(format!("About {}", crate::APP_NAME).as_str()), Some("win.about"));
-            menu.append_section(None, &help);
+            menu.append_section(None, &help_menu);
 
             // Last, where a Quit item belongs.
             let quit = gtk::gio::Menu::new();
@@ -1555,6 +1650,13 @@ impl SimpleComponent for AppModel {
             composers: Vec::new(),
             reader_compose: None,
             draining_composers: Vec::new(),
+            reader_split_top: {
+                let r = gtk::Revealer::new();
+                r.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+                r.set_transition_duration(300);
+                r.set_reveal_child(false);
+                r
+            },
             reader_compose_revealer: {
                 let r = gtk::Revealer::new();
                 r.set_transition_type(gtk::RevealerTransitionType::SlideDown);
@@ -1565,6 +1667,7 @@ impl SimpleComponent for AppModel {
             contacts_compose_revealer,
             next_compose_id: 1,
             menu,
+            help_menu,
             accounts: Vec::new(),
             folders: HashMap::new(),
             account_order: order,
@@ -1678,6 +1781,9 @@ impl SimpleComponent for AppModel {
             show_unified_pref: config::load_show_unified(),
             unified_chip: config::load_unified_chip(),
             chevrons_left: config::load_chevrons_left(),
+            console_mode: config::load_console_mode(),
+            read_mark: config::load_read_mark(),
+            filters: config::load_filters(),
             single_message_card: config::load_single_message_card(),
             thread_expansion: config::load_thread_expansion(),
             confirm_thread_delete: config::load_confirm_thread_delete(),
@@ -1690,6 +1796,7 @@ impl SimpleComponent for AppModel {
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
             notifications,
+            welcome: None,
             notify_count: 0,
             busy: HashSet::new(),
             sidebar,
@@ -1734,10 +1841,19 @@ impl SimpleComponent for AppModel {
             }
         });
         // With no accounts, no worker events will populate the sidebar, so render
-        // its empty state (the "Add first account" prompt) up front.
-        if model.config.is_empty() {
+        // its empty state (the "Add first account" prompt) up front — and greet
+        // a first run with the welcome wizard (src/ui/welcome.rs).
+        if model.config.is_empty() || std::env::var("VIREO_WELCOME").is_ok() {
             model.rebuild_sidebar();
+            // VIREO_WELCOME=1 forces the wizard over an existing config, for
+            // design review and screenshots.
+            if !demo_mode() || std::env::var("VIREO_WELCOME").is_ok() {
+                model.open_wizard(&sender);
+            }
         }
+        model
+            .message_view
+            .emit(MessageViewInput::SetReadMark(model.read_mark));
         model
             .message_list
             .emit(MessageListInput::SetGravatar(model.gravatar));
@@ -1873,8 +1989,14 @@ impl SimpleComponent for AppModel {
         {
             let pane = widgets.reader_bin.child().expect("reader pane");
             widgets.reader_bin.set_child(None::<&gtk::Widget>);
+            // Split-reply slots (#86) sandwich the reader; the full-cover
+            // revealer stays an overlay above the whole assembly.
+            pane.set_vexpand(true);
+            let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            vbox.append(&model.reader_split_top);
+            vbox.append(&pane);
             let overlay = gtk::Overlay::new();
-            overlay.set_child(Some(&pane));
+            overlay.set_child(Some(&vbox));
             overlay.add_overlay(&model.reader_compose_revealer);
             widgets.reader_bin.set_child(Some(&overlay));
         }
@@ -1942,6 +2064,33 @@ impl SimpleComponent for AppModel {
                 }
             });
             app.add_action(&open);
+
+            // Notification buttons (#38): act on the message where it lies,
+            // without presenting the window — that's their point.
+            for (name, mk) in [
+                (
+                    crate::notify::MARK_READ_ACTION,
+                    (&|account_id, folder_id, message_id| AppMsg::NotificationMarkRead {
+                        account_id,
+                        folder_id,
+                        message_id,
+                    }) as &dyn Fn(u32, u32, u32) -> AppMsg,
+                ),
+                (crate::notify::ARCHIVE_ACTION, &|account_id, folder_id, message_id| {
+                    AppMsg::NotificationArchive { account_id, folder_id, message_id }
+                }),
+            ] {
+                let act = gtk::gio::SimpleAction::new(name, Some(ty));
+                let asender = sender.clone();
+                act.connect_activate(move |_, param| {
+                    if let Some((account_id, folder_id, message_id)) =
+                        param.and_then(|v| v.get::<(u32, u32, u32)>())
+                    {
+                        asender.input(mk(account_id, folder_id, message_id));
+                    }
+                });
+                app.add_action(&act);
+            }
         }
         // Restore the last window size + maximized state (Wayland can't restore
         // position/monitor).
@@ -2169,6 +2318,24 @@ impl SimpleComponent for AppModel {
         // The status bar reveals itself for errors; this is the manual path
         // (the dedicated button is gone from the sidebar).
         let status_sender = sender.clone();
+        {
+            let s = sender.clone();
+            group.add_action(RelmAction::<ConsoleAction>::new_stateless(move |_| {
+                s.input(AppMsg::OpenConsole);
+            }));
+        }
+        {
+            let s = sender.clone();
+            group.add_action(RelmAction::<FindAction>::new_stateless(move |_| {
+                s.input(AppMsg::OpenListSearch);
+            }));
+        }
+        {
+            let s = sender.clone();
+            group.add_action(RelmAction::<WizardAction>::new_stateless(move |_| {
+                s.input(AppMsg::OpenWizardMenu);
+            }));
+        }
         group.add_action(RelmAction::<StatusBarAction>::new_stateless(move |_| {
             status_sender.input(AppMsg::ToggleNotifications);
         }));
@@ -2184,6 +2351,9 @@ impl SimpleComponent for AppModel {
             .set_accelerators_for_action::<PrintPreviewAction>(&["<Ctrl><Shift>p"]);
         relm4::main_application()
             .set_accelerators_for_action::<StatusBarAction>(&["<Ctrl><Shift>s"]);
+        relm4::main_application()
+            .set_accelerators_for_action::<ConsoleAction>(&["<Ctrl><Shift>c"]);
+        relm4::main_application().set_accelerators_for_action::<FindAction>(&["<Ctrl>f"]);
         relm4::main_application().set_accelerators_for_action::<ShortcutsAction>(&[
             "<Ctrl>question",
             "<Ctrl><Shift>question",
@@ -2420,6 +2590,18 @@ impl SimpleComponent for AppModel {
 
         // mailto: URIs can arrive (via GApplication `open`) before this init
         // ran — install the live sender and drain anything that queued early.
+        model.rebuild_help_menu();
+        model
+            .notifications
+            .emit(NotifyInput::SetConsoleEnabled(model.console_mode));
+        // Screenshot/dev hook: open the status bar console shortly after
+        // launch (pref permitting) so captures can show it.
+        if std::env::var("VIREO_SHOWCASE_CONSOLE").is_ok() {
+            let s = sender.clone();
+            gtk::glib::timeout_add_seconds_local_once(3, move || {
+                s.input(AppMsg::OpenConsole);
+            });
+        }
         let _ = MAILTO_SENDER.set(sender.input_sender().clone());
         for uri in MAILTO_PENDING.lock().unwrap().drain(..) {
             sender.input(AppMsg::OpenMailto(uri));
@@ -2617,6 +2799,22 @@ impl SimpleComponent for AppModel {
                     self.select_folder(account_id, folder_id, name, path);
                     self.message_list
                         .emit(MessageListInput::SelectAndLoad((account_id, message_id)));
+                }
+            }
+
+            AppMsg::NotificationMarkRead { account_id, folder_id, message_id } => {
+                if let Some(m) = notified_message(account_id, folder_id, message_id, &self.folders)
+                {
+                    // set_read clears the account's notification itself.
+                    self.set_read(&m, true);
+                }
+            }
+
+            AppMsg::NotificationArchive { account_id, folder_id, message_id } => {
+                if let Some(m) = notified_message(account_id, folder_id, message_id, &self.folders)
+                {
+                    self.move_to(m, FolderKind::Archive);
+                    crate::notify::withdraw_mail(account_id);
                 }
             }
 
@@ -2977,19 +3175,21 @@ impl SimpleComponent for AppModel {
                 let needs_body = cached_body.is_none();
 
                 if m.unread {
-                    if let Some(path) = folder_path.clone() {
-                        self.send_to(account_id, MailRequest::SetSeen { path, uid: m.uid, seen: true });
+                    match self.read_mark {
+                        config::ReadMark::Shown => self.mark_opened_read(&m),
+                        config::ReadMark::Delay => {
+                            // Mark after a beat in view — navigating away
+                            // before then leaves it unread (#100).
+                            let s = sender.clone();
+                            let msg = m.clone();
+                            gtk::glib::timeout_add_seconds_local_once(2, move || {
+                                s.input(AppMsg::DeferredMarkRead {
+                                    message: Box::new(msg.clone()),
+                                });
+                            });
+                        }
+                        config::ReadMark::Manual => {}
                     }
-                    // Reading new mail clears that account's new-mail notification.
-                    crate::notify::withdraw_mail(account_id);
-                    self.message_list.emit(MessageListInput::MarkRead(m.id));
-                    self.mark_cached_read(account_id, m.id);
-                    // Optimistically drop the badge by one; the next server count
-                    // (after the sync below) reconciles any drift.
-                    if let Some(n) = self.folder_unread.get_mut(&(account_id, m.folder_id)) {
-                        *n = n.saturating_sub(1);
-                    }
-                    self.push_unread_counts();
                 }
 
                 let mut current = m.clone();
@@ -3167,7 +3367,18 @@ impl SimpleComponent for AppModel {
 
             AppMsg::ToggleStar => {
                 if let Some(m) = self.reply_target() {
-                    self.set_star(&m, !m.starred);
+                    if self.thread_star_target(&m) {
+                        // The conversation is the target: any member starred
+                        // reads as a starred thread, and the toggle clears or
+                        // sets the whole set (same semantics as the list row).
+                        let any = self.current_thread.iter().any(|t| t.starred);
+                        let members = self.current_thread.clone();
+                        for t in &members {
+                            self.set_star(t, !any);
+                        }
+                    } else {
+                        self.set_star(&m, !m.starred);
+                    }
                 }
             }
 
@@ -3237,18 +3448,19 @@ impl SimpleComponent for AppModel {
                 let m = self.with_cached_body(*message);
                 match action {
                     RowAction::Reply => {
-                        self.open_inline_reply(m.account_id, reply_prefill(&m), &sender);
+                        self.open_inline_reply(m.account_id, reply_prefill(&m), Some((m.account_id, m.id)), &sender);
                     }
                     RowAction::ReplyAll => {
                         let self_email = self.email_of(m.account_id).unwrap_or_default();
                         self.open_inline_reply(
                             m.account_id,
                             reply_all_prefill(&m, &self_email),
+                            Some((m.account_id, m.id)),
                             &sender,
                         );
                     }
                     RowAction::Forward => {
-                        self.open_inline_reply(m.account_id, forward_prefill(&m), &sender);
+                        self.open_inline_reply(m.account_id, forward_prefill(&m), Some((m.account_id, m.id)), &sender);
                     }
                     // Cards only carry the three above; anything else falls
                     // through to the ordinary row behaviour.
@@ -3333,6 +3545,7 @@ impl SimpleComponent for AppModel {
                     BulkAction::MarkRead => for m in &messages { self.set_read(m, true); },
                     BulkAction::MarkUnread => for m in &messages { self.set_read(m, false); },
                     BulkAction::Flag => for m in &messages { self.set_star(m, true); },
+                    BulkAction::Unflag => for m in &messages { self.set_star(m, false); },
                     // Archive/Delete/Spam remove every selected row. Doing that one
                     // at a time blocks the UI thread (a render cycle per message) and
                     // trips GTK's "app is not responding" dialog for large selections.
@@ -3402,7 +3615,7 @@ impl SimpleComponent for AppModel {
                     // The new-message pane slides down over the reader,
                     // exactly like an inline reply — same composer, same
                     // pop-out-to-window toggle in its header.
-                    self.open_inline_reply(account, ComposePrefill::default(), &sender);
+                    self.open_inline_reply(account, ComposePrefill::default(), None, &sender);
                 } else {
                     self.open_compose(account, ComposePrefill::default(), &sender);
                 }
@@ -3410,7 +3623,7 @@ impl SimpleComponent for AppModel {
 
             AppMsg::Reply => {
                 if let Some(m) = self.reply_target() {
-                    self.open_inline_reply(m.account_id, reply_prefill(&m), &sender);
+                    self.open_inline_reply(m.account_id, reply_prefill(&m), Some((m.account_id, m.id)), &sender);
                 }
             }
 
@@ -3420,6 +3633,7 @@ impl SimpleComponent for AppModel {
                     self.open_inline_reply(
                         m.account_id,
                         reply_all_prefill(&m, &self_email),
+                        Some((m.account_id, m.id)),
                         &sender,
                     );
                 }
@@ -3427,7 +3641,7 @@ impl SimpleComponent for AppModel {
 
             AppMsg::Forward => {
                 if let Some(m) = self.reply_target() {
-                    self.open_inline_reply(m.account_id, forward_prefill(&m), &sender);
+                    self.open_inline_reply(m.account_id, forward_prefill(&m), Some((m.account_id, m.id)), &sender);
                 }
             }
 
@@ -3986,7 +4200,7 @@ impl SimpleComponent for AppModel {
                 // Same preference as "New Message": slide down over the
                 // reader, unless composing is set to open in a window.
                 if self.compose_inline {
-                    self.open_inline_reply(account, prefill, &sender);
+                    self.open_inline_reply(account, prefill, None, &sender);
                 } else {
                     self.open_compose(account, prefill, &sender);
                 }
@@ -4009,7 +4223,7 @@ impl SimpleComponent for AppModel {
                     .unwrap_or_else(|| self.active_account());
                 let prefill = ComposePrefill { attachments: paths, ..Default::default() };
                 if self.compose_inline {
-                    self.open_inline_reply(account, prefill, &sender);
+                    self.open_inline_reply(account, prefill, None, &sender);
                 } else {
                     self.open_compose(account, prefill, &sender);
                 }
@@ -4039,7 +4253,7 @@ impl SimpleComponent for AppModel {
                     .map(|m| m.account_id)
                     .unwrap_or_else(|| self.active_account());
                 if self.compose_inline {
-                    self.open_inline_reply(account, prefill, &sender);
+                    self.open_inline_reply(account, prefill, None, &sender);
                 } else {
                     self.open_compose(account, prefill, &sender);
                 }
@@ -4212,6 +4426,200 @@ impl SimpleComponent for AppModel {
                         self.reconnect_all(&sender);
                     }
                 }
+            }
+
+            AppMsg::PresentWindow => {
+                self.window.set_visible(true);
+                self.window.present();
+            }
+
+            AppMsg::OpenConsole => {
+                if self.console_mode {
+                    self.notifications.emit(NotifyInput::ShowConsole);
+                } else {
+                    self.notifications.emit(NotifyInput::Push {
+                        text: "Enable Console mode in Settings → System & Appearance".into(),
+                        error: false,
+                        connectivity: false,
+                    });
+                }
+            }
+
+            AppMsg::SetFilters(rules) => {
+                config::save_filters(&rules);
+                self.filters = rules;
+                // File whatever already sits in the inboxes under the new
+                // rules; reuses the blacklist's re-sync sweep.
+                self.sweep_blacklisted();
+            }
+
+            AppMsg::OpenListSearch => {
+                // Ctrl+F routes by focus (#102/#103): in the reader it finds
+                // within the message, everywhere else it searches the list.
+                let reader = self.message_view.widget().clone().upcast::<gtk::Widget>();
+                let reader_focused =
+                    gtk::prelude::GtkWindowExt::focus(&self.window)
+                        .is_some_and(|f| f == reader || f.is_ancestor(&reader));
+                if reader_focused && self.current.is_some() {
+                    self.message_view.emit(MessageViewInput::OpenFind);
+                } else {
+                    self.message_list.emit(MessageListInput::FocusSearch);
+                }
+            }
+
+            AppMsg::OpenReaderFind => {
+                self.message_view.emit(MessageViewInput::OpenFind);
+            }
+
+            AppMsg::OpenWizardMenu => {
+                self.open_wizard(&sender);
+            }
+
+            AppMsg::SetUnreadFilter(on) => {
+                self.message_list.emit(MessageListInput::SetUnreadOnly(on));
+            }
+
+            AppMsg::DeferredMarkRead { message } => {
+                let still_current = self
+                    .current
+                    .as_ref()
+                    .is_some_and(|c| c.id == message.id && c.account_id == message.account_id);
+                if still_current {
+                    self.mark_opened_read(&message);
+                }
+            }
+
+            AppMsg::SetReadMark(policy) => {
+                if self.read_mark != policy {
+                    self.read_mark = policy;
+                    self.save_settings();
+                    self.message_view.emit(MessageViewInput::SetReadMark(policy));
+                }
+            }
+
+            AppMsg::SetStarredFilter(on) => {
+                self.message_list.emit(MessageListInput::SetStarredOnly(on));
+            }
+
+            AppMsg::ExportSettings => {
+                let dialog = gtk::FileDialog::builder()
+                    .title("Export Settings")
+                    .initial_name("vireo-settings.toml")
+                    .build();
+                let win = self.window.clone();
+                let notif = self.notifications.sender().clone();
+                dialog.save(Some(&win), gtk::gio::Cancellable::NONE, move |res| {
+                    let Ok(file) = res else { return };
+                    let Some(path) = file.path() else { return };
+                    let outcome = crate::config::export_bundle()
+                        .and_then(|t| std::fs::write(&path, t).map_err(|e| e.to_string()));
+                    let _ = notif.send(match outcome {
+                        Ok(()) => NotifyInput::Push {
+                            text: format!("Settings exported to {}", path.display()),
+                            error: false,
+                            connectivity: false,
+                        },
+                        Err(e) => NotifyInput::Push {
+                            text: format!("Export failed: {e}"),
+                            error: true,
+                            connectivity: false,
+                        },
+                    });
+                });
+            }
+
+            AppMsg::ImportSettings => {
+                let dialog = gtk::FileDialog::builder().title("Import Settings").build();
+                let win = self.window.clone();
+                let s = sender.clone();
+                dialog.open(Some(&win), gtk::gio::Cancellable::NONE, move |res| {
+                    // Only carry the choice out of the chooser's callback —
+                    // the work (and any dialog) runs on a clean loop turn.
+                    if let Ok(file) = res {
+                        if let Some(path) = file.path() {
+                            s.input(AppMsg::ImportSettingsFrom(path));
+                        }
+                    }
+                });
+            }
+
+            AppMsg::ImportSettingsFrom(path) => {
+                let outcome = std::fs::read_to_string(&path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|t| crate::config::import_bundle(&t));
+                match outcome {
+                    Ok(n) => {
+                        // Imported files are on disk; the running model still
+                        // holds the old world, so a clean restart is the
+                        // honest way to apply everything at once.
+                        // Parent on whichever window is focused (Settings,
+                        // normally) — a modal behind the focused window reads
+                        // as a freeze.
+                        let parent = relm4::main_application()
+                            .active_window()
+                            .unwrap_or_else(|| self.window.clone().upcast());
+                        let alert = adw::MessageDialog::new(
+                            Some(&parent),
+                            Some("Settings Imported"),
+                            Some(&format!(
+                                "{n} account(s) and all preferences were imported. \
+                                 Restart Vireo to apply them. Account passwords are \
+                                 not part of a backup; re-enter them on first \
+                                 connection if this is a new machine."
+                            )),
+                        );
+                        alert.add_response("later", "Later");
+                        alert.add_response("restart", "Restart Vireo");
+                        alert
+                            .set_response_appearance("restart", adw::ResponseAppearance::Suggested);
+                        alert.connect_response(None, |_, resp| {
+                            if resp == "restart" {
+                                // A detached shell starts the next instance
+                                // once this one has quit and released its
+                                // D-Bus name (started immediately, the new
+                                // instance would just relay to the dying
+                                // primary and exit).
+                                if let Ok(exe) = std::env::current_exe() {
+                                    let _ = std::process::Command::new("sh")
+                                        .arg("-c")
+                                        .arg(format!("sleep 1.5; exec '{}'", exe.display()))
+                                        .spawn();
+                                }
+                                relm4::main_application().quit();
+                            }
+                        });
+                        alert.present();
+                    }
+                    Err(e) => {
+                        self.notifications.emit(NotifyInput::Push {
+                            text: format!("Import failed: {e}"),
+                            error: true,
+                            connectivity: false,
+                        });
+                    }
+                }
+            }
+
+            AppMsg::SetConsoleMode(on) => {
+                if self.console_mode != on {
+                    self.console_mode = on;
+                    self.save_settings();
+                    self.notifications.emit(NotifyInput::SetConsoleEnabled(on));
+                    self.rebuild_help_menu();
+                }
+            }
+
+            AppMsg::ApplyWelcomePrefs(p) => {
+                // Route every choice through its normal handler (each saves and
+                // updates the live UI); drop the wizard controller afterwards.
+                sender.input(AppMsg::SetAutoRemoteContent(!p.block_remote));
+                sender.input(AppMsg::SetGravatar(p.gravatar));
+                sender.input(AppMsg::SetSenderLogos(p.sender_logos));
+                sender.input(AppMsg::SetNotificationContent(p.notification_content));
+                sender.input(AppMsg::SetPreviewLines(p.preview_lines));
+                sender.input(AppMsg::SetAvatars(p.avatars));
+                sender.input(AppMsg::SetThreading(p.threading));
+                self.welcome = None;
             }
 
             AppMsg::ImportGoaAccount(account) => {
@@ -4458,6 +4866,7 @@ impl SimpleComponent for AppModel {
                 // Auto-delete blacklisted senders from the inbox before anything
                 // else sees them.
                 let messages = self.apply_blacklist(account_id, folder_id, messages);
+                let messages = self.apply_filters(account_id, folder_id, messages);
                 // Did this sync remove the message currently open in the reader
                 // (deleted/moved on another device)? Scope the check to the reader's
                 // own folder so a folder switch or another folder's sync doesn't
@@ -4774,6 +5183,9 @@ impl SimpleComponent for AppModel {
                 }
                 self.message_list.emit(MessageListInput::MarkRead(id));
                 self.mark_cached_read(account_id, id);
+                // The card's dot clears in place as the viewport observer
+                // marks it (#100) — this path never told the view before.
+                self.message_view.emit(MessageViewInput::ClearDot { account_id, id });
                 if let Some(n) = self.folder_unread.get_mut(&(account_id, folder_id)) {
                     *n = n.saturating_sub(1);
                 }
@@ -5068,6 +5480,24 @@ impl AppModel {
     }
 
     /// Persist all app settings together.
+    /// (Re)build the burger menu's help section: the Console entry appears
+    /// only while Console mode is enabled in Settings.
+    fn rebuild_help_menu(&self) {
+        self.help_menu.remove_all();
+        self.help_menu.append(Some("Reveal Status Bar"), Some("win.status-bar"));
+        if self.console_mode {
+            self.help_menu.append(Some("Console"), Some("win.console"));
+        }
+        // Beta builds carry a wizard entry so testers can review the
+        // first-run experience without wiping their config.
+        if cfg!(feature = "beta") {
+            self.help_menu.append(Some("Welcome Wizard"), Some("win.wizard"));
+        }
+        self.help_menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
+        self.help_menu
+            .append(Some(format!("About {}", crate::APP_NAME).as_str()), Some("win.about"));
+    }
+
     fn save_settings(&self) {
         config::save_privacy(
             &self.allowed_senders,
@@ -5109,6 +5539,8 @@ impl AppModel {
             self.show_unified_pref,
             self.unified_chip,
             self.chevrons_left,
+            self.console_mode,
+            self.read_mark,
         );
     }
 
@@ -5585,6 +6017,80 @@ impl AppModel {
                 .cloned(),
             _ => None,
         }
+    }
+
+    /// Launch (or re-present) the welcome wizard: the first run's greeting,
+    /// the VIREO_WELCOME review mode, and — on beta builds only — the burger
+    /// menu's Welcome Wizard entry for testers.
+    fn open_wizard(&mut self, sender: &ComponentSender<Self>) {
+        use crate::ui::welcome::{Welcome, WelcomeOutput};
+        if let Some(w) = self.welcome.as_ref().filter(|w| w.widget().is_visible()) {
+            w.widget().present();
+            return;
+        }
+        let welcome =
+            Welcome::builder().launch(()).forward(sender.input_sender(), |out| match out {
+                WelcomeOutput::AddAccount(account) => {
+                    AppMsg::AccountSaved { original_email: None, account }
+                }
+                WelcomeOutput::ImportGoa(account) => AppMsg::ImportGoaAccount(account),
+                WelcomeOutput::Prefs(p) => AppMsg::ApplyWelcomePrefs(p),
+                WelcomeOutput::Done => AppMsg::PresentWindow,
+            });
+        welcome.widget().set_transient_for(Some(&self.window));
+        welcome.widget().set_modal(true);
+        // On a true first run the main window stays hidden (see main.rs)
+        // until the wizard finishes — or is dismissed.
+        {
+            let s = sender.clone();
+            welcome.widget().connect_close_request(move |_| {
+                s.input(AppMsg::PresentWindow);
+                gtk::glib::Propagation::Proceed
+            });
+        }
+        welcome.widget().present();
+        self.welcome = Some(welcome);
+    }
+
+    /// The open-marks-read side effects for the just-selected message (#100):
+    /// server flag, list row, cached copy, badges, notification.
+    fn mark_opened_read(&mut self, m: &Message) {
+        let account_id = m.account_id;
+        if let Some(path) = self.resolve_folder_path(m) {
+            self.send_to(account_id, MailRequest::SetSeen { path, uid: m.uid, seen: true });
+        }
+        // Reading new mail clears that account's new-mail notification.
+        crate::notify::withdraw_mail(account_id);
+        self.message_list.emit(MessageListInput::MarkRead(m.id));
+        self.mark_cached_read(account_id, m.id);
+        // Optimistically drop the badge by one; the next server count
+        // reconciles any drift.
+        if let Some(n) = self.folder_unread.get_mut(&(account_id, m.folder_id)) {
+            *n = n.saturating_sub(1);
+        }
+        self.push_unread_counts();
+    }
+
+    /// Whether a star toggle aimed at `m` should act on the whole open
+    /// conversation: a thread is open and `m` is its head.
+    fn thread_star_target(&self, m: &Message) -> bool {
+        self.current_thread.len() > 1
+            && self
+                .current_thread
+                .first()
+                .is_some_and(|h| h.id == m.id && h.account_id == m.account_id)
+    }
+
+    /// Whether the reader toolbar's star shows lit: the target message's own
+    /// star, or any member's when the conversation is the target.
+    fn toolbar_star_lit(&self) -> bool {
+        self.reply_target().is_some_and(|m| {
+            if self.thread_star_target(&m) {
+                self.current_thread.iter().any(|t| t.starred)
+            } else {
+                m.starred
+            }
+        })
     }
 
     /// The account email for an id, if known.
@@ -6733,26 +7239,45 @@ impl AppModel {
     ) -> (u32, ComposeInit) {
         // Selectable "from" identities, in display order: each account, then
         // one entry per send-as alias it defines (#34) — same transport and
-        // signature, a different From on the wire.
-        let accounts: Vec<ComposeAccount> = self
-            .ordered_emails()
+        // signature, a different From on the wire. Built from the CONFIG, not
+        // the live account list: launched cold by a mailto/file hand-off
+        // (Nautilus's "Send by email", #105) the composer opens before any
+        // worker has connected, and the live list is still empty — which
+        // hid the From row entirely.
+        let mut emails: Vec<String> = Vec::new();
+        for email in &self.account_order {
+            if self.config.iter().any(|c| c.enabled && &c.email == email)
+                && !emails.contains(email)
+            {
+                emails.push(email.clone());
+            }
+        }
+        for c in self.config.iter().filter(|c| c.enabled) {
+            if !emails.contains(&c.email) {
+                emails.push(c.email.clone());
+            }
+        }
+        let accounts: Vec<ComposeAccount> = emails
             .iter()
             .flat_map(|email| {
-                let Some(a) = self.accounts.iter().find(|a| &a.email == email) else {
+                let Some((idx, cfg)) =
+                    self.config.iter().enumerate().find(|(_, c)| &c.email == email)
+                else {
                     return Vec::new();
                 };
-                let label = if a.name.trim().is_empty() {
-                    a.email.clone()
+                let id = idx as u32 + 1;
+                let label = if cfg.name.trim().is_empty() {
+                    cfg.email.clone()
                 } else {
-                    format!("{} <{}>", a.name, a.email)
+                    format!("{} <{}>", cfg.name, cfg.email)
                 };
-                let cfg = self.config.get(a.id.saturating_sub(1) as usize);
+                let cfg = Some(cfg);
                 let signature = cfg.and_then(|c| c.signature.clone()).unwrap_or_default();
                 let mut identities = vec![ComposeAccount {
-                    id: a.id,
+                    id,
                     label,
                     signature: signature.clone(),
-                    email: a.email.clone(),
+                    email: email.clone(),
                     alias_from: None,
                 }];
                 for alias in cfg.map(|c| c.aliases.as_slice()).unwrap_or_default() {
@@ -6766,7 +7291,7 @@ impl AppModel {
                         format!("{name} <{addr}>")
                     };
                     identities.push(ComposeAccount {
-                        id: a.id,
+                        id,
                         label: display.clone(),
                         signature: signature.clone(),
                         email: addr,
@@ -6795,7 +7320,7 @@ impl AppModel {
             .unwrap_or(0);
 
         // Exclude the user's own addresses from recipient suggestions.
-        let own: Vec<String> = self.accounts.iter().map(|a| a.email.clone()).collect();
+        let own: Vec<String> = self.config.iter().map(|c| c.email.clone()).collect();
         let id = self.next_compose_id;
         self.next_compose_id += 1;
         let init = ComposeInit {
@@ -6806,6 +7331,7 @@ impl AppModel {
             suggestions: crate::contacts::suggestions(&own),
             windowed,
             can_toggle,
+            compact: false,
         };
         (id, init)
     }
@@ -6874,7 +7400,7 @@ impl AppModel {
         }
     }
 
-    /// Hide and empty both inline-composer slots (only one ever holds it).
+    /// Hide and empty every inline-composer slot (only one ever holds it).
     fn clear_compose_slots(&self) {
         for r in [&self.reader_compose_revealer, &self.contacts_compose_revealer] {
             r.set_reveal_child(false);
@@ -6883,31 +7409,56 @@ impl AppModel {
             r.set_can_target(false);
             r.set_child(None::<&gtk::Widget>);
         }
+        // In-flow (not overlay) slot: no click-swallowing to disarm.
+        self.reader_split_top.set_reveal_child(false);
+        self.reader_split_top.set_child(None::<&gtk::Widget>);
     }
 
     fn open_inline_reply(
         &mut self,
         account_id: u32,
         prefill: ComposePrefill,
+        focus: Option<(u32, u32)>,
         sender: &ComponentSender<Self>,
     ) {
+        let contextual = focus.is_some();
         // Supersede any composer already in the reader slot first.
         self.release_reader_compose();
-        let (id, init) = self.build_compose_init(account_id, prefill, false, true);
+        let (id, mut init) = self.build_compose_init(account_id, prefill, false, true);
+        // The split reply is compact: just the editor, fields behind pop-out.
+        init.compact = contextual;
         let controller = self.spawn_compose(init, sender);
         let widget = controller.widget();
-        // Composing clears the reader toolbar too (decorations excepted); the
-        // ⋯ overflow is managed by hand, so hide it by hand.
-        self.reader_overflow_btn.set_visible(false);
-        // Fill the pane and paint an opaque surface: the composer covers the
-        // pane completely, rather than dropping down as a partial panel.
-        widget.set_vexpand(true);
         widget.set_hexpand(true);
         widget.add_css_class("inline-compose-surface");
-        let slot = self.compose_slot();
-        slot.set_child(Some(widget));
-        slot.set_can_target(true);
-        slot.set_reveal_child(true);
+        if contextual && !self.showing_contacts {
+            // A reply/forward splits the pane instead of covering it (#86):
+            // the composer slides down from the top and the message(s) stay
+            // below, visible and interactive to refer to while writing.
+            let slot = &self.reader_split_top;
+            let pane_h = slot.parent().map(|p| p.height()).filter(|h| *h > 0).unwrap_or(900);
+            widget.set_vexpand(false);
+            widget.set_height_request(((pane_h as f64 * 0.45) as i32).clamp(300, 560));
+            slot.set_child(Some(widget));
+            slot.set_reveal_child(true);
+            if let Some((fa, fid)) = focus {
+                // Put the card being answered at the top of the shortened
+                // reader, wearing the selection outline.
+                self.message_view
+                    .emit(MessageViewInput::FocusCard { account_id: fa, id: fid });
+            }
+        } else {
+            // Composing clears the reader toolbar too (decorations excepted);
+            // the ⋯ overflow is managed by hand, so hide it by hand.
+            self.reader_overflow_btn.set_visible(false);
+            // Fill the pane and paint an opaque surface: the composer covers
+            // the pane completely, not a partial panel.
+            widget.set_vexpand(true);
+            let slot = self.compose_slot();
+            slot.set_child(Some(widget));
+            slot.set_can_target(true);
+            slot.set_reveal_child(true);
+        }
         controller.emit(ComposeInput::FocusEditor);
         self.reader_compose = Some(ReaderCompose { id, controller, window: None });
     }
@@ -7924,9 +8475,20 @@ impl AppModel {
                 }
             }
         }
+        // Demo mode: the sample accounts exist only at the backend layer, so
+        // the Accounts panel would sit empty in screenshots — hand it
+        // matching stand-in configs instead.
+        if accounts.is_empty() && demo_mode() {
+            accounts = demo_account_configs();
+        }
         // The accounts panel component (embedded behind the "Accounts" tab).
         let accounts = AccountsWindow::builder()
-            .launch(accounts)
+            .launch(crate::ui::accounts::AccountsInit {
+                accounts,
+                allowed_senders: self.allowed_senders.clone(),
+                blacklist: self.blacklist.clone(),
+                filters: self.filters.clone(),
+            })
             .forward(sender.input_sender(), |out| match out {
                 AccountsOutput::Saved { original_email, account } => {
                     AppMsg::AccountSaved { original_email, account }
@@ -7938,6 +8500,11 @@ impl AppModel {
                 }
                 AccountsOutput::ImportGoa(account) => AppMsg::ImportGoaAccount(account),
                 AccountsOutput::EditorOpen(open) => AppMsg::SettingsEditorOpen(open),
+                AccountsOutput::AddSender(addr) => AppMsg::AddSender(addr),
+                AccountsOutput::RemoveSender(addr) => AppMsg::RemoveSender(addr),
+                AccountsOutput::AddBlacklist(addr) => AppMsg::AddBlacklist(addr),
+                AccountsOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
+                AccountsOutput::SetFilters(rules) => AppMsg::SetFilters(rules),
             });
         if add_new {
             accounts.emit(crate::ui::accounts::AccountsInput::AddAccount);
@@ -7946,7 +8513,6 @@ impl AppModel {
         // The host window: the preferences component, carrying the accounts
         // panel behind its other tab.
         let init = PrefInit {
-            allowed_senders: self.allowed_senders.clone(),
             auto_remote_content: self.auto_remote_content,
             show_remote_banner: self.show_remote_banner,
             gravatar: self.gravatar,
@@ -7956,7 +8522,6 @@ impl AppModel {
             clock_style: self.clock_style,
             fetch_interval_secs: self.fetch_interval_secs,
             push: self.push,
-            blacklist: self.blacklist.clone(),
             palette_collapse_secs: self.palette_collapse_secs,
             threading: self.threading,
             threads_expanded: self.threads_expanded,
@@ -7973,6 +8538,8 @@ impl AppModel {
             show_unified: self.show_unified_pref,
             unified_chip: self.unified_chip,
             chevrons_left: self.chevrons_left,
+            console_mode: self.console_mode,
+            read_mark: self.read_mark,
             settings_open_accounts: self.settings_open_accounts,
             sidebar_hover_expand: self.sidebar_hover_expand,
             card_actions_hover: self.card_actions_hover,
@@ -7992,10 +8559,6 @@ impl AppModel {
             .transient_for(&self.window)
             .launch(init)
             .forward(sender.input_sender(), |out| match out {
-                PrefOutput::AddSender(addr) => AppMsg::AddSender(addr),
-                PrefOutput::RemoveSender(addr) => AppMsg::RemoveSender(addr),
-                PrefOutput::AddBlacklist(addr) => AppMsg::AddBlacklist(addr),
-                PrefOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
                 PrefOutput::SetAutoRemoteContent(on) => AppMsg::SetAutoRemoteContent(on),
                 PrefOutput::SetShowRemoteBanner(on) => AppMsg::SetShowRemoteBanner(on),
                 PrefOutput::SetGravatar(on) => AppMsg::SetGravatar(on),
@@ -8029,6 +8592,10 @@ impl AppModel {
                 PrefOutput::SetShowUnified(show) => AppMsg::SetShowUnified(show),
                 PrefOutput::SetUnifiedChip(show) => AppMsg::SetUnifiedChip(show),
                 PrefOutput::SetChevronsLeft(left) => AppMsg::SetChevronsLeft(left),
+                PrefOutput::SetConsoleMode(on) => AppMsg::SetConsoleMode(on),
+                PrefOutput::SetReadMark(policy) => AppMsg::SetReadMark(policy),
+                PrefOutput::ExportSettings => AppMsg::ExportSettings,
+                PrefOutput::ImportSettings => AppMsg::ImportSettings,
                 PrefOutput::SetSidebarHoverExpand(on) => {
                     AppMsg::SetSidebarHoverExpand(on)
                 }
@@ -8111,15 +8678,19 @@ impl AppModel {
         page.set_margin_top(18);
         page.set_margin_bottom(12);
 
-        // Identity block.
-        let icon = gtk::Image::from_icon_name(crate::APP_ID);
-        icon.set_pixel_size(96);
-        icon.set_margin_bottom(10);
-        page.append(&icon);
-
-        let name = gtk::Label::new(Some(crate::APP_NAME));
-        name.add_css_class("title-1");
-        page.append(&name);
+        // Identity block: the blue wordmark on the brand yellow, wizard-style.
+        // Same Overlay-with-spacer cap as the wizard — a Picture's texture
+        // wins over both width requests and clamps.
+        let wm_pic = crate::ui::welcome::wordmark_picture(120);
+        let wm_frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        wm_frame.set_size_request(120, 120 * 214 / 600);
+        let wm = gtk::Overlay::new();
+        wm.set_child(Some(&wm_frame));
+        wm.add_overlay(&wm_pic);
+        wm.set_clip_overlay(&wm_pic, true);
+        wm.set_halign(gtk::Align::Center);
+        wm.set_margin_bottom(10);
+        page.append(&wm);
 
         let version = gtk::Label::new(Some(crate::VERSION));
         version.add_css_class("about-version-chip");
@@ -8219,6 +8790,10 @@ impl AppModel {
             row
         };
         links.append(&mk_row("Website", "https://vireo.hyprlab.co"));
+        links.append(&mk_row(
+            "Github — Submit bug report or feature request",
+            "https://github.com/hyprlab/vireo/issues",
+        ));
         links.append(&mk_row("Contact — hyprlab@proton.me", "mailto:hyprlab@proton.me"));
         links.append(&mk_row("Source Code", "https://github.com/hyprlab/vireo"));
         links.append(&mk_row("License (GNU AGPL v3)", "https://www.gnu.org/licenses/agpl-3.0.html"));
@@ -8278,6 +8853,7 @@ impl AppModel {
         let main_tv = adw::ToolbarView::new();
         let main_header = adw::HeaderBar::new();
         main_header.add_css_class("flat");
+        main_header.set_show_title(false);
         main_tv.add_top_bar(&main_header);
         main_tv.set_content(Some(&scroller));
         nav.add(
@@ -8302,12 +8878,31 @@ impl AppModel {
         self.send_to(m.account_id, MailRequest::SetFlagged { path, uid: m.uid, flagged: starred });
         self.message_list
             .emit(MessageListInput::SetStarred { id: m.id, starred });
+        for tm in self
+            .current_thread
+            .iter_mut()
+            .filter(|tm| tm.id == m.id && tm.account_id == m.account_id)
+        {
+            // Without this the toolbar's reply_target reads a stale copy and
+            // a second click re-stars instead of clearing.
+            tm.starred = starred;
+        }
         if let Some(cur) = self.current.as_mut() {
             if cur.id == m.id && cur.account_id == m.account_id {
                 cur.starred = starred;
             }
         }
-        if self.current.as_ref().is_some_and(|c| c.id == m.id && c.account_id == m.account_id) {
+        if self.current_thread.len() > 1 {
+            // A conversation is open: re-showing `current` alone here used to
+            // collapse the reader to a single message. Patch the card's star
+            // button in place instead.
+            self.message_view.emit(MessageViewInput::SetCardStar {
+                account_id: m.account_id,
+                id: m.id,
+                starred,
+            });
+        } else if self.current.as_ref().is_some_and(|c| c.id == m.id && c.account_id == m.account_id)
+        {
             let current = self.current.clone();
             self.show_message(current, false);
         }
@@ -8410,7 +9005,10 @@ impl AppModel {
             BulkAction::Delete => FolderKind::Trash,
             BulkAction::Spam => FolderKind::Junk,
             // Non-removing actions never reach here (handled inline).
-            BulkAction::MarkRead | BulkAction::MarkUnread | BulkAction::Flag => return,
+            BulkAction::MarkRead
+            | BulkAction::MarkUnread
+            | BulkAction::Flag
+            | BulkAction::Unflag => return,
         };
         // (account, source path) → (dest path, uids, Message-IDs for undo).
         // dest is per-account.
@@ -8548,6 +9146,67 @@ impl AppModel {
                 }
             } else {
                 kept.push(m);
+            }
+        }
+        kept
+    }
+
+    /// Apply the mail filter rules (#47) to an inbox sync, Evolution-style:
+    /// the first matching rule files the message into its folder; everything
+    /// else passes through. On-sight like the blacklist, so mail that arrived
+    /// while Vireo was closed still gets filed on the next sync.
+    fn apply_filters(
+        &self,
+        account_id: u32,
+        folder_id: u32,
+        messages: Vec<Message>,
+    ) -> Vec<Message> {
+        if self.filters.is_empty()
+            || self.inbox_of(account_id).map(|f| f.id) != Some(folder_id)
+        {
+            return messages;
+        }
+        let Some(email) = self.email_of(account_id) else { return messages };
+        let rules: Vec<&config::FilterRule> = self
+            .filters
+            .iter()
+            .filter(|r| r.account_email.eq_ignore_ascii_case(&email))
+            .collect();
+        if rules.is_empty() {
+            return messages;
+        }
+        let folders = self.folders.get(&account_id);
+        let src = folders
+            .and_then(|fs| fs.iter().find(|f| f.id == folder_id))
+            .map(|f| f.path.clone());
+        let known = |path: &str| folders.is_some_and(|fs| fs.iter().any(|f| f.path == path));
+        let mut kept = Vec::with_capacity(messages.len());
+        for m in messages {
+            let recipients = format!("{} {}", m.to, m.cc);
+            let hit = rules.iter().find(|r| {
+                r.matches(&m.from_addr, &m.from_name, &m.subject, &recipients)
+                    // A destination that vanished from the server keeps the
+                    // mail in the inbox rather than erroring it into limbo.
+                    && known(&r.dest_path)
+                    && src.as_deref() != Some(r.dest_path.as_str())
+            });
+            match (hit, &src) {
+                (Some(rule), Some(src)) => {
+                    tracing::info!(
+                        "filter: {} → {} ({:?} {:?} {:?})",
+                        m.from_addr,
+                        rule.dest_path,
+                        rule.field,
+                        rule.matcher,
+                        rule.value,
+                    );
+                    self.send_to(account_id, MailRequest::MoveMessage {
+                        path: src.clone(),
+                        uid: m.uid,
+                        dest: rule.dest_path.clone(),
+                    });
+                }
+                _ => kept.push(m),
             }
         }
         kept
@@ -8717,56 +9376,102 @@ fn md_label(text: &str, classes: &[&str]) -> gtk::Label {
 /// headings, bullets (nested one level), indented continuation paragraphs, and
 /// the inline syntax in [`md_inline`].
 fn md_column(md: &str) -> gtk::Box {
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let mut first = true;
+    /// A logical Markdown block, with source lines coalesced — CHANGELOG.md
+    /// is hard-wrapped at ~72 columns, and rendering each source line as its
+    /// own label left a ragged right edge instead of flowing text.
+    enum Block {
+        H2(String),
+        H3(String),
+        Bullet { nested: bool, text: String },
+        Para { indented: bool, text: String },
+    }
 
+    let mut blocks: Vec<Block> = Vec::new();
+    let mut cur: Option<Block> = None;
+    let mut flush = |cur: &mut Option<Block>, blocks: &mut Vec<Block>| {
+        if let Some(b) = cur.take() {
+            blocks.push(b);
+        }
+    };
     for raw in md.lines() {
         let line = raw.trim_end();
         let trimmed = line.trim_start();
         let indent = line.len() - trimmed.len();
-        // Blank lines carry no meaning here: spacing comes from each block's
-        // own margins, so a stray one can't open a gap.
         if trimmed.is_empty() {
-            continue;
-        }
-        // The page's header bar already shows the document's title.
-        if trimmed.starts_with("# ") {
-            continue;
-        }
-
-        let widget: gtk::Widget = if let Some(rest) = trimmed.strip_prefix("### ") {
-            let label = md_label(rest, &["heading"]);
-            label.set_margin_top(if first { 0 } else { 14 });
-            label.into()
+            flush(&mut cur, &mut blocks);
+        } else if trimmed.starts_with("# ") {
+            // The page's header bar already shows the document's title.
+            flush(&mut cur, &mut blocks);
         } else if let Some(rest) = trimmed.strip_prefix("## ") {
-            let label = md_label(rest, &["title-4"]);
-            label.set_margin_top(if first { 0 } else { 22 });
-            label.set_margin_bottom(2);
-            label.into()
-        } else if let Some(rest) = trimmed
-            .strip_prefix("- ")
-            .or_else(|| trimmed.strip_prefix("* "))
+            flush(&mut cur, &mut blocks);
+            blocks.push(Block::H2(rest.to_string()));
+        } else if let Some(rest) = trimmed.strip_prefix("### ") {
+            flush(&mut cur, &mut blocks);
+            blocks.push(Block::H3(rest.to_string()));
+        } else if let Some(rest) =
+            trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* "))
         {
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            row.set_margin_top(6);
-            row.set_margin_start(if indent >= 2 { 18 } else { 0 });
-            let bullet = gtk::Label::new(Some(if indent >= 2 { "◦" } else { "•" }));
-            bullet.set_valign(gtk::Align::Start);
-            bullet.add_css_class("dim-label");
-            row.append(&bullet);
-            let text = md_label(rest, &[]);
-            text.set_hexpand(true);
-            row.append(&text);
-            row.into()
+            flush(&mut cur, &mut blocks);
+            cur = Some(Block::Bullet { nested: indent >= 2, text: rest.to_string() });
         } else {
-            // An indented paragraph continues the bullet above it, so it lines up
-            // with that bullet's text rather than the page margin.
-            let label = md_label(trimmed, &[]);
-            label.set_margin_top(8);
-            label.set_margin_start(if indent >= 2 { 26 } else { 0 });
-            label.into()
-        };
+            // A plain line continues the open bullet/paragraph, or starts one.
+            match &mut cur {
+                Some(Block::Bullet { text, .. }) | Some(Block::Para { text, .. }) => {
+                    text.push(' ');
+                    text.push_str(trimmed);
+                }
+                _ => {
+                    cur = Some(Block::Para { indented: indent >= 2, text: trimmed.to_string() })
+                }
+            }
+        }
+    }
+    flush(&mut cur, &mut blocks);
 
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let mut first = true;
+    // Anything before the first section heading is document front-matter
+    // (RELEASE_NOTES' intro paragraph), not notes — skip it.
+    let mut seen_section = false;
+    for block in &blocks {
+        if !seen_section {
+            match block {
+                Block::H2(_) | Block::H3(_) => seen_section = true,
+                _ => continue,
+            }
+        }
+        let widget: gtk::Widget = match block {
+            Block::H3(text) => {
+                let label = md_label(text, &["heading"]);
+                label.set_margin_top(if first { 0 } else { 14 });
+                label.into()
+            }
+            Block::H2(text) => {
+                let label = md_label(text, &["title-4"]);
+                label.set_margin_top(if first { 0 } else { 22 });
+                label.set_margin_bottom(2);
+                label.into()
+            }
+            Block::Bullet { nested, text } => {
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                row.set_margin_top(6);
+                row.set_margin_start(if *nested { 18 } else { 0 });
+                let bullet = gtk::Label::new(Some(if *nested { "\u{25e6}" } else { "\u{2022}" }));
+                bullet.set_valign(gtk::Align::Start);
+                bullet.add_css_class("dim-label");
+                row.append(&bullet);
+                let label = md_label(text, &[]);
+                label.set_hexpand(true);
+                row.append(&label);
+                row.into()
+            }
+            Block::Para { indented, text } => {
+                let label = md_label(text, &[]);
+                label.set_margin_top(8);
+                label.set_margin_start(if *indented { 26 } else { 0 });
+                label.into()
+            }
+        };
         column.append(&widget);
         first = false;
     }
@@ -8892,6 +9597,7 @@ const SHORTCUT_HELP: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+P", "Print the message you are reading"),
             ("Ctrl+Shift+P", "Preview it as a PDF first"),
             ("Ctrl+Shift+S", "Reveal the status bar (also: long-press Refresh)"),
+            ("Ctrl+Shift+C", "Console mode (when enabled in Settings)"),
             ("Ctrl+W", "Close the window (background sync keeps running)"),
             ("Ctrl+Q", "Quit Vireo entirely"),
             ("?", "This list"),
@@ -8945,6 +9651,46 @@ fn focus_matches(window: &adw::ApplicationWindow, include_web_view: bool) -> boo
 
 /// Whether to serve the built-in sample/demo data (for screenshots). Off unless
 /// `VIREO_DEMO` is set, so removing all real accounts leaves the app blank.
+/// Stand-in [`AccountConfig`]s mirroring the demo backend's three accounts
+/// (same names, colours and emoji), so the Accounts window has something to
+/// show in demo screenshots.
+fn demo_account_configs() -> Vec<AccountConfig> {
+    let mk = |name: &str, email: &str, color: &str, emoji: &str| AccountConfig {
+        name: name.into(),
+        email: email.into(),
+        protocol: Default::default(),
+        imap_host: format!("imap.{}", email.split('@').nth(1).unwrap_or("example.com")),
+        imap_port: 993,
+        smtp_host: format!("smtp.{}", email.split('@').nth(1).unwrap_or("example.com")),
+        smtp_port: 587,
+        username: email.into(),
+        password: String::new(),
+        smtp_separate: false,
+        smtp_username: String::new(),
+        smtp_password: String::new(),
+        color: Some(color.into()),
+        emoji: Some(emoji.into()),
+        signature: None,
+        signature_html: false,
+        label: None,
+        aliases: Vec::new(),
+        enabled: true,
+        goa_id: None,
+        goa_mail_disabled: false,
+        goa_enabled_before_mail_disabled: true,
+        oauth: false,
+        oauth_settings: None,
+        oauth_refresh: String::new(),
+        push: None,
+        folder_roles: Default::default(),
+    };
+    vec![
+        mk("Jason M.", "jason@vireo.hyprlab.co", "#3584e4", "🚀"),
+        mk("Hyprlab", "hello@hyprlab.dev", "#2ec27e", "🦀"),
+        mk("Jason (Personal)", "jason.m@fastmail.com", "#9141ac", "🌿"),
+    ]
+}
+
 fn demo_mode() -> bool {
     std::env::var_os("VIREO_DEMO").is_some()
 }
@@ -9024,6 +9770,24 @@ pub fn queue_mailto(uri: String) {
         }
         None => MAILTO_PENDING.lock().unwrap().push(uri),
     }
+}
+
+/// Resolve a notification's `(account_id, folder_id, message_id)` to the full
+/// cached [`Message`] (#38): the notified message may not be in the current
+/// view, but the worker upserts it into the cache before notifying, so the
+/// cache always has it.
+fn notified_message(
+    account_id: u32,
+    folder_id: u32,
+    message_id: u32,
+    folders: &std::collections::HashMap<u32, Vec<Folder>>,
+) -> Option<Message> {
+    let path = folders.get(&account_id)?.iter().find(|f| f.id == folder_id)?.path.clone();
+    let cache = crate::cache::Cache::open().ok()?;
+    cache
+        .load_messages(account_id, &path, folder_id)
+        .into_iter()
+        .find(|m| m.id == message_id)
 }
 
 /// Percent-decode for mailto components (RFC 6068): `%XX` only — `+` stays
@@ -9113,7 +9877,7 @@ fn parse_mailto(uri: &str) -> Option<crate::ui::compose::ComposePrefill> {
 /// Render the window's widget tree to a PNG at 2x (crisp text for marketing
 /// shots). Content only — the compositor's shadow/frame is not part of the
 /// tree, which is exactly what the site and store screenshots want.
-fn showcase_capture(win: &gtk::Widget, path: &str) {
+pub(crate) fn showcase_capture(win: &gtk::Widget, path: &str) {
     let (w, h) = (win.width(), win.height());
     if w == 0 || h == 0 {
         tracing::error!("showcase: window not realized");
