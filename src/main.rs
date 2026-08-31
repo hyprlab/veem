@@ -119,9 +119,14 @@ fn main() {
         return;
     }
 
+    // A brand-new install (no accounts, not the demo) is greeted by the
+    // welcome wizard alone; the main window appears when the wizard finishes
+    // or is closed (app.rs presents it from the wizard's hand-off).
+    let first_run = std::env::var("VIREO_DEMO").is_err()
+        && config::load().unwrap_or_default().is_empty();
     let app = RelmApp::from_app(adw_app)
         .with_args(args)
-        .visible_on_activate(!hidden);
+        .visible_on_activate(!hidden && !first_run);
     app.run::<AppModel>(());
 }
 

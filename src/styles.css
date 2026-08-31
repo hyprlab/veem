@@ -1229,3 +1229,94 @@ headerbar.reader-toolbar button.image-button {
 .thread-toggle-icon.open {
   -gtk-icon-transform: rotate(90deg);
 }
+
+/* ---- First-run welcome wizard (welcome.rs) ---- */
+
+/* The whole window wears the icon's yellow; every page floats on it. */
+window.welcome-window,
+.welcome-window > * {
+  background-color: #ffc600;
+}
+.welcome-window headerbar {
+  background: transparent;
+  box-shadow: none;
+  border: none;
+}
+.welcome-window headerbar button {
+  color: rgba(0, 0, 0, 0.75);
+}
+
+.welcome-title {
+  font-size: 1.7em;
+  font-weight: 800;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.welcome-tagline {
+  font-size: 1.02em;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.welcome-section {
+  font-weight: 700;
+  font-size: 0.9em;
+  color: rgba(0, 0, 0, 0.6);
+  margin-left: 6px;
+}
+
+/* Content cards: the app's own surface colour, lifted off the yellow. */
+.welcome-card {
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+
+.welcome-pill {
+  padding: 8px 28px;
+  min-height: 0;
+  font-weight: 700;
+}
+
+/* Wizard action buttons wear the wordmark's own blue (#006dff), not the
+   theme accent, so button and lettering read as one design. */
+.welcome-window button.suggested-action {
+  background-color: #006dff;
+  color: #ffffff;
+}
+.welcome-window button.suggested-action:hover {
+  background-color: shade(#006dff, 1.12);
+}
+.welcome-window button.suggested-action:active {
+  background-color: shade(#006dff, 0.9);
+}
+
+.welcome-hint {
+  font-size: 0.9em;
+  color: rgba(0, 0, 0, 0.6);
+}
+.welcome-hint.error {
+  color: #a51d2d;
+  font-weight: 600;
+}
+.welcome-hint.success {
+  color: #1a5f2a;
+  font-weight: 600;
+}
+
+.welcome-added {
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.8);
+}
+
+.welcome-check {
+  color: #006dff;
+}
+
+.welcome-link {
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.8);
+}
+
+.welcome-window carouselindicatordots {
+  color: rgba(0, 0, 0, 0.8);
+}
+

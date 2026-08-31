@@ -33,7 +33,7 @@ enum ProviderKind {
 /// for `Preset`, the IMAP/SMTP servers to auto-fill. `hint` is shown as the row's
 /// subtitle. Server fields are empty for non-`Preset` kinds (OAuth providers get
 /// their servers from `crate::oauth::preset`; Manual/Custom are user-entered).
-struct Provider {
+pub(crate) struct Provider {
     label: &'static str,
     kind: ProviderKind,
     imap_host: &'static str,
@@ -44,6 +44,21 @@ struct Provider {
 }
 
 impl Provider {
+    /// Wizard accessors (src/ui/welcome.rs): the fields stay private to this
+    /// module, which owns the table's meaning.
+    pub(crate) fn wizard_password_provider(&self) -> bool {
+        self.is_password()
+    }
+    pub(crate) fn wizard_label(&self) -> &'static str {
+        self.label
+    }
+    pub(crate) fn wizard_servers(&self) -> (&'static str, u16, &'static str, u16) {
+        (self.imap_host, self.imap_port, self.smtp_host, self.smtp_port)
+    }
+    pub(crate) fn wizard_hint(&self) -> &'static str {
+        self.hint
+    }
+
     fn is_password(&self) -> bool {
         matches!(self.kind, ProviderKind::Manual | ProviderKind::Preset)
     }
@@ -65,7 +80,7 @@ const APP_PW: &str = "Requires an app-specific password (not your normal login p
 /// The Provider dropdown, in display order. OAuth options first, then the major
 /// app-password IMAP providers, then the two manual escape hatches. IMAP uses
 /// SSL/TLS on 993; SMTP uses implicit TLS on 465 or STARTTLS on 587.
-const PROVIDERS: &[Provider] = &[
+pub(crate) const PROVIDERS: &[Provider] = &[
     Provider { label: "Google (Gmail) — sign in", kind: ProviderKind::Google, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Sign in with your browser — no password needed." },
     Provider { label: "Microsoft 365 / Outlook", kind: ProviderKind::Microsoft, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Sign in through GNOME Online Accounts." },
     Provider { label: "iCloud", kind: ProviderKind::Preset, imap_host: "imap.mail.me.com", imap_port: 993, smtp_host: "smtp.mail.me.com", smtp_port: 587, hint: APP_PW },

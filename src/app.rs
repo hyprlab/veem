@@ -391,6 +391,8 @@ pub struct AppModel {
     /// The repeating auto-fetch timer, if armed.
     auto_fetch_source: Option<gtk::glib::SourceId>,
     notifications: Controller<NotificationCenter>,
+    /// The first-run welcome wizard, alive while it's on screen.
+    welcome: Option<Controller<crate::ui::welcome::Welcome>>,
     notify_count: usize,
     /// Accounts currently performing network activity (drives the spinner).
     busy: HashSet<u32>,
@@ -689,6 +691,11 @@ pub enum AppMsg {
     AccountRemoved { email: String },
     AccountEnabledChanged { email: String, enabled: bool },
     ImportGoaAccount(Box<AccountConfig>),
+    /// The welcome wizard's privacy/personalize choices: fan out through the
+    /// existing Set* handlers so every side effect stays in one place.
+    ApplyWelcomePrefs(crate::ui::welcome::WelcomePrefs),
+    /// Raise and focus the main window (welcome wizard hand-off).
+    PresentWindow,
     /// GNOME Online Accounts changed on the session bus. Carries the fresh live
     /// state, already fetched (debounced) on the watcher thread so the GTK main
     /// thread never does D-Bus I/O — re-reconcile against it.
@@ -1694,6 +1701,7 @@ impl SimpleComponent for AppModel {
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
             notifications,
+            welcome: None,
             notify_count: 0,
             busy: HashSet::new(),
             sidebar,
@@ -1738,9 +1746,39 @@ impl SimpleComponent for AppModel {
             }
         });
         // With no accounts, no worker events will populate the sidebar, so render
-        // its empty state (the "Add first account" prompt) up front.
-        if model.config.is_empty() {
+        // its empty state (the "Add first account" prompt) up front — and greet
+        // a first run with the welcome wizard (src/ui/welcome.rs).
+        if model.config.is_empty() || std::env::var("VIREO_WELCOME").is_ok() {
             model.rebuild_sidebar();
+            // VIREO_WELCOME=1 forces the wizard over an existing config, for
+            // design review and screenshots.
+            if !demo_mode() || std::env::var("VIREO_WELCOME").is_ok() {
+                use crate::ui::welcome::{Welcome, WelcomeOutput};
+                let welcome = Welcome::builder().launch(()).forward(
+                    sender.input_sender(),
+                    |out| match out {
+                        WelcomeOutput::AddAccount(account) => {
+                            AppMsg::AccountSaved { original_email: None, account }
+                        }
+                        WelcomeOutput::ImportGoa(account) => AppMsg::ImportGoaAccount(account),
+                        WelcomeOutput::Prefs(p) => AppMsg::ApplyWelcomePrefs(p),
+                        WelcomeOutput::Done => AppMsg::PresentWindow,
+                    },
+                );
+                welcome.widget().set_transient_for(Some(&root));
+                welcome.widget().set_modal(true);
+                // On a true first run the main window stays hidden (see
+                // main.rs) until the wizard finishes — or is dismissed.
+                {
+                    let s = sender.clone();
+                    welcome.widget().connect_close_request(move |_| {
+                        s.input(AppMsg::PresentWindow);
+                        gtk::glib::Propagation::Proceed
+                    });
+                }
+                welcome.widget().present();
+                model.welcome = Some(welcome);
+            }
         }
         model
             .message_list
@@ -4259,6 +4297,24 @@ impl SimpleComponent for AppModel {
                         self.reconnect_all(&sender);
                     }
                 }
+            }
+
+            AppMsg::PresentWindow => {
+                self.window.set_visible(true);
+                self.window.present();
+            }
+
+            AppMsg::ApplyWelcomePrefs(p) => {
+                // Route every choice through its normal handler (each saves and
+                // updates the live UI); drop the wizard controller afterwards.
+                sender.input(AppMsg::SetAutoRemoteContent(!p.block_remote));
+                sender.input(AppMsg::SetGravatar(p.gravatar));
+                sender.input(AppMsg::SetSenderLogos(p.sender_logos));
+                sender.input(AppMsg::SetNotificationContent(p.notification_content));
+                sender.input(AppMsg::SetPreviewLines(p.preview_lines));
+                sender.input(AppMsg::SetAvatars(p.avatars));
+                sender.input(AppMsg::SetThreading(p.threading));
+                self.welcome = None;
             }
 
             AppMsg::ImportGoaAccount(account) => {
@@ -9178,7 +9234,7 @@ fn parse_mailto(uri: &str) -> Option<crate::ui::compose::ComposePrefill> {
 /// Render the window's widget tree to a PNG at 2x (crisp text for marketing
 /// shots). Content only — the compositor's shadow/frame is not part of the
 /// tree, which is exactly what the site and store screenshots want.
-fn showcase_capture(win: &gtk::Widget, path: &str) {
+pub(crate) fn showcase_capture(win: &gtk::Widget, path: &str) {
     let (w, h) = (win.width(), win.height());
     if w == 0 || h == 0 {
         tracing::error!("showcase: window not realized");
