@@ -578,15 +578,14 @@ impl FactoryComponent for MessageRow {
                 set_custom_image: self.avatar_texture.as_ref(),
             },
 
-            // Faded rather than hidden: a hidden widget gives up its slot in the
-            // box, so every read row's sender and preview would sit 18px further
-            // left than an unread one's and the column would jitter as mail is
-            // read. The space is always reserved; only the dot's ink changes.
-            //
-            // With avatars on, the dot centres in the row beside the circle;
-            // without them it leads the row, so it aligns with the sender
-            // name's line instead (the .no-avatar margin in styles.css puts
-            // it on that line's centre).
+            // Faded rather than hidden: a hidden widget gives up its slot in
+            // the box, so read rows' text would sit left of unread rows' and
+            // the column would jitter as mail is read — the slot is always
+            // reserved and only the dot's ink changes (re-affirmed in #99:
+            // collapsing it was tried and the shifting read worse). With
+            // avatars on the dot centres beside the circle; without them it
+            // leads the row on the sender name's line (the .no-avatar margin
+            // in styles.css).
             gtk::Box {
                 add_css_class: "unread-dot",
                 set_valign: if self.avatars { gtk::Align::Center } else { gtk::Align::Start },
@@ -598,7 +597,10 @@ impl FactoryComponent for MessageRow {
                 set_orientation: gtk::Orientation::Vertical,
                 set_spacing: 2,
                 set_hexpand: true,
-                set_valign: gtk::Align::Center,
+                // Beside an avatar the text block centres on the circle; with
+                // avatars off it anchors to the pill's top, under the corner
+                // radius (#99) — the pill's own padding provides the inset.
+                set_valign: if self.avatars { gtk::Align::Center } else { gtk::Align::Start },
 
                 gtk::Box {
                     set_spacing: 6,

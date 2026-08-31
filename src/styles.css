@@ -513,15 +513,26 @@ button.star-active {
   color: @accent_bg_color;
 }
 
-/* Avatars off (#29): the unread dot leads the row, so it gets the same
-   gap on each side — 12px to the list's edge (6px margin + 6px padding), and
-   8px of box spacing plus this margin to the sender's name. */
+/* Avatars off (#29, #99): read rows collapse the dot's slot entirely (see
+   the row template), so the text block starts here — 8px, matching the
+   pill's right padding for equal margins. Unread rows lead with the dot. */
 .message-row.no-avatar {
-  padding-left: 6px;
+  padding-left: 8px;
+  /* Text anchors to the pill's top (#99): a tighter top inset reads as
+     top-aligned, and the freed room stays at the bottom where the floating
+     Actions Palette rides. */
+  padding-top: 6px;
+}
+
+/* With the palette on, the no-avatar pill grows at the bottom so the
+   floating ⋯ clears the text; palette off, the room isn't needed
+   (.no-palette rows keep the plain padding). */
+.message-row.no-avatar:not(.no-palette) {
+  padding-bottom: 18px;
 }
 
 .message-row.no-avatar .unread-dot {
-  margin-right: 4px;
+  margin-right: -3px;
   /* Valign Start plus this nudge centres the 10px dot on the sender name's
      ~20px first line (with avatars on, the dot centres in the row instead). */
   margin-top: 5px;
