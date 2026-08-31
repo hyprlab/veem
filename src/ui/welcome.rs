@@ -15,10 +15,8 @@ use crate::config::AccountConfig;
 use crate::ui::accounts::{Provider, PROVIDERS};
 use crate::worker::{self, ConnTest};
 
-/// Wordmark art, embedded so the wizard needs nothing on disk. Blue is the
-/// default; `VIREO_WORDMARK=tan` swaps in the embossed variant for comparison.
-const WORDMARK_BLUE_SVG: &[u8] = include_bytes!("../../data/welcome/wordmark-blue.svg");
-const WORDMARK_TAN_PNG: &[u8] = include_bytes!("../../data/welcome/wordmark-tan.png");
+/// Wordmark art, embedded so the wizard needs nothing on disk.
+const WORDMARK_SVG: &[u8] = include_bytes!("../../data/welcome/wordmark-blue.svg");
 
 /// The settings chosen on the privacy + personalize pages, applied by the app
 /// through its normal Set* handlers when the wizard finishes.
@@ -112,18 +110,14 @@ fn wizard_providers() -> Vec<&'static Provider> {
 
 /// Render the wordmark at 2x for crisp HiDPI, displayed at `width` px.
 fn wordmark_picture(width: i32) -> gtk::Picture {
-    let tan = std::env::var("VIREO_WORDMARK").as_deref() == Ok("tan");
-    let bytes: &[u8] = if tan { WORDMARK_TAN_PNG } else { WORDMARK_BLUE_SVG };
     let loader = gtk::gdk_pixbuf::PixbufLoader::new();
-    // SVG renders at the requested size; the PNG scales in the Picture.
-    if !tan {
-        loader.connect_size_prepared(move |l, w, h| {
-            let scale = (width * 2) as f64 / w.max(1) as f64;
-            l.set_size(width * 2, (h as f64 * scale) as i32);
-        });
-    }
+    // Render the SVG at the requested size (2x for crisp HiDPI).
+    loader.connect_size_prepared(move |l, w, h| {
+        let scale = (width * 2) as f64 / w.max(1) as f64;
+        l.set_size(width * 2, (h as f64 * scale) as i32);
+    });
     let pic = gtk::Picture::new();
-    if loader.write(bytes).is_ok() && loader.close().is_ok() {
+    if loader.write(WORDMARK_SVG).is_ok() && loader.close().is_ok() {
         if let Some(pb) = loader.pixbuf() {
             pic.set_paintable(Some(&gtk::gdk::Texture::for_pixbuf(&pb)));
         }
