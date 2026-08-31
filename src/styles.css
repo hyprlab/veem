@@ -121,11 +121,12 @@ headerbar.rail-header {
    little low and left of the visible ink, so each glyph type/size is nudged back
    up and right independently (initials and emoji tuned separately). */
 
-/* Large header circle — emoji nudged; initials centre fine on their own. */
+/* Large header circle — emoji get their own centring: the glyphs sit high
+   in their font box, so unlike initials they need no upward nudge at all. */
 .account-circle label.account-emoji {
   font-size: 1.05em;
   font-weight: 400;
-  margin-bottom: 2px;
+  margin-top: 2px;
   margin-left: 2px;
 }
 
@@ -148,7 +149,7 @@ headerbar.rail-header {
 .account-circle-sm label.account-emoji {
   font-size: 0.85em;
   font-weight: 400;
-  margin-bottom: 1px;
+  margin-top: 1px;
   margin-left: 1px;
 }
 
