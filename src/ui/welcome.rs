@@ -371,6 +371,11 @@ impl Component for Welcome {
         let server_exp = adw::ExpanderRow::new();
         server_exp.set_title("Server details");
         server_exp.set_subtitle("Filled in for known providers");
+        // The default provider is the generic "Other (IMAP/POP3)" entry,
+        // whose whole point is filling these in — start them open. Picking a
+        // known provider collapses them (ProviderChanged), picking the
+        // generic one re-opens them.
+        server_exp.set_expanded(true);
         let host_row = adw::EntryRow::new();
         host_row.set_title("IMAP server");
         let port_row = adw::EntryRow::new();
@@ -502,7 +507,7 @@ impl Component for Welcome {
         done_sub.set_markup(concat!(
             "Enjoy! If you encounter an issue or have a feature request,\n",
             "please open an issue on our ",
-            "<a href=\"https://github.com/hyprlab/vireo\">Github page</a>.",
+            "<a href=\"https://github.com/hyprlab/vireo\">Github</a>.",
         ));
         done.append(&done_sub);
         let finish_btn = pill("Start Reading");
