@@ -378,6 +378,10 @@ pub struct AppModel {
     read_mark: config::ReadMark,
     /// Mail filter rules (#47), applied to inbox syncs.
     filters: Vec<config::FilterRule>,
+    /// Inbox UIDs whose filter move has been requested but not yet observed
+    /// (the message still showed up in the last sync). A sync racing the
+    /// server-side move must neither re-request the move nor re-notify.
+    filter_moved: std::collections::HashMap<(u32, u32), std::collections::HashSet<u32>>,
     /// Lone messages render as inset cards (#57).
     single_message_card: bool,
     /// Whether conversation rows may expand into their members in the list
@@ -1784,6 +1788,7 @@ impl SimpleComponent for AppModel {
             console_mode: config::load_console_mode(),
             read_mark: config::load_read_mark(),
             filters: config::load_filters(),
+            filter_moved: Default::default(),
             single_message_card: config::load_single_message_card(),
             thread_expansion: config::load_thread_expansion(),
             confirm_thread_delete: config::load_confirm_thread_delete(),
@@ -4866,7 +4871,7 @@ impl SimpleComponent for AppModel {
                 // Auto-delete blacklisted senders from the inbox before anything
                 // else sees them.
                 let messages = self.apply_blacklist(account_id, folder_id, messages);
-                let messages = self.apply_filters(account_id, folder_id, messages);
+                let (messages, filed) = self.apply_filters(account_id, folder_id, messages);
                 // Did this sync remove the message currently open in the reader
                 // (deleted/moved on another device)? Scope the check to the reader's
                 // own folder so a folder switch or another folder's sync doesn't
@@ -4891,6 +4896,8 @@ impl SimpleComponent for AppModel {
                 // watching arrive), only for the Inbox, and never on the first load
                 // of a folder (no prior cache) — that would fire for every existing
                 // message on startup. "New" = unread and not in the previous sync.
+                // Mail a filter just filed elsewhere still counts (#47 feedback):
+                // it is new mail even though it never lands in the inbox list.
                 if self.notifications_enabled && !self.window.is_active() {
                     let is_inbox = self.folder_kind(account_id, folder_id) == Some(FolderKind::Inbox);
                     if let (true, Some(old)) =
@@ -4902,15 +4909,52 @@ impl SimpleComponent for AppModel {
                             .iter()
                             .filter(|m| m.unread && !old_uids.contains(&m.uid))
                             .collect();
-                        if let Some(newest) = fresh.iter().max_by_key(|m| m.timestamp) {
-                            crate::notify::new_mail(
-                                account_id,
-                                folder_id,
-                                newest.id,
-                                &newest.from_name,
-                                &newest.subject,
-                                fresh.len() - 1,
-                            );
+                        let fresh_filed: Vec<&(Message, String)> = filed
+                            .iter()
+                            .filter(|(m, _)| m.unread && !old_uids.contains(&m.uid))
+                            .collect();
+                        let others = (fresh.len() + fresh_filed.len()).saturating_sub(1);
+                        let newest = fresh.iter().max_by_key(|m| m.timestamp);
+                        let newest_filed = fresh_filed.iter().max_by_key(|(m, _)| m.timestamp);
+                        match (newest, newest_filed) {
+                            // The newest arrival is still in the inbox: anchor
+                            // there. Ties go to the inbox copy — its click
+                            // target and action buttons actually work.
+                            (Some(m), nf)
+                                if nf.is_none_or(|(f, _)| f.timestamp <= m.timestamp) =>
+                            {
+                                crate::notify::new_mail(
+                                    account_id,
+                                    folder_id,
+                                    m.id,
+                                    &m.from_name,
+                                    &m.subject,
+                                    others,
+                                    true,
+                                );
+                            }
+                            // The newest arrival was filed by a filter: anchor
+                            // the notification on its destination folder so a
+                            // click lands where the mail went. Its buttons stay
+                            // off — the message is no longer where Mark as
+                            // Read/Archive would look for it.
+                            (_, Some((m, dest_path))) => {
+                                let dest_id = self
+                                    .folders
+                                    .get(&account_id)
+                                    .and_then(|fs| fs.iter().find(|f| &f.path == dest_path))
+                                    .map_or(folder_id, |f| f.id);
+                                crate::notify::new_mail(
+                                    account_id,
+                                    dest_id,
+                                    m.id,
+                                    &m.from_name,
+                                    &m.subject,
+                                    others,
+                                    false,
+                                );
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -7412,6 +7456,8 @@ impl AppModel {
         // In-flow (not overlay) slot: no click-swallowing to disarm.
         self.reader_split_top.set_reveal_child(false);
         self.reader_split_top.set_child(None::<&gtk::Widget>);
+        // The split's reply-target outline goes with the composer.
+        self.message_view.emit(MessageViewInput::BlurCard);
     }
 
     fn open_inline_reply(
@@ -9155,32 +9201,42 @@ impl AppModel {
     /// the first matching rule files the message into its folder; everything
     /// else passes through. On-sight like the blacklist, so mail that arrived
     /// while Vireo was closed still gets filed on the next sync.
+    ///
+    /// Returns the messages staying in the inbox, plus the ones filed away on
+    /// this sync (paired with their destination path) so the caller can still
+    /// count them as new mail when notifying.
     fn apply_filters(
-        &self,
+        &mut self,
         account_id: u32,
         folder_id: u32,
         messages: Vec<Message>,
-    ) -> Vec<Message> {
+    ) -> (Vec<Message>, Vec<(Message, String)>) {
         if self.filters.is_empty()
             || self.inbox_of(account_id).map(|f| f.id) != Some(folder_id)
         {
-            return messages;
+            return (messages, Vec::new());
         }
-        let Some(email) = self.email_of(account_id) else { return messages };
+        let Some(email) = self.email_of(account_id) else { return (messages, Vec::new()) };
         let rules: Vec<&config::FilterRule> = self
             .filters
             .iter()
             .filter(|r| r.account_email.eq_ignore_ascii_case(&email))
             .collect();
         if rules.is_empty() {
-            return messages;
+            return (messages, Vec::new());
         }
         let folders = self.folders.get(&account_id);
         let src = folders
             .and_then(|fs| fs.iter().find(|f| f.id == folder_id))
             .map(|f| f.path.clone());
         let known = |path: &str| folders.is_some_and(|fs| fs.iter().any(|f| f.path == path));
+        let pending = self
+            .filter_moved
+            .remove(&(account_id, folder_id))
+            .unwrap_or_default();
+        let mut still_pending = std::collections::HashSet::new();
         let mut kept = Vec::with_capacity(messages.len());
+        let mut filed = Vec::new();
         for m in messages {
             let recipients = format!("{} {}", m.to, m.cc);
             let hit = rules.iter().find(|r| {
@@ -9192,6 +9248,14 @@ impl AppModel {
             });
             match (hit, &src) {
                 (Some(rule), Some(src)) => {
+                    still_pending.insert(m.uid);
+                    if pending.contains(&m.uid) {
+                        // The move was already requested on an earlier sync;
+                        // this one raced the server. Requesting again would
+                        // error once the first move lands, and re-notifying
+                        // would repeat the toast.
+                        continue;
+                    }
                     tracing::info!(
                         "filter: {} → {} ({:?} {:?} {:?})",
                         m.from_addr,
@@ -9205,11 +9269,17 @@ impl AppModel {
                         uid: m.uid,
                         dest: rule.dest_path.clone(),
                     });
+                    filed.push((m, rule.dest_path.clone()));
                 }
                 _ => kept.push(m),
             }
         }
-        kept
+        // UIDs absent from this sync have completed their move server-side;
+        // dropping them keeps the set from growing without bound.
+        if !still_pending.is_empty() {
+            self.filter_moved.insert((account_id, folder_id), still_pending);
+        }
+        (kept, filed)
     }
 
     /// Re-sync every inbox so a newly-blacklisted sender's existing mail is

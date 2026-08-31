@@ -991,9 +991,9 @@ headerbar.reader-toolbar button.image-button {
   padding: 16px;
 }
 
-/* The body editor sits borderless on the compose surface — the editing area
-   reads as a card on the deeper ground (see install_scheme_css), like the
-   threaded reader's cards, not a framed inset. */
+/* The body editor is a card like the address fields' boxed-list (the frame
+   carries libadwaita's `card` class); GTK's default frame border would double
+   its edge. */
 .compose-pane frame {
   border: none;
 }

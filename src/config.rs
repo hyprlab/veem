@@ -678,7 +678,7 @@ struct PrivacyFile {
     always_show_recipients: bool,
     /// Whether a lone message renders as an inset card like a conversation's
     /// messages (#57); off keeps the full-bleed view.
-    #[serde(default)]
+    #[serde(default = "default_single_message_card")]
     single_message_card: bool,
     /// Whether deleting a whole selected conversation asks for confirmation
     /// first.
@@ -811,6 +811,14 @@ fn default_thread_expansion() -> bool {
     false
 }
 
+fn default_single_message_card() -> bool {
+    // On for new installs (Jason, 2026-08-31): lone messages get the same
+    // inset card as conversations. Only a privacy.toml MISSING this key sees
+    // the default — every save writes all fields, so an existing install's
+    // choice is pinned.
+    true
+}
+
 fn default_confirm_thread_delete() -> bool {
     true
 }
@@ -890,7 +898,7 @@ impl Default for PrivacyFile {
             thread_expansion: default_thread_expansion(),
             thread_newest_first: false,
             always_show_recipients: false,
-            single_message_card: false,
+            single_message_card: default_single_message_card(),
             confirm_thread_delete: default_confirm_thread_delete(),
             message_theme: MessageTheme::default(),
             notifications: default_notifications(),

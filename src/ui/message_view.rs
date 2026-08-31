@@ -87,6 +87,9 @@ pub struct MessageView {
     instant: bool,
     /// The messages the list has selected, outlined in the reader.
     selected_cards: Vec<(u32, u32)>,
+    /// Bumped by FocusCard/BlurCard so a blur cancels a focus whose 380ms
+    /// post-slide scroll hasn't fired yet (reply cancelled immediately).
+    focus_gen: std::rc::Rc<std::cell::Cell<u64>>,
     /// True while the body is being fetched (show a spinner instead).
     loading: bool,
     /// False from when a render starts until the WebView reports it finished
@@ -344,6 +347,8 @@ pub enum MessageViewInput {
     /// top of the (now shorter) reader and give it the selection outline, so
     /// the message being answered is the one in view.
     FocusCard { account_id: u32, id: u32 },
+    /// Drop the reply-target outline (the composer closed without sending).
+    BlurCard,
     /// The wrapper document reported its scroll anchor (throttled): the card at
     /// the viewport top and the offset into it — kept so a re-render can put
     /// the reader back where they were.
@@ -685,6 +690,7 @@ impl Component for MessageView {
             frame_heights: std::collections::HashMap::new(),
             instant: false,
             selected_cards: Vec::new(),
+            focus_gen: std::rc::Rc::new(std::cell::Cell::new(0)),
             loading: false,
             webview_ready: false,
             find_open: false,
@@ -1301,11 +1307,20 @@ impl Component for MessageView {
             }
             MessageViewInput::FocusCard { account_id, id } => {
                 let webview = self.webview.clone();
+                let gen = self.focus_gen.clone();
+                gen.set(gen.get() + 1);
+                let my_gen = gen.get();
                 // Let the split's 300ms slide finish first — scrolling while
                 // the viewport is still shrinking lands somewhere else.
                 gtk::glib::timeout_add_local_once(
                     std::time::Duration::from_millis(380),
                     move || {
+                        if gen.get() != my_gen {
+                            // A BlurCard beat us here: the reply was cancelled
+                            // before the slide finished. Adding the outline
+                            // now would strand it.
+                            return;
+                        }
                         let js = format!(
                             "(function(){{\
                              if(!document.body.classList.contains('vireo-conv'))return;\
@@ -1329,6 +1344,23 @@ impl Component for MessageView {
                         );
                     },
                 );
+            }
+            MessageViewInput::BlurCard => {
+                self.focus_gen.set(self.focus_gen.get() + 1);
+                self.webview.evaluate_javascript(
+                    "(function(){document.querySelectorAll('.vireo-msg.selected')\
+                     .forEach(function(e){e.classList.remove('selected');});})()",
+                    None,
+                    None,
+                    None::<&gtk::gio::Cancellable>,
+                    |r| {
+                        if let Err(e) = r {
+                            tracing::warn!("card blur failed: {e}");
+                        }
+                    },
+                );
+                // Cards the list still has selected keep their outline.
+                self.apply_card_selection();
             }
             MessageViewInput::ScrollAnchor { account_id, id, offset } => {
                 self.saved_anchor = Some((account_id, id, offset));

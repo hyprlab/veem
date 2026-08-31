@@ -62,6 +62,10 @@ fn mail_id(account_id: u32) -> String {
 
 /// Post (or replace) the new-mail notification for an account. Clicking it opens
 /// the newest message (`folder_id` + `message_id`) in the main window.
+///
+/// `in_place` says the anchor message still sits in `folder_id` (as opposed to
+/// having been filed elsewhere by a mail filter, where `folder_id` is only the
+/// folder to show); the action buttons need that to act on the right message.
 pub fn new_mail(
     account_id: u32,
     folder_id: u32,
@@ -69,6 +73,7 @@ pub fn new_mail(
     from: &str,
     subject: &str,
     others: usize,
+    in_place: bool,
 ) {
     let (title, body) = compose_new_mail(
         from,
@@ -85,8 +90,9 @@ pub fn new_mail(
     n.set_default_action_and_target_value(&format!("app.{OPEN_MESSAGE_ACTION}"), Some(&target));
     // Action buttons (#38), only when the notification covers exactly one
     // message — on a "3 new messages" summary, "Mark as Read" acting on just
-    // the newest would do less than it says.
-    if others == 0 {
+    // the newest would do less than it says — and only when that message is
+    // still where the buttons will look for it.
+    if others == 0 && in_place {
         n.add_button_with_target_value(
             "Mark as Read",
             &format!("app.{MARK_READ_ACTION}"),

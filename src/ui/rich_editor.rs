@@ -33,6 +33,10 @@ impl RichEditor {
 
         let frame = gtk::Frame::new(None);
         frame.set_vexpand(true);
+        // Same card treatment as the address fields' boxed-list: shadow and
+        // radius from libadwaita, with the WebView clipped to the corners.
+        frame.add_css_class("card");
+        frame.set_overflow(gtk::Overflow::Hidden);
         frame.set_child(Some(&webview));
 
         let bx = gtk::Box::new(gtk::Orientation::Vertical, 6);
