@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.19.0-beta.3" date="2026-08-31" type="development">
+
+      <description><p>Mail filed by a filter now raises the new-mail notification (#47 beta feedback), split-reply outline and composer styling fixes, and single messages render as cards by default on new installs.</p></description>
+
+    </release>
     <release version="1.19.0-beta.2" date="2026-08-31" type="development">
 
       <description><p>The beta registers its own mailto handler, so it can be selected as the default mail app separately from stable.</p></description>

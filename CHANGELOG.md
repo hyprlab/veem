@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.19.0-beta.3 — 2026-08-31
+
+- **Filtered mail raises the new-mail notification (#47 beta feedback).**
+  Mail filters ran before the notification check, so a message filed by a
+  rule arrived silently. Filed mail now counts toward the notification;
+  when the newest arrival was filed, the notification opens the folder it
+  went to, and the Mark as Read/Archive buttons are omitted (the message
+  is no longer where they would act). Filter moves are also remembered
+  per sync, so a sync racing the server-side move can't re-request it.
+- **Cancelling a split reply clears the reply-target outline.** The card
+  outline painted for a split reply stayed behind when the composer
+  closed without sending; a cancel mid-slide could strand one too.
+- **The compose body editor wears the fields' card shadow.** The editor
+  frame takes libadwaita's card styling to match the From/To/Subject
+  rows above it, in the inline split, the popout window, and the
+  signature editor.
+- **Single messages render as cards by default on new installs.**
+  Existing installs keep their saved choice.
+
 ## 1.19.0-beta.2 — 2026-08-31
 
 - **Beta selectable as the default mail app.** The beta's desktop entry now

@@ -2,6 +2,10 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.19.0-beta.3
+
+Fixes from beta feedback. Mail filed by a filter now counts as new mail: the notification fires for it, and when the newest arrival was filed away, clicking the notification opens the folder it went to (#47). Also: cancelling a split reply no longer leaves the reply-target outline behind, the compose body editor matches the address fields' card styling, and new installs render single messages as cards by default.
+
 ## What's new in 1.19.0-beta.2
 
 The beta can now be chosen as the system default mail app. Its desktop entry registers the mailto handler separately from stable, so GNOME Settings offers Vireo (beta) in the default-apps picker and mailto: links open in whichever channel is selected.
