@@ -532,7 +532,8 @@ button.star-active {
 }
 
 .message-row.no-avatar .unread-dot {
-  margin-right: -3px;
+  margin-left: 1px;
+  margin-right: -2px;
   /* Valign Start plus this nudge centres the 10px dot on the sender name's
      ~20px first line (with avatars on, the dot centres in the row instead). */
   margin-top: 5px;
