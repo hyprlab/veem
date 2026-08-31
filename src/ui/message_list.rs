@@ -1405,6 +1405,8 @@ pub struct MessageList {
     sort: SortOrder,
     /// Quick filter (#97): show only unread messages.
     unread_only: bool,
+    /// Quick filter: show only starred messages.
+    starred_only: bool,
     /// The last count string sent to the header bar, to emit only on change.
     last_count: String,
     /// Group messages into conversation threads (user preference).
@@ -1465,6 +1467,8 @@ pub enum BulkAction {
 pub enum MessageListInput {
     /// The header's quick filter (#97): scope the list to unread mail.
     SetUnreadOnly(bool),
+    /// The header's starred quick filter.
+    SetStarredOnly(bool),
     SetMessages { messages: Vec<Message> },
     /// Merge more indexed messages into the current list (background backfill),
     /// preserving the current search query and view.
@@ -1899,6 +1903,7 @@ impl SimpleComponent for MessageList {
             scroller: None,
             sort: SortOrder::DateNewest,
             unread_only: false,
+            starred_only: false,
             last_count: String::new(),
             threading: true,
             thread_expansion: true,
@@ -2374,6 +2379,13 @@ impl SimpleComponent for MessageList {
             MessageListInput::SetUnreadOnly(on) => {
                 if self.unread_only != on {
                     self.unread_only = on;
+                    self.rebuild_preserving_scroll();
+                }
+            }
+
+            MessageListInput::SetStarredOnly(on) => {
+                if self.starred_only != on {
+                    self.starred_only = on;
                     self.rebuild_preserving_scroll();
                 }
             }
@@ -3134,6 +3146,7 @@ impl MessageList {
             .active_source()
             .iter()
             .filter(|m| !self.unread_only || m.unread)
+            .filter(|m| !self.starred_only || m.starred)
             .filter(|m| {
                 q.is_empty()
                     || m.subject.to_lowercase().contains(&q)

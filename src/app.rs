@@ -712,6 +712,8 @@ pub enum AppMsg {
     SetConsoleMode(bool),
     /// The list header's unread quick filter (#97).
     SetUnreadFilter(bool),
+    /// The list header's starred quick filter.
+    SetStarredFilter(bool),
     /// Backup (#50): save/load the whole configuration as one file.
     ExportSettings,
     ImportSettings,
@@ -987,8 +989,8 @@ impl SimpleComponent for AppModel {
                                 // message count and the sort menu (moved out of
                                 // the list's own toolbar to reclaim a row).
                                 // pack_end packs right-to-left: sort rightmost.
-                                // Quick filter (#97): unread only. Session
-                                // state, like Mail.app's filter bar.
+                                // Quick filters (#97): unread / starred only.
+                                // Session state, like Mail.app's filter bar.
                                 pack_end = &gtk::ToggleButton {
                                     set_icon_name: "co.hyprlab.Vireo-mail-unread-symbolic",
                                     set_tooltip_text: Some("Show only unread"),
@@ -996,6 +998,15 @@ impl SimpleComponent for AppModel {
                                     add_css_class: "flat",
                                     connect_toggled[sender] => move |btn| {
                                         sender.input(AppMsg::SetUnreadFilter(btn.is_active()));
+                                    },
+                                },
+                                pack_end = &gtk::ToggleButton {
+                                    set_icon_name: "co.hyprlab.Vireo-starred-symbolic",
+                                    set_tooltip_text: Some("Show only starred"),
+                                    set_valign: gtk::Align::Center,
+                                    add_css_class: "flat",
+                                    connect_toggled[sender] => move |btn| {
+                                        sender.input(AppMsg::SetStarredFilter(btn.is_active()));
                                     },
                                 },
 
@@ -4398,6 +4409,10 @@ impl SimpleComponent for AppModel {
 
             AppMsg::SetUnreadFilter(on) => {
                 self.message_list.emit(MessageListInput::SetUnreadOnly(on));
+            }
+
+            AppMsg::SetStarredFilter(on) => {
+                self.message_list.emit(MessageListInput::SetStarredOnly(on));
             }
 
             AppMsg::ExportSettings => {
