@@ -1320,3 +1320,52 @@ window.welcome-window,
   color: rgba(0, 0, 0, 0.8);
 }
 
+/* ---- Console mode (notifications.rs): dracula on an old tube ---- */
+
+/* The bar fades between its normal colours and the terminal's. */
+.notify-area {
+  transition: background-color 0.4s ease, color 0.4s ease;
+}
+.notify-area.console-on {
+  background-color: #282a36;
+  color: #f8f8f2;
+}
+.notify-area.console-on .notify-bar {
+  color: #f8f8f2;
+}
+
+textview.console-view,
+textview.console-view text {
+  background-color: #282a36;
+  color: #f8f8f2;
+  font-family: "Source Code Pro", "JetBrains Mono", "DejaVu Sans Mono", monospace;
+  font-size: 0.82em;
+}
+textview.console-view text selection {
+  background-color: #44475a;
+  color: #f8f8f2;
+}
+
+/* Scanlines: thin dark lines every few pixels, CSS-only. */
+.console-scanlines {
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.14) 0px,
+    rgba(0, 0, 0, 0.14) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+/* Console resize grip: a slim rail with a pill handle. */
+.console-grip {
+  background-color: #21222c;
+  min-height: 10px;
+}
+.console-grip-bar {
+  background-color: #44475a;
+  min-width: 36px;
+  min-height: 4px;
+  border-radius: 2px;
+}
+

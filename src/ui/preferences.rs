@@ -54,6 +54,7 @@ pub struct PrefInit {
     pub show_unified: bool,
     pub unified_chip: bool,
     pub chevrons_left: bool,
+    pub console_mode: bool,
     pub sidebar_hover_expand: bool,
     pub preview_lines: u32,
     pub single_key_shortcuts: bool,
@@ -209,6 +210,7 @@ pub enum PrefInput {
     ToggleSidebarHoverExpand(bool),
     ChangePreviewLines(u32),
     ToggleSingleKey(bool),
+    ToggleConsoleMode(bool),
     ToggleRunInBackground(bool),
     ToggleAutostart(bool),
     ChangePaletteCollapse(u64),
@@ -255,6 +257,7 @@ pub enum PrefOutput {
     SetShowUnified(bool),
     SetUnifiedChip(bool),
     SetChevronsLeft(bool),
+    SetConsoleMode(bool),
     SetSidebarHoverExpand(bool),
     SetAppTheme(AppTheme),
     /// The "this window opens to" choice changed (true = Accounts).
@@ -665,6 +668,16 @@ impl Component for Preferences {
                                 sender.input(PrefInput::ToggleSingleKey(row.is_active()));
                             },
                         },
+
+                        #[name = "console_mode_row"]
+                        adw::SwitchRow {
+                            set_title: "Console mode",
+                            set_subtitle: "A verbose live console in the status bar showing \
+                                           everything Vireo is doing under the hood.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleConsoleMode(row.is_active()));
+                            },
+                        },
                     },
 
                     add = &adw::PreferencesGroup {
@@ -962,6 +975,7 @@ impl Component for Preferences {
             });
         }
         widgets.single_key_row.set_active(init.single_key_shortcuts);
+        widgets.console_mode_row.set_active(init.console_mode);
         widgets.threading_row.set_active(init.threading);
         widgets.threads_expanded_row.set_active(init.threads_expanded);
         widgets.thread_newest_first_row.set_active(init.thread_newest_first);
@@ -1169,6 +1183,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleSingleKey(on) => {
                 let _ = sender.output(PrefOutput::SetSingleKey(on));
+            }
+            PrefInput::ToggleConsoleMode(on) => {
+                let _ = sender.output(PrefOutput::SetConsoleMode(on));
             }
             PrefInput::ToggleRunInBackground(on) => {
                 let _ = sender.output(PrefOutput::SetRunInBackground(on));

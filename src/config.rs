@@ -767,6 +767,10 @@ struct PrivacyFile {
     /// headers) LEAD their rows; off puts them back at the row's end.
     #[serde(default = "default_chevrons_left")]
     chevrons_left: bool,
+    /// Console mode (#status-bar): the verbose activity console is offered in
+    /// the status bar. Off by default.
+    #[serde(default)]
+    console_mode: bool,
 }
 
 fn default_chevrons_left() -> bool {
@@ -867,6 +871,7 @@ impl Default for PrivacyFile {
             show_unified: default_show_unified(),
             unified_chip: default_unified_chip(),
             chevrons_left: default_chevrons_left(),
+            console_mode: false,
             gravatar: false,
             avatars: default_avatars(),
             sender_logos: false,
@@ -1002,6 +1007,10 @@ pub fn load_unified_chip() -> bool {
 
 pub fn load_chevrons_left() -> bool {
     load_privacy().chevrons_left
+}
+
+pub fn load_console_mode() -> bool {
+    load_privacy().console_mode
 }
 
 pub fn load_single_message_card() -> bool {
@@ -1143,6 +1152,7 @@ pub fn save_privacy(
     show_unified: bool,
     unified_chip: bool,
     chevrons_left: bool,
+    console_mode: bool,
 ) {
     let Some(path) = privacy_path() else {
         return;
@@ -1190,6 +1200,7 @@ pub fn save_privacy(
         show_unified,
         unified_chip,
         chevrons_left,
+        console_mode,
     };
     match toml::to_string_pretty(&file) {
         Ok(toml) => {

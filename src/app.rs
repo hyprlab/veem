@@ -67,6 +67,7 @@ relm4::new_stateless_action!(ShortcutsAction, WindowActionGroup, "shortcuts");
 relm4::new_stateless_action!(PrintAction, WindowActionGroup, "print");
 relm4::new_stateless_action!(PrintPreviewAction, WindowActionGroup, "print-preview");
 relm4::new_stateless_action!(StatusBarAction, WindowActionGroup, "status-bar");
+relm4::new_stateless_action!(ConsoleAction, WindowActionGroup, "console");
 
 use crate::config::{self, split_identity, AccountConfig};
 use crate::models::{Account, Attachment, Folder, FolderKind, Message};
@@ -154,6 +155,8 @@ pub struct AppModel {
     /// Monotonic id source for composers.
     next_compose_id: u32,
     menu: gtk::gio::Menu,
+    /// The burger menu's help section, rebuilt when Console mode toggles.
+    help_menu: gtk::gio::Menu,
     /// All known accounts, ordered by id.
     accounts: Vec<Account>,
     /// account_id → that account's folders.
@@ -364,6 +367,8 @@ pub struct AppModel {
     unified_chip: bool,
     /// Whether the sidebar's disclosure chevrons lead their rows.
     chevrons_left: bool,
+    /// Console mode offered in the status bar (Settings → System & Appearance).
+    console_mode: bool,
     /// Lone messages render as inset cards (#57).
     single_message_card: bool,
     /// Whether conversation rows may expand into their members in the list
@@ -696,6 +701,10 @@ pub enum AppMsg {
     ApplyWelcomePrefs(crate::ui::welcome::WelcomePrefs),
     /// Raise and focus the main window (welcome wizard hand-off).
     PresentWindow,
+    /// Open the status bar straight into console mode (button / burger menu).
+    OpenConsole,
+    /// Settings toggle for offering console mode at all.
+    SetConsoleMode(bool),
     /// GNOME Online Accounts changed on the session bus. Carries the fresh live
     /// state, already fetched (debounced) on the watcher thread so the GTK main
     /// thread never does D-Bus I/O — re-reconcile against it.
@@ -1535,6 +1544,7 @@ impl SimpleComponent for AppModel {
 
         // Sectioned: settings / printing / window & help / quit.
         let menu = gtk::gio::Menu::new();
+        let help_menu = gtk::gio::Menu::new();
         {
             let settings = gtk::gio::Menu::new();
             settings.append(Some("Accounts & Settings"), Some("win.accounts"));
@@ -1545,11 +1555,7 @@ impl SimpleComponent for AppModel {
             printing.append(Some("Print Message…"), Some("win.print"));
             menu.append_section(None, &printing);
 
-            let help = gtk::gio::Menu::new();
-            help.append(Some("Reveal Status Bar"), Some("win.status-bar"));
-            help.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
-            help.append(Some(format!("About {}", crate::APP_NAME).as_str()), Some("win.about"));
-            menu.append_section(None, &help);
+            menu.append_section(None, &help_menu);
 
             // Last, where a Quit item belongs.
             let quit = gtk::gio::Menu::new();
@@ -1576,6 +1582,7 @@ impl SimpleComponent for AppModel {
             contacts_compose_revealer,
             next_compose_id: 1,
             menu,
+            help_menu,
             accounts: Vec::new(),
             folders: HashMap::new(),
             account_order: order,
@@ -1689,6 +1696,7 @@ impl SimpleComponent for AppModel {
             show_unified_pref: config::load_show_unified(),
             unified_chip: config::load_unified_chip(),
             chevrons_left: config::load_chevrons_left(),
+            console_mode: config::load_console_mode(),
             single_message_card: config::load_single_message_card(),
             thread_expansion: config::load_thread_expansion(),
             confirm_thread_delete: config::load_confirm_thread_delete(),
@@ -2238,6 +2246,12 @@ impl SimpleComponent for AppModel {
         // The status bar reveals itself for errors; this is the manual path
         // (the dedicated button is gone from the sidebar).
         let status_sender = sender.clone();
+        {
+            let s = sender.clone();
+            group.add_action(RelmAction::<ConsoleAction>::new_stateless(move |_| {
+                s.input(AppMsg::OpenConsole);
+            }));
+        }
         group.add_action(RelmAction::<StatusBarAction>::new_stateless(move |_| {
             status_sender.input(AppMsg::ToggleNotifications);
         }));
@@ -2253,6 +2267,8 @@ impl SimpleComponent for AppModel {
             .set_accelerators_for_action::<PrintPreviewAction>(&["<Ctrl><Shift>p"]);
         relm4::main_application()
             .set_accelerators_for_action::<StatusBarAction>(&["<Ctrl><Shift>s"]);
+        relm4::main_application()
+            .set_accelerators_for_action::<ConsoleAction>(&["<Ctrl><Shift>c"]);
         relm4::main_application().set_accelerators_for_action::<ShortcutsAction>(&[
             "<Ctrl>question",
             "<Ctrl><Shift>question",
@@ -2489,6 +2505,18 @@ impl SimpleComponent for AppModel {
 
         // mailto: URIs can arrive (via GApplication `open`) before this init
         // ran — install the live sender and drain anything that queued early.
+        model.rebuild_help_menu();
+        model
+            .notifications
+            .emit(NotifyInput::SetConsoleEnabled(model.console_mode));
+        // Screenshot/dev hook: open the status bar console shortly after
+        // launch (pref permitting) so captures can show it.
+        if std::env::var("VIREO_SHOWCASE_CONSOLE").is_ok() {
+            let s = sender.clone();
+            gtk::glib::timeout_add_seconds_local_once(3, move || {
+                s.input(AppMsg::OpenConsole);
+            });
+        }
         let _ = MAILTO_SENDER.set(sender.input_sender().clone());
         for uri in MAILTO_PENDING.lock().unwrap().drain(..) {
             sender.input(AppMsg::OpenMailto(uri));
@@ -4304,6 +4332,27 @@ impl SimpleComponent for AppModel {
                 self.window.present();
             }
 
+            AppMsg::OpenConsole => {
+                if self.console_mode {
+                    self.notifications.emit(NotifyInput::ShowConsole);
+                } else {
+                    self.notifications.emit(NotifyInput::Push {
+                        text: "Enable Console mode in Settings → System & Appearance".into(),
+                        error: false,
+                        connectivity: false,
+                    });
+                }
+            }
+
+            AppMsg::SetConsoleMode(on) => {
+                if self.console_mode != on {
+                    self.console_mode = on;
+                    self.save_settings();
+                    self.notifications.emit(NotifyInput::SetConsoleEnabled(on));
+                    self.rebuild_help_menu();
+                }
+            }
+
             AppMsg::ApplyWelcomePrefs(p) => {
                 // Route every choice through its normal handler (each saves and
                 // updates the live UI); drop the wizard controller afterwards.
@@ -5171,6 +5220,19 @@ impl AppModel {
     }
 
     /// Persist all app settings together.
+    /// (Re)build the burger menu's help section: the Console entry appears
+    /// only while Console mode is enabled in Settings.
+    fn rebuild_help_menu(&self) {
+        self.help_menu.remove_all();
+        self.help_menu.append(Some("Reveal Status Bar"), Some("win.status-bar"));
+        if self.console_mode {
+            self.help_menu.append(Some("Console"), Some("win.console"));
+        }
+        self.help_menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
+        self.help_menu
+            .append(Some(format!("About {}", crate::APP_NAME).as_str()), Some("win.about"));
+    }
+
     fn save_settings(&self) {
         config::save_privacy(
             &self.allowed_senders,
@@ -5212,6 +5274,7 @@ impl AppModel {
             self.show_unified_pref,
             self.unified_chip,
             self.chevrons_left,
+            self.console_mode,
         );
     }
 
@@ -8076,6 +8139,7 @@ impl AppModel {
             show_unified: self.show_unified_pref,
             unified_chip: self.unified_chip,
             chevrons_left: self.chevrons_left,
+            console_mode: self.console_mode,
             settings_open_accounts: self.settings_open_accounts,
             sidebar_hover_expand: self.sidebar_hover_expand,
             card_actions_hover: self.card_actions_hover,
@@ -8132,6 +8196,7 @@ impl AppModel {
                 PrefOutput::SetShowUnified(show) => AppMsg::SetShowUnified(show),
                 PrefOutput::SetUnifiedChip(show) => AppMsg::SetUnifiedChip(show),
                 PrefOutput::SetChevronsLeft(left) => AppMsg::SetChevronsLeft(left),
+                PrefOutput::SetConsoleMode(on) => AppMsg::SetConsoleMode(on),
                 PrefOutput::SetSidebarHoverExpand(on) => {
                     AppMsg::SetSidebarHoverExpand(on)
                 }
@@ -8995,6 +9060,7 @@ const SHORTCUT_HELP: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+P", "Print the message you are reading"),
             ("Ctrl+Shift+P", "Preview it as a PDF first"),
             ("Ctrl+Shift+S", "Reveal the status bar (also: long-press Refresh)"),
+            ("Ctrl+Shift+C", "Console mode (when enabled in Settings)"),
             ("Ctrl+W", "Close the window (background sync keeps running)"),
             ("Ctrl+Q", "Quit Vireo entirely"),
             ("?", "This list"),
