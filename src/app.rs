@@ -8456,6 +8456,12 @@ impl AppModel {
                 }
             }
         }
+        // Demo mode: the sample accounts exist only at the backend layer, so
+        // the Accounts panel would sit empty in screenshots — hand it
+        // matching stand-in configs instead.
+        if accounts.is_empty() && demo_mode() {
+            accounts = demo_account_configs();
+        }
         // The accounts panel component (embedded behind the "Accounts" tab).
         let accounts = AccountsWindow::builder()
             .launch(crate::ui::accounts::AccountsInit {
@@ -9626,6 +9632,46 @@ fn focus_matches(window: &adw::ApplicationWindow, include_web_view: bool) -> boo
 
 /// Whether to serve the built-in sample/demo data (for screenshots). Off unless
 /// `VIREO_DEMO` is set, so removing all real accounts leaves the app blank.
+/// Stand-in [`AccountConfig`]s mirroring the demo backend's three accounts
+/// (same names, colours and emoji), so the Accounts window has something to
+/// show in demo screenshots.
+fn demo_account_configs() -> Vec<AccountConfig> {
+    let mk = |name: &str, email: &str, color: &str, emoji: &str| AccountConfig {
+        name: name.into(),
+        email: email.into(),
+        protocol: Default::default(),
+        imap_host: format!("imap.{}", email.split('@').nth(1).unwrap_or("example.com")),
+        imap_port: 993,
+        smtp_host: format!("smtp.{}", email.split('@').nth(1).unwrap_or("example.com")),
+        smtp_port: 587,
+        username: email.into(),
+        password: String::new(),
+        smtp_separate: false,
+        smtp_username: String::new(),
+        smtp_password: String::new(),
+        color: Some(color.into()),
+        emoji: Some(emoji.into()),
+        signature: None,
+        signature_html: false,
+        label: None,
+        aliases: Vec::new(),
+        enabled: true,
+        goa_id: None,
+        goa_mail_disabled: false,
+        goa_enabled_before_mail_disabled: true,
+        oauth: false,
+        oauth_settings: None,
+        oauth_refresh: String::new(),
+        push: None,
+        folder_roles: Default::default(),
+    };
+    vec![
+        mk("Jason M.", "jason@vireo.hyprlab.co", "#3584e4", "🚀"),
+        mk("Hyprlab", "hello@hyprlab.dev", "#2ec27e", "🦀"),
+        mk("Jason (Personal)", "jason.m@fastmail.com", "#9141ac", "🌿"),
+    ]
+}
+
 fn demo_mode() -> bool {
     std::env::var_os("VIREO_DEMO").is_some()
 }
