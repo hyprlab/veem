@@ -8405,15 +8405,19 @@ impl AppModel {
         page.set_margin_top(18);
         page.set_margin_bottom(12);
 
-        // Identity block.
-        let icon = gtk::Image::from_icon_name(crate::APP_ID);
-        icon.set_pixel_size(96);
-        icon.set_margin_bottom(10);
-        page.append(&icon);
-
-        let name = gtk::Label::new(Some(crate::APP_NAME));
-        name.add_css_class("title-1");
-        page.append(&name);
+        // Identity block: the blue wordmark on the brand yellow, wizard-style.
+        // Same Overlay-with-spacer cap as the wizard — a Picture's texture
+        // wins over both width requests and clamps.
+        let wm_pic = crate::ui::welcome::wordmark_picture(120);
+        let wm_frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        wm_frame.set_size_request(120, 120 * 214 / 600);
+        let wm = gtk::Overlay::new();
+        wm.set_child(Some(&wm_frame));
+        wm.add_overlay(&wm_pic);
+        wm.set_clip_overlay(&wm_pic, true);
+        wm.set_halign(gtk::Align::Center);
+        wm.set_margin_bottom(10);
+        page.append(&wm);
 
         let version = gtk::Label::new(Some(crate::VERSION));
         version.add_css_class("about-version-chip");
@@ -8513,6 +8517,10 @@ impl AppModel {
             row
         };
         links.append(&mk_row("Website", "https://vireo.hyprlab.co"));
+        links.append(&mk_row(
+            "Github — Submit bug report or feature request",
+            "https://github.com/hyprlab/vireo/issues",
+        ));
         links.append(&mk_row("Contact — hyprlab@proton.me", "mailto:hyprlab@proton.me"));
         links.append(&mk_row("Source Code", "https://github.com/hyprlab/vireo"));
         links.append(&mk_row("License (GNU AGPL v3)", "https://www.gnu.org/licenses/agpl-3.0.html"));
@@ -8572,6 +8580,7 @@ impl AppModel {
         let main_tv = adw::ToolbarView::new();
         let main_header = adw::HeaderBar::new();
         main_header.add_css_class("flat");
+        main_header.set_show_title(false);
         main_tv.add_top_bar(&main_header);
         main_tv.set_content(Some(&scroller));
         nav.add(
@@ -9072,56 +9081,102 @@ fn md_label(text: &str, classes: &[&str]) -> gtk::Label {
 /// headings, bullets (nested one level), indented continuation paragraphs, and
 /// the inline syntax in [`md_inline`].
 fn md_column(md: &str) -> gtk::Box {
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let mut first = true;
+    /// A logical Markdown block, with source lines coalesced — CHANGELOG.md
+    /// is hard-wrapped at ~72 columns, and rendering each source line as its
+    /// own label left a ragged right edge instead of flowing text.
+    enum Block {
+        H2(String),
+        H3(String),
+        Bullet { nested: bool, text: String },
+        Para { indented: bool, text: String },
+    }
 
+    let mut blocks: Vec<Block> = Vec::new();
+    let mut cur: Option<Block> = None;
+    let mut flush = |cur: &mut Option<Block>, blocks: &mut Vec<Block>| {
+        if let Some(b) = cur.take() {
+            blocks.push(b);
+        }
+    };
     for raw in md.lines() {
         let line = raw.trim_end();
         let trimmed = line.trim_start();
         let indent = line.len() - trimmed.len();
-        // Blank lines carry no meaning here: spacing comes from each block's
-        // own margins, so a stray one can't open a gap.
         if trimmed.is_empty() {
-            continue;
-        }
-        // The page's header bar already shows the document's title.
-        if trimmed.starts_with("# ") {
-            continue;
-        }
-
-        let widget: gtk::Widget = if let Some(rest) = trimmed.strip_prefix("### ") {
-            let label = md_label(rest, &["heading"]);
-            label.set_margin_top(if first { 0 } else { 14 });
-            label.into()
+            flush(&mut cur, &mut blocks);
+        } else if trimmed.starts_with("# ") {
+            // The page's header bar already shows the document's title.
+            flush(&mut cur, &mut blocks);
         } else if let Some(rest) = trimmed.strip_prefix("## ") {
-            let label = md_label(rest, &["title-4"]);
-            label.set_margin_top(if first { 0 } else { 22 });
-            label.set_margin_bottom(2);
-            label.into()
-        } else if let Some(rest) = trimmed
-            .strip_prefix("- ")
-            .or_else(|| trimmed.strip_prefix("* "))
+            flush(&mut cur, &mut blocks);
+            blocks.push(Block::H2(rest.to_string()));
+        } else if let Some(rest) = trimmed.strip_prefix("### ") {
+            flush(&mut cur, &mut blocks);
+            blocks.push(Block::H3(rest.to_string()));
+        } else if let Some(rest) =
+            trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* "))
         {
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            row.set_margin_top(6);
-            row.set_margin_start(if indent >= 2 { 18 } else { 0 });
-            let bullet = gtk::Label::new(Some(if indent >= 2 { "◦" } else { "•" }));
-            bullet.set_valign(gtk::Align::Start);
-            bullet.add_css_class("dim-label");
-            row.append(&bullet);
-            let text = md_label(rest, &[]);
-            text.set_hexpand(true);
-            row.append(&text);
-            row.into()
+            flush(&mut cur, &mut blocks);
+            cur = Some(Block::Bullet { nested: indent >= 2, text: rest.to_string() });
         } else {
-            // An indented paragraph continues the bullet above it, so it lines up
-            // with that bullet's text rather than the page margin.
-            let label = md_label(trimmed, &[]);
-            label.set_margin_top(8);
-            label.set_margin_start(if indent >= 2 { 26 } else { 0 });
-            label.into()
-        };
+            // A plain line continues the open bullet/paragraph, or starts one.
+            match &mut cur {
+                Some(Block::Bullet { text, .. }) | Some(Block::Para { text, .. }) => {
+                    text.push(' ');
+                    text.push_str(trimmed);
+                }
+                _ => {
+                    cur = Some(Block::Para { indented: indent >= 2, text: trimmed.to_string() })
+                }
+            }
+        }
+    }
+    flush(&mut cur, &mut blocks);
 
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let mut first = true;
+    // Anything before the first section heading is document front-matter
+    // (RELEASE_NOTES' intro paragraph), not notes — skip it.
+    let mut seen_section = false;
+    for block in &blocks {
+        if !seen_section {
+            match block {
+                Block::H2(_) | Block::H3(_) => seen_section = true,
+                _ => continue,
+            }
+        }
+        let widget: gtk::Widget = match block {
+            Block::H3(text) => {
+                let label = md_label(text, &["heading"]);
+                label.set_margin_top(if first { 0 } else { 14 });
+                label.into()
+            }
+            Block::H2(text) => {
+                let label = md_label(text, &["title-4"]);
+                label.set_margin_top(if first { 0 } else { 22 });
+                label.set_margin_bottom(2);
+                label.into()
+            }
+            Block::Bullet { nested, text } => {
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                row.set_margin_top(6);
+                row.set_margin_start(if *nested { 18 } else { 0 });
+                let bullet = gtk::Label::new(Some(if *nested { "\u{25e6}" } else { "\u{2022}" }));
+                bullet.set_valign(gtk::Align::Start);
+                bullet.add_css_class("dim-label");
+                row.append(&bullet);
+                let label = md_label(text, &[]);
+                label.set_hexpand(true);
+                row.append(&label);
+                row.into()
+            }
+            Block::Para { indented, text } => {
+                let label = md_label(text, &[]);
+                label.set_margin_top(8);
+                label.set_margin_start(if *indented { 26 } else { 0 });
+                label.into()
+            }
+        };
         column.append(&widget);
         first = false;
     }

@@ -109,7 +109,8 @@ fn wizard_providers() -> Vec<&'static Provider> {
 }
 
 /// Render the wordmark at 2x for crisp HiDPI, displayed at `width` px.
-fn wordmark_picture(width: i32) -> gtk::Picture {
+/// (Also used by the About window's identity block.)
+pub(crate) fn wordmark_picture(width: i32) -> gtk::Picture {
     let loader = gtk::gdk_pixbuf::PixbufLoader::new();
     // Render the SVG at the requested size (2x for crisp HiDPI).
     loader.connect_size_prepared(move |l, w, h| {

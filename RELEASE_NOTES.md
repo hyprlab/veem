@@ -2,6 +2,16 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.18.4
+
+Composer attachment fixes from Isaac's PR #96 (@thecalamityjoe87). Attachment pills in the composer now shrink to their content instead of stretching the full row, and files opened with Vireo from a file manager or the command line attach to a fresh composer.
+
+## What's new in 1.18.3
+
+Fix release for #90 and #91, both reported by @frenchy82, plus sender-seal corrections under GNOME text scaling.
+
+A folder click can no longer be swallowed by a stalled IMAP IDLE: the IDLE handshakes now time out and the click completes over a fresh connection. Push becomes a per-account setting (each account's editor gains Syncing → Instant new mail), so one server that mishandles IDLE no longer costs the others their instant delivery. GNOME Files' "Send by email" now attaches the selected files. The sender seal and its popover render correctly at any GNOME text scaling factor.
+
 ## What's new in 1.18.2
 
 Sidebar work in this release was done with Isaac (@thecalamityjoe87, PRs #89 and #95); the header seal was requested by @taprobane99 (#88).
