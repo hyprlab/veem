@@ -7412,6 +7412,8 @@ impl AppModel {
         // In-flow (not overlay) slot: no click-swallowing to disarm.
         self.reader_split_top.set_reveal_child(false);
         self.reader_split_top.set_child(None::<&gtk::Widget>);
+        // The split's reply-target outline goes with the composer.
+        self.message_view.emit(MessageViewInput::BlurCard);
     }
 
     fn open_inline_reply(
