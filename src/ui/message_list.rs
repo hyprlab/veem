@@ -1325,6 +1325,11 @@ pub struct MessageList {
     scope: SearchScope,
     /// The search field widget, kept so a folder switch can clear its text.
     search_entry: Option<gtk::SearchEntry>,
+    /// The search toolbar is hidden until asked for (#102).
+    search_open: bool,
+    /// When the search closed itself (empty entry losing focus): the button
+    /// click that caused that blur arrives right after and must not reopen.
+    search_closed_at: Option<std::time::Instant>,
     /// Currently displayed (post-filter, capped) messages, aligned with rows.
     shown: Vec<Message>,
     /// Total messages matching the current filter (may exceed what's rendered).
@@ -1553,6 +1558,9 @@ pub enum MessageListInput {
     ReclaimFocus,
     /// Put the cursor in the search field.
     FocusSearch,
+    /// Close and clear the search toolbar (#102): Esc, empty focus-out, or
+    /// the header button while open.
+    CloseSearch,
     /// Showcase staging: open row N's Actions Palette (screenshot hook only —
     /// see VIREO_SHOWCASE_PALETTE in app.rs).
     DebugOpenPalette(usize),
@@ -1648,9 +1656,16 @@ impl SimpleComponent for MessageList {
                 set_spacing: 8,
 
                 // The folder name, count and sort control live in the pane's
-                // header bar now (app.rs) — only search needs this toolbar.
+                // header bar now (app.rs) — only search needs this toolbar,
+                // and it stays hidden until asked for (#102).
+                gtk::Revealer {
+                    set_transition_type: gtk::RevealerTransitionType::SlideDown,
+                    #[watch]
+                    set_reveal_child: model.search_open,
+
                 gtk::Box {
                     set_spacing: 6,
+                    add_css_class: "list-search-row",
 
                     #[name = "search_entry"]
                     gtk::SearchEntry {
@@ -1661,6 +1676,22 @@ impl SimpleComponent for MessageList {
                         set_placeholder_text: Some(model.search_placeholder()),
                         connect_search_changed[sender] => move |entry| {
                             sender.input(MessageListInput::Search(entry.text().to_string()));
+                        },
+                        // Esc closes (SearchEntry's own stop signal).
+                        connect_stop_search[sender] => move |_| {
+                            sender.input(MessageListInput::CloseSearch);
+                        },
+                        // Leaving an empty entry closes too.
+                        add_controller = gtk::EventControllerFocus {
+                            connect_leave[sender] => move |ctl| {
+                                let empty = ctl
+                                    .widget()
+                                    .and_downcast_ref::<gtk::SearchEntry>()
+                                    .is_some_and(|e| e.text().trim().is_empty());
+                                if empty {
+                                    sender.input(MessageListInput::CloseSearch);
+                                }
+                            },
                         },
                     },
 
@@ -1680,6 +1711,7 @@ impl SimpleComponent for MessageList {
                             sender.input(MessageListInput::SetScope(scope));
                         },
                     },
+                },
                 },
             },
 
@@ -1878,6 +1910,8 @@ impl SimpleComponent for MessageList {
             search_pool: Vec::new(),
             scope: SearchScope::AllFolders,
             search_entry: None,
+            search_open: false,
+            search_closed_at: None,
             shown: Vec::new(),
             total_matches: 0,
             render_limit: RENDER_CAP,
@@ -2441,9 +2475,36 @@ impl SimpleComponent for MessageList {
             }
 
             MessageListInput::FocusSearch => {
-                if let Some(entry) = &self.search_entry {
-                    entry.grab_focus();
+                // Toggle (#102): the header button closes an open search too.
+                if self.search_open {
+                    sender.input(MessageListInput::CloseSearch);
+                    return;
                 }
+                // Clicking the button blurs an empty entry, whose focus-leave
+                // just closed the bar — that same click must not reopen it.
+                if self
+                    .search_closed_at
+                    .take()
+                    .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(300))
+                {
+                    return;
+                }
+                self.search_open = true;
+                if let Some(entry) = &self.search_entry {
+                    let entry = entry.clone();
+                    // After the revealer maps it; focusing an unmapped entry
+                    // is a no-op.
+                    gtk::glib::idle_add_local_once(move || {
+                        entry.grab_focus();
+                    });
+                }
+            }
+
+            MessageListInput::CloseSearch => {
+                self.search_open = false;
+                self.search_closed_at = Some(std::time::Instant::now());
+                self.clear_search();
+                self.rebuild_preserving_scroll();
             }
 
             MessageListInput::ClearSelection => {

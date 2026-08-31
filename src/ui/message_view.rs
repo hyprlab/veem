@@ -92,6 +92,13 @@ pub struct MessageView {
     /// False from when a render starts until the WebView reports it finished
     /// loading — a themed cover hides the WebView's white inter-document gap.
     webview_ready: bool,
+    /// In-message find (#103).
+    find_open: bool,
+    find_matches: Option<(u32, u32)>,
+    find_entry: Option<gtk::SearchEntry>,
+    /// When find last closed itself (empty entry blur) — the toolbar click
+    /// that caused the blur must not instantly reopen it.
+    find_closed_at: Option<std::time::Instant>,
     /// Which message the document currently on screen was rendered for, so an
     webview: webkit6::WebView,
     /// Bumped per render: each load gets a unique base URI so WebKit treats it
@@ -125,6 +132,16 @@ impl MessageView {
         );
         self.webview
             .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+    }
+
+    /// Run one of the in-message find engine's calls (#103), logging failures.
+    fn eval_find(&self, js: &str) {
+        self.webview
+            .evaluate_javascript(js, None, None, None::<&gtk::gio::Cancellable>, |r| {
+                if let Err(e) = r {
+                    tracing::warn!("find js failed: {e}");
+                }
+            });
     }
 
     /// The verdict-details popover, anchored where the seal was clicked.
@@ -316,6 +333,13 @@ pub enum MessageViewInput {
     SetCardStar { account_id: u32, id: u32, starred: bool },
     /// Read-marking policy changed (#100).
     SetReadMark(crate::config::ReadMark),
+    /// In-message find (#103): open/close the bar, run/step the search.
+    OpenFind,
+    CloseFind,
+    FindChanged(String),
+    FindNext,
+    FindPrev,
+    FindCounted { current: u32, total: u32 },
     /// A split reply opened for this message (#86): scroll its card to the
     /// top of the (now shorter) reader and give it the selection outline, so
     /// the message being answered is the one in view.
@@ -447,6 +471,74 @@ impl Component for MessageView {
                     },
                 },
 
+                // In-message find (#103): WebKit's FindController does the
+                // matching and highlighting; this bar just drives it.
+                gtk::Revealer {
+                    set_transition_type: gtk::RevealerTransitionType::SlideDown,
+                    #[watch]
+                    set_reveal_child: model.find_open,
+
+                    gtk::Box {
+                        add_css_class: "reader-find",
+                        set_spacing: 6,
+
+                        #[name = "find_entry"]
+                        gtk::SearchEntry {
+                            set_hexpand: true,
+                            set_placeholder_text: Some("Find in message"),
+                            connect_search_changed[sender] => move |entry| {
+                                sender.input(MessageViewInput::FindChanged(entry.text().to_string()));
+                            },
+                            connect_activate[sender] => move |_| {
+                                sender.input(MessageViewInput::FindNext);
+                            },
+                            connect_stop_search[sender] => move |_| {
+                                sender.input(MessageViewInput::CloseFind);
+                            },
+                            add_controller = gtk::EventControllerFocus {
+                                connect_leave[sender] => move |ctl| {
+                                    let empty = ctl
+                                        .widget()
+                                        .and_downcast_ref::<gtk::SearchEntry>()
+                                        .is_some_and(|e| e.text().trim().is_empty());
+                                    if empty {
+                                        sender.input(MessageViewInput::CloseFind);
+                                    }
+                                },
+                            },
+                        },
+
+                        gtk::Label {
+                            add_css_class: "dim-label",
+                            #[watch]
+                            set_label: &match model.find_matches {
+                                Some((_, 0)) => "No matches".to_string(),
+                                Some((cur, total)) => format!("{cur} of {total}"),
+                                None => String::new(),
+                            },
+                        },
+
+                        gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-pan-up-symbolic",
+                            set_tooltip_text: Some("Previous match"),
+                            add_css_class: "flat",
+                            connect_clicked => MessageViewInput::FindPrev,
+                        },
+                        gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-pan-down-symbolic",
+                            set_tooltip_text: Some("Next match"),
+                            add_css_class: "flat",
+                            connect_clicked => MessageViewInput::FindNext,
+                        },
+                        gtk::Button {
+                            set_icon_name: "co.hyprlab.Vireo-window-close-symbolic",
+                            set_tooltip_text: Some("Close find"),
+                            add_css_class: "flat",
+                            connect_clicked => MessageViewInput::CloseFind,
+                        },
+                    },
+                },
+
                 gtk::Box {
                     add_css_class: "reader-header",
                     set_orientation: gtk::Orientation::Vertical,
@@ -570,7 +662,7 @@ impl Component for MessageView {
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
             );
         }
-        let model = MessageView {
+        let mut model = MessageView {
             always_show_recipients: false,
             single_message_card: false,
             current: None,
@@ -595,6 +687,10 @@ impl Component for MessageView {
             selected_cards: Vec::new(),
             loading: false,
             webview_ready: false,
+            find_open: false,
+            find_matches: None,
+            find_entry: None,
+            find_closed_at: None,
             webview,
             sender_check: None,
             member_checks: std::collections::HashMap::new(),
@@ -705,6 +801,14 @@ impl Component for MessageView {
                     }
                     "open" => open_sender.input(MessageViewInput::OpenHeader { account_id, id }),
                     "seen" => open_sender.input(MessageViewInput::MarkSeen { account_id, id }),
+                    "found" => {
+                        let (cur, total) = extra
+                            .and_then(|e| e.split_once(','))
+                            .and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))
+                            .unwrap_or((0, 0));
+                        open_sender
+                            .input(MessageViewInput::FindCounted { current: cur, total });
+                    }
                     "reply" => open_sender.input(MessageViewInput::CardAction {
                         action: RowAction::Reply,
                         account_id,
@@ -778,6 +882,7 @@ impl Component for MessageView {
         });
 
         let widgets = view_output!();
+        model.find_entry = Some(widgets.find_entry.clone());
         let body_overlay = gtk::Overlay::new();
         body_overlay.set_child(Some(&model.webview));
         body_overlay.add_overlay(&link_preview);
@@ -1129,6 +1234,51 @@ impl Component for MessageView {
                         self.render();
                     }
                 }
+            }
+            MessageViewInput::OpenFind => {
+                // The toolbar button toggles: a second press collapses the bar.
+                if self.find_open {
+                    sender.input(MessageViewInput::CloseFind);
+                    return;
+                }
+                if self
+                    .find_closed_at
+                    .take()
+                    .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(300))
+                {
+                    return;
+                }
+                self.find_open = true;
+                if let Some(entry) = self.find_entry.clone() {
+                    gtk::glib::idle_add_local_once(move || {
+                        entry.grab_focus();
+                    });
+                }
+            }
+            MessageViewInput::CloseFind => {
+                self.find_open = false;
+                self.find_closed_at = Some(std::time::Instant::now());
+                self.find_matches = None;
+                if let Some(entry) = &self.find_entry {
+                    entry.set_text("");
+                }
+                self.eval_find("vireoFindClear()");
+            }
+            MessageViewInput::FindChanged(text) => {
+                let text = text.trim();
+                if text.is_empty() {
+                    self.find_matches = None;
+                    self.eval_find("vireoFindClear()");
+                    return;
+                }
+                // Into a JS single-quoted string: backslashes and quotes only.
+                let quoted = text.replace('\\', "\\\\").replace('\'', "\\'");
+                self.eval_find(&format!("vireoFind('{quoted}')"));
+            }
+            MessageViewInput::FindNext => self.eval_find("vireoFindStep(1)"),
+            MessageViewInput::FindPrev => self.eval_find("vireoFindStep(-1)"),
+            MessageViewInput::FindCounted { current, total } => {
+                self.find_matches = Some((current, total));
             }
             MessageViewInput::SetCardStar { account_id, id, starred } => {
                 for m in self.thread.iter_mut() {
@@ -3382,6 +3532,56 @@ else if(!vis&&rt[k]){clearTimeout(rt[k]);delete rt[k];}\
 });},{threshold:[0,0.25,0.5,0.75,1]});\
 var rsecs=document.querySelectorAll('.vireo-msg');\
 for(var ri=0;ri<rsecs.length;ri++){if(rsecs[ri].querySelector('.vireo-dot'))rio.observe(rsecs[ri]);}}\
+window.vf={marks:[],cur:-1};\
+window.vfDocs=function(){var ds=[document];var fs=document.querySelectorAll('iframe');\
+for(var i=0;i<fs.length;i++){try{if(fs[i].contentDocument)ds.push(fs[i].contentDocument);}catch(_){}}return ds;};\
+window.vfCss=function(d){if(d.getElementById('vireo-find-css'))return;\
+var st=d.createElement('style');st.id='vireo-find-css';\
+st.textContent='.vireo-find{background:rgba(255,198,0,0.5);color:#000;border-radius:5px;box-shadow:0 0 0 2px rgba(255,198,0,0.5);}.vireo-find.current{background:#ffc600;box-shadow:0 0 0 2px #ffc600;}';\
+(d.head||d.documentElement).appendChild(st);};\
+window.vireoFindClear=function(){for(var i=0;i<vf.marks.length;i++){var m=vf.marks[i];\
+var p=m.parentNode;if(!p)continue;while(m.firstChild)p.insertBefore(m.firstChild,m);p.removeChild(m);p.normalize();}\
+vf.marks=[];vf.cur=-1;};\
+window.vfPost=function(){try{window.webkit.messageHandlers.vireo.postMessage(\
+'found:0:0:'+(vf.marks.length?vf.cur+1:0)+','+vf.marks.length);}catch(_){}};\
+window.vfShow=function(){for(var i=0;i<vf.marks.length;i++)vf.marks[i].className='vireo-find'+(i===vf.cur?' current':'');\
+vfPost();\
+var m=vf.marks[vf.cur];if(!m)return;\
+var d=m.ownerDocument;\
+if(d===document){m.scrollIntoView({block:'center'});}\
+else{var fs=document.querySelectorAll('iframe');\
+for(var j=0;j<fs.length;j++){if(fs[j].contentDocument===d){\
+var r=m.getBoundingClientRect(),fr=fs[j].getBoundingClientRect();\
+window.scrollTo({top:window.scrollY+fr.top+r.top-window.innerHeight/2});break;}}}};\
+window.vfY=function(m){var d=m.ownerDocument,r=m.getBoundingClientRect();\
+if(d===document)return r.top+window.scrollY;\
+var fs=document.querySelectorAll('iframe');\
+for(var j=0;j<fs.length;j++){if(fs[j].contentDocument===d)\
+return fs[j].getBoundingClientRect().top+window.scrollY+r.top;}\
+return r.top;};\
+window.vireoFindStep=function(dir){if(!vf.marks.length)return;\
+vf.cur=(vf.cur+dir+vf.marks.length)%vf.marks.length;vfShow();};\
+window.vireoFind=function(q){vireoFindClear();q=(q||'').toLowerCase();\
+if(q){var docs=vfDocs();\
+for(var di=0;di<docs.length;di++){var d=docs[di];vfCss(d);\
+var w=d.createTreeWalker(d.body||d.documentElement,NodeFilter.SHOW_TEXT,null);\
+var nodes=[];var n;\
+while((n=w.nextNode())){var pn=n.parentNode&&n.parentNode.nodeName;\
+if(pn==='SCRIPT'||pn==='STYLE')continue;\
+if(n.nodeValue&&n.nodeValue.toLowerCase().indexOf(q)>=0)nodes.push(n);}\
+for(var ni=0;ni<nodes.length;ni++){var node=nodes[ni];\
+var text=node.nodeValue,lower=text.toLowerCase(),pos=0,idx;\
+var frag=d.createDocumentFragment(),had=false;\
+while((idx=lower.indexOf(q,pos))>=0){had=true;\
+frag.appendChild(d.createTextNode(text.slice(pos,idx)));\
+var sp=d.createElement('span');sp.className='vireo-find';\
+sp.textContent=text.slice(idx,idx+q.length);\
+frag.appendChild(sp);vf.marks.push(sp);pos=idx+q.length;}\
+frag.appendChild(d.createTextNode(text.slice(pos)));\
+if(had)node.parentNode.replaceChild(frag,node);}}\
+vf.marks=vf.marks.filter(function(m){return m.getClientRects().length>0;});\
+if(vf.marks.length){vf.marks.sort(function(a,b){return vfY(a)-vfY(b);});\
+vf.cur=0;vfShow();}else{vfPost();}}else{vfPost();}};\
 var rs=document.querySelectorAll('.vireo-rcpt-toggle');\
 for(var r=0;r<rs.length;r++){rs[r].addEventListener('click',function(e){\
 e.stopPropagation();e.preventDefault();\
@@ -3982,29 +4182,6 @@ mod tests {
         // The cards sit on the deeper page — the same colour the spinner and the
         // cover behind the WebView are painted, so the handover is invisible.
         assert!(doc.contains(&format!("background:{}", PAGE.0)), "page ground: {doc}");
-    }
-
-    #[test]
-    fn dump_doc_tmp() {
-        let mut first = msg_for_print();
-        first.body = "<p>opening</p>".into();
-        first.unread = true;
-        let mut second = msg_for_print();
-        second.id = 2;
-        second.body = "<p>reply</p>".into();
-        let doc = MessageView::conversation_document(
-            &[first, second],
-            &std::collections::HashMap::new(),
-            &Default::default(),
-            &Default::default(),
-            &[],
-            "#3584e4",
-            true,
-            false,
-            false,
-            false,
-        );
-        std::fs::write("/tmp/claude-1000/-home-jason-Dev-vireo/a13cb451-6479-4834-85d6-44ce8feadb9d/scratchpad/doc-dump.html", doc).unwrap();
     }
 
     /// Each card names everyone the message went to, collapsed behind a chip so

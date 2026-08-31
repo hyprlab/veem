@@ -405,6 +405,15 @@ button.star-active {
 /* ---- Message list ---- */
 
 .list-toolbar {
+  /* No padding of its own: search hides by default (#102), and dead
+     padding here floated the first row ~32px low. The revealed search row
+     carries its own inset instead; the negative margin buys the rows two
+     more pixels. */
+  padding: 0;
+  margin-bottom: 2px;
+}
+
+.list-search-row {
   padding: 8px 12px 10px 12px;
 }
 
@@ -1379,5 +1388,11 @@ textview.console-view text selection {
   min-width: 36px;
   min-height: 4px;
   border-radius: 2px;
+}
+
+/* In-message find bar (#103). */
+.reader-find {
+  padding: 6px 10px;
+  border-bottom: 1px solid alpha(currentColor, 0.1);
 }
 

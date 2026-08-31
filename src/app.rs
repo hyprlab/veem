@@ -68,6 +68,7 @@ relm4::new_stateless_action!(PrintAction, WindowActionGroup, "print");
 relm4::new_stateless_action!(PrintPreviewAction, WindowActionGroup, "print-preview");
 relm4::new_stateless_action!(StatusBarAction, WindowActionGroup, "status-bar");
 relm4::new_stateless_action!(ConsoleAction, WindowActionGroup, "console");
+relm4::new_stateless_action!(FindAction, WindowActionGroup, "find");
 
 use crate::config::{self, split_identity, AccountConfig};
 use crate::models::{Account, Attachment, Folder, FolderKind, Message};
@@ -714,6 +715,10 @@ pub enum AppMsg {
     SetConsoleMode(bool),
     /// The list header's unread quick filter (#97).
     SetUnreadFilter(bool),
+    /// Reveal (or toggle away) the message list's search bar (#102).
+    OpenListSearch,
+    /// Open the reader's in-message find bar (#103).
+    OpenReaderFind,
     /// Delay-policy read marking (#100): fires a couple of seconds after a
     /// message opened; only applies if it is still the one on screen.
     DeferredMarkRead { message: Box<Message> },
@@ -992,6 +997,16 @@ impl SimpleComponent for AppModel {
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleSidebar),
                                 },
+                                // Search lives behind this button (#102);
+                                // Ctrl+F and / open it too.
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-system-search-symbolic",
+                                    set_tooltip_text: Some("Search messages (Ctrl+F)"),
+                                    add_css_class: "flat",
+                                    connect_clicked[sender] => move |_| {
+                                        sender.input(AppMsg::OpenListSearch);
+                                    },
+                                },
                                 // Across from the sidebar toggle: the visible
                                 // message count and the sort menu (moved out of
                                 // the list's own toolbar to reclaim a row).
@@ -1175,6 +1190,20 @@ impl SimpleComponent for AppModel {
                                     #[watch]
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleStar),
+                                },
+                                // In-message find (#103), right of the star.
+                                pack_start = &gtk::Button {
+                                    set_icon_name: "co.hyprlab.Vireo-system-search-symbolic",
+                                    set_tooltip_text: Some("Find in message (Ctrl+F)"),
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: !model.showing_outbox
+                                        && model.current.is_some()
+                                        && model.reader_compose.is_none()
+                                        && !model.reader_actions_collapsed,
+                                    connect_clicked[sender] => move |_| {
+                                        sender.input(AppMsg::OpenReaderFind);
+                                    },
                                 },
                                 // (No Add-to-Contacts button here: the action
                                 // lives on the address itself — right-click any
@@ -2316,6 +2345,12 @@ impl SimpleComponent for AppModel {
                 s.input(AppMsg::OpenConsole);
             }));
         }
+        {
+            let s = sender.clone();
+            group.add_action(RelmAction::<FindAction>::new_stateless(move |_| {
+                s.input(AppMsg::OpenListSearch);
+            }));
+        }
         group.add_action(RelmAction::<StatusBarAction>::new_stateless(move |_| {
             status_sender.input(AppMsg::ToggleNotifications);
         }));
@@ -2333,6 +2368,7 @@ impl SimpleComponent for AppModel {
             .set_accelerators_for_action::<StatusBarAction>(&["<Ctrl><Shift>s"]);
         relm4::main_application()
             .set_accelerators_for_action::<ConsoleAction>(&["<Ctrl><Shift>c"]);
+        relm4::main_application().set_accelerators_for_action::<FindAction>(&["<Ctrl>f"]);
         relm4::main_application().set_accelerators_for_action::<ShortcutsAction>(&[
             "<Ctrl>question",
             "<Ctrl><Shift>question",
@@ -4430,6 +4466,24 @@ impl SimpleComponent for AppModel {
                 // File whatever already sits in the inboxes under the new
                 // rules; reuses the blacklist's re-sync sweep.
                 self.sweep_blacklisted();
+            }
+
+            AppMsg::OpenListSearch => {
+                // Ctrl+F routes by focus (#102/#103): in the reader it finds
+                // within the message, everywhere else it searches the list.
+                let reader = self.message_view.widget().clone().upcast::<gtk::Widget>();
+                let reader_focused =
+                    gtk::prelude::GtkWindowExt::focus(&self.window)
+                        .is_some_and(|f| f == reader || f.is_ancestor(&reader));
+                if reader_focused && self.current.is_some() {
+                    self.message_view.emit(MessageViewInput::OpenFind);
+                } else {
+                    self.message_list.emit(MessageListInput::FocusSearch);
+                }
+            }
+
+            AppMsg::OpenReaderFind => {
+                self.message_view.emit(MessageViewInput::OpenFind);
             }
 
             AppMsg::SetUnreadFilter(on) => {
