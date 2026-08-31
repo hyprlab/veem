@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.19.0-beta.2 — 2026-08-31
+
+- **Beta selectable as the default mail app.** The beta's desktop entry now
+  registers the mailto handler and passes the URI through, so GNOME's
+  default-apps picker offers Vireo (beta) separately from the stable app and
+  mailto: links open in it. The running-instance hand-off already used the
+  beta's own D-Bus name, so the two channels stay independent.
+
 ## 1.19.0-beta.1 — 2026-08-31
 
 The 1.19 feature preview. Everything below is new since stable 1.18.4.
