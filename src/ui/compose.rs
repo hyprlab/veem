@@ -395,37 +395,29 @@ impl Component for Compose {
         size_for_host(&root, &widgets.header, &widgets.editor_holder, model.windowed);
 
         // Per-row visibility (#25): To always; Cc/Bcc only when prefilled (a
-        // reply-all carries Cc); Subject stays up for a new message or draft,
-        // where it's the user's to write, and hides behind "More" for replies
-        // and forwards, where it arrived prefilled. `can_toggle` is true for
-        // exactly the reply/forward composers.
+        // reply-all carries Cc). The Subject is always shown — replies and
+        // forwards arrive with it prefilled, but it stays the user's to see
+        // and change (2026-08-31).
         let cc_shown = !prefill.cc.trim().is_empty();
         let bcc_shown = !prefill.bcc.trim().is_empty();
-        let subject_shown = !model.can_toggle;
         widgets.cc_row.set_visible(cc_shown);
         widgets.bcc_row.set_visible(bcc_shown);
         // Reply-To (#58) is rare enough to always start hidden behind "More".
         widgets.reply_to_row.set_visible(false);
-        widgets.subject_row.set_visible(subject_shown);
+        widgets.subject_row.set_visible(true);
         {
             let more = gtk::Button::with_label("More");
             more.add_css_class("flat");
             more.set_valign(gtk::Align::Center);
-            more.set_tooltip_text(Some(if subject_shown {
-                "Show Cc, Bcc and Reply-To"
-            } else {
-                "Show Cc, Bcc, Reply-To and Subject"
-            }));
+            more.set_tooltip_text(Some("Show Cc, Bcc and Reply-To"));
             let cc = widgets.cc_row.clone();
             let bcc = widgets.bcc_row.clone();
             let reply_to = widgets.reply_to_row.clone();
-            let subject = widgets.subject_row.clone();
             let btn = more.clone();
             more.connect_clicked(move |_| {
                 cc.set_visible(true);
                 bcc.set_visible(true);
                 reply_to.set_visible(true);
-                subject.set_visible(true);
                 btn.set_visible(false);
             });
             widgets.to_row.add_suffix(&more);

@@ -8212,7 +8212,12 @@ impl AppModel {
         }
         // The accounts panel component (embedded behind the "Accounts" tab).
         let accounts = AccountsWindow::builder()
-            .launch(accounts)
+            .launch(crate::ui::accounts::AccountsInit {
+                accounts,
+                allowed_senders: self.allowed_senders.clone(),
+                blacklist: self.blacklist.clone(),
+                filters: self.filters.clone(),
+            })
             .forward(sender.input_sender(), |out| match out {
                 AccountsOutput::Saved { original_email, account } => {
                     AppMsg::AccountSaved { original_email, account }
@@ -8224,6 +8229,11 @@ impl AppModel {
                 }
                 AccountsOutput::ImportGoa(account) => AppMsg::ImportGoaAccount(account),
                 AccountsOutput::EditorOpen(open) => AppMsg::SettingsEditorOpen(open),
+                AccountsOutput::AddSender(addr) => AppMsg::AddSender(addr),
+                AccountsOutput::RemoveSender(addr) => AppMsg::RemoveSender(addr),
+                AccountsOutput::AddBlacklist(addr) => AppMsg::AddBlacklist(addr),
+                AccountsOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
+                AccountsOutput::SetFilters(rules) => AppMsg::SetFilters(rules),
             });
         if add_new {
             accounts.emit(crate::ui::accounts::AccountsInput::AddAccount);
@@ -8232,7 +8242,6 @@ impl AppModel {
         // The host window: the preferences component, carrying the accounts
         // panel behind its other tab.
         let init = PrefInit {
-            allowed_senders: self.allowed_senders.clone(),
             auto_remote_content: self.auto_remote_content,
             show_remote_banner: self.show_remote_banner,
             gravatar: self.gravatar,
@@ -8242,7 +8251,6 @@ impl AppModel {
             clock_style: self.clock_style,
             fetch_interval_secs: self.fetch_interval_secs,
             push: self.push,
-            blacklist: self.blacklist.clone(),
             palette_collapse_secs: self.palette_collapse_secs,
             threading: self.threading,
             threads_expanded: self.threads_expanded,
@@ -8260,9 +8268,6 @@ impl AppModel {
             unified_chip: self.unified_chip,
             chevrons_left: self.chevrons_left,
             console_mode: self.console_mode,
-            filters: self.filters.clone(),
-            filter_accounts: self.config.iter().map(|c| c.email.clone()).collect(),
-            filter_folders: self.folder_choice_map(),
             settings_open_accounts: self.settings_open_accounts,
             sidebar_hover_expand: self.sidebar_hover_expand,
             card_actions_hover: self.card_actions_hover,
@@ -8282,10 +8287,6 @@ impl AppModel {
             .transient_for(&self.window)
             .launch(init)
             .forward(sender.input_sender(), |out| match out {
-                PrefOutput::AddSender(addr) => AppMsg::AddSender(addr),
-                PrefOutput::RemoveSender(addr) => AppMsg::RemoveSender(addr),
-                PrefOutput::AddBlacklist(addr) => AppMsg::AddBlacklist(addr),
-                PrefOutput::RemoveBlacklist(addr) => AppMsg::RemoveBlacklist(addr),
                 PrefOutput::SetAutoRemoteContent(on) => AppMsg::SetAutoRemoteContent(on),
                 PrefOutput::SetShowRemoteBanner(on) => AppMsg::SetShowRemoteBanner(on),
                 PrefOutput::SetGravatar(on) => AppMsg::SetGravatar(on),
@@ -8322,7 +8323,6 @@ impl AppModel {
                 PrefOutput::SetConsoleMode(on) => AppMsg::SetConsoleMode(on),
                 PrefOutput::ExportSettings => AppMsg::ExportSettings,
                 PrefOutput::ImportSettings => AppMsg::ImportSettings,
-                PrefOutput::SetFilters(rules) => AppMsg::SetFilters(rules),
                 PrefOutput::SetSidebarHoverExpand(on) => {
                     AppMsg::SetSidebarHoverExpand(on)
                 }

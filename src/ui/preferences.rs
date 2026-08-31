@@ -3,7 +3,6 @@
 //! Account credentials are managed in their own window (see `ui/accounts.rs`).
 
 use adw::prelude::*;
-use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
 
 use crate::config::{AppTheme, ClockStyle, DateStyle, MessageTheme};
@@ -11,7 +10,6 @@ use crate::config::{AppTheme, ClockStyle, DateStyle, MessageTheme};
 /// Initial data for the settings window.
 #[derive(Debug)]
 pub struct PrefInit {
-    pub allowed_senders: Vec<String>,
     pub auto_remote_content: bool,
     pub show_remote_banner: bool,
     pub gravatar: bool,
@@ -21,7 +19,6 @@ pub struct PrefInit {
     pub clock_style: ClockStyle,
     pub fetch_interval_secs: u64,
     pub push: bool,
-    pub blacklist: Vec<String>,
     pub palette_collapse_secs: u64,
     pub threading: bool,
     pub threads_expanded: bool,
@@ -55,10 +52,6 @@ pub struct PrefInit {
     pub unified_chip: bool,
     pub chevrons_left: bool,
     pub console_mode: bool,
-    /// Filter rules (#47) plus the data the editor dialog needs.
-    pub filters: Vec<crate::config::FilterRule>,
-    pub filter_accounts: Vec<String>,
-    pub filter_folders: std::collections::HashMap<String, Vec<(String, String)>>,
     pub sidebar_hover_expand: bool,
     pub preview_lines: u32,
     pub single_key_shortcuts: bool,
@@ -154,10 +147,6 @@ impl FactoryComponent for SenderRow {
 // ---- Preferences window -----------------------------------------------------
 
 pub struct Preferences {
-    senders: FactoryVecDeque<SenderRow>,
-    sender_addrs: Vec<String>,
-    blacklist: FactoryVecDeque<SenderRow>,
-    blacklist_addrs: Vec<String>,
     /// Mirrors the notifications switch, so the "show sender and subject" row
     /// below it can grey out when nothing is being posted at all.
     notifications: bool,
@@ -173,11 +162,6 @@ pub struct Preferences {
     list_palette: bool,
     /// The Accounts/Preferences panel stack, for tab switching from update().
     panels_stack: Option<adw::ViewStack>,
-    /// Filter rules (#47) + the account/folder data the editor dialog needs.
-    filter_rules: Vec<crate::config::FilterRule>,
-    filter_accounts: Vec<String>,
-    filter_folders: std::collections::HashMap<String, Vec<(String, String)>>,
-    filters_list: Option<gtk::ListBox>,
     /// The shared header bar (view switcher); hidden while the accounts
     /// editor subpage is open, whose own header takes over.
     host_header: Option<adw::HeaderBar>,
@@ -185,11 +169,7 @@ pub struct Preferences {
 
 #[derive(Debug)]
 pub enum PrefInput {
-    AddSenderText(String),
-    RemoveSenderRow(String),
     ToggleShowRemoteBanner(bool),
-    AddBlacklistText(String),
-    RemoveBlacklistRow(String),
     ToggleAutoRemoteContent(bool),
     ToggleGravatar(bool),
     ToggleAvatars(bool),
@@ -222,9 +202,6 @@ pub enum PrefInput {
     ToggleConsoleMode(bool),
     ExportSettings,
     ImportSettings,
-    AddFilter,
-    RemoveFilter(usize),
-    FilterAdded(crate::config::FilterRule),
     ToggleRunInBackground(bool),
     ToggleAutostart(bool),
     ChangePaletteCollapse(u64),
@@ -240,10 +217,6 @@ pub enum PrefInput {
 
 #[derive(Debug)]
 pub enum PrefOutput {
-    AddSender(String),
-    RemoveSender(String),
-    AddBlacklist(String),
-    RemoveBlacklist(String),
     SetAutoRemoteContent(bool),
     SetShowRemoteBanner(bool),
     SetGravatar(bool),
@@ -274,7 +247,6 @@ pub enum PrefOutput {
     SetConsoleMode(bool),
     ExportSettings,
     ImportSettings,
-    SetFilters(Vec<crate::config::FilterRule>),
     SetSidebarHoverExpand(bool),
     SetAppTheme(AppTheme),
     /// The "this window opens to" choice changed (true = Accounts).
@@ -377,28 +349,6 @@ impl Component for Preferences {
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleNotificationContent(row.is_active()));
                             },
-                        },
-                    },
-
-                    add = &adw::PreferencesGroup {
-                        set_title: "Filters",
-                        set_description: Some(
-                            "File incoming mail into folders automatically, by sender, \
-                             subject or recipients. Applied to each account's Inbox as \
-                             Vireo syncs it."
-                        ),
-                        #[wrap(Some)]
-                        set_header_suffix = &gtk::Button {
-                            set_label: "Add Filter…",
-                            set_valign: gtk::Align::Center,
-                            add_css_class: "flat",
-                            connect_clicked => PrefInput::AddFilter,
-                        },
-
-                        #[name = "filters_list"]
-                        gtk::ListBox {
-                            add_css_class: "boxed-list",
-                            set_selection_mode: gtk::SelectionMode::None,
                         },
                     },
 
@@ -830,84 +780,6 @@ impl Component for Preferences {
 
                     },
 
-                    add = &adw::PreferencesGroup {
-                        set_title: "Allowed Senders",
-                        set_description: Some(
-                            "Messages from these senders load remote content automatically."
-                        ),
-
-                        #[name = "add_sender_row"]
-                        adw::EntryRow {
-                            set_title: "Email address",
-                            set_input_purpose: gtk::InputPurpose::Email,
-                            // The + is the apply button, so there is only one way
-                            // to add and it reads the same in both lists.
-                            set_show_apply_button: false,
-                            connect_entry_activated[sender] => move |row| {
-                                sender.input(PrefInput::AddSenderText(row.text().to_string()));
-                                row.set_text("");
-                            },
-
-                            add_suffix = &gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-list-add-symbolic",
-                                set_tooltip_text: Some("Allow this sender"),
-                                set_valign: gtk::Align::Center,
-                                add_css_class: "flat",
-                                connect_clicked[sender, add_sender_row] => move |_| {
-                                    sender.input(PrefInput::AddSenderText(
-                                        add_sender_row.text().to_string(),
-                                    ));
-                                    add_sender_row.set_text("");
-                                },
-                            },
-                        },
-
-                        #[local_ref]
-                        senders_box -> gtk::ListBox {
-                            add_css_class: "boxed-list",
-                            add_css_class: "sender-list",
-                            set_selection_mode: gtk::SelectionMode::None,
-                        },
-                    },
-
-                    add = &adw::PreferencesGroup {
-                        set_title: "Blacklist",
-                        set_description: Some(
-                            "Incoming mail from these senders is deleted automatically \
-                             (moved to Trash). Enter an email address, or a whole domain \
-                             like \"example.com\" to block every sender there."
-                        ),
-
-                        #[name = "add_blacklist_row"]
-                        adw::EntryRow {
-                            set_title: "Address or domain",
-                            set_show_apply_button: false,
-                            connect_entry_activated[sender] => move |row| {
-                                sender.input(PrefInput::AddBlacklistText(row.text().to_string()));
-                                row.set_text("");
-                            },
-
-                            add_suffix = &gtk::Button {
-                                set_icon_name: "co.hyprlab.Vireo-list-add-symbolic",
-                                set_tooltip_text: Some("Block this sender"),
-                                set_valign: gtk::Align::Center,
-                                add_css_class: "flat",
-                                connect_clicked[sender, add_blacklist_row] => move |_| {
-                                    sender.input(PrefInput::AddBlacklistText(
-                                        add_blacklist_row.text().to_string(),
-                                    ));
-                                    add_blacklist_row.set_text("");
-                                },
-                            },
-                        },
-
-                        #[local_ref]
-                        blacklist_box -> gtk::ListBox {
-                            add_css_class: "boxed-list",
-                            add_css_class: "sender-list",
-                            set_selection_mode: gtk::SelectionMode::None,
-                        },
-                    },
                 },
                 },
             },
@@ -919,22 +791,7 @@ impl Component for Preferences {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let senders = FactoryVecDeque::builder()
-            .launch(gtk::ListBox::new())
-            .forward(sender.input_sender(), |out| match out {
-                SenderRowOutput::Remove(addr) => PrefInput::RemoveSenderRow(addr),
-            });
-        let blacklist = FactoryVecDeque::builder()
-            .launch(gtk::ListBox::new())
-            .forward(sender.input_sender(), |out| match out {
-                SenderRowOutput::Remove(addr) => PrefInput::RemoveBlacklistRow(addr),
-            });
-
         let mut model = Preferences {
-            senders,
-            sender_addrs: Vec::new(),
-            blacklist,
-            blacklist_addrs: Vec::new(),
             notifications: init.notifications,
             show_unified: init.show_unified,
             threading: init.threading,
@@ -942,29 +799,8 @@ impl Component for Preferences {
             list_palette: init.list_palette,
             panels_stack: None,
             host_header: None,
-            filter_rules: init.filters.clone(),
-            filter_accounts: init.filter_accounts.clone(),
-            filter_folders: init.filter_folders.clone(),
-            filters_list: None,
         };
 
-        {
-            let mut guard = model.senders.guard();
-            for addr in &init.allowed_senders {
-                model.sender_addrs.push(addr.clone());
-                guard.push_back(addr.clone());
-            }
-        }
-        {
-            let mut guard = model.blacklist.guard();
-            for addr in &init.blacklist {
-                model.blacklist_addrs.push(addr.clone());
-                guard.push_back(addr.clone());
-            }
-        }
-
-        let senders_box = model.senders.widget();
-        let blacklist_box = model.blacklist.widget();
         let widgets = view_output!();
 
         // Settings never truncates. AdwComboRow's DEFAULT item factory builds
@@ -1147,9 +983,6 @@ impl Component for Preferences {
         model.panels_stack = Some(widgets.panels_stack.clone());
         model.host_header = Some(widgets.host_header.clone());
 
-        model.filters_list = Some(widgets.filters_list.clone());
-        model.rebuild_filter_rows(&sender);
-
         ComponentParts { model, widgets }
     }
 
@@ -1269,21 +1102,6 @@ impl Component for Preferences {
             PrefInput::ImportSettings => {
                 let _ = sender.output(PrefOutput::ImportSettings);
             }
-            PrefInput::AddFilter => {
-                self.open_filter_dialog(&sender, _root);
-            }
-            PrefInput::RemoveFilter(i) => {
-                if i < self.filter_rules.len() {
-                    self.filter_rules.remove(i);
-                    self.rebuild_filter_rows(&sender);
-                    let _ = sender.output(PrefOutput::SetFilters(self.filter_rules.clone()));
-                }
-            }
-            PrefInput::FilterAdded(rule) => {
-                self.filter_rules.push(rule);
-                self.rebuild_filter_rows(&sender);
-                let _ = sender.output(PrefOutput::SetFilters(self.filter_rules.clone()));
-            }
             PrefInput::ToggleRunInBackground(on) => {
                 let _ = sender.output(PrefOutput::SetRunInBackground(on));
             }
@@ -1325,204 +1143,10 @@ impl Component for Preferences {
                     .unwrap_or_default();
                 let _ = sender.output(PrefOutput::SetMessageTheme(theme));
             }
-            PrefInput::AddSenderText(text) => {
-                let addr = text.trim().to_lowercase();
-                if !addr.is_empty() && !self.sender_addrs.contains(&addr) {
-                    self.sender_addrs.push(addr.clone());
-                    self.senders.guard().push_back(addr.clone());
-                    let _ = sender.output(PrefOutput::AddSender(addr));
-                }
-            }
-
-            PrefInput::RemoveSenderRow(addr) => {
-                if let Some(pos) = self.sender_addrs.iter().position(|s| *s == addr) {
-                    self.sender_addrs.remove(pos);
-                    self.senders.guard().remove(pos);
-                    let _ = sender.output(PrefOutput::RemoveSender(addr));
-                }
-            }
-
             PrefInput::ToggleShowRemoteBanner(on) => {
                 let _ = sender.output(PrefOutput::SetShowRemoteBanner(on));
             }
-            PrefInput::AddBlacklistText(text) => {
-                let addr = text.trim().to_lowercase();
-                if !addr.is_empty() && !self.blacklist_addrs.contains(&addr) {
-                    self.blacklist_addrs.push(addr.clone());
-                    self.blacklist.guard().push_back(addr.clone());
-                    let _ = sender.output(PrefOutput::AddBlacklist(addr));
-                }
-            }
-
-            PrefInput::RemoveBlacklistRow(addr) => {
-                if let Some(pos) = self.blacklist_addrs.iter().position(|s| *s == addr) {
-                    self.blacklist_addrs.remove(pos);
-                    self.blacklist.guard().remove(pos);
-                    let _ = sender.output(PrefOutput::RemoveBlacklist(addr));
-                }
-            }
         }
-    }
-}
-
-impl Preferences {
-    /// Human labels for the filter enums, shared by rows and the dialog.
-    fn field_label(f: crate::config::FilterField) -> &'static str {
-        use crate::config::FilterField::*;
-        match f {
-            FromAddress => "From address",
-            FromName => "From name",
-            Subject => "Subject",
-            Recipients => "To or Cc",
-        }
-    }
-    fn match_label(m: crate::config::FilterMatch) -> &'static str {
-        use crate::config::FilterMatch::*;
-        match m {
-            Contains => "contains",
-            Equals => "is exactly",
-            StartsWith => "starts with",
-            EndsWith => "ends with",
-        }
-    }
-
-    /// Re-render the Filters group's rule rows.
-    fn rebuild_filter_rows(&self, sender: &ComponentSender<Self>) {
-        let Some(list) = &self.filters_list else { return };
-        while let Some(row) = list.first_child() {
-            list.remove(&row);
-        }
-        list.set_visible(!self.filter_rules.is_empty());
-        for (i, r) in self.filter_rules.iter().enumerate() {
-            let row = adw::ActionRow::new();
-            row.set_title(&format!(
-                "{} {} \u{201c}{}\u{201d}",
-                Self::field_label(r.field),
-                Self::match_label(r.matcher),
-                r.value,
-            ));
-            let dest = self
-                .filter_folders
-                .get(&r.account_email)
-                .and_then(|fs| fs.iter().find(|(p, _)| *p == r.dest_path))
-                .map(|(_, name)| name.clone())
-                .unwrap_or_else(|| r.dest_path.clone());
-            row.set_subtitle(&format!("{} \u{2192} {}", r.account_email, dest));
-            let rm = gtk::Button::from_icon_name("co.hyprlab.Vireo-user-trash-symbolic");
-            rm.add_css_class("flat");
-            rm.set_valign(gtk::Align::Center);
-            rm.set_tooltip_text(Some("Remove filter"));
-            let s = sender.clone();
-            rm.connect_clicked(move |_| s.input(PrefInput::RemoveFilter(i)));
-            row.add_suffix(&rm);
-            list.append(&row);
-        }
-    }
-
-    /// The Add Filter dialog: account, field, match, value, destination.
-    fn open_filter_dialog(&self, sender: &ComponentSender<Self>, root: &adw::Window) {
-        use crate::config::{FilterField, FilterMatch, FilterRule};
-        if self.filter_accounts.is_empty() {
-            return;
-        }
-        let dialog = adw::MessageDialog::new(Some(root), Some("Add Filter"), None);
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("add", "Add Filter");
-        dialog.set_response_appearance("add", adw::ResponseAppearance::Suggested);
-        dialog.set_default_response(Some("add"));
-
-        let form = gtk::ListBox::new();
-        form.add_css_class("boxed-list");
-        form.set_selection_mode(gtk::SelectionMode::None);
-
-        let account_row = adw::ComboRow::new();
-        account_row.set_title("Account");
-        let emails: Vec<&str> = self.filter_accounts.iter().map(|s| s.as_str()).collect();
-        account_row.set_model(Some(&gtk::StringList::new(&emails)));
-
-        let field_row = adw::ComboRow::new();
-        field_row.set_title("Where");
-        field_row
-            .set_model(Some(&gtk::StringList::new(&["From address", "From name", "Subject", "To or Cc"])));
-
-        let match_row = adw::ComboRow::new();
-        match_row.set_title("Match");
-        match_row.set_model(Some(&gtk::StringList::new(&[
-            "contains",
-            "is exactly",
-            "starts with",
-            "ends with",
-        ])));
-
-        let value_row = adw::EntryRow::new();
-        value_row.set_title("Text to match");
-
-        let dest_row = adw::ComboRow::new();
-        dest_row.set_title("Move to");
-        // The destination list follows the chosen account.
-        let folders = std::rc::Rc::new(self.filter_folders.clone());
-        let accounts = std::rc::Rc::new(self.filter_accounts.clone());
-        let dest_paths = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
-        let fill_dest = {
-            let dest_row = dest_row.clone();
-            let folders = folders.clone();
-            let accounts = accounts.clone();
-            let dest_paths = dest_paths.clone();
-            move |idx: usize| {
-                let empty = Vec::new();
-                let list = accounts.get(idx).and_then(|e| folders.get(e)).unwrap_or(&empty);
-                let names: Vec<&str> = list.iter().map(|(_, n)| n.as_str()).collect();
-                dest_row.set_model(Some(&gtk::StringList::new(&names)));
-                *dest_paths.borrow_mut() = list.iter().map(|(p, _)| p.clone()).collect();
-            }
-        };
-        fill_dest(0);
-        {
-            let fill_dest = fill_dest.clone();
-            account_row.connect_selected_notify(move |row| fill_dest(row.selected() as usize));
-        }
-
-        form.append(&account_row);
-        form.append(&field_row);
-        form.append(&match_row);
-        form.append(&value_row);
-        form.append(&dest_row);
-        dialog.set_extra_child(Some(&form));
-
-        let s = sender.clone();
-        let accounts2 = self.filter_accounts.clone();
-        dialog.connect_response(Some("add"), move |_, _| {
-            let value = value_row.text().trim().to_string();
-            let paths = dest_paths.borrow();
-            let (Some(email), Some(dest)) = (
-                accounts2.get(account_row.selected() as usize),
-                paths.get(dest_row.selected() as usize),
-            ) else {
-                return;
-            };
-            if value.is_empty() {
-                return;
-            }
-            let rule = FilterRule {
-                account_email: email.clone(),
-                field: match field_row.selected() {
-                    0 => FilterField::FromAddress,
-                    1 => FilterField::FromName,
-                    2 => FilterField::Subject,
-                    _ => FilterField::Recipients,
-                },
-                matcher: match match_row.selected() {
-                    0 => FilterMatch::Contains,
-                    1 => FilterMatch::Equals,
-                    2 => FilterMatch::StartsWith,
-                    _ => FilterMatch::EndsWith,
-                },
-                value,
-                dest_path: dest.clone(),
-            };
-            s.input(PrefInput::FilterAdded(rule));
-        });
-        dialog.present();
     }
 }
 
