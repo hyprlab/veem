@@ -149,6 +149,9 @@ pub struct AppModel {
     draining_composers: Vec<(u32, Controller<Compose>)>,
     /// SlideDown revealer under the reader toolbar that hosts the inline pane.
     reader_compose_revealer: gtk::Revealer,
+    /// Split-reply slot (#86): a reply slides down from the pane's top and
+    /// the message(s) stay below it, visible and interactive.
+    reader_split_top: gtk::Revealer,
     /// Same idea over the contacts view's detail pane: composing from a
     /// contact slides down right there instead of yanking the mail view back.
     contacts_compose_revealer: gtk::Revealer,
@@ -1597,6 +1600,13 @@ impl SimpleComponent for AppModel {
             composers: Vec::new(),
             reader_compose: None,
             draining_composers: Vec::new(),
+            reader_split_top: {
+                let r = gtk::Revealer::new();
+                r.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+                r.set_transition_duration(300);
+                r.set_reveal_child(false);
+                r
+            },
             reader_compose_revealer: {
                 let r = gtk::Revealer::new();
                 r.set_transition_type(gtk::RevealerTransitionType::SlideDown);
@@ -1949,8 +1959,14 @@ impl SimpleComponent for AppModel {
         {
             let pane = widgets.reader_bin.child().expect("reader pane");
             widgets.reader_bin.set_child(None::<&gtk::Widget>);
+            // Split-reply slots (#86) sandwich the reader; the full-cover
+            // revealer stays an overlay above the whole assembly.
+            pane.set_vexpand(true);
+            let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            vbox.append(&model.reader_split_top);
+            vbox.append(&pane);
             let overlay = gtk::Overlay::new();
-            overlay.set_child(Some(&pane));
+            overlay.set_child(Some(&vbox));
             overlay.add_overlay(&model.reader_compose_revealer);
             widgets.reader_bin.set_child(Some(&overlay));
         }
@@ -3376,18 +3392,19 @@ impl SimpleComponent for AppModel {
                 let m = self.with_cached_body(*message);
                 match action {
                     RowAction::Reply => {
-                        self.open_inline_reply(m.account_id, reply_prefill(&m), &sender);
+                        self.open_inline_reply(m.account_id, reply_prefill(&m), Some((m.account_id, m.id)), &sender);
                     }
                     RowAction::ReplyAll => {
                         let self_email = self.email_of(m.account_id).unwrap_or_default();
                         self.open_inline_reply(
                             m.account_id,
                             reply_all_prefill(&m, &self_email),
+                            Some((m.account_id, m.id)),
                             &sender,
                         );
                     }
                     RowAction::Forward => {
-                        self.open_inline_reply(m.account_id, forward_prefill(&m), &sender);
+                        self.open_inline_reply(m.account_id, forward_prefill(&m), Some((m.account_id, m.id)), &sender);
                     }
                     // Cards only carry the three above; anything else falls
                     // through to the ordinary row behaviour.
@@ -3541,7 +3558,7 @@ impl SimpleComponent for AppModel {
                     // The new-message pane slides down over the reader,
                     // exactly like an inline reply — same composer, same
                     // pop-out-to-window toggle in its header.
-                    self.open_inline_reply(account, ComposePrefill::default(), &sender);
+                    self.open_inline_reply(account, ComposePrefill::default(), None, &sender);
                 } else {
                     self.open_compose(account, ComposePrefill::default(), &sender);
                 }
@@ -3549,7 +3566,7 @@ impl SimpleComponent for AppModel {
 
             AppMsg::Reply => {
                 if let Some(m) = self.reply_target() {
-                    self.open_inline_reply(m.account_id, reply_prefill(&m), &sender);
+                    self.open_inline_reply(m.account_id, reply_prefill(&m), Some((m.account_id, m.id)), &sender);
                 }
             }
 
@@ -3559,6 +3576,7 @@ impl SimpleComponent for AppModel {
                     self.open_inline_reply(
                         m.account_id,
                         reply_all_prefill(&m, &self_email),
+                        Some((m.account_id, m.id)),
                         &sender,
                     );
                 }
@@ -3566,7 +3584,7 @@ impl SimpleComponent for AppModel {
 
             AppMsg::Forward => {
                 if let Some(m) = self.reply_target() {
-                    self.open_inline_reply(m.account_id, forward_prefill(&m), &sender);
+                    self.open_inline_reply(m.account_id, forward_prefill(&m), Some((m.account_id, m.id)), &sender);
                 }
             }
 
@@ -4125,7 +4143,7 @@ impl SimpleComponent for AppModel {
                 // Same preference as "New Message": slide down over the
                 // reader, unless composing is set to open in a window.
                 if self.compose_inline {
-                    self.open_inline_reply(account, prefill, &sender);
+                    self.open_inline_reply(account, prefill, None, &sender);
                 } else {
                     self.open_compose(account, prefill, &sender);
                 }
@@ -4148,7 +4166,7 @@ impl SimpleComponent for AppModel {
                     .unwrap_or_else(|| self.active_account());
                 let prefill = ComposePrefill { attachments: paths, ..Default::default() };
                 if self.compose_inline {
-                    self.open_inline_reply(account, prefill, &sender);
+                    self.open_inline_reply(account, prefill, None, &sender);
                 } else {
                     self.open_compose(account, prefill, &sender);
                 }
@@ -4178,7 +4196,7 @@ impl SimpleComponent for AppModel {
                     .map(|m| m.account_id)
                     .unwrap_or_else(|| self.active_account());
                 if self.compose_inline {
-                    self.open_inline_reply(account, prefill, &sender);
+                    self.open_inline_reply(account, prefill, None, &sender);
                 } else {
                     self.open_compose(account, prefill, &sender);
                 }
@@ -7178,7 +7196,7 @@ impl AppModel {
         }
     }
 
-    /// Hide and empty both inline-composer slots (only one ever holds it).
+    /// Hide and empty every inline-composer slot (only one ever holds it).
     fn clear_compose_slots(&self) {
         for r in [&self.reader_compose_revealer, &self.contacts_compose_revealer] {
             r.set_reveal_child(false);
@@ -7187,31 +7205,54 @@ impl AppModel {
             r.set_can_target(false);
             r.set_child(None::<&gtk::Widget>);
         }
+        // In-flow (not overlay) slot: no click-swallowing to disarm.
+        self.reader_split_top.set_reveal_child(false);
+        self.reader_split_top.set_child(None::<&gtk::Widget>);
     }
 
     fn open_inline_reply(
         &mut self,
         account_id: u32,
         prefill: ComposePrefill,
+        focus: Option<(u32, u32)>,
         sender: &ComponentSender<Self>,
     ) {
+        let contextual = focus.is_some();
         // Supersede any composer already in the reader slot first.
         self.release_reader_compose();
         let (id, init) = self.build_compose_init(account_id, prefill, false, true);
         let controller = self.spawn_compose(init, sender);
         let widget = controller.widget();
-        // Composing clears the reader toolbar too (decorations excepted); the
-        // ⋯ overflow is managed by hand, so hide it by hand.
-        self.reader_overflow_btn.set_visible(false);
-        // Fill the pane and paint an opaque surface: the composer covers the
-        // pane completely, rather than dropping down as a partial panel.
-        widget.set_vexpand(true);
         widget.set_hexpand(true);
         widget.add_css_class("inline-compose-surface");
-        let slot = self.compose_slot();
-        slot.set_child(Some(widget));
-        slot.set_can_target(true);
-        slot.set_reveal_child(true);
+        if contextual && !self.showing_contacts {
+            // A reply/forward splits the pane instead of covering it (#86):
+            // the composer slides down from the top and the message(s) stay
+            // below, visible and interactive to refer to while writing.
+            let slot = &self.reader_split_top;
+            let pane_h = slot.parent().map(|p| p.height()).filter(|h| *h > 0).unwrap_or(900);
+            widget.set_vexpand(false);
+            widget.set_height_request(((pane_h as f64 * 0.45) as i32).clamp(300, 560));
+            slot.set_child(Some(widget));
+            slot.set_reveal_child(true);
+            if let Some((fa, fid)) = focus {
+                // Put the card being answered at the top of the shortened
+                // reader, wearing the selection outline.
+                self.message_view
+                    .emit(MessageViewInput::FocusCard { account_id: fa, id: fid });
+            }
+        } else {
+            // Composing clears the reader toolbar too (decorations excepted);
+            // the ⋯ overflow is managed by hand, so hide it by hand.
+            self.reader_overflow_btn.set_visible(false);
+            // Fill the pane and paint an opaque surface: the composer covers
+            // the pane completely, not a partial panel.
+            widget.set_vexpand(true);
+            let slot = self.compose_slot();
+            slot.set_child(Some(widget));
+            slot.set_can_target(true);
+            slot.set_reveal_child(true);
+        }
         controller.emit(ComposeInput::FocusEditor);
         self.reader_compose = Some(ReaderCompose { id, controller, window: None });
     }

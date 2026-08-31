@@ -308,6 +308,10 @@ pub enum MessageViewInput {
     /// A conversation message was read: clear its card's unread dot in place,
     /// without reloading the document.
     ClearDot { account_id: u32, id: u32 },
+    /// A split reply opened for this message (#86): scroll its card to the
+    /// top of the (now shorter) reader and give it the selection outline, so
+    /// the message being answered is the one in view.
+    FocusCard { account_id: u32, id: u32 },
     /// The wrapper document reported its scroll anchor (throttled): the card at
     /// the viewport top and the offset into it — kept so a re-render can put
     /// the reader back where they were.
@@ -1103,6 +1107,36 @@ impl Component for MessageView {
                             tracing::warn!("clear-dot patch failed: {e}");
                         }
                     });
+            }
+            MessageViewInput::FocusCard { account_id, id } => {
+                let webview = self.webview.clone();
+                // Let the split's 300ms slide finish first — scrolling while
+                // the viewport is still shrinking lands somewhere else.
+                gtk::glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(380),
+                    move || {
+                        let js = format!(
+                            "(function(){{\
+                             var s=document.querySelector('.vireo-msg[data-key=\"{account_id}:{id}\"]');\
+                             if(!s)return;\
+                             document.querySelectorAll('.vireo-msg.selected').forEach(function(e){{e.classList.remove('selected');}});\
+                             s.classList.add('selected');\
+                             s.style.scrollMarginTop='14px';\
+                             s.scrollIntoView({{behavior:'smooth',block:'start'}});}})()"
+                        );
+                        webview.evaluate_javascript(
+                            &js,
+                            None,
+                            None,
+                            None::<&gtk::gio::Cancellable>,
+                            |r| {
+                                if let Err(e) = r {
+                                    tracing::warn!("focus-card scroll failed: {e}");
+                                }
+                            },
+                        );
+                    },
+                );
             }
             MessageViewInput::ScrollAnchor { account_id, id, offset } => {
                 self.saved_anchor = Some((account_id, id, offset));
