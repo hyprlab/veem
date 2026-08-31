@@ -72,6 +72,8 @@ pub struct RowInit {
     /// Any message in this conversation is unread (thread heads only) — keeps
     /// the head marked unread while unread replies are hidden beneath it.
     pub thread_unread: bool,
+    /// Any message in this conversation is starred (thread heads only).
+    pub thread_starred: bool,
     /// Every currently shown row as (account, folder, uid, id), in list order.
     /// Shared with the list so a drag can turn the ListBox's selected row
     /// *indices* into message ids and carry the whole selection (#23).
@@ -201,6 +203,7 @@ pub struct MessageRow {
     thread_preview: Option<String>,
     /// Any message in this conversation is unread (heads only).
     thread_unread: bool,
+    thread_starred: bool,
     /// Shared row keys, so a drag from this row can carry the whole selection.
     drag_keys: DragKeys,
     /// Drives the row's own Revealer — false only for the brief window a
@@ -231,6 +234,7 @@ pub enum MessageRowInput {
     ToggleThreadClicked,
     /// The thread's aggregate unread state changed (a hidden reply was read).
     SetThreadUnread(bool),
+    SetThreadStarred(bool),
     /// Drive the row's own Revealer directly — used to slide a reply open
     /// right after it's inserted, or shut just before it's removed.
     SetRevealed(bool),
@@ -509,9 +513,9 @@ impl FactoryComponent for MessageRow {
                             gtk::Button {
                                 set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
                                 #[watch]
-                                set_css_classes: if self.msg.starred { &["flat", "star-active"] } else { &["flat"] },
+                                set_css_classes: if self.msg.starred || self.thread_starred { &["flat", "star-active"] } else { &["flat"] },
                                 #[watch]
-                                set_tooltip_text: Some(if self.msg.starred { "Remove star" } else { "Star" }),
+                                set_tooltip_text: Some(if self.msg.starred || self.thread_starred { "Remove star" } else { "Star" }),
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleStar)),
                             },
                             gtk::Button {
@@ -621,7 +625,7 @@ impl FactoryComponent for MessageRow {
                     gtk::Image {
                         set_icon_name: Some("co.hyprlab.Vireo-starred-symbolic"),
                         #[watch]
-                        set_visible: self.msg.starred,
+                        set_visible: self.msg.starred || self.thread_starred,
                         add_css_class: "star-icon",
                     },
                     gtk::Label {
@@ -785,6 +789,7 @@ impl FactoryComponent for MessageRow {
             thread_from,
             thread_preview,
             thread_unread,
+            thread_starred,
             drag_keys,
             show_recipient,
             revealed,
@@ -814,6 +819,7 @@ impl FactoryComponent for MessageRow {
             thread_from,
             thread_preview,
             thread_unread,
+            thread_starred,
             drag_keys,
             revealed,
             index: index.clone(),
@@ -902,6 +908,7 @@ impl FactoryComponent for MessageRow {
                 }
             }
             MessageRowInput::SetThreadUnread(unread) => self.thread_unread = unread,
+            MessageRowInput::SetThreadStarred(starred) => self.thread_starred = starred,
             MessageRowInput::SetRevealed(revealed) => self.revealed = revealed,
             MessageRowInput::SetThreadExpanded(expanded) => self.thread_expanded = expanded,
         }
@@ -1458,6 +1465,9 @@ pub enum BulkAction {
     MarkRead,
     MarkUnread,
     Flag,
+    /// Remove the star from every selected/threaded message (the bulk bar
+    /// itself only offers Flag; conversations need the inverse too).
+    Unflag,
     Archive,
     Spam,
     Delete,
@@ -2331,7 +2341,13 @@ impl SimpleComponent for MessageList {
                 // here left the reader stale on the deleted message. In-place
                 // actions (read/flag) drop the selection as before, dismissing
                 // the bulk bar.
-                if matches!(action, BulkAction::MarkRead | BulkAction::MarkUnread | BulkAction::Flag)
+                if matches!(
+                    action,
+                    BulkAction::MarkRead
+                        | BulkAction::MarkUnread
+                        | BulkAction::Flag
+                        | BulkAction::Unflag
+                )
                 {
                     self.rows.widget().unselect_all();
                     self.selected_id = None;
@@ -2511,6 +2527,7 @@ impl SimpleComponent for MessageList {
                     self.shown[idx].starred = starred;
                     self.rows.send(idx, MessageRowInput::SetStarred(starred));
                 }
+                self.refresh_thread_star(id);
             }
             MessageListInput::SetHasAttachment { id, has } => {
                 if let Some(m) = self.all.iter_mut().find(|m| m.id == id) {
@@ -2654,6 +2671,27 @@ impl SimpleComponent for MessageList {
                 }
             }
             MessageListInput::RowAction { action, message } => {
+                // Starring a conversation row stars the conversation (#star):
+                // every member together, toggled as a unit — individual
+                // members keep their own stars via their own rows/cards.
+                if matches!(action, RowAction::ToggleStar) {
+                    let members = self.thread_members(&message);
+                    let is_head = members.first().is_some_and(|h| {
+                        (h.account_id, h.id) == (message.account_id, message.id)
+                    });
+                    if is_head && members.len() > 1 {
+                        // ANY starred member reads as a starred conversation
+                        // (matching the head's indicator), so the toggle can
+                        // always clear — all-starred semantics deadlocked the
+                        // moment one member was individually unstarred.
+                        let any = members.iter().any(|m| m.starred);
+                        let _ = sender.output(MessageListOutput::Bulk {
+                            action: if any { BulkAction::Unflag } else { BulkAction::Flag },
+                            messages: members,
+                        });
+                        return;
+                    }
+                }
                 let _ = sender.output(MessageListOutput::Action { action, message });
             }
             MessageListInput::SetPaletteCollapse(secs) => self.palette_collapse_secs.set(secs),
@@ -2776,7 +2814,32 @@ impl MessageList {
             .icon(icon)
         };
 
-        let mut flag_section = vec![if msg.starred {
+        // (computed early: the star entry needs it too)
+        let members_for_star = self.thread_members(msg);
+        let star_is_head = members_for_star
+            .first()
+            .is_some_and(|h| (h.account_id, h.id) == (msg.account_id, msg.id));
+        let mut flag_section = vec![if star_is_head && members_for_star.len() > 1 {
+            // A conversation row's star acts on the whole thread, like its
+            // read toggle below.
+            let any = members_for_star.iter().any(|m| m.starred);
+            let s = sender.clone();
+            let members = members_for_star.clone();
+            MenuEntry::new(
+                if any { "Remove Stars" } else { "Star Conversation" },
+                move || {
+                    let _ = s.output(MessageListOutput::Bulk {
+                        action: if any { BulkAction::Unflag } else { BulkAction::Flag },
+                        messages: members.clone(),
+                    });
+                },
+            )
+            .icon(if any {
+                "co.hyprlab.Vireo-non-starred-symbolic"
+            } else {
+                "co.hyprlab.Vireo-starred-symbolic"
+            })
+        } else if msg.starred {
             item(RowAction::ToggleStar, "Remove Star", "co.hyprlab.Vireo-non-starred-symbolic")
         } else {
             item(RowAction::ToggleStar, "Star", "co.hyprlab.Vireo-starred-symbolic")
@@ -2961,6 +3024,35 @@ impl MessageList {
         }
     }
 
+    /// Mirror of [`refresh_thread_unread`] for the star: the head shows a
+    /// conversation as starred while any member is.
+    fn refresh_thread_star(&mut self, id: u32) {
+        let Some(key) = self
+            .all
+            .iter()
+            .find(|m| m.id == id)
+            .map(|m| (m.account_id, m.id))
+        else {
+            return;
+        };
+        let Some(tkey) = self.msg_thread.get(&key) else {
+            return;
+        };
+        let Some(members) = self.thread_members.get(tkey).cloned() else {
+            return;
+        };
+        let any = members
+            .iter()
+            .any(|k| self.all.iter().any(|m| (m.account_id, m.id) == *k && m.starred));
+        if let Some(idx) = self
+            .shown
+            .iter()
+            .position(|m| members.contains(&(m.account_id, m.id)))
+        {
+            self.rows.send(idx, MessageRowInput::SetThreadStarred(any));
+        }
+    }
+
 
     /// Begin collapsing a thread: slide its currently-visible replies shut
     /// (they stay exactly where they are in `self.rows`/`self.shown` — only
@@ -3061,6 +3153,7 @@ impl MessageList {
                         thread_from: None,
                         thread_preview: None,
                         thread_unread: false,
+                        thread_starred: false,
                         drag_keys: self.drag_keys.clone(),
                         show_recipient: self.show_recipient,
                         revealed: false,
@@ -3203,6 +3296,7 @@ impl MessageList {
             expanded: bool,
             key: Option<(u32, String)>,
             unread: bool,
+            starred: bool,
             /// The newest member's display time (thread heads only): the head
             /// row says when the conversation last moved, not when it began.
             latest: Option<String>,
@@ -3254,6 +3348,7 @@ impl MessageList {
             } else {
                 (None, None)
             };
+            let any_starred = count > 1 && msgs.iter().any(|m| m.starred);
             let mut it = msgs.into_iter();
             let head = it.next().unwrap();
             shown.push(head);
@@ -3266,6 +3361,7 @@ impl MessageList {
                 expanded,
                 key: if count > 1 { Some(key.clone()) } else { None },
                 unread: any_unread,
+                starred: any_starred,
                 latest,
             });
             if expanded {
@@ -3282,6 +3378,7 @@ impl MessageList {
                         expanded: false,
                         key: None,
                         unread: false,
+                        starred: false,
                         latest: None,
                     });
                 }
@@ -3331,6 +3428,7 @@ impl MessageList {
                     thread_from: meta.from,
                     thread_preview: meta.preview,
                     thread_unread: meta.unread,
+                    thread_starred: meta.starred,
                     drag_keys: self.drag_keys.clone(),
                     show_recipient: self.show_recipient,
                     // A full rebuild never needs a row to mount closed —

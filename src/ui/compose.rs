@@ -115,6 +115,10 @@ pub struct ComposeInit {
     pub windowed: bool,
     /// Whether the inline/window toggle button is offered (reply/forward only).
     pub can_toggle: bool,
+    /// Compact reply (#86 follow-up): the split reply hides every address/
+    /// subject row and shows just the editor — popping out to a window brings
+    /// the full fields back.
+    pub compact: bool,
 }
 
 pub struct Compose {
@@ -149,6 +153,7 @@ pub struct Compose {
     windowed: bool,
     /// Whether this composer offers the inline/window toggle at all.
     can_toggle: bool,
+    compact: bool,
     /// A recipient/subject field was edited since open (body edits are tracked
     /// separately by the editor itself). Used for save-if-dirty.
     fields_dirty: bool,
@@ -337,6 +342,7 @@ impl Component for Compose {
             suggestions,
             windowed,
             can_toggle,
+            compact,
         } = init;
         let in_reply_to = prefill.in_reply_to.clone();
         let references = prefill.references.clone();
@@ -382,6 +388,7 @@ impl Component for Compose {
             compose_id,
             windowed,
             can_toggle,
+            compact,
             fields_dirty: false,
         };
         let widgets = view_output!();
@@ -405,6 +412,9 @@ impl Component for Compose {
         // Reply-To (#58) is rare enough to always start hidden behind "More".
         widgets.reply_to_row.set_visible(false);
         widgets.subject_row.set_visible(true);
+        // Compact split reply: only the editor shows; the full field rows
+        // return when the composer pops out to a window.
+        widgets.fields_list.set_visible(!model.compact);
         {
             let more = gtk::Button::with_label("More");
             more.add_css_class("flat");
@@ -552,6 +562,9 @@ impl Component for Compose {
                 self.windowed = windowed;
                 set_toggle_icon(&widgets.toggle_btn, windowed);
                 size_for_host(root, &widgets.header, &widgets.editor_holder, windowed);
+                // A compact reply grows its field rows back in a window (and
+                // sheds them again if it returns inline).
+                widgets.fields_list.set_visible(!(self.compact && !windowed));
             }
 
             ComposeInput::FocusEditor => self.editor.grab_focus(),

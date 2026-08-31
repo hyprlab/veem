@@ -308,6 +308,9 @@ pub enum MessageViewInput {
     /// A conversation message was read: clear its card's unread dot in place,
     /// without reloading the document.
     ClearDot { account_id: u32, id: u32 },
+    /// A message's star changed outside the card (list row, toolbar): sync
+    /// the card's star button without a re-render.
+    SetCardStar { account_id: u32, id: u32, starred: bool },
     /// A split reply opened for this message (#86): scroll its card to the
     /// top of the (now shorter) reader and give it the selection outline, so
     /// the message being answered is the one in view.
@@ -1108,6 +1111,25 @@ impl Component for MessageView {
                         }
                     });
             }
+            MessageViewInput::SetCardStar { account_id, id, starred } => {
+                for m in self.thread.iter_mut() {
+                    if m.account_id == account_id && m.id == id {
+                        m.starred = starred;
+                    }
+                }
+                let js = format!(
+                    "(function(){{\
+                     var b=document.querySelector('.vireo-act[data-act=\"star\"][data-key=\"{account_id}:{id}\"]');\
+                     if(b)b.classList.{}('on');}})()",
+                    if starred { "add" } else { "remove" },
+                );
+                self.webview
+                    .evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |r| {
+                        if let Err(e) = r {
+                            tracing::warn!("card star patch failed: {e}");
+                        }
+                    });
+            }
             MessageViewInput::FocusCard { account_id, id } => {
                 let webview = self.webview.clone();
                 // Let the split's 300ms slide finish first — scrolling while
@@ -1117,6 +1139,7 @@ impl Component for MessageView {
                     move || {
                         let js = format!(
                             "(function(){{\
+                             if(!document.body.classList.contains('vireo-conv'))return;\
                              var s=document.querySelector('.vireo-msg[data-key=\"{account_id}:{id}\"]');\
                              if(!s)return;\
                              document.querySelectorAll('.vireo-msg.selected').forEach(function(e){{e.classList.remove('selected');}});\

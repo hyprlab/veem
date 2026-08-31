@@ -1157,7 +1157,7 @@ impl SimpleComponent for AppModel {
                                     // icon; the flagged state carries colour only.
                                     set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
                                     #[watch]
-                                    set_css_classes: if model.reply_target().is_some_and(|m| m.starred) {
+                                    set_css_classes: if model.toolbar_star_lit() {
                                         &["flat", "star-active"]
                                     } else {
                                         &["flat"]
@@ -3333,7 +3333,18 @@ impl SimpleComponent for AppModel {
 
             AppMsg::ToggleStar => {
                 if let Some(m) = self.reply_target() {
-                    self.set_star(&m, !m.starred);
+                    if self.thread_star_target(&m) {
+                        // The conversation is the target: any member starred
+                        // reads as a starred thread, and the toggle clears or
+                        // sets the whole set (same semantics as the list row).
+                        let any = self.current_thread.iter().any(|t| t.starred);
+                        let members = self.current_thread.clone();
+                        for t in &members {
+                            self.set_star(t, !any);
+                        }
+                    } else {
+                        self.set_star(&m, !m.starred);
+                    }
                 }
             }
 
@@ -3500,6 +3511,7 @@ impl SimpleComponent for AppModel {
                     BulkAction::MarkRead => for m in &messages { self.set_read(m, true); },
                     BulkAction::MarkUnread => for m in &messages { self.set_read(m, false); },
                     BulkAction::Flag => for m in &messages { self.set_star(m, true); },
+                    BulkAction::Unflag => for m in &messages { self.set_star(m, false); },
                     // Archive/Delete/Spam remove every selected row. Doing that one
                     // at a time blocks the UI thread (a render cycle per message) and
                     // trips GTK's "app is not responding" dialog for large selections.
@@ -5924,6 +5936,28 @@ impl AppModel {
         }
     }
 
+    /// Whether a star toggle aimed at `m` should act on the whole open
+    /// conversation: a thread is open and `m` is its head.
+    fn thread_star_target(&self, m: &Message) -> bool {
+        self.current_thread.len() > 1
+            && self
+                .current_thread
+                .first()
+                .is_some_and(|h| h.id == m.id && h.account_id == m.account_id)
+    }
+
+    /// Whether the reader toolbar's star shows lit: the target message's own
+    /// star, or any member's when the conversation is the target.
+    fn toolbar_star_lit(&self) -> bool {
+        self.reply_target().is_some_and(|m| {
+            if self.thread_star_target(&m) {
+                self.current_thread.iter().any(|t| t.starred)
+            } else {
+                m.starred
+            }
+        })
+    }
+
     /// The account email for an id, if known.
     fn email_of(&self, account_id: u32) -> Option<String> {
         self.accounts
@@ -7143,6 +7177,7 @@ impl AppModel {
             suggestions: crate::contacts::suggestions(&own),
             windowed,
             can_toggle,
+            compact: false,
         };
         (id, init)
     }
@@ -7235,7 +7270,9 @@ impl AppModel {
         let contextual = focus.is_some();
         // Supersede any composer already in the reader slot first.
         self.release_reader_compose();
-        let (id, init) = self.build_compose_init(account_id, prefill, false, true);
+        let (id, mut init) = self.build_compose_init(account_id, prefill, false, true);
+        // The split reply is compact: just the editor, fields behind pop-out.
+        init.compact = contextual;
         let controller = self.spawn_compose(init, sender);
         let widget = controller.widget();
         widget.set_hexpand(true);
@@ -8679,12 +8716,31 @@ impl AppModel {
         self.send_to(m.account_id, MailRequest::SetFlagged { path, uid: m.uid, flagged: starred });
         self.message_list
             .emit(MessageListInput::SetStarred { id: m.id, starred });
+        for tm in self
+            .current_thread
+            .iter_mut()
+            .filter(|tm| tm.id == m.id && tm.account_id == m.account_id)
+        {
+            // Without this the toolbar's reply_target reads a stale copy and
+            // a second click re-stars instead of clearing.
+            tm.starred = starred;
+        }
         if let Some(cur) = self.current.as_mut() {
             if cur.id == m.id && cur.account_id == m.account_id {
                 cur.starred = starred;
             }
         }
-        if self.current.as_ref().is_some_and(|c| c.id == m.id && c.account_id == m.account_id) {
+        if self.current_thread.len() > 1 {
+            // A conversation is open: re-showing `current` alone here used to
+            // collapse the reader to a single message. Patch the card's star
+            // button in place instead.
+            self.message_view.emit(MessageViewInput::SetCardStar {
+                account_id: m.account_id,
+                id: m.id,
+                starred,
+            });
+        } else if self.current.as_ref().is_some_and(|c| c.id == m.id && c.account_id == m.account_id)
+        {
             let current = self.current.clone();
             self.show_message(current, false);
         }
@@ -8787,7 +8843,10 @@ impl AppModel {
             BulkAction::Delete => FolderKind::Trash,
             BulkAction::Spam => FolderKind::Junk,
             // Non-removing actions never reach here (handled inline).
-            BulkAction::MarkRead | BulkAction::MarkUnread | BulkAction::Flag => return,
+            BulkAction::MarkRead
+            | BulkAction::MarkUnread
+            | BulkAction::Flag
+            | BulkAction::Unflag => return,
         };
         // (account, source path) → (dest path, uids, Message-IDs for undo).
         // dest is per-account.
