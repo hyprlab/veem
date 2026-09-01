@@ -1,5 +1,78 @@
 # Changelog
 
+## 1.19.0 — 2026-09-01
+
+The 1.19 feature release, previewed through three betas (1.19.0-beta.1
+to beta.3). Features requested in #38 (@isorropisths), #47 and its beta
+feedback (@mfreeman72), #50 (@doodoobug-dot), #86 (@yioannides), #97
+(@Toxblh), #100–#103 (@p-mitana); fixes for #99 and #105 (@frenchy82).
+
+- **First-run welcome wizard.** A brand-new install is greeted by a
+  five-step guided setup — account (one-click GNOME Online Accounts
+  imports plus a manual IMAP form with provider presets and a live
+  connection test), privacy choices, and popular defaults — with the
+  wordmark riding the carousel's spring from hero to header. The main
+  window appears when the wizard finishes or is dismissed. Beta builds
+  carry a Welcome Wizard burger-menu entry for reviewing it safely;
+  stable builds do not.
+- **Console mode.** Settings → System & Appearance gains a status-bar
+  console: a live verbose log (dedicated vireo=debug tracing layer)
+  in a dracula-styled, CRT-grained, selectable view — via a status-bar
+  button, the burger menu, or Ctrl+Shift+C; resizable with a 160px
+  floor. WebKit's JS console pipes into the same log.
+- **Mail filters (#47).** Accounts tab → Filters: file inbox arrivals
+  into folders by From address/name, Subject, or To/Cc (contains / is
+  exactly / starts with / ends with), per account, first match wins,
+  applied on sight so mail that arrived while Vireo was closed is
+  filed on the next sync. Filed mail still raises the new-mail
+  notification: when the newest arrival was filed, the notification
+  opens the destination folder, with Mark as Read/Archive omitted;
+  filter moves are remembered per sync so a sync racing the
+  server-side move can't re-request it.
+- **Settings backup (#50).** Export every configuration file as one
+  TOML bundle (passwords stay in the keyring, never exported); import
+  replaces the config in place and offers a self-restart.
+- **Notification actions (#38).** Single-message new-mail
+  notifications carry Mark as Read and Archive buttons that act
+  without raising the window.
+- **Split replies (#86).** Reply/Reply All/Forward slide a compact
+  composer (editor only; pop out for the full fields) down from the
+  reader's top, with the conversation visible and interactive below,
+  scrolled to the card being answered with the selection outline.
+  Cancelling a split reply clears the reply-target outline, and the
+  compose body editor wears the fields' card shadow everywhere.
+- **Search reworked (#102, #103).** The list's search bar hides
+  behind a header button (or Ctrl+F, or /); the reader gains
+  find-in-message with rounded pill highlights (current match solid,
+  the rest translucent), a live "N of M" counter and arrows, hidden
+  text excluded and matches walked in visual order.
+- **Quick filters (#97).** Unread-only and starred-only toggles beside
+  the sort menu, composable, session-scoped.
+- **Read marking rebuilt (#100, #101).** Conversation members mark
+  read as they come into view (the old scrolled-through path never
+  fired), with a Settings → Reading policy: when displayed, after two
+  seconds, or manually. Threads open on the first unread, falling
+  back to the newest message.
+- **Conversation starring.** A thread row's star (palette, context
+  menu, or reader toolbar) stars or unstars the whole conversation —
+  any member starred reads as a starred thread — while individual
+  messages keep their own stars; the reader no longer collapses to a
+  single message when starring an open conversation.
+- **Threads surface their newest message** in the list (sender,
+  avatar, preview), and a conversation row's context menu can mark
+  the whole thread read or unread.
+- **Reorganized Settings.** Filters, Allowed Senders and the
+  Blacklist live on the Accounts tab; the composer always shows its
+  Subject; the About window is rebuilt around the wordmark with
+  flowing Release Notes/Changelog text.
+- **Single messages render as cards by default on new installs.**
+  Existing installs keep their saved choice.
+- **Fixes**: cold-start composers from Nautilus's "Send by email"
+  keep their From field (#105); avatarless rows align top-left with
+  equal padding (#99); emoji avatars centre with their own optical
+  parameters; the sidebar's Accounts panel shows the demo accounts in
+  demo mode.
+
 ## 1.18.4 — 2026-08-30
 
 Composer attachment fixes with Isaac (@thecalamityjoe87, PR #96).
