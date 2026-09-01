@@ -260,13 +260,46 @@ fn remember_miss(domain: &str) {
 }
 
 fn decode(bytes: &[u8]) -> Option<gtk::gdk::Texture> {
-    let glib_bytes = gtk::glib::Bytes::from(bytes);
-    if let Ok(tex) = gtk::gdk::Texture::from_bytes(&glib_bytes) {
-        return Some(tex);
+    use gtk::gdk_pixbuf::prelude::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    // These textures live in the session-long cache above and are drawn at
+    // avatar size, but sites publish `apple-touch-icon`s at up to 1024² — a
+    // few MB of decoded pixels each, held forever per domain (issue #106).
+    // Downscale during decode, exactly as avatars do; the pixel limit also
+    // rejects decompression bombs. Going through a size-prepared PixbufLoader
+    // covers PNG, JPEG and ICO alike.
+    const MAX_PIXELS: i64 = 4_194_304;
+    const THUMBNAIL_EDGE: i32 = 160;
+    let loader = gtk::gdk_pixbuf::PixbufLoader::new();
+    let valid = Rc::new(Cell::new(false));
+    loader.connect_size_prepared({
+        let valid = valid.clone();
+        move |loader, width, height| {
+            if width <= 0 || height <= 0 || i64::from(width) * i64::from(height) > MAX_PIXELS {
+                loader.set_size(1, 1);
+                return;
+            }
+            valid.set(true);
+            let longest = width.max(height);
+            if longest > THUMBNAIL_EDGE {
+                loader.set_size(
+                    (width * THUMBNAIL_EDGE / longest).max(1),
+                    (height * THUMBNAIL_EDGE / longest).max(1),
+                );
+            }
+        }
+    });
+    if loader.write(bytes).is_err() {
+        let _ = loader.close();
+        return None;
     }
-    // ICO, and anything else the platform has a pixbuf loader for.
-    let stream = gtk::gio::MemoryInputStream::from_bytes(&glib_bytes);
-    let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_stream(&stream, gtk::gio::Cancellable::NONE).ok()?;
+    loader.close().ok()?;
+    if !valid.get() {
+        return None;
+    }
+    let pixbuf = loader.pixbuf()?;
     Some(gtk::gdk::Texture::for_pixbuf(&pixbuf))
 }
 

@@ -2215,12 +2215,43 @@ pub fn new_preview_webview() -> webkit6::WebView {
     new_webview()
 }
 
+thread_local! {
+    /// One web context for every view the app creates (reader, pop-outs, print
+    /// preview, rich editors), configured for showing documents rather than
+    /// browsing (issue #106). The default context runs WebKit's browser cache
+    /// model — big in-memory resource cache, back/forward page cache — which
+    /// for a mail reader only hoards dead documents: every render loads a fresh
+    /// unique URI, so nothing cached is ever revisited, and the web process
+    /// grew by hundreds of megabytes per reading session and never shrank.
+    /// `DocumentViewer` turns those caches off, and the memory-pressure limit
+    /// makes the web process actively release memory instead of waiting for
+    /// system-wide pressure that arrives only after the damage is done.
+    static WEB_CONTEXT: webkit6::WebContext = {
+        let mut pressure = webkit6::MemoryPressureSettings::new();
+        // In MB. Trimming starts at a fraction of this (~1/3), so the web
+        // process settles in the low hundreds of MB instead of the gigabytes
+        // reported in #106.
+        pressure.set_memory_limit(512);
+        let ctx = webkit6::WebContext::builder()
+            .memory_pressure_settings(&pressure)
+            .build();
+        ctx.set_cache_model(webkit6::CacheModel::DocumentViewer);
+        ctx
+    };
+}
+
+/// The shared document-viewer web context (see [`WEB_CONTEXT`]).
+pub fn shared_web_context() -> webkit6::WebContext {
+    WEB_CONTEXT.with(|c| c.clone())
+}
+
 fn new_webview() -> webkit6::WebView {
     // A user-content manager with a script message handler lets the wrapper
     // document notify us (e.g. a double-clicked conversation header).
     let ucm = webkit6::UserContentManager::new();
     ucm.register_script_message_handler("vireo", None);
     let webview = webkit6::WebView::builder()
+        .web_context(&shared_web_context())
         .user_content_manager(&ucm)
         .build();
 

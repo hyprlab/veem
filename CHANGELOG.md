@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.19.2-beta.1 — 2026-09-01
+
+Catch-up release: the beta matches stable 1.19.1 (next section). No
+beta-only changes.
+
+## 1.19.1 — 2026-09-01
+
+Memory-use fixes for long-running sessions (#106, reported by
+@mfreeman72): the process tree could grow past 2 GB over a day of use
+and never shrink.
+
+- **WebKit on a document-viewer diet.** Every WebView (reader, pop-out
+  windows, print preview, compose editors) now shares one web context
+  configured with the DocumentViewer cache model and a 512 MB
+  memory-pressure limit. The default browser cache model kept an
+  in-memory resource cache and back/forward page cache that only ever
+  hoarded dead documents — each render loads a fresh unique URI, so
+  nothing cached was ever revisited — and the web process grew by
+  hundreds of MB per reading session. It now trims itself back under
+  pressure instead of waiting for system-wide memory pressure.
+- **Byte-bounded in-RAM caches.** The rendered-body cache (fed 50
+  bodies per folder per sync by the background prefetch) and the
+  opened-attachment cache were unbounded HashMaps; they are now
+  oldest-first evicting caches capped at 64 MiB and 128 MiB
+  (`src/ram_cache.rs`). Everything evicted re-reads from the SQLite
+  cache in a blink.
+- **Sender logos downscaled at decode.** Domain icons (up to 1024²
+  apple-touch-icons, a few MB of decoded pixels each) are now
+  downscaled to the same 160 px edge avatars already use, with the
+  same decompression-bomb guard.
+- **Attachments gallery releases its data.** Leaving the gallery now
+  drops the eagerly loaded item bytes (up to 300 × 6 MiB per account,
+  previously held in two copies until quit); it reloads from the cache
+  on the next visit exactly as it already did.
+
 ## 1.19.1-beta.1 — 2026-09-01
 
 Catch-up release: the beta matches stable 1.19.0 (next section). No

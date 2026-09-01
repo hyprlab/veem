@@ -58,6 +58,13 @@ const READER_ACTIONS_BREAKPOINT: f64 = 490.0;
 
 const SIDEBAR_RAIL_WIDTH: f64 = 80.0;
 
+/// Byte budgets for the in-RAM body and attachment caches (issue #106). Bodies
+/// average well under 1 MB even with inline images, so 64 MiB holds hundreds of
+/// recently seen messages; attachments run larger, and 128 MiB still keeps a
+/// handful of big ones for instant re-preview. Everything evicted re-reads from
+/// the SQLite cache.
+const BODY_CACHE_BUDGET: usize = 64 << 20;
+const ATTACHMENT_CACHE_BUDGET: usize = 128 << 20;
 
 relm4::new_action_group!(WindowActionGroup, "win");
 relm4::new_stateless_action!(AccountsAction, WindowActionGroup, "accounts");
@@ -186,8 +193,10 @@ pub struct AppModel {
     /// The collapsed header's ⋯ button — the anchor its menu pops from.
     reader_overflow_btn: gtk::Button,
     /// Cache of fetched attachments, keyed by (account_id, message_id), so
-    /// revisiting a message doesn't re-download them.
-    attachment_cache: HashMap<(u32, u32), Vec<Attachment>>,
+    /// revisiting a message doesn't re-download them. Byte-bounded — raw
+    /// attachment bytes for every message ever opened added up to hundreds of
+    /// megabytes over a long session (issue #106).
+    attachment_cache: crate::ram_cache::RamCache<Vec<Attachment>>,
     /// The app-wide attachment lightbox (drawer previews): the
     /// previewable items on show, the current index, and its texture. The
     /// overlay fills the whole window — a separate window meant double chrome.
@@ -217,8 +226,11 @@ pub struct AppModel {
     /// message list knows no more rows will stream in for them.
     indexed_folders: HashSet<(u32, u32)>,
     /// (account_id, message_id) → fetched body, so reopening a message renders
-    /// instantly with no loading spinner.
-    body_cache: HashMap<(u32, u32), String>,
+    /// instantly with no loading spinner. Byte-bounded: the background prefetch
+    /// feeds this on every folder sync, and unbounded it grew past a gigabyte
+    /// on a long-running session (issue #106) — evicted bodies re-read from the
+    /// SQLite cache in a blink.
+    body_cache: crate::ram_cache::RamCache<String>,
     /// Sender-authentication verdicts, keyed like `body_cache`. Prefetch delivers
     /// these well before a message is opened, and opening one renders from the
     /// in-memory body cache without a worker round-trip — so the verdict has to
@@ -1698,13 +1710,13 @@ impl SimpleComponent for AppModel {
                 b.set_visible(false);
                 b
             },
-            attachment_cache: HashMap::new(),
+            attachment_cache: crate::ram_cache::RamCache::new(ATTACHMENT_CACHE_BUDGET),
             unified: false,
             unified_by_account: HashMap::new(),
             unified_boot_requested: HashSet::new(),
             message_cache: HashMap::new(),
             indexed_folders: HashSet::new(),
-            body_cache: HashMap::new(),
+            body_cache: crate::ram_cache::RamCache::new(BODY_CACHE_BUDGET),
             sender_cache: HashMap::new(),
             pending_draft: None,
             popouts: HashMap::new(),
@@ -2626,7 +2638,7 @@ impl SimpleComponent for AppModel {
                 // out from under the user. `selected` stays None so no sync or
                 // server request is ever aimed at it.
                 self.showing_outbox = true;
-                self.showing_gallery = false;
+                self.leave_gallery();
                 self.showing_contacts = false;
                 self.unified = false;
                 self.selected = None;
@@ -2712,7 +2724,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::OpenAttachmentMessage { account_id, folder_path, uid } => {
-                self.showing_gallery = false;
+                self.leave_gallery();
                 self.showing_contacts = false;
                 self.showing_outbox = false;
                 if let Some(folder) = self
@@ -2730,7 +2742,7 @@ impl SimpleComponent for AppModel {
 
             AppMsg::UnifiedSelected => {
                 self.close_sidebar_peek();
-                self.showing_gallery = false;
+                self.leave_gallery();
                 self.showing_contacts = false;
                 self.showing_outbox = false;
                 self.unified = true;
@@ -4192,7 +4204,7 @@ impl SimpleComponent for AppModel {
                 // slides down over the contact card); from the gallery there is
                 // no slot, so bring the mail panes back first — the composer
                 // would otherwise open invisibly behind the stack.
-                self.showing_gallery = false;
+                self.leave_gallery();
                 let account = self
                     .current
                     .as_ref()
@@ -4220,7 +4232,7 @@ impl SimpleComponent for AppModel {
                 if paths.is_empty() {
                     return;
                 }
-                self.showing_gallery = false;
+                self.leave_gallery();
                 let account = self
                     .current
                     .as_ref()
@@ -4251,7 +4263,7 @@ impl SimpleComponent for AppModel {
                     }
                     ok
                 });
-                self.showing_gallery = false;
+                self.leave_gallery();
                 let account = self
                     .current
                     .as_ref()
@@ -5426,7 +5438,7 @@ impl SimpleComponent for AppModel {
             AppMsg::OpenContacts => {
                 self.close_sidebar_peek();
                 self.showing_outbox = false;
-                self.showing_gallery = false;
+                self.leave_gallery();
                 self.showing_contacts = true;
                 // Read EDS off the UI thread (SQLite + photo decoding); the
                 // page shows its loading face until the list lands.
@@ -6804,11 +6816,22 @@ impl AppModel {
         window.present();
     }
 
+    /// Leave the attachments gallery, dropping its data. The gallery loads
+    /// every item's bytes eagerly (up to 300 × 6 MiB per account) and reloads
+    /// from scratch on each visit anyway, so keeping two copies of that around
+    /// for the rest of the session bought nothing but memory (issue #106).
+    fn leave_gallery(&mut self) {
+        if std::mem::take(&mut self.showing_gallery) {
+            self.gallery_by_account.clear();
+            self.gallery.emit(GalleryInput::SetItems(Vec::new()));
+        }
+    }
+
     /// Switch the message list to a folder: reset the view, show its cached
     /// messages instantly (if any), and kick off a background sync. Shared by the
     /// sidebar selection and the "open message from notification" flow.
     fn select_folder(&mut self, account_id: u32, folder_id: u32, _name: String, path: String) {
-        self.showing_gallery = false;
+        self.leave_gallery();
         self.showing_contacts = false;
         self.showing_outbox = false;
         // Mirror the selection in the sidebar. Navigation that starts in the
