@@ -2,6 +2,34 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.19.1-beta.1
+
+The beta channel catches up with stable 1.19.0: everything in the next section. No beta-only changes.
+
+## What's new in 1.19.0
+
+The 1.19 feature release, built with the community: mail filters (#47, requested by @mfreeman72), settings backup (#50, @doodoobug-dot), notification actions (#38, @isorropisths), split replies (#86, @yioannides), quick filters (#97, @Toxblh), the read-marking and search work (#100 through #103, @p-mitana), and the Nautilus From-field fix (#105, @frenchy82). Everything below was previewed and refined through the 1.19.0 betas.
+
+**A welcome on first run.** A brand-new install opens with a five-step guided setup: add an account with one-click GNOME Online Accounts imports or a manual IMAP form with provider presets and a live connection test, then pick privacy choices and popular defaults.
+
+**Mail filters (#47).** File inbox arrivals into folders by sender, subject or recipient, per account, on the Accounts tab. Mail that arrived while Vireo was closed is filed on the next sync, and filed mail still raises the new-mail notification, which opens the folder the message went to.
+
+**Settings backup (#50).** Export every configuration file as one TOML bundle (passwords stay in the keyring, never exported); import replaces the config in place and offers a self-restart.
+
+**Notification actions (#38).** Single-message new-mail notifications carry Mark as Read and Archive buttons that act without raising the window.
+
+**Split replies (#86).** Reply, Reply All and Forward slide a compact composer down from the reader's top with the conversation still visible and interactive below it, scrolled to the card being answered.
+
+**Search, twice over (#102, #103).** The message list's search bar hides behind a header button (or Ctrl+F, or /), and the reader gains find-in-message with pill highlights, a live match counter and arrows.
+
+**Quick filters (#97).** Unread-only and starred-only toggles sit beside the sort menu and compose with each other.
+
+**Reading, rebuilt (#100, #101).** Messages mark themselves read as they come into view, governed by a new Reading policy setting (when displayed, after two seconds, or manually), and threads open on the first unread message. Conversation rows surface their newest message in the list, a thread's star now stars the whole conversation, and a row's context menu can mark the entire thread read or unread.
+
+**Console mode.** A live verbose log opens from the status bar for troubleshooting, with WebKit's JS console piped into the same view.
+
+Also: settings reorganized (Filters, Allowed Senders and the Blacklist on the Accounts tab), the About window rebuilt around the wordmark, single messages render as cards by default on new installs, cold-start composers from Nautilus's "Send by email" keep their From field (#105), and avatarless rows align cleanly again (#99).
+
 ## What's new in 1.19.0-beta.3
 
 Fixes from beta feedback. Mail filed by a filter now counts as new mail: the notification fires for it, and when the newest arrival was filed away, clicking the notification opens the folder it went to (#47). Also: cancelling a split reply no longer leaves the reply-target outline behind, the compose body editor matches the address fields' card styling, and new installs render single messages as cards by default.

@@ -56,6 +56,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.19.0" date="2026-09-01">
+
+      <description><p>First-run welcome wizard, per-account mail filters, settings backup and restore, notification action buttons, split replies, collapsible search plus find-in-message, unread and starred quick filters, viewport-based read marking with a reading policy, conversation-level starring, and threads surfacing their newest message.</p></description>
+
+    </release>
     <release version="1.18.4" date="2026-08-30">
 
       <description><p>Composer attachment pills shrink to their content, and files opened with Vireo from a file manager or the command line attach to a fresh composer.</p></description>
