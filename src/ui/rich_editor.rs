@@ -15,7 +15,11 @@ pub struct RichEditor {
 
 impl RichEditor {
     pub fn new(initial_html: &str) -> Self {
-        let webview = webkit6::WebView::new();
+        // The shared document-viewer context (issue #106): a default-context
+        // view would bring up a second web process with browser-sized caches.
+        let webview = webkit6::WebView::builder()
+            .web_context(&super::message_view::shared_web_context())
+            .build();
         let settings = webkit6::Settings::new();
         settings.set_enable_javascript(true);
         settings.set_enable_developer_extras(false);

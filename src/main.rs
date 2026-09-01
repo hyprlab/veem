@@ -18,6 +18,7 @@ mod notify;
 mod oauth;
 mod platform;
 mod power;
+mod ram_cache;
 mod rng;
 mod ui;
 mod verify;
