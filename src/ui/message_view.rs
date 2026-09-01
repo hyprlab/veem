@@ -3342,6 +3342,67 @@ fn rewrite_tag_attrs(tag: &str) -> String {
     out
 }
 
+/// Pin every `prefers-color-scheme` media query in the document to the ground
+/// the reader actually chose, rather than the OS setting WebKit reads.
+///
+/// The reader sets each message's ground itself (a light card, or a dark one
+/// via [`adapt_colors_for_dark`]) and injects a `color-scheme` to match. But
+/// `@media (prefers-color-scheme: dark)` inside the sandboxed frame is evaluated
+/// against the *desktop's* preference, which our injected value does not change.
+/// So an email that ships its own dark rules — a Google Calendar invite forcing
+/// `color:#9aa0a6 !important` under `prefers-color-scheme: dark`, say — paints
+/// that light-grey text onto our white card whenever the desktop is in dark mode
+/// but the message is shown light (a light message theme, or a mismatch between
+/// the app's and the desktop's schemes). The result is near-invisible grey on
+/// white, and the mirror case (light rules on our dark ground) is just as bad.
+///
+/// Rewriting the media *feature* to a width test that is always or never true —
+/// keeping any surrounding `only screen and …` intact — makes the email's own
+/// light/dark rules follow our ground deterministically. `999999px` stands in
+/// for "never" (no message is a million pixels wide) and `0px` for "always".
+fn pin_color_scheme(doc: &str, dark: bool) -> String {
+    // (feature we're neutralising, replacement that matches iff we chose it)
+    let (dark_repl, light_repl) = if dark {
+        ("min-width:0px", "min-width:999999px")
+    } else {
+        ("min-width:999999px", "min-width:0px")
+    };
+    let mut out = String::with_capacity(doc.len());
+    let lower = doc.to_ascii_lowercase();
+    let needle = "prefers-color-scheme";
+    let mut i = 0;
+    while let Some(rel) = lower[i..].find(needle) {
+        let start = i + rel;
+        // Parse `prefers-color-scheme` [ws] `:` [ws] (`dark`|`light`).
+        let after = start + needle.len();
+        let rest = lower[after..].trim_start();
+        let ws = lower[after..].len() - rest.len();
+        if let Some(colon) = rest.strip_prefix(':') {
+            let val = colon.trim_start();
+            let vws = colon.len() - val.len();
+            let repl = if val.starts_with("dark") {
+                Some((4usize, dark_repl))
+            } else if val.starts_with("light") {
+                Some((5usize, light_repl))
+            } else {
+                None
+            };
+            if let Some((vlen, replacement)) = repl {
+                out.push_str(&doc[i..start]);
+                out.push_str(replacement);
+                // Skip the original `prefers-color-scheme : <value>` span.
+                i = after + ws + 1 + vws + vlen;
+                continue;
+            }
+        }
+        // Not a real prefers-color-scheme:<value> — keep it verbatim and move on.
+        out.push_str(&doc[i..after]);
+        i = after;
+    }
+    out.push_str(&doc[i..]);
+    out
+}
+
 /// The whole-document pass: `<style>` blocks through the CSS rewriter, every
 /// other tag through the attribute rewriter, text content untouched. Tag ends
 /// are found quote-aware, since `>` inside attribute values is legal HTML.
@@ -3762,6 +3823,11 @@ fn message_frame(body: &str, restrict: bool, dark: bool, key: (u32, u32), height
     // that sets explicit dark text without a background needs its colours
     // transformed, and the sandboxed frames run no JS to do it live.
     let doc = if dark { adapt_colors_for_dark(&doc) } else { doc };
+    // Make the email's own light/dark rules follow the ground we chose rather
+    // than the desktop's preference (see `pin_color_scheme`). Runs after the
+    // dark adaptation so a message's hand-authored dark palette is used as-is,
+    // not double-transformed.
+    let doc = pin_color_scheme(&doc, dark);
     let doc = inject_csp(&doc, !restrict, dark);
     format!(
         // `allow-same-origin` lets our wrapper script measure the frame height;
@@ -4134,6 +4200,33 @@ mod tests {
         assert!(out.contains("p{color:#ffffff}"), "{out}");
         assert!(out.contains(".x{background:#141414}"), "{out}");
         assert!(out.contains("@media screen"), "{out}");
+    }
+
+    /// A light render must never let an email's `prefers-color-scheme: dark`
+    /// rules fire — that is the light-grey-on-white bug. A dark render wants
+    /// the reverse: dark rules on, light rules off. The surrounding query
+    /// (`only screen and …`) and the declarations inside must survive.
+    #[test]
+    fn color_scheme_queries_follow_the_chosen_ground() {
+        let css = "@media only screen and (prefers-color-scheme: dark){.a{color:#9aa0a6}}\
+                   @media (prefers-color-scheme:light){.b{color:#000}}";
+        let light = pin_color_scheme(css, false);
+        assert!(light.contains("only screen and (min-width:999999px){.a"), "dark off: {light}");
+        assert!(light.contains("(min-width:0px){.b"), "light on: {light}");
+
+        let dark = pin_color_scheme(css, true);
+        assert!(dark.contains("(min-width:0px){.a"), "dark on: {dark}");
+        assert!(dark.contains("(min-width:999999px){.b"), "light off: {dark}");
+    }
+
+    /// The rewrite keys off the real media feature, not the substring: a class
+    /// or text that merely contains the words is left alone.
+    #[test]
+    fn color_scheme_rewrite_ignores_non_feature_text() {
+        let doc = "<p>we support prefers-color-scheme detection</p>";
+        assert_eq!(pin_color_scheme(doc, false), doc);
+        let cls = "<div class=\"prefers-color-scheme-badge\">x</div>";
+        assert_eq!(pin_color_scheme(cls, true), cls);
     }
 
     /// A data: URL inside a background shorthand contains semicolons and
