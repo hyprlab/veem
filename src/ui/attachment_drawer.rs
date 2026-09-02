@@ -520,10 +520,10 @@ impl SimpleComponent for AttachmentDrawer {
             }
             AttachmentDrawerInput::PillDrag { want } => {
                 if self.collapsed {
-                    // A pull upward past a small threshold snaps the drawer
-                    // out to the height it last had. The rest of the gesture
-                    // is ignored — see `pill_snapped`.
-                    if !self.pill_snapped && self.paned.position() - want > 8 {
+                    // Any drag at all — a few pixels, either direction —
+                    // snaps the drawer out to the height it last had. The
+                    // rest of the gesture is ignored — see `pill_snapped`.
+                    if !self.pill_snapped && (self.paned.position() - want).abs() >= 2 {
                         self.pill_snapped = true;
                         self.collapsed = false;
                         self.apply_position();
