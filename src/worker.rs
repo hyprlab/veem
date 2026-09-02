@@ -2441,7 +2441,21 @@ fn extract_attachments(raw: &[u8]) -> Vec<crate::models::Attachment> {
     for (i, part) in parsed.attachments().enumerate() {
         // Decoration referenced from the body (a `cid:` logo) is rendered in
         // place, not listed — unless it's big enough to be real content.
-        if part.content_id().is_some() && part.contents().len() < INLINE_ATTACHMENT_MIN {
+        //
+        // A part the sender marked `Content-Disposition: attachment` is never
+        // decoration, however small. Gmail's composer stamps a Content-ID
+        // (`<f_…>`) on every file it uploads, so the size test alone silently
+        // dropped real attachments under 64 KiB: a message with two small PDFs
+        // and one large font file listed only the font. `structure_has_attachment`
+        // already tests disposition first, which is why such mail showed a
+        // paperclip and then an incomplete list — the two disagreed.
+        let declared_attachment = part
+            .content_disposition()
+            .is_some_and(|d| d.is_attachment());
+        if !declared_attachment
+            && part.content_id().is_some()
+            && part.contents().len() < INLINE_ATTACHMENT_MIN
+        {
             continue;
         }
         let name = part
@@ -8543,6 +8557,50 @@ mod tests {
     fn small_cid_image_is_still_only_decoration() {
         let raw = cid_mail_with_image_of(INLINE_ATTACHMENT_MIN - 1);
         assert!(extract_attachments(raw.as_bytes()).is_empty());
+    }
+
+    /// A message in the shape Gmail's composer sends: every uploaded file is
+    /// marked `Content-Disposition: attachment` *and* stamped with an `<f_…>`
+    /// Content-ID, whatever its size.
+    fn gmail_mail_with_files(files: &[(&str, &str, usize)]) -> String {
+        let mut raw = String::from("Content-Type: multipart/mixed; boundary=M\r\n");
+        raw.push_str("Subject: files\r\n\r\n");
+        raw.push_str("--M\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n");
+        raw.push_str("Body text.\r\n");
+        for (i, (name, ctype, bytes)) in files.iter().enumerate() {
+            raw.push_str("--M\r\n");
+            raw.push_str(&format!("Content-Type: {ctype}; name=\"{name}\"\r\n"));
+            raw.push_str(&format!(
+                "Content-Disposition: attachment; filename=\"{name}\"\r\n"
+            ));
+            raw.push_str("Content-Transfer-Encoding: base64\r\n");
+            raw.push_str(&format!("Content-ID: <f_a1b2c3d4{i}>\r\n\r\n"));
+            raw.push_str(&crate::oauth::base64_encode(&vec![0u8; *bytes]));
+            raw.push_str("\r\n");
+        }
+        raw.push_str("--M--\r\n");
+        raw
+    }
+
+    /// Two small files and one large one are sent together; only the large one
+    /// came back, because the small parts carried a Content-ID. A part the sender
+    /// declared an attachment is never decoration, however small.
+    #[test]
+    fn small_declared_attachments_survive_their_content_id() {
+        let raw = gmail_mail_with_files(&[
+            ("first.pdf", "application/pdf", 16_384),
+            ("second.pdf", "application/pdf", 40_960),
+            ("large.bin", "application/octet-stream", INLINE_ATTACHMENT_MIN + 1),
+        ]);
+        let found = extract_attachments(raw.as_bytes());
+        let names: Vec<&str> = found.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["first.pdf", "second.pdf", "large.bin"],
+            "found: {names:?}"
+        );
+        assert_eq!(found[0].data.len(), 16_384);
+        assert_eq!(found[1].data.len(), 40_960);
     }
 
     #[test]
