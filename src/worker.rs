@@ -4350,6 +4350,8 @@ fn summary_from_headers(account_id: u32, fetch: &Fetch, folder_id: u32) -> Messa
         .unwrap_or_else(|| internal_date_summary(fetch));
     let to = parsed.as_ref().map(|p| mp_list(p.to())).unwrap_or_default();
     let cc = parsed.as_ref().map(|p| mp_list(p.cc())).unwrap_or_default();
+    let reply_to = parsed.as_ref().map(|p| mp_list(p.reply_to())).unwrap_or_default();
+    let reply_to = if reply_to.eq_ignore_ascii_case(&from_addr) { String::new() } else { reply_to };
 
     // Best-effort attachment hint from the top-level Content-Type (BODYSTRUCTURE
     // isn't available on this path). multipart/mixed is the usual attachment case.
@@ -4374,6 +4376,7 @@ fn summary_from_headers(account_id: u32, fetch: &Fetch, folder_id: u32) -> Messa
         uid,
         from_name,
         from_addr,
+        reply_to,
         to,
         cc,
         subject,
@@ -4896,6 +4899,11 @@ fn build_summary(account_id: u32, fetch: &Fetch, folder_id: u32) -> Message {
         .unwrap_or_else(|| internal_date_summary(fetch));
     let to = address_list(env.and_then(|e| e.to.as_ref()));
     let cc = address_list(env.and_then(|e| e.cc.as_ref()));
+    // Where the sender asked replies to go. Servers echo From here when the
+    // header is absent; storing that echo would be noise, so keep it only
+    // when it actually differs.
+    let reply_to = address_list(env.and_then(|e| e.reply_to.as_ref()));
+    let reply_to = if reply_to.eq_ignore_ascii_case(&from_addr) { String::new() } else { reply_to };
 
     let has_attachment = fetch
         .bodystructure()
@@ -4923,6 +4931,7 @@ fn build_summary(account_id: u32, fetch: &Fetch, folder_id: u32) -> Message {
         uid,
         from_name,
         from_addr,
+        reply_to,
         to,
         cc,
         subject,
@@ -5250,6 +5259,8 @@ fn summary_from_raw(account_id: u32, folder_id: u32, uid: u32, raw: &[u8]) -> Me
     };
     let to = addr_list(parsed.as_ref().and_then(|p| p.to()));
     let cc = addr_list(parsed.as_ref().and_then(|p| p.cc()));
+    let reply_to = addr_list(parsed.as_ref().and_then(|p| p.reply_to()));
+    let reply_to = if reply_to.eq_ignore_ascii_case(&from_addr) { String::new() } else { reply_to };
     let has_attachment = parsed.as_ref().map(|p| p.attachment_count() > 0).unwrap_or(false);
     let (message_id, references) = mp_thread_ids(parsed.as_ref());
 
@@ -5260,6 +5271,7 @@ fn summary_from_raw(account_id: u32, folder_id: u32, uid: u32, raw: &[u8]) -> Me
         uid,
         from_name,
         from_addr,
+        reply_to,
         to,
         cc,
         subject,
@@ -6572,13 +6584,18 @@ fn graph_message(v: &serde_json::Value, account_id: u32, folder_id: u32) -> Opti
         .chars()
         .take(200)
         .collect();
+    let from_addr = v["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string();
+    let reply_to = graph_addrs(&v["replyTo"]);
+    let reply_to =
+        if reply_to.eq_ignore_ascii_case(&from_addr) { String::new() } else { reply_to };
     let msg = Message {
         id: uid,
         account_id,
         folder_id,
         uid,
         from_name: v["from"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
-        from_addr: v["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
+        from_addr,
+        reply_to,
         to: graph_addrs(&v["toRecipients"]),
         cc: graph_addrs(&v["ccRecipients"]),
         subject: v["subject"].as_str().unwrap_or("").to_string(),
@@ -6599,8 +6616,8 @@ fn graph_message(v: &serde_json::Value, account_id: u32, folder_id: u32) -> Opti
 }
 
 const GRAPH_MSG_SELECT: &str = "$select=id,internetMessageId,conversationId,subject,bodyPreview,\
-                                from,toRecipients,ccRecipients,receivedDateTime,isRead,flag,\
-                                hasAttachments";
+                                from,replyTo,toRecipients,ccRecipients,receivedDateTime,isRead,\
+                                flag,hasAttachments";
 
 /// List a folder's newest summaries (newest first).
 fn graph_list_messages(

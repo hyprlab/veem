@@ -155,6 +155,7 @@ fn build(s: &Spec) -> Message {
         timestamp: 1_760_000_000 - (s.id as i64) * 3600,
         from_name: s.from_name.into(),
         from_addr: s.from_addr.into(),
+        reply_to: String::new(),
         to: s.to.into(),
         cc: String::new(),
         subject: s.subject.into(),

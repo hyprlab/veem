@@ -3675,6 +3675,7 @@ mod tests {
             uid: id,
             from_name: "X".into(),
             from_addr: "x@example.com".into(),
+            reply_to: String::new(),
             to: String::new(),
             cc: String::new(),
             subject: "S".into(),

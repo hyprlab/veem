@@ -4288,6 +4288,7 @@ mod tests {
             uid: 1,
             from_name: "Ada Lovelace".into(),
             from_addr: "ada@example.com".into(),
+            reply_to: String::new(),
             to: "me@example.com".into(),
             cc: "carol@example.com".into(),
             subject: "Quarterly numbers".into(),

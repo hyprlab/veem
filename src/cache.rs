@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS messages (
     message_id     TEXT    NOT NULL DEFAULT '',
     references_    TEXT    NOT NULL DEFAULT '',
     preview        TEXT    NOT NULL DEFAULT '',
+    reply_to       TEXT    NOT NULL DEFAULT '',
     PRIMARY KEY (account_id, folder_path, uid)
 );
 CREATE TABLE IF NOT EXISTS bodies (
@@ -221,6 +222,11 @@ impl Cache {
         // dropping the index, which would cost every user a full re-sync; the
         // error when it is already there is the expected outcome, not a problem.
         let _ = conn.execute("ALTER TABLE messages ADD COLUMN preview TEXT NOT NULL DEFAULT ''", []);
+        // Same in-place treatment for `reply_to` (added later still): existing
+        // rows carry an empty value until their folder's recent window
+        // re-syncs, and Reply falls back to the sender until then.
+        let _ =
+            conn.execute("ALTER TABLE messages ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''", []);
         // Previews cached by a build that showed MIME machinery or a tracking
         // link instead of the message: a multipart's boundary ("--b2=_cipk…") or
         // the rendered link a marketing mail opens with ("( https://…"). Clearing
@@ -339,7 +345,7 @@ impl Cache {
     pub fn load_messages(&self, account_id: u32, folder_path: &str, folder_id: u32) -> Vec<Message> {
         let run = || -> rusqlite::Result<Vec<Message>> {
             let mut stmt = self.conn.prepare(
-                "SELECT uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, preview
+                "SELECT uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, preview, reply_to
                  FROM messages WHERE account_id = ?1 AND folder_path = ?2 ORDER BY uid DESC",
             )?;
             let rows = stmt.query_map(params![account_id, folder_path], |row| {
@@ -351,6 +357,7 @@ impl Cache {
                     uid,
                     from_name: row.get(1)?,
                     from_addr: row.get(2)?,
+                    reply_to: row.get(14)?,
                     to: row.get(9)?,
                     cc: row.get(10)?,
                     subject: row.get(3)?,
@@ -425,12 +432,12 @@ impl Cache {
             for m in messages {
                 tx.execute(
                     "INSERT INTO messages
-                     (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                     (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, reply_to)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                     params![
                         account_id, folder_path, m.uid, m.from_name, m.from_addr, m.subject,
                         m.date, m.timestamp, m.unread, m.starred, m.has_attachment, m.to, m.cc,
-                        m.message_id, m.references
+                        m.message_id, m.references, m.reply_to
                     ],
                 )?;
             }
@@ -454,8 +461,8 @@ impl Cache {
                 // lost its preview.
                 tx.execute(
                     "INSERT INTO messages
-                     (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, preview)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                     (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, preview, reply_to)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
                      ON CONFLICT(account_id, folder_path, uid) DO UPDATE SET
                        from_name = excluded.from_name,
                        from_addr = excluded.from_addr,
@@ -469,11 +476,12 @@ impl Cache {
                        cc = excluded.cc,
                        message_id = excluded.message_id,
                        references_ = excluded.references_,
-                       preview = CASE WHEN excluded.preview = '' THEN messages.preview ELSE excluded.preview END",
+                       preview = CASE WHEN excluded.preview = '' THEN messages.preview ELSE excluded.preview END,
+                       reply_to = excluded.reply_to",
                     params![
                         account_id, folder_path, m.uid, m.from_name, m.from_addr, m.subject,
                         m.date, m.timestamp, m.unread, m.starred, m.has_attachment, m.to, m.cc,
-                        m.message_id, m.references, m.preview
+                        m.message_id, m.references, m.preview, m.reply_to
                     ],
                 )?;
             }
@@ -532,7 +540,7 @@ impl Cache {
             .collect::<Vec<_>>()
             .join(" OR ");
         let sql = format!(
-            "SELECT folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred,                     has_attachment, recipients, cc, message_id, references_, preview              FROM messages              WHERE account_id = ?{account} AND (message_id IN ({in_list}) OR {refs_match})              ORDER BY ts DESC LIMIT ?{limit}",
+            "SELECT folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred,                     has_attachment, recipients, cc, message_id, references_, preview, reply_to              FROM messages             WHERE account_id = ?{account} AND (message_id IN ({in_list}) OR {refs_match})              ORDER BY ts DESC LIMIT ?{limit}",
             account = ids.len() * 2 + 1,
             limit = ids.len() * 2 + 2,
             in_list = slots(0),
@@ -562,6 +570,7 @@ impl Cache {
                         uid,
                         from_name: row.get(2)?,
                         from_addr: row.get(3)?,
+                        reply_to: row.get(15)?,
                         to: row.get(10)?,
                         cc: row.get(11)?,
                         subject: row.get(4)?,

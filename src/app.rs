@@ -10270,7 +10270,10 @@ fn reply_prefill(m: &Message) -> ComposePrefill {
     let text = message_text(&m.body);
     let attribution = format!("On {}, {} wrote:", m.date, m.from_name);
     ComposePrefill {
-        to: m.from_addr.clone(),
+        // A Reply-To header is the sender saying "answer me here instead" —
+        // a mailing list, a no-reply address with a monitored counterpart. It
+        // wins over the From address whenever it is present.
+        to: if m.reply_to.is_empty() { m.from_addr.clone() } else { m.reply_to.clone() },
         cc: String::new(),
         subject,
         // Who the original went to, so a mail addressed to one of the
@@ -10303,12 +10306,15 @@ fn reply_all_prefill(m: &Message, self_email: &str) -> ComposePrefill {
     let mut prefill = reply_prefill(m);
     let self_l = self_email.to_lowercase();
     let from_l = m.from_addr.to_lowercase();
+    // Whoever is already in To (the Reply-To address when one exists) must not
+    // be repeated in Cc.
+    let to_l = prefill.to.to_lowercase();
     let mut cc: Vec<String> = Vec::new();
     for list in [m.to.as_str(), m.cc.as_str()] {
         for addr in list.split(',') {
             let a = addr.trim();
             let al = a.to_lowercase();
-            if a.is_empty() || al == self_l || al == from_l {
+            if a.is_empty() || al == self_l || al == from_l || to_l.contains(&al) {
                 continue;
             }
             if !cc.iter().any(|x| x.eq_ignore_ascii_case(a)) {
@@ -10746,6 +10752,7 @@ mod tests {
             uid,
             from_name: String::new(),
             from_addr: String::new(),
+            reply_to: String::new(),
             to: String::new(),
             cc: String::new(),
             subject: String::new(),
@@ -10971,6 +10978,7 @@ mod tests {
             uid,
             from_name: String::new(),
             from_addr: String::new(),
+            reply_to: String::new(),
             to: String::new(),
             cc: String::new(),
             subject: String::new(),
@@ -10984,6 +10992,31 @@ mod tests {
             message_id: String::new(),
             references: String::new(),
         }
+    }
+
+    /// A sender's Reply-To wins over their From address, and Reply All must
+    /// not smuggle the sender back in through Cc.
+    #[test]
+    fn reply_goes_where_the_sender_asked() {
+        let mut m = msg(1, 1, 10);
+        m.from_addr = "no-reply@list.example".into();
+        m.reply_to = "editor@example.com".into();
+        m.to = "me@example.com, other@example.com".into();
+
+        let r = reply_prefill(&m);
+        assert_eq!(r.to, "editor@example.com");
+
+        let ra = reply_all_prefill(&m, "me@example.com");
+        assert_eq!(ra.to, "editor@example.com");
+        assert_eq!(ra.cc, "other@example.com", "no sender, no self, no repeat of To");
+    }
+
+    /// Without a Reply-To the sender's own address is still the reply target.
+    #[test]
+    fn reply_falls_back_to_the_sender() {
+        let mut m = msg(1, 1, 10);
+        m.from_addr = "ada@example.com".into();
+        assert_eq!(reply_prefill(&m).to, "ada@example.com");
     }
 
     #[test]
