@@ -56,6 +56,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.19.2" date="2026-09-02">
+
+      <description><p>Emails that carry their own dark-mode styling, like Google Calendar invitations, now follow the background the message is shown on instead of the desktop's light/dark setting, fixing light-grey text on a white card.</p></description>
+
+    </release>
     <release version="1.19.1" date="2026-09-01">
 
       <description><p>Memory-use fixes for long-running sessions: the web renderer runs with a document-viewer cache model and a memory ceiling, and the body, attachment, logo and gallery caches are bounded, so a long day of reading stays in the hundreds of MB.</p></description>

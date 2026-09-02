@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.19.3-beta.1" date="2026-09-02" type="development">
+
+      <description><p>Catch-up release: the beta matches stable 1.19.2 and its dark-mode email fix. No beta-only changes.</p></description>
+
+    </release>
     <release version="1.19.2-beta.1" date="2026-09-01" type="development">
 
       <description><p>Catch-up release: the beta matches stable 1.19.1 and its memory-use fixes. No beta-only changes.</p></description>
