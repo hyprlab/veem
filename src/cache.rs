@@ -907,7 +907,24 @@ impl Cache {
     }
 
     /// Whether a message's attachments have already been fetched/checked.
+    ///
+    /// Gmail shows one message under every label it carries, so the same mail
+    /// arrives as INBOX + a label + All Mail. [`load_attachments`] already reads
+    /// across those copies; without the same reach here the prefetch treats each
+    /// label as unfetched and downloads the message once per label, storing a
+    /// full second and third copy of blobs it can already answer from.
+    ///
+    /// [`load_attachments`]: Self::load_attachments
     pub fn attachments_checked(&self, account_id: u32, folder_path: &str, uid: u32) -> bool {
+        if self.checked_of(account_id, folder_path, uid) {
+            return true;
+        }
+        self.sibling_copies(account_id, folder_path, uid)
+            .into_iter()
+            .any(|(p, u)| self.checked_of(account_id, &p, u))
+    }
+
+    fn checked_of(&self, account_id: u32, folder_path: &str, uid: u32) -> bool {
         self.conn
             .query_row(
                 "SELECT 1 FROM attachments_checked WHERE account_id = ?1 AND folder_path = ?2 AND uid = ?3",
@@ -1521,6 +1538,30 @@ mod tests {
         let found = c.load_attachments(1, "INBOX", 42);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "spec.pdf");
+    }
+
+    /// One message under two labels is one download, not two. `load_attachments`
+    /// already answers for every label from whichever copy was fetched, so
+    /// fetching the others only stores the same blobs again.
+    #[test]
+    fn attachments_fetched_under_one_label_count_as_fetched_for_the_others() {
+        let c = Cache::in_memory();
+        add_threaded(&c, "INBOX", 42, 500, "same@x", "");
+        add_threaded(&c, "Work", 7, 500, "same@x", "");
+        c.mark_attachments_checked(1, "Work", 7);
+
+        assert!(c.attachments_checked(1, "INBOX", 42));
+    }
+
+    /// The reach stops at the message: an unrelated mail is still unfetched.
+    #[test]
+    fn another_message_being_fetched_does_not_count_as_this_one() {
+        let c = Cache::in_memory();
+        add_threaded(&c, "INBOX", 42, 500, "mine@x", "");
+        add_threaded(&c, "Work", 7, 500, "someone-else@x", "");
+        c.mark_attachments_checked(1, "Work", 7);
+
+        assert!(!c.attachments_checked(1, "INBOX", 42));
     }
 
     /// Two different messages must never answer for each other — the fallback
