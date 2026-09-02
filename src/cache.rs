@@ -114,7 +114,11 @@ CREATE TABLE IF NOT EXISTS attachments_checked (
 /// v12: plain-text bodies no longer bake `padding:16px` into the cached
 /// document — the reader injects the default inset at render time — so cached
 /// bodies carrying the old baked padding must be dropped and re-rendered.
-const SCHEMA_VERSION: i64 = 12;
+/// v13: builds before the declared-attachment exemption dropped small files a
+/// web-Gmail sender attached, and stored one blob copy per Gmail label. The
+/// checked table remembers those messages as done, so the wrong lists would
+/// survive forever — drop both tables and let attachments re-fetch on demand.
+const SCHEMA_VERSION: i64 = 13;
 
 /// Most Message-IDs one cross-folder conversation lookup matches against. A
 /// thread's ancestry is short in practice, and the references half of that query
@@ -200,6 +204,16 @@ impl Cache {
             // next open. The message index is kept: it's expensive to rebuild.
             let _ = conn
                 .execute_batch("DROP TABLE IF EXISTS bodies; DROP TABLE IF EXISTS sender_checks;");
+            // Attachment lists cached by builds before v13 are wrong in place
+            // (small declared files missing, blobs duplicated per Gmail label),
+            // and `attachments_checked` would keep them from ever re-fetching.
+            // The re-fetch is bounded: the prefetch re-touches only the newest
+            // messages per folder, the rest heal lazily on open.
+            if version < 13 {
+                let _ = conn.execute_batch(
+                    "DROP TABLE IF EXISTS attachments; DROP TABLE IF EXISTS attachments_checked;",
+                );
+            }
         }
         conn.execute_batch(SCHEMA)?;
         // `messages` predates the preview column, and `CREATE TABLE IF NOT
