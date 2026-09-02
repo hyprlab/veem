@@ -7523,6 +7523,12 @@ impl AppModel {
             want.clamp(220, (split.height() - 200).max(220))
         });
         pill.set_valign(gtk::Align::End);
+        // Bias the centred bar 4px downward inside its hit zone (a top margin
+        // shifts the centring by half its size): 4px more air between the
+        // editor card and the bar, matching the attachment drawer's spacing.
+        if let Some(bar) = pill.first_child() {
+            bar.set_margin_top(8);
+        }
         pill
     }
 
