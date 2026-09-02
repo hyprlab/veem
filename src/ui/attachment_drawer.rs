@@ -101,7 +101,8 @@ pub struct AttachmentDrawer {
     paned: gtk::Paned,
     /// The visible resize affordance: the shared grab pill floated just above
     /// the seam (over the reader's bottom edge), like the split reply's.
-    /// Shown only while there is an expanded drawer to resize.
+    /// Shown whenever the drawer is — expanded it resizes live, collapsed a
+    /// pull upward snaps the drawer out to its remembered height.
     pill: gtk::Box,
     /// True while we set the Paned position programmatically, so the resulting
     /// position-notify isn't mistaken for a user drag.
@@ -111,6 +112,10 @@ pub struct AttachmentDrawer {
     /// Debounces persisting the dragged height: position-notify fires for
     /// every pixel of a drag, and each save is a config write.
     height_save: Rc<std::cell::RefCell<Option<glib::SourceId>>>,
+    /// Set once a pill drag has snapped the collapsed drawer open; the rest
+    /// of that gesture is swallowed (its offsets are measured from the
+    /// collapsed seam and would yank the divider right back).
+    pill_snapped: bool,
 }
 
 /// What the drawer asks the app to do.
@@ -147,6 +152,10 @@ pub enum AttachmentDrawerInput {
     SaveAll,
     /// Right-click at (x, y) within the cell.
     ContextMenu { index: usize, x: f64, y: f64 },
+    /// A drag on the grab pill is starting.
+    PillDragBegin,
+    /// The grab pill was dragged to this candidate divider position.
+    PillDrag { want: i32 },
 }
 
 #[relm4::component(pub)]
@@ -373,12 +382,23 @@ impl SimpleComponent for AttachmentDrawer {
 
         // The grab pill floats just above the seam, over the reader's bottom
         // edge — the same affordance, in the same place, as the split reply's.
-        // The Paned's own bounds do the clamping (the drawer can't shrink
-        // below its minimum, the reader can).
-        let pill = crate::ui::grab_pill::paned_grab_pill(&root, |_, want| want.max(0));
+        // Its drag routes through update(), which knows the collapsed state:
+        // expanded it moves the divider live, collapsed a pull upward snaps
+        // the drawer out to its remembered height.
+        let pill = crate::ui::grab_pill::pill_widget();
         pill.set_valign(gtk::Align::End);
         pill.set_margin_bottom(4);
-        pill.set_visible(false); // nothing to resize until attachments arrive
+        pill.set_visible(false); // no seam until attachments arrive
+        {
+            let s = sender.clone();
+            let s2 = sender.clone();
+            crate::ui::grab_pill::attach_drag(
+                &pill,
+                &root,
+                move |_| s.input(AttachmentDrawerInput::PillDragBegin),
+                move |want| s2.input(AttachmentDrawerInput::PillDrag { want }),
+            );
+        }
 
         let model = AttachmentDrawer {
             items: Vec::new(),
@@ -395,6 +415,7 @@ impl SimpleComponent for AttachmentDrawer {
             adjusting: Rc::new(Cell::new(false)),
             positioned: Rc::new(Cell::new(false)),
             height_save: Rc::new(std::cell::RefCell::new(None)),
+            pill_snapped: false,
         };
 
         let widgets = view_output!();
@@ -494,6 +515,28 @@ impl SimpleComponent for AttachmentDrawer {
             AttachmentDrawerInput::ContextMenu { index, x, y } => {
                 self.show_context_menu(index, x, y, &sender);
             }
+            AttachmentDrawerInput::PillDragBegin => {
+                self.pill_snapped = false;
+            }
+            AttachmentDrawerInput::PillDrag { want } => {
+                if self.collapsed {
+                    // A pull upward past a small threshold snaps the drawer
+                    // out to the height it last had. The rest of the gesture
+                    // is ignored — see `pill_snapped`.
+                    if !self.pill_snapped && self.paned.position() - want > 8 {
+                        self.pill_snapped = true;
+                        self.collapsed = false;
+                        self.apply_position();
+                        self.set_divider_draggable(true);
+                        config::save_drawer_collapsed(self.collapsed);
+                    }
+                } else if !self.pill_snapped {
+                    // Expanded: the pill moves the divider live, exactly like
+                    // a drag on the (invisible) separator. Position-notify
+                    // records and persists the height as usual.
+                    self.paned.set_position(want.max(0));
+                }
+            }
         }
     }
 }
@@ -504,11 +547,11 @@ impl AttachmentDrawer {
         self.flow.root().and_downcast::<gtk::Window>()
     }
 
-    /// The grab pill shows only while there is an expanded drawer to resize:
-    /// no attachments means no seam, and a collapsed drawer snaps any drag
-    /// straight back.
+    /// The grab pill shows whenever the drawer does — collapsed included,
+    /// where dragging it up snaps the drawer back out. Only a message with
+    /// no attachments (no drawer, no seam) hides it.
     fn update_pill_visibility(&self) {
-        self.pill.set_visible(!self.items.is_empty() && !self.collapsed);
+        self.pill.set_visible(!self.items.is_empty());
     }
 
     /// Natural height of the drawer's header row (the first child of the end
