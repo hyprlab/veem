@@ -148,6 +148,10 @@ pub struct AppModel {
     /// can't push it down over the messages — and its divider is the grab
     /// handle that resizes the panel. Hidden slot = hidden divider.
     reader_split: gtk::Paned,
+    /// The running close animation, if the split reply is currently sliding
+    /// out (see `animate_split_close`) — held so opening a new reply can skip
+    /// it to its end instead of fighting it over the divider.
+    split_close_anim: std::rc::Rc<std::cell::RefCell<Option<adw::TimedAnimation>>>,
     /// Same idea over the contacts view's detail pane: composing from a
     /// contact slides down right there instead of yanking the mail view back.
     contacts_compose_revealer: gtk::Revealer,
@@ -1662,6 +1666,7 @@ impl SimpleComponent for AppModel {
                 r.set_reveal_child(false);
                 r
             },
+            split_close_anim: std::rc::Rc::new(std::cell::RefCell::new(None)),
             reader_split: {
                 let p = gtk::Paned::new(gtk::Orientation::Vertical);
                 // The separator itself is styled invisible — painted the
@@ -7515,6 +7520,52 @@ impl AppModel {
         self.message_view.emit(MessageViewInput::BlurCard);
     }
 
+    /// Slide the split reply up and out the way it slid in, then tear the
+    /// slot down. The Paned allocates the slot by divider position — not by
+    /// the revealer's animated height — so the position is animated to zero
+    /// in step with the revealer's own slide-up, with the slot briefly
+    /// allowed to shrink below the composer's minimum. The teardown at the
+    /// end is skipped if a new reply has taken the slot meanwhile.
+    fn animate_split_close(&self) {
+        let slot = &self.reader_split_top;
+        let Some(wrap) = slot.child() else { return };
+        if slot.is_visible() {
+            config::save_split_reply_height(self.reader_split.position());
+        }
+        // The reply-target outline goes with the composer, as on an
+        // instant teardown.
+        self.message_view.emit(MessageViewInput::BlurCard);
+
+        if let Some(prev) = self.split_close_anim.borrow_mut().take() {
+            prev.skip();
+        }
+        let split = self.reader_split.clone();
+        split.set_shrink_start_child(true);
+        slot.set_reveal_child(false);
+        let from = split.position() as f64;
+        let target = adw::CallbackAnimationTarget::new({
+            let split = split.clone();
+            move |v| split.set_position(v as i32)
+        });
+        let anim = adw::TimedAnimation::new(&split, from, 0.0, 300, target);
+        anim.set_easing(adw::Easing::EaseOutCubic);
+        let slot = slot.clone();
+        let cell = self.split_close_anim.clone();
+        anim.connect_done(move |_| {
+            cell.borrow_mut().take();
+            split.set_shrink_start_child(false);
+            if slot.child().as_ref() == Some(&wrap) {
+                if let Some(w) = wrap.downcast_ref::<gtk::Overlay>() {
+                    w.set_child(None::<&gtk::Widget>);
+                }
+                slot.set_child(None::<&gtk::Widget>);
+                slot.set_visible(false);
+            }
+        });
+        *self.split_close_anim.borrow_mut() = Some(anim.clone());
+        anim.play();
+    }
+
     /// The split reply's grab handle: the shared grab pill, floated at the
     /// panel's bottom edge and bounded like the panel's opening height — a
     /// usable panel, a visible reader.
@@ -7523,11 +7574,11 @@ impl AppModel {
             want.clamp(220, (split.height() - 200).max(220))
         });
         pill.set_valign(gtk::Align::End);
-        // Bias the centred bar 4px downward inside its hit zone (a top margin
-        // shifts the centring by half its size): 4px more air between the
-        // editor card and the bar, matching the attachment drawer's spacing.
+        // Bias the centred bar 6px downward inside its hit zone (a top margin
+        // shifts the centring by half its size): more air between the editor
+        // card and the bar, matching the attachment drawer's spacing.
         if let Some(bar) = pill.first_child() {
-            bar.set_margin_top(8);
+            bar.set_margin_top(12);
         }
         pill
     }
@@ -7561,6 +7612,13 @@ impl AppModel {
             // (the iOS home-indicator look) — the wrapper Overlay floats it
             // over the composer, and dragging it moves the Paned divider,
             // whose own separator is painted invisible.
+            // A still-running close animation would fight the new panel for
+            // the divider: jump it to its end (its teardown sees the slot's
+            // new occupant and stands down).
+            let prev_anim = self.split_close_anim.borrow_mut().take();
+            if let Some(prev) = prev_anim {
+                prev.skip();
+            }
             let slot = &self.reader_split_top;
             widget.set_vexpand(true);
             let wrap = gtk::Overlay::new();
@@ -7610,7 +7668,13 @@ impl AppModel {
                 self.composers.push(ComposeHost { id: r.id, controller: r.controller, window });
             }
             None => {
-                self.clear_compose_slots();
+                // A split reply slides out the way it slid in; the covering
+                // composer is torn down at once as before.
+                if self.reader_split_top.child().is_some() {
+                    self.animate_split_close();
+                } else {
+                    self.clear_compose_slots();
+                }
                 self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 r.controller.emit(ComposeInput::SaveDraftIfDirty);
                 self.draining_composers.push((r.id, r.controller));
@@ -7673,7 +7737,12 @@ impl AppModel {
                     window.destroy();
                 }
                 None => {
-                    self.clear_compose_slots();
+                    // Cancel/send on a split reply: slide it out, not blink it.
+                    if self.reader_split_top.child().is_some() {
+                        self.animate_split_close();
+                    } else {
+                        self.clear_compose_slots();
+                    }
                     self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 }
             }
