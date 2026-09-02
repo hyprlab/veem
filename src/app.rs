@@ -8864,6 +8864,7 @@ impl AppModel {
             "https://github.com/hyprlab/vireo/issues",
         ));
         links.append(&mk_row("Contact — hyprlab@proton.me", "mailto:hyprlab@proton.me"));
+        links.append(&mk_row("Discord — Join the community", "https://discord.gg/YfEJ4b6PFW"));
         links.append(&mk_row("Source Code", "https://github.com/hyprlab/vireo"));
         links.append(&mk_row("License (GNU AGPL v3)", "https://www.gnu.org/licenses/agpl-3.0.html"));
 
