@@ -1173,8 +1173,25 @@ headerbar.reader-toolbar button.image-button {
 .attachment-drawer-header {
   padding: 4px 8px;
 }
-/* Split-reply divider: wide-handle mode (set in code) gets Adwaita's stock
-   grab-handle styling — grip pill included — untouched. */
+/* Split-reply divider: the separator is a flush strip of the composer's own
+   ground (its background-color comes from the runtime theme CSS), so the
+   panel reads as running to its edge with no line across. The visible
+   affordance is the floating .split-grab-pill overlaid on the composer. */
+.reader-split > separator {
+  border: none;
+  box-shadow: none;
+  outline: none;
+  min-height: 8px;
+}
+/* The grab handle: a thin rounded bar floated above the panel's bottom edge,
+   like the bar at the bottom of the iOS home screen. Sized in code (100×5). */
+.split-grab-pill {
+  background-color: alpha(currentColor, 0.35);
+  border-radius: 3px;
+}
+.split-grab-pill:hover {
+  background-color: alpha(currentColor, 0.55);
+}
 .attachment-drawer-flow {
   background: transparent;
 }

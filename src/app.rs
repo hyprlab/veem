@@ -1664,10 +1664,11 @@ impl SimpleComponent for AppModel {
             },
             reader_split: {
                 let p = gtk::Paned::new(gtk::Orientation::Vertical);
+                // The separator itself is styled invisible — painted the
+                // composer's own ground, so the panel reads as running to its
+                // edge. The visible affordance is the floating grab pill the
+                // split slot overlays on the composer (open_inline_reply).
                 p.add_css_class("reader-split");
-                // Adwaita draws a grip pill on wide handles — the visible
-                // invitation to drag the split reply taller or shorter.
-                p.set_wide_handle(true);
                 p
             },
             reader_compose_revealer: {
@@ -7501,11 +7502,67 @@ impl AppModel {
             config::save_split_reply_height(self.reader_split.position());
         }
         self.reader_split_top.set_reveal_child(false);
+        // The composer sits inside the grab-pill Overlay wrapper: unparent it
+        // from there explicitly, or hosting it elsewhere (pop-out, drain)
+        // would find it still parented.
+        if let Some(wrap) = self.reader_split_top.child().and_downcast::<gtk::Overlay>() {
+            wrap.set_child(None::<&gtk::Widget>);
+        }
         self.reader_split_top.set_child(None::<&gtk::Widget>);
         // Hiding the slot hides the Paned divider with it.
         self.reader_split_top.set_visible(false);
         // The split's reply-target outline goes with the composer.
         self.message_view.emit(MessageViewInput::BlurCard);
+    }
+
+    /// The split reply's grab handle: a slim rounded pill floated at the
+    /// panel's bottom edge, iOS-home-indicator style. Dragging it moves the
+    /// Paned divider. The pointer is tracked in ROOT coordinates: the pill
+    /// rides the panel it resizes, so pill-local offsets would feed back into
+    /// the resize and jitter (same trick as the console grip).
+    fn build_split_grab_pill(&self) -> gtk::Box {
+        let pill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        pill.add_css_class("split-grab-pill");
+        pill.set_size_request(100, 5);
+        pill.set_halign(gtk::Align::Center);
+        pill.set_valign(gtk::Align::End);
+        pill.set_margin_bottom(5);
+        pill.set_cursor_from_name(Some("ns-resize"));
+
+        let drag = gtk::GestureDrag::new();
+        let split = self.reader_split.clone();
+        let start = std::rc::Rc::new(std::cell::Cell::new((0i32, 0f32)));
+        let to_root_y = {
+            let pill = pill.clone();
+            move |x: f64, y: f64| -> Option<f32> {
+                let root = pill.root()?;
+                pill.compute_point(
+                    root.upcast_ref::<gtk::Widget>(),
+                    &gtk::graphene::Point::new(x as f32, y as f32),
+                )
+                .map(|p| p.y())
+            }
+        };
+        {
+            let split = split.clone();
+            let start = start.clone();
+            let to_root_y = to_root_y.clone();
+            drag.connect_drag_begin(move |_, x, y| {
+                if let Some(ry) = to_root_y(x, y) {
+                    start.set((split.position(), ry));
+                }
+            });
+        }
+        drag.connect_drag_update(move |g, ox, oy| {
+            let Some((sx, sy)) = g.start_point() else { return };
+            let Some(now) = to_root_y(sx + ox, sy + oy) else { return };
+            let (start_pos, start_y) = start.get();
+            // Same bounds as at open: a usable panel, a visible reader.
+            let ceiling = (split.height() - 200).max(220);
+            split.set_position((start_pos + (now - start_y) as i32).clamp(220, ceiling));
+        });
+        pill.add_controller(drag);
+        pill
     }
 
     fn open_inline_reply(
@@ -7529,12 +7586,20 @@ impl AppModel {
             // A reply/forward splits the pane instead of covering it (#86):
             // the composer slides down from the top and the message(s) stay
             // below, visible and interactive to refer to while writing. The
-            // composer fills whatever the Paned divider grants it — the
-            // divider is the grab handle, and the height it sets is final:
-            // pasting a novel into the body cannot push the panel down.
+            // composer fills whatever the Paned divider grants it, and the
+            // height it sets is final: pasting a novel into the body cannot
+            // push the panel down.
+            //
+            // The grab handle is a floating pill at the panel's bottom edge
+            // (the iOS home-indicator look) — the wrapper Overlay floats it
+            // over the composer, and dragging it moves the Paned divider,
+            // whose own separator is painted invisible.
             let slot = &self.reader_split_top;
             widget.set_vexpand(true);
-            slot.set_child(Some(widget));
+            let wrap = gtk::Overlay::new();
+            wrap.set_child(Some(widget));
+            wrap.add_overlay(&self.build_split_grab_pill());
+            slot.set_child(Some(&wrap));
             slot.set_visible(true);
             slot.set_reveal_child(true);
             let pane_h = self.reader_split.height();
@@ -10290,7 +10355,8 @@ fn install_scheme_css() {
              .message-listbox > row.activatable:selected:active .message-row {{ \
                background-color: @accent_bg_color; color: white; }}\
              .remote-alert image {{ color: {shield}; }}\
-             .inline-compose-surface, .compose-pane {{ background-color: {page}; }}"
+             .inline-compose-surface, .compose-pane {{ background-color: {page}; }}\
+             .reader-split > separator {{ background-color: {page}; }}"
         ));
     };
     let style = adw::StyleManager::default();
