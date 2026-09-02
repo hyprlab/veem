@@ -504,20 +504,16 @@ impl Component for Compose {
         let editor = model.editor.clone();
         key.connect_key_pressed(move |_, keyval, _, state| {
             use gtk::glib::Propagation;
-            // Ctrl+V pastes in the preferred mode, Ctrl+Shift+V in the
-            // opposite one (a shifted V arrives capitalised). Only over the
-            // body: the address and subject entries are plain text by nature,
-            // and the focus guard leaves their Ctrl+V untouched.
-            if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) && editor.has_focus() {
-                let rich = crate::config::load_paste_rich();
-                if keyval == gtk::gdk::Key::v {
-                    editor.paste(rich);
-                    return Propagation::Stop;
-                }
-                if keyval == gtk::gdk::Key::V {
-                    editor.paste(!rich);
-                    return Propagation::Stop;
-                }
+            // Ctrl+V pastes per the "Paste as plain text" preference, read
+            // here so a settings change applies to composers already open.
+            // Only over the body: the address and subject entries are plain
+            // text by nature, and the focus guard leaves their Ctrl+V alone.
+            if state.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+                && keyval == gtk::gdk::Key::v
+                && editor.has_focus()
+            {
+                editor.paste(!crate::config::load_paste_plain());
+                return Propagation::Stop;
             }
             if !open.get() {
                 // Escape backs out of the whole composer — the same as Cancel,

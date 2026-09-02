@@ -728,11 +728,11 @@ struct PrivacyFile {
     /// reply) rather than in its own window.
     #[serde(default = "default_compose_inline")]
     compose_inline: bool,
-    /// Whether Ctrl+V in the composer keeps the clipboard's formatting. Off
-    /// (the default) it pastes plain text; either way Ctrl+Shift+V does the
-    /// opposite, and the editor's context menu always offers both.
-    #[serde(default)]
-    paste_rich: bool,
+    /// Whether pasting into the composer strips the clipboard's formatting
+    /// (the default). Off, a paste keeps its formatting. The editor's context
+    /// menu always offers both, whichever way this is set.
+    #[serde(default = "default_paste_plain")]
+    paste_plain: bool,
     /// Hovering the icon rail (narrow-window or user-collapsed) floats the
     /// full sidebar out over the panes without needing the expand button.
     #[serde(default)]
@@ -866,6 +866,10 @@ fn default_card_actions_auto() -> bool {
     false
 }
 
+fn default_paste_plain() -> bool {
+    true
+}
+
 fn default_compose_inline() -> bool {
     true
 }
@@ -916,7 +920,7 @@ impl Default for PrivacyFile {
             list_palette: default_list_palette(),
             list_palette_hover: false,
             compose_inline: default_compose_inline(),
-            paste_rich: false,
+            paste_plain: default_paste_plain(),
             sidebar_hover_expand: false,
             app_theme: AppTheme::default(),
             preview_lines: default_preview_lines(),
@@ -1272,10 +1276,9 @@ pub fn load_compose_inline() -> bool {
     load_privacy().compose_inline
 }
 
-/// Whether a composer Ctrl+V keeps the clipboard's formatting (Ctrl+Shift+V
-/// always does the opposite).
-pub fn load_paste_rich() -> bool {
-    load_privacy().paste_rich
+/// Whether pasting into the composer strips the clipboard's formatting.
+pub fn load_paste_plain() -> bool {
+    load_privacy().paste_plain
 }
 
 pub fn load_sidebar_hover_expand() -> bool {
@@ -1340,7 +1343,7 @@ pub fn save_privacy(
     list_palette: bool,
     list_palette_hover: bool,
     compose_inline: bool,
-    paste_rich: bool,
+    paste_plain: bool,
     preview_lines: u32,
     single_key_shortcuts: bool,
     run_in_background: bool,
@@ -1390,7 +1393,7 @@ pub fn save_privacy(
         list_palette,
         list_palette_hover,
         compose_inline,
-        paste_rich,
+        paste_plain,
         preview_lines,
         single_key_shortcuts,
         run_in_background,

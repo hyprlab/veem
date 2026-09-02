@@ -9,33 +9,14 @@ use relm4::prelude::*;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Contributors whose work is in the app, shown in the About window's "Thanks"
-/// list: display name, GitHub handle, and what they contributed.
-const CONTRIBUTORS: &[(&str, &str, &str)] = &[
-    (
-        "Alfonso Lizárraga",
-        "alfonsolzrg",
-        "Sending to named recipients, startup message list, unread dot",
-    ),
-    (
-        "Chris Pouliot",
-        "chrispouliot",
-        "Proton Bridge connections (STARTTLS, local certificates)",
-    ),
-    (
-        "Isaac",
-        "thecalamityjoe87",
-        "The sidebar's pinned footer, thread expand/collapse animations, the list that stays put when rows vanish, PDF thumbnails, the attachment-opening fix, the reader's To line, remote-content option, GNOME-styled context menus",
-    ),
-    (
-        "Alexander Lubovenko",
-        "typedev",
-        "Gmail conversations: one message per thread, one fetch for its bodies",
-    ),
-    (
-        "Anton Palgunov",
-        "Toxblh",
-        "Contact photos as sender avatars; Online Accounts custom ports, Mail-toggle pausing",
-    ),
+/// list: display name and GitHub handle (which is also the link). What each
+/// person contributed is credited in the README and the changelog.
+const CONTRIBUTORS: &[(&str, &str)] = &[
+    ("Alfonso Lizárraga", "alfonsolzrg"),
+    ("Chris Pouliot", "chrispouliot"),
+    ("Isaac", "thecalamityjoe87"),
+    ("Alexander Lubovenko", "typedev"),
+    ("Anton Palgunov", "Toxblh"),
 ];
 
 // The message list's opening width now comes from config (the remembered pane
@@ -422,7 +403,7 @@ pub struct AppModel {
     list_palette_hover: bool,
     /// "New message" composes inline over the reading pane (vs a window).
     compose_inline: bool,
-    paste_rich: bool,
+    paste_plain: bool,
     /// How email content is themed (message content only, not the app UI).
     message_theme: config::MessageTheme,
     /// The repeating auto-fetch timer, if armed.
@@ -661,7 +642,7 @@ pub enum AppMsg {
     SetListPalette(bool),
     SetListPaletteHover(bool),
     SetComposeInline(bool),
-    SetPasteRich(bool),
+    SetPastePlain(bool),
     /// Ctrl+Z: undo the most recent move/delete.
     Undo,
     SetFetchInterval(u64),
@@ -1826,7 +1807,7 @@ impl SimpleComponent for AppModel {
             list_palette: config::load_list_palette(),
             list_palette_hover: config::load_list_palette_hover(),
             compose_inline: config::load_compose_inline(),
-            paste_rich: config::load_paste_rich(),
+            paste_plain: config::load_paste_plain(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
             notifications,
@@ -4216,9 +4197,9 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::SetPasteRich(on) => {
-                if self.paste_rich != on {
-                    self.paste_rich = on;
+            AppMsg::SetPastePlain(on) => {
+                if self.paste_plain != on {
+                    self.paste_plain = on;
                     self.save_settings();
                 }
             }
@@ -5622,7 +5603,7 @@ impl AppModel {
             self.list_palette,
             self.list_palette_hover,
             self.compose_inline,
-            self.paste_rich,
+            self.paste_plain,
             self.preview_lines,
             self.single_key.get(),
             self.run_in_background.get(),
@@ -8669,7 +8650,7 @@ impl AppModel {
             list_palette: self.list_palette,
             list_palette_hover: self.list_palette_hover,
             compose_inline: self.compose_inline,
-            paste_rich: self.paste_rich,
+            paste_plain: self.paste_plain,
             app_theme: self.app_theme,
             preview_lines: self.preview_lines,
             single_key_shortcuts: self.single_key.get(),
@@ -8704,7 +8685,7 @@ impl AppModel {
                 PrefOutput::SetListPalette(on) => AppMsg::SetListPalette(on),
                 PrefOutput::SetListPaletteHover(on) => AppMsg::SetListPaletteHover(on),
                 PrefOutput::SetComposeInline(on) => AppMsg::SetComposeInline(on),
-                PrefOutput::SetPasteRich(on) => AppMsg::SetPasteRich(on),
+                PrefOutput::SetPastePlain(on) => AppMsg::SetPastePlain(on),
                 PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                 PrefOutput::SetPush(on) => AppMsg::SetPush(on),
                 PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
@@ -8948,10 +8929,10 @@ impl AppModel {
         let thanks = gtk::ListBox::new();
         thanks.add_css_class("boxed-list");
         thanks.set_selection_mode(gtk::SelectionMode::None);
-        for (name, handle, what) in CONTRIBUTORS {
+        for (name, handle) in CONTRIBUTORS {
             let row = adw::ActionRow::builder()
                 .title(*name)
-                .subtitle(format!("@{handle} — {what}"))
+                .subtitle(format!("@{handle}"))
                 .activatable(true)
                 .build();
             let url = format!("https://github.com/{handle}");

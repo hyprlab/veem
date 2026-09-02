@@ -256,8 +256,8 @@ fn prompt_link(webview: &webkit6::WebView, anchor: &gtk::Button) {
 /// command — raises a DOM `paste` event here, where the clipboard's flavours
 /// can be inspected. `__vireoPasteRich` is the standing mode (the user's
 /// preference, stamped at document build); `__vireoPasteOnce` overrides it for
-/// exactly one paste (the opposite-mode shortcut and the context-menu items
-/// set it just before running the Paste command).
+/// exactly one paste (Ctrl+V and the context-menu items set it just before
+/// running the Paste command, so a live preference change is honored).
 ///
 /// Plain mode inserts the clipboard's text flavour with URLs linkified; rich
 /// mode lets WebKit's native paste keep the formatting, linkifying only
@@ -305,7 +305,7 @@ const PASTE_SCRIPT: &str = r#"<script>
 /// The contentEditable HTML document, themed for light/dark.
 fn document(content: &str, dark: bool) -> String {
     let scheme = if dark { "dark" } else { "light" };
-    let paste_rich = crate::config::load_paste_rich();
+    let paste_rich = !crate::config::load_paste_plain();
     let script = format!(
         "<script>window.__vireoPasteRich={paste_rich};</script>{PASTE_SCRIPT}"
     );
