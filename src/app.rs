@@ -416,6 +416,7 @@ pub struct AppModel {
     list_palette_hover: bool,
     /// "New message" composes inline over the reading pane (vs a window).
     compose_inline: bool,
+    paste_rich: bool,
     /// How email content is themed (message content only, not the app UI).
     message_theme: config::MessageTheme,
     /// The repeating auto-fetch timer, if armed.
@@ -654,6 +655,7 @@ pub enum AppMsg {
     SetListPalette(bool),
     SetListPaletteHover(bool),
     SetComposeInline(bool),
+    SetPasteRich(bool),
     /// Ctrl+Z: undo the most recent move/delete.
     Undo,
     SetFetchInterval(u64),
@@ -1810,6 +1812,7 @@ impl SimpleComponent for AppModel {
             list_palette: config::load_list_palette(),
             list_palette_hover: config::load_list_palette_hover(),
             compose_inline: config::load_compose_inline(),
+            paste_rich: config::load_paste_rich(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
             notifications,
@@ -4186,6 +4189,13 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetPasteRich(on) => {
+                if self.paste_rich != on {
+                    self.paste_rich = on;
+                    self.save_settings();
+                }
+            }
+
             AppMsg::SetMessageTheme(theme) => {
                 if self.message_theme != theme {
                     self.message_theme = theme;
@@ -5585,6 +5595,7 @@ impl AppModel {
             self.list_palette,
             self.list_palette_hover,
             self.compose_inline,
+            self.paste_rich,
             self.preview_lines,
             self.single_key.get(),
             self.run_in_background.get(),
@@ -8616,6 +8627,7 @@ impl AppModel {
             list_palette: self.list_palette,
             list_palette_hover: self.list_palette_hover,
             compose_inline: self.compose_inline,
+            paste_rich: self.paste_rich,
             app_theme: self.app_theme,
             preview_lines: self.preview_lines,
             single_key_shortcuts: self.single_key.get(),
@@ -8650,6 +8662,7 @@ impl AppModel {
                 PrefOutput::SetListPalette(on) => AppMsg::SetListPalette(on),
                 PrefOutput::SetListPaletteHover(on) => AppMsg::SetListPaletteHover(on),
                 PrefOutput::SetComposeInline(on) => AppMsg::SetComposeInline(on),
+                PrefOutput::SetPasteRich(on) => AppMsg::SetPasteRich(on),
                 PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                 PrefOutput::SetPush(on) => AppMsg::SetPush(on),
                 PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),

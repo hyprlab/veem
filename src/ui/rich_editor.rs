@@ -7,6 +7,8 @@ use webkit6::prelude::WebViewExt;
 
 /// A rich-text editor widget. Add `widget` to a container; read the content back
 /// with [`RichEditor::extract_html`] (asynchronous, since it queries the WebView).
+/// Clones share the same underlying widgets (GObject references).
+#[derive(Clone)]
 pub struct RichEditor {
     /// The toolbar + editor, ready to be placed in a container.
     pub widget: gtk::Box,
@@ -32,6 +34,36 @@ impl RichEditor {
         webview.set_background_color(&gtk::gdk::RGBA::new(0.0, 0.0, 0.0, 0.0));
         let dark = adw::StyleManager::default().is_dark();
         webview.load_html(&document(initial_html, dark), Some("https://vireo.localhost/editor"));
+
+        // The stock editable menu's single "Paste" hides the plain/rich choice
+        // behind the preference; the menu offers both, always, in its place.
+        webview.connect_context_menu(|view, menu, _hit| {
+            let items = menu.items();
+            let Some(pos) = items
+                .iter()
+                .position(|i| i.stock_action() == webkit6::ContextMenuAction::Paste)
+            else {
+                return false; // no paste here (nothing editable hit): stock menu as-is
+            };
+            for item in items.iter().filter(|i| {
+                matches!(
+                    i.stock_action(),
+                    webkit6::ContextMenuAction::Paste | webkit6::ContextMenuAction::PasteAsPlainText
+                )
+            }) {
+                menu.remove(item);
+            }
+            let mut at = pos as i32;
+            for (label, rich) in [("Paste with Formatting", true), ("Paste as Plain Text", false)] {
+                let action =
+                    gtk::gio::SimpleAction::new(if rich { "vireo-paste-rich" } else { "vireo-paste-plain" }, None);
+                let v = view.clone();
+                action.connect_activate(move |_, _| paste_into(&v, rich));
+                menu.insert(&webkit6::ContextMenuItem::from_gaction(&action, label, None), at);
+                at += 1;
+            }
+            false
+        });
 
         let toolbar = build_toolbar(&webview);
 
@@ -65,6 +97,23 @@ impl RichEditor {
     /// signature block when the From account changes).
     pub fn run_js(&self, js: &str) {
         exec(&self.webview, js);
+    }
+
+    /// Whether keyboard focus is currently inside the editor's WebView — the
+    /// guard a host's paste shortcut uses so it never hijacks Ctrl+V aimed at
+    /// an address entry.
+    pub fn has_focus(&self) -> bool {
+        self.webview
+            .root()
+            .and_then(|r| r.focus())
+            .is_some_and(|f| f == *self.webview.upcast_ref::<gtk::Widget>() || f.is_ancestor(&self.webview))
+    }
+
+    /// Paste the clipboard into the editor, keeping (`rich`) or stripping the
+    /// clipboard's formatting for this one paste, whatever the standing
+    /// preference says.
+    pub fn paste(&self, rich: bool) {
+        paste_into(&self.webview, rich);
     }
 
     /// Whether the body has been edited since it was loaded (async read of a JS
@@ -112,6 +161,21 @@ impl RichEditor {
 
 fn exec(webview: &webkit6::WebView, js: &str) {
     webview.evaluate_javascript(js, None, None, gtk::gio::Cancellable::NONE, |_| {});
+}
+
+/// One paste in an explicit mode: arm the document's one-shot flag, then run
+/// the editing command once the flag is in place (the callback orders the two,
+/// since both travel to the web process asynchronously). The DOM paste handler
+/// consumes the flag — see [`PASTE_SCRIPT`].
+fn paste_into(webview: &webkit6::WebView, rich: bool) {
+    let v = webview.clone();
+    webview.evaluate_javascript(
+        &format!("window.__vireoPasteOnce={rich};"),
+        None,
+        None,
+        gtk::gio::Cancellable::NONE,
+        move |_| v.execute_editing_command("Paste"),
+    );
 }
 
 fn build_toolbar(webview: &webkit6::WebView) -> gtk::Box {
@@ -188,21 +252,23 @@ fn prompt_link(webview: &webkit6::WebView, anchor: &gtk::Button) {
     dialog.present();
 }
 
-/// Auto-linkify URLs in pasted plain text. Lives in `<head>` (not the editable
-/// body) so it never becomes part of the message. Rich pastes that already carry
-/// links are left untouched.
+/// The paste choke point: every paste — shortcut, context menu, editing
+/// command — raises a DOM `paste` event here, where the clipboard's flavours
+/// can be inspected. `__vireoPasteRich` is the standing mode (the user's
+/// preference, stamped at document build); `__vireoPasteOnce` overrides it for
+/// exactly one paste (the opposite-mode shortcut and the context-menu items
+/// set it just before running the Paste command).
+///
+/// Plain mode inserts the clipboard's text flavour with URLs linkified; rich
+/// mode lets WebKit's native paste keep the formatting, linkifying only
+/// pastes that carry no HTML at all. Lives in `<head>` (not the editable
+/// body) so it never becomes part of the message.
 const PASTE_SCRIPT: &str = r#"<script>
 (function(){
+  window.__vireoPasteOnce = null;
   var urlRe = /((?:https?:\/\/|www\.)[^\s<>()]+[^\s<>().,;:!?'"])/gi;
   function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-  document.addEventListener('paste', function(e){
-    var cd = e.clipboardData; if(!cd) return;
-    var html = cd.getData('text/html');
-    if(html && /<a[\s>]/i.test(html)) return; // already-linked rich paste: keep it
-    var text = cd.getData('text/plain'); if(!text) return;
-    urlRe.lastIndex = 0;
-    if(!urlRe.test(text)) return;            // nothing to linkify
-    e.preventDefault();
+  function insertLinkified(text){
     urlRe.lastIndex = 0;
     var out='', last=0, m;
     while((m = urlRe.exec(text)) !== null){
@@ -215,6 +281,23 @@ const PASTE_SCRIPT: &str = r#"<script>
     out += esc(text.slice(last));
     out = out.replace(/\r\n|\r|\n/g,'<br>');
     document.execCommand('insertHTML', false, out);
+  }
+  document.addEventListener('paste', function(e){
+    var cd = e.clipboardData; if(!cd) return;
+    var rich = window.__vireoPasteRich === true;
+    if(window.__vireoPasteOnce !== null){ rich = window.__vireoPasteOnce; window.__vireoPasteOnce = null; }
+    var html = cd.getData('text/html');
+    var text = cd.getData('text/plain');
+    if(rich){
+      if(html) return;                       // native paste keeps the formatting
+      if(!text) return;
+      urlRe.lastIndex = 0;
+      if(!urlRe.test(text)) return;          // plain text with nothing to linkify
+    } else {
+      if(!text) return;                      // no text flavour; let WebKit try
+    }
+    e.preventDefault();
+    insertLinkified(text);
   });
 })();
 </script>"#;
@@ -222,7 +305,10 @@ const PASTE_SCRIPT: &str = r#"<script>
 /// The contentEditable HTML document, themed for light/dark.
 fn document(content: &str, dark: bool) -> String {
     let scheme = if dark { "dark" } else { "light" };
-    let script = PASTE_SCRIPT;
+    let paste_rich = crate::config::load_paste_rich();
+    let script = format!(
+        "<script>window.__vireoPasteRich={paste_rich};</script>{PASTE_SCRIPT}"
+    );
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
          <meta name=\"color-scheme\" content=\"{scheme}\">\

@@ -42,6 +42,7 @@ pub struct PrefInit {
     pub list_palette_hover: bool,
     /// "New message" composes inline over the reading pane (vs a window).
     pub compose_inline: bool,
+    pub paste_rich: bool,
     pub message_theme: MessageTheme,
     pub app_theme: AppTheme,
     pub notifications: bool,
@@ -188,6 +189,7 @@ pub enum PrefInput {
     ToggleListPalette(bool),
     ToggleListPaletteHover(bool),
     ToggleComposeInline(bool),
+    TogglePasteRich(bool),
     ChangeFetchInterval(u32),
     TogglePush(bool),
     ToggleNotifications(bool),
@@ -237,6 +239,7 @@ pub enum PrefOutput {
     SetListPalette(bool),
     SetListPaletteHover(bool),
     SetComposeInline(bool),
+    SetPasteRich(bool),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -615,6 +618,19 @@ impl Component for Preferences {
                                 sender.input(PrefInput::ToggleComposeInline(row.is_active()));
                             },
                         },
+
+                        #[name = "paste_rich_row"]
+                        adw::SwitchRow {
+                            set_title: "Paste keeps formatting",
+                            set_subtitle: "Ctrl+V pastes the clipboard with its \
+                                           formatting and Ctrl+Shift+V pastes plain \
+                                           text. Off, the shortcuts swap: Ctrl+V \
+                                           pastes plain, Ctrl+Shift+V keeps the \
+                                           formatting. Right-click always offers both.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::TogglePasteRich(row.is_active()));
+                            },
+                        },
                     },
 
                     add = &adw::PreferencesGroup {
@@ -932,6 +948,7 @@ impl Component for Preferences {
         widgets.list_palette_row.set_active(init.list_palette);
         widgets.list_palette_hover_row.set_active(init.list_palette_hover);
         widgets.compose_inline_row.set_active(init.compose_inline);
+        widgets.paste_rich_row.set_active(init.paste_rich);
 
         // Date and clock combos.
         let date_labels: Vec<&str> = DATE_STYLES.iter().map(|(l, _)| *l).collect();
@@ -1078,6 +1095,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleComposeInline(on) => {
                 let _ = sender.output(PrefOutput::SetComposeInline(on));
+            }
+            PrefInput::TogglePasteRich(on) => {
+                let _ = sender.output(PrefOutput::SetPasteRich(on));
             }
             PrefInput::ChangeFetchInterval(index) => {
                 let secs = FETCH_INTERVALS
