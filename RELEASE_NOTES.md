@@ -2,6 +2,10 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.19.2
+
+A fix for messages with their own dark mode. Some emails, like Google Calendar invitations, carry their own dark-mode styling that the reader was applying based on your desktop's light/dark setting rather than the theme the message is shown in. With the desktop in dark mode but a message displayed on a light background, that left light-grey text on white, hard to read. Emails now follow the background they are actually shown on, in both light and dark.
+
 ## What's new in 1.19.1
 
 A memory-use release (#106, reported by @mfreeman72). Vireo could grow past 2 GB of RAM over a long session and only a restart brought it back down; a day of reading now stays in the hundreds of MB.

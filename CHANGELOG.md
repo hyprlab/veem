@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.19.2 — 2026-09-02
+
+- **Emails with their own dark mode render on the right ground.** A
+  message that ships `@media (prefers-color-scheme: dark)` rules (a
+  Google Calendar invite, say) had those rules evaluated by WebKit
+  against the desktop's light/dark preference, which the `color-scheme`
+  the reader injects into each sandboxed message frame does not change.
+  So with the desktop in dark mode but a message shown light — a light
+  message theme, or the app's and desktop's schemes disagreeing — the
+  email painted its light-grey dark-mode text onto the reader's white
+  card, rendering as near-invisible grey on white; the mirror case put
+  an email's light rules on the reader's dark card. Each
+  `prefers-color-scheme` media query is now pinned to the ground the
+  reader actually chose, so an email's own light and dark rules follow
+  the card, not the desktop.
+
 ## 1.19.1 — 2026-09-01
 
 Memory-use fixes for long-running sessions (#106, reported by
