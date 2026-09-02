@@ -28,15 +28,27 @@ pub fn paned_grab_pill(
     pill
 }
 
-/// Just the bar itself, for a host that wires its own drag semantics
-/// (the attachment drawer's collapsed snap-out) via [`attach_drag`].
+/// The pill, for a host that wires its own gesture semantics (the attachment
+/// drawer's click-toggle) via [`attach_drag`]. What comes back is an
+/// invisible, larger hit zone with the thin bar drawn centred inside it — the
+/// visible bar is only 5px tall, far too small a target to press and release
+/// reliably, so the gestures live on the zone (the iOS home indicator does
+/// the same).
 pub fn pill_widget() -> gtk::Box {
-    let pill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    pill.add_css_class("split-grab-pill");
-    pill.set_size_request(100, 5);
-    pill.set_halign(gtk::Align::Center);
-    pill.set_cursor_from_name(Some("ns-resize"));
-    pill
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    bar.add_css_class("split-grab-pill");
+    bar.set_size_request(100, 5);
+    bar.set_hexpand(true);
+    bar.set_halign(gtk::Align::Center);
+    bar.set_valign(gtk::Align::Center);
+
+    let hit = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    hit.add_css_class("split-grab-hit");
+    hit.set_size_request(120, 20);
+    hit.set_halign(gtk::Align::Center);
+    hit.set_cursor_from_name(Some("ns-resize"));
+    hit.append(&bar);
+    hit
 }
 
 /// The pointer travel below which a press-and-release still counts as a

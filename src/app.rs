@@ -7523,7 +7523,6 @@ impl AppModel {
             want.clamp(220, (split.height() - 200).max(220))
         });
         pill.set_valign(gtk::Align::End);
-        pill.set_margin_bottom(5);
         pill
     }
 

@@ -1189,7 +1189,9 @@ headerbar.reader-toolbar button.image-button {
   background-color: alpha(currentColor, 0.35);
   border-radius: 3px;
 }
-.split-grab-pill:hover {
+/* The bar sits centred in a larger invisible hit zone that carries the
+   gestures; hovering anywhere in the zone lights the bar. */
+.split-grab-hit:hover .split-grab-pill {
   background-color: alpha(currentColor, 0.55);
 }
 .attachment-drawer-flow {

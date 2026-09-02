@@ -392,7 +392,6 @@ impl SimpleComponent for AttachmentDrawer {
         // becomes the drawer's new height.
         let pill = crate::ui::grab_pill::pill_widget();
         pill.set_valign(gtk::Align::End);
-        pill.set_margin_bottom(4);
         pill.set_visible(false); // no seam until attachments arrive
         {
             let s = sender.clone();
