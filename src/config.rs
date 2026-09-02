@@ -1588,6 +1588,10 @@ struct StateFile {
     prefs_height: i32,
     #[serde(default = "default_about_height")]
     about_height: i32,
+    /// Split-reply panel height in px (the dragged divider). 0 = never
+    /// dragged: the panel opens at its computed default.
+    #[serde(default)]
+    split_reply_height: i32,
 }
 
 fn default_aux_height() -> i32 {
@@ -1753,6 +1757,19 @@ pub fn load_prefs_height() -> i32 {
 pub fn save_prefs_height(height: i32) {
     let mut s = load_state();
     s.prefs_height = height.clamp(400, 4000);
+    save_state(&s);
+}
+
+/// The split-reply panel's dragged height; 0 when it has never been dragged
+/// (the caller computes an opening default from the pane).
+pub fn load_split_reply_height() -> i32 {
+    let h = load_state().split_reply_height;
+    if h == 0 { 0 } else { h.clamp(220, 4000) }
+}
+
+pub fn save_split_reply_height(height: i32) {
+    let mut s = load_state();
+    s.split_reply_height = height.clamp(220, 4000);
     save_state(&s);
 }
 

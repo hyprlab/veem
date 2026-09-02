@@ -161,6 +161,12 @@ pub struct AppModel {
     /// Split-reply slot (#86): a reply slides down from the pane's top and
     /// the message(s) stay below it, visible and interactive.
     reader_split_top: gtk::Revealer,
+    /// The vertical Paned dividing the split reply (start child, the slot
+    /// above) from the reader (end child). A Paned allocates by divider
+    /// position, so the composer holds the height it was given — a big paste
+    /// can't push it down over the messages — and its divider is the grab
+    /// handle that resizes the panel. Hidden slot = hidden divider.
+    reader_split: gtk::Paned,
     /// Same idea over the contacts view's detail pane: composing from a
     /// contact slides down right there instead of yanking the mail view back.
     contacts_compose_revealer: gtk::Revealer,
@@ -1675,6 +1681,14 @@ impl SimpleComponent for AppModel {
                 r.set_reveal_child(false);
                 r
             },
+            reader_split: {
+                let p = gtk::Paned::new(gtk::Orientation::Vertical);
+                p.add_css_class("reader-split");
+                // Adwaita draws a grip pill on wide handles — the visible
+                // invitation to drag the split reply taller or shorter.
+                p.set_wide_handle(true);
+                p
+            },
             reader_compose_revealer: {
                 let r = gtk::Revealer::new();
                 r.set_transition_type(gtk::RevealerTransitionType::SlideDown);
@@ -2009,14 +2023,27 @@ impl SimpleComponent for AppModel {
         {
             let pane = widgets.reader_bin.child().expect("reader pane");
             widgets.reader_bin.set_child(None::<&gtk::Widget>);
-            // Split-reply slots (#86) sandwich the reader; the full-cover
-            // revealer stays an overlay above the whole assembly.
+            // Split-reply slot (#86) above the reader; the full-cover
+            // revealer stays an overlay above the whole assembly. A Paned
+            // rather than a Box so the composer's height is the divider
+            // position — dragged by the user, immune to the editor's natural
+            // height — instead of whatever the composer asks for.
             pane.set_vexpand(true);
-            let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            vbox.append(&model.reader_split_top);
-            vbox.append(&pane);
+            let split = &model.reader_split;
+            split.set_start_child(Some(&model.reader_split_top));
+            split.set_end_child(Some(&pane));
+            // Window resizes go to the reader; the composer keeps its set
+            // height and never shrinks below its minimum. The reader may
+            // shrink — the divider clamp at open time is what keeps a slice
+            // of it on screen.
+            split.set_resize_start_child(false);
+            split.set_shrink_start_child(false);
+            split.set_resize_end_child(true);
+            split.set_shrink_end_child(true);
+            // Hidden while no split reply is open, which hides the divider too.
+            model.reader_split_top.set_visible(false);
             let overlay = gtk::Overlay::new();
-            overlay.set_child(Some(&vbox));
+            overlay.set_child(Some(split));
             overlay.add_overlay(&model.reader_compose_revealer);
             widgets.reader_bin.set_child(Some(&overlay));
         }
@@ -7487,9 +7514,15 @@ impl AppModel {
             r.set_can_target(false);
             r.set_child(None::<&gtk::Widget>);
         }
-        // In-flow (not overlay) slot: no click-swallowing to disarm.
+        // In-flow (not overlay) slot: no click-swallowing to disarm. Remember
+        // the height the user dragged the panel to before it goes.
+        if self.reader_split_top.is_visible() && self.reader_split_top.child().is_some() {
+            config::save_split_reply_height(self.reader_split.position());
+        }
         self.reader_split_top.set_reveal_child(false);
         self.reader_split_top.set_child(None::<&gtk::Widget>);
+        // Hiding the slot hides the Paned divider with it.
+        self.reader_split_top.set_visible(false);
         // The split's reply-target outline goes with the composer.
         self.message_view.emit(MessageViewInput::BlurCard);
     }
@@ -7514,13 +7547,22 @@ impl AppModel {
         if contextual && !self.showing_contacts {
             // A reply/forward splits the pane instead of covering it (#86):
             // the composer slides down from the top and the message(s) stay
-            // below, visible and interactive to refer to while writing.
+            // below, visible and interactive to refer to while writing. The
+            // composer fills whatever the Paned divider grants it — the
+            // divider is the grab handle, and the height it sets is final:
+            // pasting a novel into the body cannot push the panel down.
             let slot = &self.reader_split_top;
-            let pane_h = slot.parent().map(|p| p.height()).filter(|h| *h > 0).unwrap_or(900);
-            widget.set_vexpand(false);
-            widget.set_height_request(((pane_h as f64 * 0.45) as i32).clamp(300, 560));
+            widget.set_vexpand(true);
             slot.set_child(Some(widget));
+            slot.set_visible(true);
             slot.set_reveal_child(true);
+            let pane_h = self.reader_split.height();
+            let pane_h = if pane_h > 0 { pane_h } else { 900 };
+            let saved = config::load_split_reply_height();
+            let h =
+                if saved > 0 { saved } else { ((pane_h as f64 * 0.45) as i32).clamp(300, 560) };
+            // Keep a usable slice of reader on screen whatever was saved.
+            self.reader_split.set_position(h.clamp(220, (pane_h - 200).max(220)));
             if let Some((fa, fid)) = focus {
                 // Put the card being answered at the top of the shortened
                 // reader, wearing the selection outline.

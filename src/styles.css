@@ -1173,6 +1173,16 @@ headerbar.reader-toolbar button.image-button {
 .attachment-drawer-header {
   padding: 4px 8px;
 }
+/* Split-reply divider: the grab handle between the inline reply above and
+   the reader below. Wide-handle mode (set in code) draws Adwaita's grip
+   pill, so the boundary reads as draggable; this only quiets the hairline
+   so the strip sits flush with the composer surface above it. */
+.reader-split > separator {
+  border: none;
+  box-shadow: none;
+  outline: none;
+  background-color: alpha(currentColor, 0.04);
+}
 .attachment-drawer-flow {
   background: transparent;
 }
