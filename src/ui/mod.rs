@@ -5,6 +5,7 @@ pub mod compose;
 pub mod contacts_browser;
 pub mod contacts_page;
 pub mod context_menu;
+pub mod grab_pill;
 pub mod message_list;
 pub mod message_view;
 pub mod message_window;

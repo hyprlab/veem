@@ -99,6 +99,10 @@ pub struct AttachmentDrawer {
     /// resize grip — native drag, and the reader shrinks rather than the window
     /// growing.
     paned: gtk::Paned,
+    /// The visible resize affordance: the shared grab pill floated just above
+    /// the seam (over the reader's bottom edge), like the split reply's.
+    /// Shown only while there is an expanded drawer to resize.
+    pill: gtk::Box,
     /// True while we set the Paned position programmatically, so the resulting
     /// position-notify isn't mistaken for a user drag.
     adjusting: Rc<Cell<bool>>,
@@ -160,6 +164,8 @@ impl SimpleComponent for AttachmentDrawer {
             // a slim grabbable strip, no lines, no grip — and while the drawer
             // is collapsed it is made untargetable entirely (see
             // set_divider_draggable), so only the expanded drawer resizes.
+            // The visible affordance is the grab pill floated over the
+            // reader's bottom edge (built in init).
             add_css_class: "drawer-split",
             // The reader (start child) shrinks to make room; the drawer keeps its
             // set size. This is what prevents the window from growing.
@@ -365,6 +371,15 @@ impl SimpleComponent for AttachmentDrawer {
             flow.add_controller(key);
         }
 
+        // The grab pill floats just above the seam, over the reader's bottom
+        // edge — the same affordance, in the same place, as the split reply's.
+        // The Paned's own bounds do the clamping (the drawer can't shrink
+        // below its minimum, the reader can).
+        let pill = crate::ui::grab_pill::paned_grab_pill(&root, |_, want| want.max(0));
+        pill.set_valign(gtk::Align::End);
+        pill.set_margin_bottom(4);
+        pill.set_visible(false); // nothing to resize until attachments arrive
+
         let model = AttachmentDrawer {
             items: Vec::new(),
             display_order: Vec::new(),
@@ -376,14 +391,19 @@ impl SimpleComponent for AttachmentDrawer {
             flow: flow.clone(),
             // The root of this component IS the Paned.
             paned: root.clone(),
+            pill: pill.clone(),
             adjusting: Rc::new(Cell::new(false)),
             positioned: Rc::new(Cell::new(false)),
             height_save: Rc::new(std::cell::RefCell::new(None)),
         };
 
         let widgets = view_output!();
-        // Dock the reader as the top pane (the drawer body is the bottom pane).
-        root.set_start_child(Some(&init.reader));
+        // Dock the reader as the top pane (the drawer body is the bottom pane),
+        // wrapped in the Overlay that floats the grab pill over its lower edge.
+        let reader_wrap = gtk::Overlay::new();
+        reader_wrap.set_child(Some(&init.reader));
+        reader_wrap.add_overlay(&pill);
+        root.set_start_child(Some(&reader_wrap));
         // A collapsed drawer starts with its divider locked.
         model.set_divider_draggable(!model.collapsed);
         ComponentParts { model, widgets }
@@ -394,6 +414,7 @@ impl SimpleComponent for AttachmentDrawer {
             AttachmentDrawerInput::SetItems(items) => {
                 let became_visible = self.items.is_empty() && !items.is_empty();
                 self.items = items;
+                self.update_pill_visibility();
                 self.rebuild(&sender);
                 // Apply the remembered split the first time the drawer appears
                 // (the Paned is allocated only once both children are visible).
@@ -430,6 +451,7 @@ impl SimpleComponent for AttachmentDrawer {
                 self.collapsed = !self.collapsed;
                 self.apply_position();
                 self.set_divider_draggable(!self.collapsed);
+                self.update_pill_visibility();
                 config::save_drawer_collapsed(self.collapsed);
             }
             AttachmentDrawerInput::ToggleListView => {
@@ -480,6 +502,13 @@ impl AttachmentDrawer {
     /// The top-level window this drawer lives in (for modal children / dialogs).
     fn window(&self) -> Option<gtk::Window> {
         self.flow.root().and_downcast::<gtk::Window>()
+    }
+
+    /// The grab pill shows only while there is an expanded drawer to resize:
+    /// no attachments means no seam, and a collapsed drawer snaps any drag
+    /// straight back.
+    fn update_pill_visibility(&self) {
+        self.pill.set_visible(!self.items.is_empty() && !self.collapsed);
     }
 
     /// Natural height of the drawer's header row (the first child of the end

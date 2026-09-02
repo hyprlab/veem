@@ -7515,53 +7515,15 @@ impl AppModel {
         self.message_view.emit(MessageViewInput::BlurCard);
     }
 
-    /// The split reply's grab handle: a slim rounded pill floated at the
-    /// panel's bottom edge, iOS-home-indicator style. Dragging it moves the
-    /// Paned divider. The pointer is tracked in ROOT coordinates: the pill
-    /// rides the panel it resizes, so pill-local offsets would feed back into
-    /// the resize and jitter (same trick as the console grip).
+    /// The split reply's grab handle: the shared grab pill, floated at the
+    /// panel's bottom edge and bounded like the panel's opening height — a
+    /// usable panel, a visible reader.
     fn build_split_grab_pill(&self) -> gtk::Box {
-        let pill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        pill.add_css_class("split-grab-pill");
-        pill.set_size_request(100, 5);
-        pill.set_halign(gtk::Align::Center);
+        let pill = crate::ui::grab_pill::paned_grab_pill(&self.reader_split, |split, want| {
+            want.clamp(220, (split.height() - 200).max(220))
+        });
         pill.set_valign(gtk::Align::End);
         pill.set_margin_bottom(5);
-        pill.set_cursor_from_name(Some("ns-resize"));
-
-        let drag = gtk::GestureDrag::new();
-        let split = self.reader_split.clone();
-        let start = std::rc::Rc::new(std::cell::Cell::new((0i32, 0f32)));
-        let to_root_y = {
-            let pill = pill.clone();
-            move |x: f64, y: f64| -> Option<f32> {
-                let root = pill.root()?;
-                pill.compute_point(
-                    root.upcast_ref::<gtk::Widget>(),
-                    &gtk::graphene::Point::new(x as f32, y as f32),
-                )
-                .map(|p| p.y())
-            }
-        };
-        {
-            let split = split.clone();
-            let start = start.clone();
-            let to_root_y = to_root_y.clone();
-            drag.connect_drag_begin(move |_, x, y| {
-                if let Some(ry) = to_root_y(x, y) {
-                    start.set((split.position(), ry));
-                }
-            });
-        }
-        drag.connect_drag_update(move |g, ox, oy| {
-            let Some((sx, sy)) = g.start_point() else { return };
-            let Some(now) = to_root_y(sx + ox, sy + oy) else { return };
-            let (start_pos, start_y) = start.get();
-            // Same bounds as at open: a usable panel, a visible reader.
-            let ceiling = (split.height() - 200).max(220);
-            split.set_position((start_pos + (now - start_y) as i32).clamp(220, ceiling));
-        });
-        pill.add_controller(drag);
         pill
     }
 
