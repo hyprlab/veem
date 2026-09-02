@@ -19,9 +19,9 @@
 //! reader pane is allowed to shrink, resizing the drawer never grows the
 //! window; while the drawer is collapsed a drag snaps back, so only the
 //! expanded drawer resizes. The size slider in the header scales the
-//! thumbnails only; the chevron collapses the grid to just the header. The
-//! dragged height, collapsed state and view settings are persisted; thumbnail
-//! size is per-session.
+//! thumbnails only; a click on the grab pill collapses the grid to just the
+//! header. The dragged height, collapsed state and view settings are
+//! persisted; thumbnail size is per-session.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -101,9 +101,9 @@ pub struct AttachmentDrawer {
     paned: gtk::Paned,
     /// The visible resize affordance: the shared grab pill floated just above
     /// the seam (over the reader's bottom edge), like the split reply's.
-    /// Shown whenever the drawer is. A click toggles collapsed/expanded like
-    /// the chevron; a drag resizes live — out of the collapse too, where the
-    /// release point becomes the drawer's new height.
+    /// Shown whenever the drawer is. A click toggles collapsed/expanded; a
+    /// drag resizes live — out of the collapse too, where the release point
+    /// becomes the drawer's new height.
     pill: gtk::Box,
     /// True while we set the Paned position programmatically, so the resulting
     /// position-notify isn't mistaken for a user drag.
@@ -135,8 +135,6 @@ pub enum AttachmentDrawerInput {
     SetThumbSize(i32),
     /// The Paned divider moved (user drag) — capture the new height.
     PositionChanged,
-    /// Toggle the collapsed/expanded state (chevron).
-    ToggleCollapsed,
     /// Switch between the thumbnail grid and the alphabetical list.
     ToggleListView,
     /// Flip the list's sort direction (A→Z / Z→A).
@@ -158,7 +156,7 @@ pub enum AttachmentDrawerInput {
     /// The grab pill was dragged to this candidate divider position.
     PillDrag { want: i32 },
     /// The press on the grab pill was released. A plain click (no drag in
-    /// between) toggles the drawer like the chevron does.
+    /// between) toggles the drawer collapsed/expanded.
     PillReleased,
 }
 
@@ -202,26 +200,6 @@ impl SimpleComponent for AttachmentDrawer {
                     set_orientation: gtk::Orientation::Horizontal,
                     set_spacing: 8,
                     add_css_class: "attachment-drawer-header",
-                    gtk::Button {
-                        add_css_class: "flat",
-                        add_css_class: "circular",
-                        set_valign: gtk::Align::Center,
-                        #[watch]
-                        set_icon_name: if model.collapsed {
-                            "co.hyprlab.Vireo-pan-up-symbolic"
-                        } else {
-                            "co.hyprlab.Vireo-pan-down-symbolic"
-                        },
-                        #[watch]
-                        set_tooltip_text: Some(if model.collapsed {
-                            "Show attachments"
-                        } else {
-                            "Hide attachments"
-                        }),
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AttachmentDrawerInput::ToggleCollapsed);
-                        },
-                    },
                     gtk::Image {
                         set_icon_name: Some("co.hyprlab.Vireo-mail-attachment-symbolic"),
                         add_css_class: "dim-label",
@@ -387,9 +365,9 @@ impl SimpleComponent for AttachmentDrawer {
         // The grab pill floats just above the seam, over the reader's bottom
         // edge — the same affordance, in the same place, as the split reply's.
         // Its gestures route through update(), which knows the collapsed
-        // state: a plain click toggles the drawer like the chevron, a drag
-        // resizes it live — collapsed included, where the release point
-        // becomes the drawer's new height.
+        // state: a plain click toggles the drawer, a drag resizes it live —
+        // collapsed included, where the release point becomes the drawer's
+        // new height.
         let pill = crate::ui::grab_pill::pill_widget();
         pill.set_valign(gtk::Align::End);
         pill.set_visible(false); // no seam until attachments arrive
@@ -478,9 +456,6 @@ impl SimpleComponent for AttachmentDrawer {
                     self.schedule_height_save();
                 }
             }
-            AttachmentDrawerInput::ToggleCollapsed => {
-                self.toggle_collapsed();
-            }
             AttachmentDrawerInput::ToggleListView => {
                 self.list_view = !self.list_view;
                 self.rebuild(&sender);
@@ -565,8 +540,7 @@ impl AttachmentDrawer {
         self.pill.set_visible(!self.items.is_empty());
     }
 
-    /// Flip collapsed/expanded — the chevron's action, shared with a plain
-    /// click on the grab pill.
+    /// Flip collapsed/expanded — a plain click on the grab pill.
     fn toggle_collapsed(&mut self) {
         self.collapsed = !self.collapsed;
         self.apply_position();
