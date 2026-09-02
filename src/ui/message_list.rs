@@ -2960,6 +2960,11 @@ impl MessageList {
                 item(RowAction::Archive, "Archive", "co.hyprlab.Vireo-mail-archive-symbolic"),
                 item(RowAction::Delete, "Delete", "co.hyprlab.Vireo-user-trash-symbolic"),
             ],
+            vec![item(
+                RowAction::AddContact,
+                "Add Sender to Contacts",
+                "co.hyprlab.Vireo-contact-new-symbolic",
+            )],
             vec![item(RowAction::ViewSource, "View Source", "co.hyprlab.Vireo-code-symbolic")],
         ];
 
