@@ -39,9 +39,16 @@ pub fn pill_widget() -> gtk::Box {
     pill
 }
 
-/// Wire the pill's drag: `on_begin` fires as a drag starts, then `on_want`
+/// The pointer travel below which a press-and-release still counts as a
+/// click: `GtkGestureDrag` has no threshold of its own, so without this slop
+/// a click's pixel of jitter would fire drag updates.
+const DRAG_SLOP: i32 = 4;
+
+/// Wire the pill's drag: `on_begin` fires as a press lands, then `on_want`
 /// gets each update's candidate divider position (the position at drag start
-/// plus the pointer's travel) — the host decides what to do with it.
+/// plus the pointer's travel) — the host decides what to do with it. Updates
+/// only start once the pointer has travelled past [`DRAG_SLOP`]; from then on
+/// they flow continuously, back inside the slop included.
 pub fn attach_drag(
     pill: &gtk::Box,
     paned: &gtk::Paned,
@@ -50,6 +57,7 @@ pub fn attach_drag(
 ) {
     let drag = gtk::GestureDrag::new();
     let split = paned.clone();
+    let armed = std::rc::Rc::new(std::cell::Cell::new(false));
     let start = std::rc::Rc::new(std::cell::Cell::new((0i32, 0f32)));
     let to_root_y = {
         let pill = pill.clone();
@@ -64,11 +72,13 @@ pub fn attach_drag(
     };
     {
         let start = start.clone();
+        let armed = armed.clone();
         let to_root_y = to_root_y.clone();
         drag.connect_drag_begin(move |_, x, y| {
             if let Some(ry) = to_root_y(x, y) {
                 let pos = split.position();
                 start.set((pos, ry));
+                armed.set(false);
                 on_begin(pos);
             }
         });
@@ -77,7 +87,14 @@ pub fn attach_drag(
         let Some((sx, sy)) = g.start_point() else { return };
         let Some(now) = to_root_y(sx + ox, sy + oy) else { return };
         let (start_pos, start_y) = start.get();
-        on_want(start_pos + (now - start_y) as i32);
+        let want = start_pos + (now - start_y) as i32;
+        if !armed.get() {
+            if (want - start_pos).abs() < DRAG_SLOP {
+                return;
+            }
+            armed.set(true);
+        }
+        on_want(want);
     });
     pill.add_controller(drag);
 }
