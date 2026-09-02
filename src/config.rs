@@ -733,6 +733,13 @@ struct PrivacyFile {
     /// menu always offers both, whichever way this is set.
     #[serde(default = "default_paste_plain")]
     paste_plain: bool,
+    /// Whether the composer underlines misspelled words as you type.
+    #[serde(default = "default_spellcheck")]
+    spellcheck: bool,
+    /// Languages to check against, comma-separated (e.g. "en_US, de_DE").
+    /// Empty = follow the session locale (WebKit's own default).
+    #[serde(default)]
+    spellcheck_langs: String,
     /// Hovering the icon rail (narrow-window or user-collapsed) floats the
     /// full sidebar out over the panes without needing the expand button.
     #[serde(default)]
@@ -870,6 +877,10 @@ fn default_paste_plain() -> bool {
     true
 }
 
+fn default_spellcheck() -> bool {
+    true
+}
+
 fn default_compose_inline() -> bool {
     true
 }
@@ -921,6 +932,8 @@ impl Default for PrivacyFile {
             list_palette_hover: false,
             compose_inline: default_compose_inline(),
             paste_plain: default_paste_plain(),
+            spellcheck: default_spellcheck(),
+            spellcheck_langs: String::new(),
             sidebar_hover_expand: false,
             app_theme: AppTheme::default(),
             preview_lines: default_preview_lines(),
@@ -1281,6 +1294,16 @@ pub fn load_paste_plain() -> bool {
     load_privacy().paste_plain
 }
 
+/// Whether the composer checks spelling as you type.
+pub fn load_spellcheck() -> bool {
+    load_privacy().spellcheck
+}
+
+/// The configured spell-checking languages (comma-separated; empty = locale).
+pub fn load_spellcheck_langs() -> String {
+    load_privacy().spellcheck_langs
+}
+
 pub fn load_sidebar_hover_expand() -> bool {
     load_privacy().sidebar_hover_expand
 }
@@ -1344,6 +1367,8 @@ pub fn save_privacy(
     list_palette_hover: bool,
     compose_inline: bool,
     paste_plain: bool,
+    spellcheck: bool,
+    spellcheck_langs: String,
     preview_lines: u32,
     single_key_shortcuts: bool,
     run_in_background: bool,
@@ -1394,6 +1419,8 @@ pub fn save_privacy(
         list_palette_hover,
         compose_inline,
         paste_plain,
+        spellcheck,
+        spellcheck_langs,
         preview_lines,
         single_key_shortcuts,
         run_in_background,

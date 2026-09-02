@@ -43,6 +43,8 @@ pub struct PrefInit {
     /// "New message" composes inline over the reading pane (vs a window).
     pub compose_inline: bool,
     pub paste_plain: bool,
+    pub spellcheck: bool,
+    pub spellcheck_langs: String,
     pub message_theme: MessageTheme,
     pub app_theme: AppTheme,
     pub notifications: bool,
@@ -190,6 +192,8 @@ pub enum PrefInput {
     ToggleListPaletteHover(bool),
     ToggleComposeInline(bool),
     TogglePastePlain(bool),
+    ToggleSpellcheck(bool),
+    SpellLangsEdited(String),
     ChangeFetchInterval(u32),
     TogglePush(bool),
     ToggleNotifications(bool),
@@ -240,6 +244,8 @@ pub enum PrefOutput {
     SetListPaletteHover(bool),
     SetComposeInline(bool),
     SetPastePlain(bool),
+    SetSpellcheck(bool),
+    SetSpellcheckLangs(String),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -632,6 +638,35 @@ impl Component for Preferences {
                         },
                     },
 
+                    #[name = "spelling_group"]
+                    add = &adw::PreferencesGroup {
+                        set_title: "Spelling",
+                        // The description is filled in at init with the
+                        // dictionaries the app can actually see — checking a
+                        // language without one silently checks nothing, so
+                        // honesty about what is installed beats silence.
+
+                        #[name = "spellcheck_row"]
+                        adw::SwitchRow {
+                            set_title: "Check spelling as you type",
+                            set_subtitle: "Misspelled words in the message body \
+                                           are underlined; right-click a word \
+                                           for corrections.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleSpellcheck(row.is_active()));
+                            },
+                        },
+
+                        #[name = "spell_langs_row"]
+                        adw::EntryRow {
+                            set_title: "Languages (comma-separated, blank = system language)",
+                            set_show_apply_button: true,
+                            connect_apply[sender] => move |row| {
+                                sender.input(PrefInput::SpellLangsEdited(row.text().to_string()));
+                            },
+                        },
+                    },
+
                     add = &adw::PreferencesGroup {
                         // Rendered as Pango markup — a bare "&" breaks it.
                         set_title: "System &amp; Appearance",
@@ -948,6 +983,9 @@ impl Component for Preferences {
         widgets.list_palette_hover_row.set_active(init.list_palette_hover);
         widgets.compose_inline_row.set_active(init.compose_inline);
         widgets.paste_plain_row.set_active(init.paste_plain);
+        widgets.spellcheck_row.set_active(init.spellcheck);
+        widgets.spell_langs_row.set_text(&init.spellcheck_langs);
+        widgets.spelling_group.set_description(Some(&dictionary_summary()));
 
         // Date and clock combos.
         let date_labels: Vec<&str> = DATE_STYLES.iter().map(|(l, _)| *l).collect();
@@ -1098,6 +1136,12 @@ impl Component for Preferences {
             PrefInput::TogglePastePlain(on) => {
                 let _ = sender.output(PrefOutput::SetPastePlain(on));
             }
+            PrefInput::ToggleSpellcheck(on) => {
+                let _ = sender.output(PrefOutput::SetSpellcheck(on));
+            }
+            PrefInput::SpellLangsEdited(langs) => {
+                let _ = sender.output(PrefOutput::SetSpellcheckLangs(langs));
+            }
             PrefInput::ChangeFetchInterval(index) => {
                 let secs = FETCH_INTERVALS
                     .get(index as usize)
@@ -1202,3 +1246,39 @@ impl Component for Preferences {
     }
 }
 
+
+
+/// What spell-checking can actually use: the hunspell dictionaries that
+/// resolve to real files. Inside the Flatpak most of `/usr/share/hunspell` is
+/// dangling symlinks until the locale extension carries the language, and a
+/// language without a dictionary silently checks nothing — so the Spelling
+/// group says out loud what is installed (#114).
+fn dictionary_summary() -> String {
+    let mut codes: std::collections::BTreeSet<String> = Default::default();
+    for dir in ["/usr/share/hunspell", "/usr/share/myspell"] {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let is_dic = p.extension().is_some_and(|x| x == "dic");
+            // metadata() follows symlinks: a dangling one (locale extension
+            // without that language) errs out and is rightly skipped.
+            if is_dic && p.metadata().map(|m| m.is_file()).unwrap_or(false) {
+                if let Some(s) = p.file_stem().and_then(|s| s.to_str()) {
+                    codes.insert(s.to_string());
+                }
+            }
+        }
+    }
+    if codes.is_empty() {
+        return "No dictionaries are visible to the app. On Flatpak, add your \
+                language with: flatpak config --set extra-languages <code>"
+            .to_string();
+    }
+    let total = codes.len();
+    let shown: Vec<String> = codes.into_iter().take(12).collect();
+    let mut out = format!("Installed dictionaries: {}", shown.join(", "));
+    if total > shown.len() {
+        out.push_str(&format!(" and {} more", total - shown.len()));
+    }
+    out
+}

@@ -15,10 +15,32 @@ pub struct RichEditor {
     webview: webkit6::WebView,
 }
 
+/// Push the spell-checking preference onto the shared web context (#114).
+/// Checking only happens in editable views, so the reader — which shares the
+/// context — is unaffected. With no languages configured the call is left to
+/// WebKit, whose own default follows the session locale.
+pub fn apply_spellcheck() {
+    let ctx = super::message_view::shared_web_context();
+    let on = crate::config::load_spellcheck();
+    ctx.set_spell_checking_enabled(on);
+    if !on {
+        return;
+    }
+    let setting = crate::config::load_spellcheck_langs();
+    let langs: Vec<&str> =
+        setting.split([',', ';', ' ']).map(str::trim).filter(|s| !s.is_empty()).collect();
+    if !langs.is_empty() {
+        ctx.set_spell_checking_languages(&langs);
+    }
+}
+
 impl RichEditor {
     pub fn new(initial_html: &str) -> Self {
         // The shared document-viewer context (issue #106): a default-context
         // view would bring up a second web process with browser-sized caches.
+        // Spell checking rides the same context; refreshing it here keeps a
+        // just-changed preference honored without a restart.
+        apply_spellcheck();
         let webview = webkit6::WebView::builder()
             .web_context(&super::message_view::shared_web_context())
             .build();

@@ -408,6 +408,8 @@ pub struct AppModel {
     /// "New message" composes inline over the reading pane (vs a window).
     compose_inline: bool,
     paste_plain: bool,
+    spellcheck: bool,
+    spellcheck_langs: String,
     /// How email content is themed (message content only, not the app UI).
     message_theme: config::MessageTheme,
     /// The repeating auto-fetch timer, if armed.
@@ -647,6 +649,8 @@ pub enum AppMsg {
     SetListPaletteHover(bool),
     SetComposeInline(bool),
     SetPastePlain(bool),
+    SetSpellcheck(bool),
+    SetSpellcheckLangs(String),
     /// Ctrl+Z: undo the most recent move/delete.
     Undo,
     SetFetchInterval(u64),
@@ -1814,6 +1818,8 @@ impl SimpleComponent for AppModel {
             list_palette_hover: config::load_list_palette_hover(),
             compose_inline: config::load_compose_inline(),
             paste_plain: config::load_paste_plain(),
+            spellcheck: config::load_spellcheck(),
+            spellcheck_langs: config::load_spellcheck_langs(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
             notifications,
@@ -4210,6 +4216,24 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetSpellcheck(on) => {
+                if self.spellcheck != on {
+                    self.spellcheck = on;
+                    self.save_settings();
+                    // Takes effect in already-open composers too: the shared
+                    // web context is live.
+                    crate::ui::rich_editor::apply_spellcheck();
+                }
+            }
+
+            AppMsg::SetSpellcheckLangs(langs) => {
+                if self.spellcheck_langs != langs {
+                    self.spellcheck_langs = langs;
+                    self.save_settings();
+                    crate::ui::rich_editor::apply_spellcheck();
+                }
+            }
+
             AppMsg::SetMessageTheme(theme) => {
                 if self.message_theme != theme {
                     self.message_theme = theme;
@@ -5610,6 +5634,8 @@ impl AppModel {
             self.list_palette_hover,
             self.compose_inline,
             self.paste_plain,
+            self.spellcheck,
+            self.spellcheck_langs.clone(),
             self.preview_lines,
             self.single_key.get(),
             self.run_in_background.get(),
@@ -8752,6 +8778,8 @@ impl AppModel {
             list_palette_hover: self.list_palette_hover,
             compose_inline: self.compose_inline,
             paste_plain: self.paste_plain,
+            spellcheck: self.spellcheck,
+            spellcheck_langs: self.spellcheck_langs.clone(),
             app_theme: self.app_theme,
             preview_lines: self.preview_lines,
             single_key_shortcuts: self.single_key.get(),
@@ -8787,6 +8815,8 @@ impl AppModel {
                 PrefOutput::SetListPaletteHover(on) => AppMsg::SetListPaletteHover(on),
                 PrefOutput::SetComposeInline(on) => AppMsg::SetComposeInline(on),
                 PrefOutput::SetPastePlain(on) => AppMsg::SetPastePlain(on),
+                PrefOutput::SetSpellcheck(on) => AppMsg::SetSpellcheck(on),
+                PrefOutput::SetSpellcheckLangs(l) => AppMsg::SetSpellcheckLangs(l),
                 PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                 PrefOutput::SetPush(on) => AppMsg::SetPush(on),
                 PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
