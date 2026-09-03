@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.20.0-beta.4 — 2026-09-03
+
+The attachment drawer's seam, finished (beta.3 feedback).
+
+- **The dead zone is gone at the root.** GtkPaned attaches two
+  capture-phase gestures to the paned itself (a GestureDrag that moves
+  the divider, and its GesturePan touch sibling) that hit-test raw
+  coordinates against an enlarged handle area — untargeting the
+  separator widget never stopped them claiming presses near the seam,
+  which is why the cursor and hover kept working while clicks died and
+  drags "worked" natively. Both gestures are removed; the seam is
+  entirely the app's own.
+- **One continuous handle.** Full-width grab zone above, hairline
+  separator, and a real edge strip inside the drawer's top that clicks,
+  drags, wears the same cursor, and lights the bar on hover.
+- **Cursors that match their seams.** The split reply's handle shows
+  row-resize (matching its live separator); the drawer keeps plain
+  ns-resize.
+
 ## 1.20.0-beta.3 — 2026-09-03
 
 Attachment-drawer seam fixes from beta.2 testing.

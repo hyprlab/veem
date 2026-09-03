@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.20.0-beta.4" date="2026-09-03" type="development">
+
+      <description><p>The attachment drawer's seam finished: the dead click zone is gone at its root, the whole edge is one continuous handle that highlights on hover, and each seam's cursor matches how it works.</p></description>
+
+    </release>
     <release version="1.20.0-beta.3" date="2026-09-03" type="development">
 
       <description><p>Attachment-drawer fixes: collapsing no longer flashes, a resized drawer reopens at its dragged height, and the whole seam answers clicks and drags.</p></description>
