@@ -17,7 +17,8 @@
 //! the sandbox and may not resolve our icon theme, and the dot has to be drawn
 //! on anyway. The Vireo icon is the app icon itself; the envelope variants are
 //! the reader's `mail-unread-symbolic` in plain white or black, for panels
-//! that don't recolour symbolic icons.
+//! that don't recolour symbolic icons. On Cinnamon the icon is drawn at half
+//! size inside the pixmap, see [`panel_fill`].
 
 use gtk::cairo;
 use gtk::gdk_pixbuf::{InterpType, Pixbuf, PixbufLoader};
@@ -359,28 +360,48 @@ fn initials_png(name: &str, email: &str, size: i32) -> Option<Vec<u8>> {
 
 /// Every size of one icon, with or without the dot.
 fn render_set(icon: TrayIcon, dotted: bool) -> Vec<Icon> {
+    let fill = panel_fill();
     SIZES
         .iter()
-        .filter_map(|&size| render(icon, dotted, size))
+        .filter_map(|&size| render(icon, dotted, size, fill))
         .collect()
 }
 
-/// Decode the chosen icon at `size` and composite the dot over its top-right.
-fn render(icon: TrayIcon, dotted: bool, size: i32) -> Option<Icon> {
-    let pixbuf = base_pixbuf(icon, size)?;
+/// How much of each pixmap the icon fills; the rest is a clear margin.
+///
+/// A panel draws the pixmap at whatever size it asked for, so the icon
+/// fills it. Cinnamon is the exception: its status applet takes a pixmap
+/// for a full-colour icon and draws it at the panel's colour icon size,
+/// while the symbolic icons beside it get the smaller symbolic size, so
+/// ours towered over them. Drawing at half size brings it level.
+fn panel_fill() -> f64 {
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    let cinnamon = desktop
+        .split(':')
+        .any(|d| d.eq_ignore_ascii_case("x-cinnamon") || d.eq_ignore_ascii_case("cinnamon"));
+    if cinnamon { 0.5 } else { 1.0 }
+}
+
+/// Decode the chosen icon, composite the dot over its top-right, and centre
+/// it in a `size` canvas, of which it fills `fill`.
+fn render(icon: TrayIcon, dotted: bool, size: i32, fill: f64) -> Option<Icon> {
+    let glyph = ((f64::from(size) * fill).round() as i32).clamp(1, size);
+    let pixbuf = base_pixbuf(icon, glyph)?;
     let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, size, size).ok()?;
     {
         let cr = cairo::Context::new(&surface).ok()?;
-        // Centre a pixbuf the loader sized under the canvas (an SVG keeps its
-        // aspect, so a wide envelope comes back shorter than `size`).
+        // Centre a pixbuf the loader sized under the glyph (an SVG keeps its
+        // aspect, so a wide envelope comes back shorter than `glyph`).
         let x = f64::from(size - pixbuf.width()) / 2.0;
         let y = f64::from(size - pixbuf.height()) / 2.0;
         cr.set_source_pixbuf(&pixbuf, x, y);
         cr.paint().ok()?;
         if dotted {
-            let s = f64::from(size);
+            // The dot sits on the glyph's corner, not the canvas's.
+            let s = f64::from(glyph);
+            let margin = f64::from(size - glyph) / 2.0;
             let r = (s * 0.19).max(2.0);
-            let (cx, cy) = (s - r - s * 0.04, r + s * 0.04);
+            let (cx, cy) = (margin + s - r - s * 0.04, margin + r + s * 0.04);
             // A clear ring first, so the dot reads as sitting on top of the
             // icon rather than merging into its corner.
             cr.set_operator(cairo::Operator::Clear);
@@ -492,8 +513,8 @@ mod tests {
     #[test]
     fn the_dot_is_red_and_only_when_asked() {
         let size = 32usize;
-        let plain = render(TrayIcon::EnvelopeLight, false, size as i32).unwrap();
-        let dotted = render(TrayIcon::EnvelopeLight, true, size as i32).unwrap();
+        let plain = render(TrayIcon::EnvelopeLight, false, size as i32, 1.0).unwrap();
+        let dotted = render(TrayIcon::EnvelopeLight, true, size as i32, 1.0).unwrap();
         // The dot's centre, per `render`.
         let s = size as f64;
         let r = s * 0.19;
@@ -506,5 +527,28 @@ mod tests {
         assert_eq!(a, 0xff);
         assert_eq!((red, g, b), (0xe0, 0x1b, 0x24));
         assert_ne!(at(&plain), at(&dotted));
+    }
+
+    #[test]
+    fn a_half_fill_leaves_a_clear_margin_and_moves_the_dot() {
+        let size = 32usize;
+        let icon = render(TrayIcon::Vireo, true, size as i32, 0.5).unwrap();
+        assert_eq!(icon.data.len(), size * size * 4);
+        let at = |x: usize, y: usize| {
+            let i = (y * size + x) * 4;
+            (icon.data[i], icon.data[i + 1], icon.data[i + 2], icon.data[i + 3])
+        };
+        // The outer 8px ring is empty: corner, and just inside the old dot.
+        assert_eq!(at(1, 1), (0, 0, 0, 0));
+        assert_eq!(at(size - 3, 2), (0, 0, 0, 0));
+        // The dot sits on the 16px glyph's corner, per `render`.
+        let (s, margin) = (16.0f64, 8.0f64);
+        let r = s * 0.19;
+        let (cx, cy) = ((margin + s - r - s * 0.04) as usize, (margin + r + s * 0.04) as usize);
+        let (a, red, g, b) = at(cx, cy);
+        assert_eq!(a, 0xff);
+        assert_eq!((red, g, b), (0xe0, 0x1b, 0x24));
+        // And the glyph itself is there, in the middle.
+        assert_ne!(at(size / 2, size / 2).0, 0);
     }
 }
