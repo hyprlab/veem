@@ -103,9 +103,22 @@ impl RichEditor {
         // Spell checking rides the same context; refreshing it here keeps a
         // just-changed preference honored without a restart.
         apply_spellcheck();
+        // The message handler carries the word under the caret out for a
+        // mid-word spelling verdict (see the paste script's caretWord).
+        let ucm = webkit6::UserContentManager::new();
+        ucm.register_script_message_handler("vireoSpell", None);
         let webview = webkit6::WebView::builder()
             .web_context(&super::message_view::shared_web_context())
+            .user_content_manager(&ucm)
             .build();
+        {
+            let v = webview.clone();
+            ucm.connect_script_message_received(Some("vireoSpell"), move |_, value| {
+                let word = value.to_str().to_string();
+                let bad = crate::spell::word_is_misspelled(&word);
+                exec(&v, &format!("window.__vireoSpellMark({bad})"));
+            });
+        }
         let settings = webkit6::Settings::new();
         settings.set_enable_javascript(true);
         settings.set_enable_developer_extras(false);
@@ -535,6 +548,65 @@ const PASTE_SCRIPT: &str = r#"<script>
       });
     });
   }).observe(document.documentElement, {childList: true, subtree: true});
+  /* WebKit only marks a word's spelling once the caret leaves it. The word
+     under the caret is checked by us instead: after a typing pause it goes
+     to the app (which asks the same enchant the body's checker uses), and a
+     misspelling is drawn through the CSS Custom Highlight API — no DOM
+     mutation, so the caret, the undo stack, and the outgoing HTML are all
+     untouched. The mark clears the moment typing resumes or the caret
+     leaves the word, where WebKit's own marking takes over. */
+  var spellT = null, composing = false, spellRange = null;
+  var spellHl = (window.Highlight && window.CSS && CSS.highlights)
+    ? new Highlight() : null;
+  if(spellHl) CSS.highlights.set('vireo-misspell', spellHl);
+  function caretWord(){
+    var sel = getSelection();
+    if(!sel.rangeCount || !sel.isCollapsed) return null;
+    var n = sel.focusNode, off = sel.focusOffset;
+    if(!n || n.nodeType !== 3) return null;
+    var s = n.textContent;
+    var isW = function(c){ return /[\p{L}'’]/u.test(c); };
+    var a = off; while(a > 0 && isW(s[a-1])) a--;
+    var b = off; while(b < s.length && isW(s[b])) b++;
+    if(b - a < 2) return null;
+    var r = document.createRange();
+    r.setStart(n, a); r.setEnd(n, b);
+    return {range: r, word: s.slice(a, b)};
+  }
+  window.__vireoSpellMark = function(bad){
+    if(!spellHl) return;
+    spellHl.clear();
+    if(bad && spellRange && spellRange.startContainer.isConnected){
+      spellHl.add(spellRange);
+    }
+  };
+  document.addEventListener('compositionstart', function(){ composing = true; });
+  document.addEventListener('compositionend', function(){ composing = false; });
+  document.addEventListener('input', function(){
+    if(!spellHl) return;
+    spellHl.clear();
+    if(composing) return;
+    clearTimeout(spellT);
+    spellT = setTimeout(function(){
+      if(composing) return;
+      var w = caretWord();
+      if(!w) return;
+      spellRange = w.range;
+      try{ window.webkit.messageHandlers.vireoSpell.postMessage(w.word); }catch(_){}
+    }, 600);
+  });
+  document.addEventListener('selectionchange', function(){
+    if(!spellHl || !spellRange) return;
+    var sel = getSelection();
+    if(!sel.rangeCount) return;
+    var r = sel.getRangeAt(0);
+    if(!sel.isCollapsed || r.startContainer !== spellRange.startContainer
+       || r.startOffset < spellRange.startOffset
+       || r.startOffset > spellRange.endOffset){
+      spellHl.clear();
+      spellRange = null;
+    }
+  });
   /* Clicking an image selects it whole, so it can be deleted, cut, or
      copied like any other selection. */
   document.addEventListener('click', function(e){
@@ -643,6 +715,11 @@ fn document(content: &str, dark: bool) -> String {
               recipient; this rule is what the composer itself obeys,\
               whatever survives insertHTML. */\
            img{{max-width:100%;height:auto;}}\
+           /* The in-progress word's misspelling mark (Custom Highlight API);\
+              the tint backs up engines that skip decorations in highlights. */\
+           ::highlight(vireo-misspell){{\
+             text-decoration:underline wavy #e01b24;\
+             background-color:rgba(224,27,36,0.10);}}\
            blockquote{{margin:0 0 0 8px;padding-left:10px;\
              border-left:3px solid rgba(128,128,128,0.4);}}\
            .vireo-quote-attr{{opacity:0.7;margin:10px 0 4px;}}\

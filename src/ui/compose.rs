@@ -502,19 +502,45 @@ impl Component for Compose {
         widgets
             .subject_row
             .connect_changed(move |_| s.input(ComposeInput::MarkFieldsDirty));
-        // The subject gets the body's red underlines too (#114): each edit
+        // The subject gets the body's red underlines too (#114): every edit
         // re-checks the line through enchant directly and paints error
         // underlines onto the row's inner GtkText — the row itself exposes
-        // no Pango attributes. Addresses stay uncheckable on purpose: only
-        // the subject is prose.
+        // no Pango attributes. The word the cursor sits in is exempt while
+        // typing and joins the check after a 400ms pause, so mistakes show
+        // before the space without half-words flashing red mid-keystroke.
+        // Addresses stay uncheckable on purpose: only the subject is prose.
         if let Some(text) = inner_text(widgets.subject_row.upcast_ref()) {
             let t = text.clone();
+            let pending: std::rc::Rc<std::cell::RefCell<Option<gtk::glib::SourceId>>> =
+                std::rc::Rc::new(std::cell::RefCell::new(None));
             widgets.subject_row.connect_changed(move |row| {
-                t.set_attributes(crate::spell::error_attrs(&row.text()).as_ref());
+                if let Some(prev) = pending.borrow_mut().take() {
+                    prev.remove();
+                }
+                let content = row.text().to_string();
+                // Editable positions count characters; attribute ranges
+                // count bytes.
+                let cursor = content
+                    .char_indices()
+                    .nth(row.position().max(0) as usize)
+                    .map(|(b, _)| b)
+                    .unwrap_or(content.len());
+                t.set_attributes(crate::spell::error_attrs(&content, Some(cursor)).as_ref());
+                let t = t.clone();
+                let row = row.clone();
+                let slot = pending.clone();
+                let id = gtk::glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(400),
+                    move || {
+                        slot.borrow_mut().take();
+                        t.set_attributes(crate::spell::error_attrs(&row.text(), None).as_ref());
+                    },
+                );
+                *pending.borrow_mut() = Some(id);
             });
             // Prefilled subjects (replies, drafts) get checked on open too.
             text.set_attributes(
-                crate::spell::error_attrs(&widgets.subject_row.text()).as_ref(),
+                crate::spell::error_attrs(&widgets.subject_row.text(), None).as_ref(),
             );
         }
 

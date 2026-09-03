@@ -134,10 +134,23 @@ fn checkable_words(text: &str) -> Vec<(usize, usize, &str)> {
     out
 }
 
+/// Whether one word is misspelled under the current preference and language.
+/// `false` whenever checking is off or unavailable.
+pub fn word_is_misspelled(word: &str) -> bool {
+    if !crate::config::load_spellcheck() {
+        return false;
+    }
+    let lang = crate::ui::rich_editor::resolved_spell_language();
+    checker_for(&lang).is_some_and(|c| c.is_misspelled(word))
+}
+
 /// Pango error-underline attributes for every misspelled word in `text` —
 /// `None` (clear the entry's attributes) when checking is off or enchant is
-/// unavailable.
-pub fn error_attrs(text: &str) -> Option<gtk::pango::AttrList> {
+/// unavailable. A word whose byte range contains `cursor` is left unmarked:
+/// while the cursor sits in a word it is still being typed, and flagging a
+/// half-word on every keystroke reads as nagging. Pass `None` (after a
+/// typing pause) to check the cursor's word too.
+pub fn error_attrs(text: &str, cursor: Option<usize>) -> Option<gtk::pango::AttrList> {
     if !crate::config::load_spellcheck() {
         return None;
     }
@@ -145,11 +158,20 @@ pub fn error_attrs(text: &str) -> Option<gtk::pango::AttrList> {
     let checker = checker_for(&lang)?;
     let attrs = gtk::pango::AttrList::new();
     for (start, end, word) in checkable_words(text) {
+        if cursor.is_some_and(|c| c >= start && c <= end) {
+            continue;
+        }
         if checker.is_misspelled(word) {
             let mut a = gtk::pango::AttrInt::new_underline(gtk::pango::Underline::Error);
             a.set_start_index(start as u32);
             a.set_end_index(end as u32);
             attrs.insert(a);
+            // The error underline takes the text colour unless told
+            // otherwise; misspellings are red (GNOME's @error_color).
+            let mut c = gtk::pango::AttrColor::new_underline_color(0xe0e0, 0x1b1b, 0x2424);
+            c.set_start_index(start as u32);
+            c.set_end_index(end as u32);
+            attrs.insert(c);
         }
     }
     Some(attrs)
