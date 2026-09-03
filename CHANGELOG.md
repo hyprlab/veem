@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.20.0-beta.9 — 2026-09-03
+
+Mail that filter rules file into folders counts toward unread, per rule
+(#116).
+
+- **Filtered folders count toward unread, per rule (#116).** The unread
+  total behind the All Inboxes chip, the tray icon's dot and menu, and
+  the Background Apps status counted inbox mail only, so mail a filter
+  rule filed into a folder dropped out of the number the moment it was
+  filed: five unread in the window, one in the tray. Each filter rule
+  now carries a "Count unread mail" switch (`count_unread`, on by
+  default, also in the Add Filter dialog; existing rules load with it
+  on), and the folders of counting rules join the account's inbox in
+  the total. Trash and Junk destinations never count. The tray menu
+  lists unread mail from those folders too; their lists are primed from
+  the disk cache at startup, fetched quietly when a rule starts counting
+  a folder, and the background resync that follows a changed count now
+  covers every counted folder, not just the inbox. Flipping the switch
+  recounts at once. Server-side sorting Vireo does not know about is
+  not counted, and notifications are unchanged (inbox arrivals, and
+  mail Vireo's own filters file elsewhere).
+
 ## 1.20.0-beta.8 — 2026-09-03
 
 The tray menu and new-mail notifications follow the inbox while another

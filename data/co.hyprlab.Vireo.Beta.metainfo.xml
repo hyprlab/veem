@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.20.0-beta.9" date="2026-09-03" type="development">
+
+      <description><p>Mail that filter rules file into folders counts as unread, per rule (#116): a "Count unread mail" switch on each rule, on by default. The All Inboxes badge, the tray icon and the Background Apps status share the total.</p></description>
+
+    </release>
     <release version="1.20.0-beta.8" date="2026-09-03" type="development">
 
       <description><p>The tray menu's unread list and new-mail notifications keep up with the inbox while another folder is open (#116). Account Settings… from the sidebar opens that account's editor. The split reply closes in one motion.</p></description>
