@@ -215,7 +215,7 @@ The project has the following foundational values that guide its development:
   everything we do.** Our aim is to improve the lives of our users and the
   Linux desktop as a whole.
 - **Vireo is committed to GNOME-first development** through deference to GNOME
-  HIG (human interface guidelines) where possible and ensuring 100%
+  HIG (human interface guidelines) where appropriate and ensuring 100%
   compatibility with the latest GNOME release. This app was conceived for GNOME
   and it will remain the desktop environment we target primarily.
 - **Aesthetics matter as much as features.** Vireo should make using email on
