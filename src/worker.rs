@@ -360,6 +360,19 @@ pub fn spawn(
 ) -> mpsc::UnboundedSender<MailRequest> {
     let (tx, rx) = mpsc::unbounded_channel();
 
+    // The UI talks to the cache lane, which answers what the disk cache can
+    // and hands the rest to the worker (`tx`), so a cached message never
+    // waits behind a sync the worker is busy with. See [`cache_lane`].
+    let (ui_tx, lane_rx) = mpsc::unbounded_channel();
+    {
+        let protocol = account.as_ref().map(|a| a.protocol);
+        let emit = emit.clone();
+        std::thread::Builder::new()
+            .name(format!("vireo-cache-{account_id}"))
+            .spawn(move || cache_lane(account_id, protocol, lane_rx, tx, emit))
+            .expect("failed to spawn cache lane thread");
+    }
+
     std::thread::Builder::new()
         .name(format!("vireo-mail-{account_id}"))
         .spawn(move || {
@@ -384,7 +397,141 @@ pub fn spawn(
         })
         .expect("failed to spawn mail worker thread");
 
-    tx
+    ui_tx
+}
+
+/// The fast lane in front of an account's worker: everything the disk cache
+/// can answer is answered here, at once, and only what needs the network goes
+/// on to the worker.
+///
+/// The worker handles one request at a time, and a folder sync or a
+/// prefetch can hold it for a good while. Without this lane a click on a
+/// message whose body was cached long ago would still queue behind that
+/// work — at startup, the whole initial sync — and the reader would sit on
+/// its spinner over mail that is already on disk. Cached mail must open
+/// instantly whatever the worker is doing, so the lane runs on its own
+/// thread with its own cache connection (WAL mode; readers never block).
+///
+/// Order is kept for whatever is forwarded: the lane is a single loop, so
+/// two requests that both reach the worker arrive in the order the UI sent
+/// them. The worker keeps its own cache-first arms, which cost a miss each
+/// for a forwarded request and still serve its prefetch paths.
+///
+/// The offline sample backend (`protocol == None`) has no cache; everything
+/// passes straight through. POP3 keeps its whole conversation in the inbox
+/// and answers `LoadRelated` itself.
+fn cache_lane(
+    account_id: u32,
+    protocol: Option<crate::config::Protocol>,
+    mut rx: mpsc::UnboundedReceiver<MailRequest>,
+    tx: mpsc::UnboundedSender<MailRequest>,
+    emit: impl Fn(WorkerEvent),
+) {
+    let cache = protocol.and_then(|_| {
+        Cache::open().map_err(|e| tracing::warn!("cache lane unavailable: {e}")).ok()
+    });
+    while let Some(req) = rx.blocking_recv() {
+        let Some(c) = cache.as_ref() else {
+            if tx.send(req).is_err() {
+                break;
+            }
+            continue;
+        };
+        let forward = match req {
+            MailRequest::LoadBody { message_id, path, uid } => {
+                if serve_cached_body(c, account_id, &path, uid, message_id, &emit) {
+                    None
+                } else {
+                    Some(MailRequest::LoadBody { message_id, path, uid })
+                }
+            }
+            MailRequest::LoadBodies { items, path } => {
+                let items: Vec<(u32, u32)> = items
+                    .into_iter()
+                    .filter(|(message_id, uid)| {
+                        !serve_cached_body(c, account_id, &path, *uid, *message_id, &emit)
+                    })
+                    .collect();
+                if items.is_empty() {
+                    None
+                } else {
+                    Some(MailRequest::LoadBodies { items, path })
+                }
+            }
+            MailRequest::LoadAttachments { message_id, path, uid, download } => {
+                let items = c.load_attachments(account_id, &path, uid);
+                if !items.is_empty() {
+                    emit(WorkerEvent::Attachments { message_id, items });
+                    None
+                } else if !download {
+                    emit(WorkerEvent::AttachmentsPending { message_id });
+                    None
+                } else {
+                    Some(MailRequest::LoadAttachments { message_id, path, uid, download })
+                }
+            }
+            MailRequest::LoadRelated { message_id, ids }
+                if protocol != Some(crate::config::Protocol::Pop3) =>
+            {
+                emit(WorkerEvent::Related {
+                    message_id,
+                    messages: related_from_cache(c, account_id, &ids),
+                });
+                None
+            }
+            other => Some(other),
+        };
+        if let Some(req) = forward {
+            if tx.send(req).is_err() {
+                break;
+            }
+        }
+    }
+}
+
+/// Emit a message's cached body (and its cached sender check, if any).
+/// Returns false when the cache has no body for it.
+fn serve_cached_body(
+    cache: &Cache,
+    account_id: u32,
+    path: &str,
+    uid: u32,
+    message_id: u32,
+    emit: &impl Fn(WorkerEvent),
+) -> bool {
+    let Some(body) = cache.load_body(account_id, path, uid) else {
+        return false;
+    };
+    emit(WorkerEvent::Body { message_id, path: path.to_string(), body });
+    if let Some(check) = cache.load_sender_check(account_id, path, uid) {
+        emit(WorkerEvent::SenderChecked { message_id, check });
+    }
+    true
+}
+
+/// Assemble a conversation from the cache across every folder of the account:
+/// the messages whose Message-ID or references match `ids`.
+///
+/// Folder ids are positional over the same ordered folder list the UI was
+/// given, so a cached row's path maps back to the id the app knows it by —
+/// which is what lets the reader fetch a related message's body and say which
+/// folder it came from. Deleting or binning a message is a decision about it,
+/// so Trash and Junk copies are left out: a conversation shouldn't quietly put
+/// them back on screen.
+fn related_from_cache(cache: &Cache, account_id: u32, ids: &[String]) -> Vec<Message> {
+    let folders = cache.load_folders(account_id);
+    cache
+        .messages_by_thread_ids(account_id, ids)
+        .into_iter()
+        .filter_map(|(path, mut m)| {
+            let f = folders.iter().find(|f| f.path == path)?;
+            if matches!(f.kind, FolderKind::Trash | FolderKind::Junk) {
+                return None;
+            }
+            m.folder_id = f.id;
+            Some(m)
+        })
+        .collect()
 }
 
 async fn run(
@@ -852,29 +999,9 @@ async fn run_imap(
                 continue; // cache-only, never hits the network
             }
             MailRequest::LoadRelated { message_id, ids } => {
-                // Folder ids are positional over the same ordered folder list the
-                // UI was given, so a cached row's path maps back to the id the app
-                // knows it by — which is what lets the reader fetch a related
-                // message's body and say which folder it came from.
                 let messages = cache
                     .as_ref()
-                    .map(|c| {
-                        let folders = c.load_folders(account_id);
-                        c.messages_by_thread_ids(account_id, ids)
-                            .into_iter()
-                            .filter_map(|(path, mut m)| {
-                                let f = folders.iter().find(|f| f.path == path)?;
-                                // Deleting or binning a message is a decision about
-                                // it; a conversation shouldn't quietly put it back
-                                // on screen.
-                                if matches!(f.kind, FolderKind::Trash | FolderKind::Junk) {
-                                    return None;
-                                }
-                                m.folder_id = f.id;
-                                Some(m)
-                            })
-                            .collect()
-                    })
+                    .map(|c| related_from_cache(c, account_id, ids))
                     .unwrap_or_default();
                 emit(WorkerEvent::Related { message_id: *message_id, messages });
                 continue; // cache-only, never hits the network
@@ -884,18 +1011,10 @@ async fn run_imap(
                 path,
                 uid,
             } => {
-                if let Some(body) = cache.as_ref().and_then(|c| c.load_body(account_id, path, *uid))
+                if cache
+                    .as_ref()
+                    .is_some_and(|c| serve_cached_body(c, account_id, path, *uid, *message_id, &emit))
                 {
-                    emit(WorkerEvent::Body {
-                        message_id: *message_id,
-                        path: path.clone(),
-                        body,
-                    });
-                    if let Some(check) =
-                        cache.as_ref().and_then(|c| c.load_sender_check(account_id, path, *uid))
-                    {
-                        emit(WorkerEvent::SenderChecked { message_id: *message_id, check });
-                    }
                     continue; // already cached; no network needed
                 }
             }
@@ -904,24 +1023,10 @@ async fn run_imap(
                 // for one fetch. A conversation reopened after its bodies were
                 // cached costs no network at all.
                 for (message_id, uid) in items {
-                    match cache.as_ref().and_then(|c| c.load_body(account_id, path, *uid)) {
-                        Some(body) => {
-                            emit(WorkerEvent::Body {
-                                message_id: *message_id,
-                                path: path.clone(),
-                                body,
-                            });
-                            if let Some(check) = cache
-                                .as_ref()
-                                .and_then(|c| c.load_sender_check(account_id, path, *uid))
-                            {
-                                emit(WorkerEvent::SenderChecked {
-                                    message_id: *message_id,
-                                    check,
-                                });
-                            }
-                        }
-                        None => pending_bodies.push((*message_id, *uid)),
+                    if !cache.as_ref().is_some_and(|c| {
+                        serve_cached_body(c, account_id, path, *uid, *message_id, &emit)
+                    }) {
+                        pending_bodies.push((*message_id, *uid));
                     }
                 }
                 if pending_bodies.is_empty() {
@@ -6881,20 +6986,7 @@ async fn run_graph(
             MailRequest::LoadRelated { message_id, ids } => {
                 let messages = cache
                     .as_ref()
-                    .map(|c| {
-                        let folders = c.load_folders(account_id);
-                        c.messages_by_thread_ids(account_id, &ids)
-                            .into_iter()
-                            .filter_map(|(path, mut m)| {
-                                let f = folders.iter().find(|f| f.path == path)?;
-                                if matches!(f.kind, FolderKind::Trash | FolderKind::Junk) {
-                                    return None;
-                                }
-                                m.folder_id = f.id;
-                                Some(m)
-                            })
-                            .collect()
-                    })
+                    .map(|c| related_from_cache(c, account_id, &ids))
                     .unwrap_or_default();
                 emit(WorkerEvent::Related { message_id, messages });
             }
