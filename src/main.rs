@@ -21,6 +21,7 @@ mod power;
 mod ram_cache;
 mod rng;
 mod spell;
+mod tray;
 mod ui;
 mod verify;
 mod worker;
@@ -29,7 +30,7 @@ use relm4::RelmApp;
 
 use crate::app::AppModel;
 
-const APP_ID: &str =
+pub const APP_ID: &str =
     if cfg!(feature = "beta") { "co.hyprlab.Vireo.Beta" } else { "co.hyprlab.Vireo" };
 
 /// The user-visible application name.
