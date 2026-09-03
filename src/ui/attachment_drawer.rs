@@ -165,6 +165,9 @@ pub enum AttachmentDrawerInput {
     /// The press on the grab pill was released. A plain click (no drag in
     /// between) toggles the drawer collapsed/expanded.
     PillReleased,
+    /// A click landed on the seam itself (the Paned separator, or the
+    /// drawer's topmost strip) — toggles like a pill click.
+    EdgeClicked,
     /// The expand/collapse slide finished. Carries the state it was heading
     /// for and the generation it belongs to (see `toggle_gen`).
     ToggleSettled { collapsed: bool, gen: u64 },
@@ -199,6 +202,7 @@ impl SimpleComponent for AttachmentDrawer {
             },
 
             #[wrap(Some)]
+            #[name = "drawer_body"]
             set_end_child = &gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
                 add_css_class: "attachment-drawer",
@@ -430,6 +434,47 @@ impl SimpleComponent for AttachmentDrawer {
         root.set_start_child(Some(&reader_wrap));
         // A collapsed drawer starts with its divider locked.
         model.set_divider_draggable(!model.collapsed);
+
+        // The seam must never make the user hunt for a click target: the
+        // Paned separator itself toggles on click (dragging it already
+        // resizes), and so does the drawer's topmost strip — together with
+        // the full-width pill zone above, everything from over the bar down
+        // to a few px inside the drawer answers.
+        {
+            let start = root.start_child();
+            let end = root.end_child();
+            let mut child = root.first_child();
+            while let Some(c) = child {
+                if Some(&c) != start.as_ref() && Some(&c) != end.as_ref() {
+                    let click = gtk::GestureClick::new();
+                    let s = sender.clone();
+                    click.connect_released(move |_, _, _, _| {
+                        s.input(AttachmentDrawerInput::EdgeClicked);
+                    });
+                    c.add_controller(click);
+                }
+                child = c.next_sibling();
+            }
+        }
+        {
+            // Capture-phase on the drawer body, alive only in its top 6px so
+            // the header's buttons keep every ordinary click.
+            let click = gtk::GestureClick::new();
+            click.set_propagation_phase(gtk::PropagationPhase::Capture);
+            click.connect_pressed(|g, _, _, y| {
+                if y > 6.0 {
+                    g.set_state(gtk::EventSequenceState::Denied);
+                }
+            });
+            let s = sender.clone();
+            click.connect_released(move |g, _, _, y| {
+                if y <= 6.0 {
+                    g.set_state(gtk::EventSequenceState::Claimed);
+                    s.input(AttachmentDrawerInput::EdgeClicked);
+                }
+            });
+            widgets.drawer_body.add_controller(click);
+        }
         ComponentParts { model, widgets }
     }
 
@@ -530,9 +575,15 @@ impl SimpleComponent for AttachmentDrawer {
                     config::save_drawer_collapsed(self.collapsed);
                 }
                 // The pill moves the divider live, exactly like a drag on the
-                // (invisible) separator. Position-notify records and persists
-                // the height as usual.
+                // (invisible) separator. The height is recorded here directly
+                // (as well as by position-notify) so a drag is remembered
+                // whatever else is in flight when the divider settles.
                 self.paned.set_position(want.max(0));
+                let drawer_h = self.paned.height() - want.max(0);
+                if drawer_h >= MIN_HEIGHT {
+                    self.height = drawer_h;
+                    self.schedule_height_save();
+                }
             }
             AttachmentDrawerInput::PillReleased => {
                 // A plain click — the press never travelled past the drag
@@ -542,15 +593,25 @@ impl SimpleComponent for AttachmentDrawer {
                     self.toggle_collapsed(&sender);
                 }
             }
+            AttachmentDrawerInput::EdgeClicked => {
+                self.toggle_collapsed(&sender);
+            }
             AttachmentDrawerInput::ToggleSettled { collapsed, gen } => {
                 // A skipped slide's settle arrives late; its work was already
                 // done synchronously when it was superseded.
                 if gen != self.toggle_gen {
                     return;
                 }
+                // Order matters: flip the state first (the view update right
+                // after this hides the body, shrinking the drawer's minimum),
+                // THEN allow the end child its minimum again — the other way
+                // round the Paned jumps the divider to fit the still-visible
+                // body before the settle pulls it back.
                 if collapsed {
                     self.settle_collapsed();
                 }
+                self.paned.set_shrink_end_child(false);
+                self.adjusting.set(false);
             }
         }
     }
@@ -616,12 +677,14 @@ impl AttachmentDrawer {
         self.toggle_gen += 1;
         let gen = self.toggle_gen;
         let cell = self.toggle_anim.clone();
-        let adjusting = self.adjusting.clone();
         let s = sender.clone();
+        // NOTHING is restored here: un-shrinking the drawer while its body is
+        // still visible makes the Paned jump the divider up to the body's
+        // minimum, then the settle snaps it back — a visible flash (and a
+        // window where the jump could be recorded as a height). The settle
+        // handler restores state in the right order instead.
         anim.connect_done(move |_| {
             cell.borrow_mut().take();
-            paned.set_shrink_end_child(false);
-            adjusting.set(false);
             s.input(AttachmentDrawerInput::ToggleSettled { collapsed: closing, gen });
         });
         *self.toggle_anim.borrow_mut() = Some((anim.clone(), closing));
@@ -639,6 +702,8 @@ impl AttachmentDrawer {
         if closing {
             self.settle_collapsed();
         }
+        self.paned.set_shrink_end_child(false);
+        self.adjusting.set(false);
     }
 
     /// The end state of a collapse: body hidden, divider locked, position
