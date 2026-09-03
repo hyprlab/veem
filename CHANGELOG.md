@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.20.0-beta.6 — 2026-09-03
+
+The tray menu lists unread mail (#116), and the beta-only wizard entry
+is gone.
+
+- **Unread mail in the tray menu (#116).** With the tray icon on, its
+  menu lists the newest five unread inbox messages across accounts as
+  card-like rows: the sender's contact or Gravatar picture (initials on
+  a colour when there is none), then sender, account when there are
+  several, and date; the subject; and the list's preview line. A click
+  opens the message in the reader, the same path a notification click
+  takes. Past five, a "View all N unread…" row goes to All Inboxes when
+  that view is on, else to the first inbox in sidebar order holding
+  unread mail, moving the sidebar highlight with it. The section is
+  refreshed with the unread counts and sent over D-Bus only when it
+  changed. A switch under the tray icon rows turns it off. Underscores
+  in mail text are escaped, since a menu label reads them as mnemonics.
+  Actions on a message (reply, mark read, archive, delete) stay in the
+  reader: a tray menu is a DBusMenu the panel draws as a vertical list
+  of icon-and-text rows, so buttons on a card, or icons side by side,
+  cannot be expressed; stacked action rows were tried and dropped.
+- **The Welcome Wizard entry leaves the beta help menu.** It let
+  testers review the first-run flow without wiping their config; that
+  review is done. The wizard still runs on a first launch, and
+  `VIREO_WELCOME=1` still forces it.
+
 ## 1.20.0-beta.5 — 2026-09-03
 
 Cached mail opens at once at startup, and a tray icon for the desktops

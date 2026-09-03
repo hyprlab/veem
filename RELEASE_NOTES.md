@@ -2,6 +2,10 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.20.0-beta.6
+
+The tray icon's menu now lists your newest five unread messages (#116): sender, account, date, subject and a preview line, with the sender's picture. Click one to open it in the reader; past five, "View all unread" takes you to All Inboxes, or to the first inbox with unread mail. A switch under the tray icon settings turns the list off. The beta-only Welcome Wizard menu entry is removed.
+
 ## What's new in 1.20.0-beta.5
 
 Messages already on disk open the instant they are clicked, even while the startup sync is still running. And for desktops with a system tray (Cinnamon, KDE, MATE, XFCE, or GNOME with the AppIndicator extension), an optional tray icon (#116): the Vireo icon or a white or black envelope, a red dot while any inbox has unread mail, and a menu to open Vireo, Accounts, Settings, or quit. Off by default under Settings → Keep running in the background.
