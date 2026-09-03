@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.20.0-beta.3 — 2026-09-03
+
+Attachment-drawer seam fixes from beta.2 testing.
+
+- **No flash on collapse.** The slide's end was restoring the drawer's
+  minimum-size constraint while its body was still visible — the Paned
+  jumped the divider up to fit the body, then the settle snapped it
+  back. State now flips before the constraint returns, on the animated
+  and skip paths alike; the same window could occasionally record the
+  jump as the drawer's height, so a resized drawer reopens at its
+  dragged height reliably now (drags also record their height
+  directly).
+- **The seam answers everywhere.** The grab zone is taller, the
+  separator strip itself toggles on click (it already dragged), and the
+  drawer's topmost few pixels toggle too — from above the bar to just
+  inside the drawer, no dead zones to hunt around.
+
 ## 1.20.0-beta.2 — 2026-09-03
 
 Polish on beta.1's composer work, from first-round beta feedback.
