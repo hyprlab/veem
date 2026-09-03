@@ -81,9 +81,12 @@ fn locale_language() -> Option<String> {
 /// dangling one errs out and is rightly skipped.
 pub fn installed_dictionaries() -> Vec<String> {
     let mut codes: std::collections::BTreeSet<String> = Default::default();
-    // The classic locations plus every XDG data dir — enchant searches the
-    // latter too, and /app/share/hunspell is where the Flatpak bundles its
-    // own set of common languages.
+    // Exactly the places enchant's hunspell provider reads (verified
+    // empirically — a listed dictionary the checker can't use is the silent
+    // failure this feature avoids): the classic locations, every SYSTEM XDG
+    // data dir (which is how the Flatpak's bundled /app/share/hunspell set
+    // is found), and enchant's per-user drop-in under the config dir. The
+    // user DATA dir is deliberately absent: enchant does not search it.
     let mut dirs = vec![
         std::path::PathBuf::from("/usr/share/hunspell"),
         std::path::PathBuf::from("/usr/share/myspell"),
@@ -91,7 +94,7 @@ pub fn installed_dictionaries() -> Vec<String> {
     for d in gtk::glib::system_data_dirs() {
         dirs.push(d.join("hunspell"));
     }
-    dirs.push(gtk::glib::user_data_dir().join("hunspell"));
+    dirs.push(gtk::glib::user_config_dir().join("enchant").join("hunspell"));
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for e in entries.flatten() {
