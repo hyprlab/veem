@@ -2458,14 +2458,92 @@ fn extract_attachments(raw: &[u8]) -> Vec<crate::models::Attachment> {
         {
             continue;
         }
-        let name = part
-            .attachment_name()
-            .map(|s| s.to_string())
+        let name = attachment_name_of(part, raw)
             .unwrap_or_else(|| format!("attachment-{}", i + 1));
         out.push(crate::models::Attachment {
             name,
             data: part.contents().to_vec(),
         });
+    }
+    out
+}
+
+/// An attachment part's filename, repaired if the sender split it across adjacent
+/// RFC 2047 encoded-words.
+///
+/// RFC 2047 §6.2 joins adjacent encoded-words separated only by linear whitespace
+/// and discards that whitespace — it is there so a long word can be folded, not as
+/// part of the text. `mail_parser` keeps the separator inside parameter values, so
+/// a file announced as
+///
+/// ```text
+/// Content-Disposition: attachment; filename="=?utf-8?q?docu?= =?utf-8?q?ment.pdf?="
+/// ```
+///
+/// arrives named `docu ment.pdf`. That is not a cosmetic problem: with no `.pdf`
+/// suffix [`guess_mime`] can't type the file, so it gets no PDF thumbnail and
+/// opens in nothing. A header folded between the encoded-words leaves a tab
+/// instead of a space, with the same result.
+///
+/// Splice such pairs in the raw header and let `mail_parser` decode the repaired
+/// version, so the charset handling stays in one place.
+fn attachment_name_of(part: &mail_parser::MessagePart<'_>, raw: &[u8]) -> Option<String> {
+    use mail_parser::{HeaderName, MessageParser, MimeHeaders};
+
+    let names = |h: &mail_parser::Header<'_>| {
+        matches!(
+            h.name,
+            HeaderName::ContentDisposition | HeaderName::ContentType
+        )
+    };
+    let plain = || part.attachment_name().map(|s| s.to_string());
+
+    let mut repaired = Vec::new();
+    let mut spliced = false;
+    for h in part.headers.iter().filter(|h| names(h)) {
+        let Some(value) = raw.get(h.offset_start..h.offset_end) else {
+            return plain();
+        };
+        let joined = splice_encoded_words(value);
+        spliced |= joined != value;
+        repaired.extend_from_slice(h.name().as_bytes());
+        repaired.push(b':');
+        repaired.extend_from_slice(&joined);
+        if !repaired.ends_with(b"\n") {
+            repaired.extend_from_slice(b"\r\n");
+        }
+    }
+    // Nothing to repair: the common case, and no second parse.
+    if !spliced {
+        return plain();
+    }
+    repaired.extend_from_slice(b"\r\n");
+    MessageParser::default()
+        .parse(&repaired)
+        .and_then(|m| m.attachment_name().map(|s| s.to_string()))
+        .or_else(plain)
+}
+
+/// Join adjacent RFC 2047 encoded-words, discarding the linear whitespace between
+/// them. Bytes are safe to scan directly: `?=`, `=?` and the whitespace are all
+/// ASCII, which never occurs inside a multi-byte UTF-8 sequence.
+fn splice_encoded_words(value: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(value.len());
+    let mut i = 0;
+    while i < value.len() {
+        if value[i..].starts_with(b"?=") {
+            let mut j = i + 2;
+            while matches!(value.get(j), Some(b' ' | b'\t' | b'\r' | b'\n')) {
+                j += 1;
+            }
+            if j > i + 2 && value[j..].starts_with(b"=?") {
+                out.extend_from_slice(b"?=");
+                i = j;
+                continue;
+            }
+        }
+        out.push(value[i]);
+        i += 1;
     }
     out
 }
@@ -8745,6 +8823,64 @@ mod tests {
         );
         assert_eq!(found[0].data.len(), 16_384);
         assert_eq!(found[1].data.len(), 40_960);
+    }
+
+    /// One attachment, its Content-Disposition supplied verbatim.
+    fn mail_with_disposition(disposition: &str) -> String {
+        format!(
+            concat!(
+                "Content-Type: multipart/mixed; boundary=B\r\n",
+                "Subject: file\r\n\r\n",
+                "--B\r\n",
+                "Content-Type: application/octet-stream\r\n",
+                "Content-Transfer-Encoding: base64\r\n",
+                "Content-Disposition: {disposition}\r\n\r\n",
+                "AAAAAA==\r\n",
+                "--B--\r\n",
+            ),
+            disposition = disposition
+        )
+    }
+
+    /// A sender split one filename across two encoded-words with a space between
+    /// them. RFC 2047 §6.2 joins those and drops the space; keeping it yields
+    /// `docu ment.pdf` — a PDF with no `.pdf` suffix, so nothing can open it.
+    #[test]
+    fn a_filename_split_across_encoded_words_is_rejoined() {
+        let raw =
+            mail_with_disposition("attachment; filename=\"=?utf-8?q?docu?= =?utf-8?q?ment.pdf?=\"");
+        let found = extract_attachments(raw.as_bytes());
+        assert_eq!(found.len(), 1, "found: {found:?}");
+        assert_eq!(found[0].name, "document.pdf");
+    }
+
+    /// The same split, folded across two lines: the separator arrives as a tab.
+    #[test]
+    fn a_filename_folded_between_encoded_words_is_rejoined() {
+        let raw = mail_with_disposition(
+            "attachment;\r\n\tfilename=\"=?utf-8?q?docu?=\r\n\t=?utf-8?q?ment.pdf?=\"",
+        );
+        let found = extract_attachments(raw.as_bytes());
+        assert_eq!(found.len(), 1, "found: {found:?}");
+        assert_eq!(found[0].name, "document.pdf");
+    }
+
+    /// `=20` is a space in the name itself, not a separator between two words.
+    #[test]
+    fn a_space_inside_one_encoded_word_is_kept() {
+        let raw = mail_with_disposition("attachment; filename=\"=?utf-8?q?my=20file.pdf?=\"");
+        let found = extract_attachments(raw.as_bytes());
+        assert_eq!(found.len(), 1, "found: {found:?}");
+        assert_eq!(found[0].name, "my file.pdf");
+    }
+
+    /// A plain filename with a space in it is nobody's business but the sender's.
+    #[test]
+    fn an_unencoded_filename_with_a_space_is_untouched() {
+        let raw = mail_with_disposition("attachment; filename=\"my file.pdf\"");
+        let found = extract_attachments(raw.as_bytes());
+        assert_eq!(found.len(), 1, "found: {found:?}");
+        assert_eq!(found[0].name, "my file.pdf");
     }
 
     #[test]
