@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.20.0-beta.7 — 2026-09-03
+
+The tray icon now appears in the beta Flatpak, and sits level with its
+neighbours on Cinnamon (#116).
+
+- **The beta Flatpak can reach the tray watcher (#116).** The stable
+  manifest gained `--talk-name=org.kde.StatusNotifierWatcher` with the
+  tray icon, but the beta manifest did not, so every beta build since
+  beta.5 shipped a sandbox whose D-Bus proxy dropped the
+  `RegisterStatusNotifierItem` call. Reproduced on Linux Mint 22.3 /
+  Cinnamon 6.6.4: the stock beta.6 showed nothing, and the same build
+  run with the grant registered with xapp-sn-watcher and appeared in
+  the panel. The beta manifest now carries the grant.
+- **The tray icon is drawn smaller on Cinnamon (#116).** Cinnamon's
+  status applet takes a StatusNotifierItem pixmap for a full-colour
+  icon and draws it at the panel's colour icon size, 24px on a default
+  panel, while the symbolic icons beside it get 16px, so the Vireo icon
+  towered over them. When `XDG_CURRENT_DESKTOP` names Cinnamon the icon
+  and its dot are rendered at five-eighths of the pixmap, centred in a
+  clear margin, which brings it level with its neighbours. Every other
+  panel draws the pixmap at the size it asked for and keeps the full
+  fill. A test covers the reduced fill and the moved dot.
+
 ## 1.20.0-beta.6 — 2026-09-03
 
 The tray menu lists unread mail (#116), and the beta-only wizard entry

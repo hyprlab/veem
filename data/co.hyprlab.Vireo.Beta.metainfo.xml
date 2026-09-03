@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.20.0-beta.7" date="2026-09-03" type="development">
+
+      <description><p>The tray icon (#116) now appears in the beta Flatpak, whose sandbox lacked permission to reach the tray watcher. On Cinnamon it is drawn smaller, level with the panel's other icons.</p></description>
+
+    </release>
     <release version="1.20.0-beta.6" date="2026-09-03" type="development">
 
       <description><p>The tray icon's menu lists the newest five unread messages (#116), each opening in the reader, with a View all unread row past five. The beta-only Welcome Wizard menu entry is removed.</p></description>
