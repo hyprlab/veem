@@ -502,6 +502,21 @@ impl Component for Compose {
         widgets
             .subject_row
             .connect_changed(move |_| s.input(ComposeInput::MarkFieldsDirty));
+        // The subject gets the body's red underlines too (#114): each edit
+        // re-checks the line through enchant directly and paints error
+        // underlines onto the row's inner GtkText — the row itself exposes
+        // no Pango attributes. Addresses stay uncheckable on purpose: only
+        // the subject is prose.
+        if let Some(text) = inner_text(widgets.subject_row.upcast_ref()) {
+            let t = text.clone();
+            widgets.subject_row.connect_changed(move |row| {
+                t.set_attributes(crate::spell::error_attrs(&row.text()).as_ref());
+            });
+            // Prefilled subjects (replies, drafts) get checked on open too.
+            text.set_attributes(
+                crate::spell::error_attrs(&widgets.subject_row.text()).as_ref(),
+            );
+        }
 
         // Drive the suggestion list from a single capture-phase key handler on
         // the window — the toplevel sees every key first, regardless of focus.
@@ -1014,4 +1029,20 @@ impl Compose {
         }
         flow.set_visible(!self.attachments.is_empty());
     }
+}
+
+/// The GtkText embedded somewhere inside a composite row — where Pango
+/// attributes (the spell-check underlines) actually live.
+fn inner_text(widget: &gtk::Widget) -> Option<gtk::Text> {
+    if let Some(t) = widget.downcast_ref::<gtk::Text>() {
+        return Some(t.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(c) = child {
+        if let Some(t) = inner_text(&c) {
+            return Some(t);
+        }
+        child = c.next_sibling();
+    }
+    None
 }
