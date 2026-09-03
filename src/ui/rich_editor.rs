@@ -107,7 +107,16 @@ pub fn installed_dictionaries() -> Vec<String> {
             }
         }
     }
-    codes.into_iter().collect()
+    // The runtime ships English many times over (eighteen region variants,
+    // all hardlinks to the same data); the list keeps the five anyone looks
+    // for. Other languages are shown as installed.
+    const KEPT_ENGLISH: &[&str] = &["en_US", "en_GB", "en_CA", "en_AU", "en_NZ"];
+    codes
+        .into_iter()
+        .filter(|c| {
+            c.split('_').next() != Some("en") || KEPT_ENGLISH.contains(&c.as_str())
+        })
+        .collect()
 }
 
 impl RichEditor {
