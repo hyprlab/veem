@@ -57,7 +57,6 @@ relm4::new_stateless_action!(PrintPreviewAction, WindowActionGroup, "print-previ
 relm4::new_stateless_action!(StatusBarAction, WindowActionGroup, "status-bar");
 relm4::new_stateless_action!(ConsoleAction, WindowActionGroup, "console");
 relm4::new_stateless_action!(FindAction, WindowActionGroup, "find");
-relm4::new_stateless_action!(WizardAction, WindowActionGroup, "wizard");
 
 use crate::config::{self, split_identity, AccountConfig};
 use crate::models::{Account, Attachment, Folder, FolderKind, Message};
@@ -746,8 +745,6 @@ pub enum AppMsg {
     OpenListSearch,
     /// Open the reader's in-message find bar (#103).
     OpenReaderFind,
-    /// Beta-only burger entry: show the welcome wizard for review.
-    OpenWizardMenu,
     /// Delay-policy read marking (#100): fires a couple of seconds after a
     /// message opened; only applies if it is still the one on screen.
     DeferredMarkRead { message: Box<Message> },
@@ -2389,12 +2386,6 @@ impl SimpleComponent for AppModel {
             let s = sender.clone();
             group.add_action(RelmAction::<FindAction>::new_stateless(move |_| {
                 s.input(AppMsg::OpenListSearch);
-            }));
-        }
-        {
-            let s = sender.clone();
-            group.add_action(RelmAction::<WizardAction>::new_stateless(move |_| {
-                s.input(AppMsg::OpenWizardMenu);
             }));
         }
         group.add_action(RelmAction::<StatusBarAction>::new_stateless(move |_| {
@@ -4584,10 +4575,6 @@ impl SimpleComponent for AppModel {
                 self.message_view.emit(MessageViewInput::OpenFind);
             }
 
-            AppMsg::OpenWizardMenu => {
-                self.open_wizard(&sender);
-            }
-
             AppMsg::SetUnreadFilter(on) => {
                 self.message_list.emit(MessageListInput::SetUnreadOnly(on));
             }
@@ -5639,11 +5626,6 @@ impl AppModel {
         self.help_menu.append(Some("Reveal Status Bar"), Some("win.status-bar"));
         if self.console_mode {
             self.help_menu.append(Some("Console"), Some("win.console"));
-        }
-        // Beta builds carry a wizard entry so testers can review the
-        // first-run experience without wiping their config.
-        if cfg!(feature = "beta") {
-            self.help_menu.append(Some("Welcome Wizard"), Some("win.wizard"));
         }
         self.help_menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
         self.help_menu
