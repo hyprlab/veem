@@ -239,12 +239,14 @@ upstream — their work ships in the app and is credited in the About window:
   "To:" line, the preference to always load remote content, and the shared
   GNOME-styled right-click context menus.
 - [**Alexander Lubovenko**](https://github.com/typedev) ([#45](https://github.com/hyprlab/vireo/pull/45),
-  [#110](https://github.com/hyprlab/vireo/pull/110), [#112](https://github.com/hyprlab/vireo/pull/112)) — Gmail
+  [#110](https://github.com/hyprlab/vireo/pull/110), [#112](https://github.com/hyprlab/vireo/pull/112),
+  [#118](https://github.com/hyprlab/vireo/pull/118)) — Gmail
   conversations: showing a message once rather than once per label, answering it
   from whichever label already holds its body or attachments, and fetching a
   conversation's bodies in one request instead of one apiece; listing small
-  attachments sent from web Gmail that the inline-image heuristic hid; and
-  fetching a labelled message's attachments once instead of once per label.
+  attachments sent from web Gmail that the inline-image heuristic hid;
+  fetching a labelled message's attachments once instead of once per label;
+  and rejoining filenames split across RFC 2047 encoded-words.
 - [**Anton Palgunov**](https://github.com/Toxblh) ([#7](https://github.com/hyprlab/vireo/pull/7),
   [#8](https://github.com/hyprlab/vireo/pull/8)) — sender avatars from GNOME
   Contacts photos, and GNOME Online Accounts refinements: custom server ports
