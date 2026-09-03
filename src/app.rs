@@ -7714,9 +7714,7 @@ impl AppModel {
             config::save_split_reply_height(self.reader_split.position());
         }
         // The reader gets its header back with the pane.
-        if let Some(h) = self.reader_header.get() {
-            h.set_visible(true);
-        }
+        self.show_reader_header(true);
         self.reader_split_top.set_reveal_child(false);
         // The composer sits inside the grab-pill Overlay wrapper: unparent it
         // from there explicitly, or hosting it elsewhere (pop-out, drain)
@@ -7781,6 +7779,11 @@ impl AppModel {
         let split = self.reader_split.clone();
         split.set_shrink_start_child(true);
         slot.set_reveal_child(false);
+        // The reader's header comes back in step with the panel's exit: it
+        // slides down while the panel slides up, its icons fading in, so the
+        // reader below moves in one motion rather than jumping up as the
+        // panel goes and back down as the header pops in after it.
+        self.show_reader_header(true);
         let from = split.position() as f64;
         let target = adw::CallbackAnimationTarget::new({
             let split = split.clone();
@@ -7790,23 +7793,50 @@ impl AppModel {
         anim.set_easing(adw::Easing::EaseOutCubic);
         let slot = slot.clone();
         let cell = self.split_close_anim.clone();
-        let header = self.reader_header.get().cloned();
         anim.connect_done(move |_| {
             cell.borrow_mut().take();
-            split.set_shrink_start_child(false);
             if slot.child().as_ref() == Some(&wrap) {
                 if let Some(w) = wrap.downcast_ref::<gtk::Overlay>() {
                     w.set_child(None::<&gtk::Widget>);
                 }
                 slot.set_child(None::<&gtk::Widget>);
                 slot.set_visible(false);
-                // The reader gets its header back with the pane.
-                if let Some(h) = &header {
-                    h.set_visible(true);
-                }
             }
+            // Only once the slot is empty (or a new panel owns it): with the
+            // composer still in the slot, forbidding shrink first would
+            // re-clamp the divider to the composer's minimum for a frame —
+            // the bounce at the end of the slide.
+            split.set_shrink_start_child(false);
         });
         *self.split_close_anim.borrow_mut() = Some(anim.clone());
+        anim.play();
+    }
+
+    /// Slide the reader's header bar in or out of its toolbar view, fading
+    /// its icons with it. The toolbar view animates the bar's height (its
+    /// reveal-top-bars transition), so the content below slides rather than
+    /// jumping by the bar's height; the opacity animation keeps the icons
+    /// from appearing at full strength on the first frame of the slide.
+    /// Timed to match the split reply's own 300ms slide, which it accompanies.
+    fn show_reader_header(&self, shown: bool) {
+        let Some(header) = self.reader_header.get() else { return };
+        let tv = header
+            .ancestor(adw::ToolbarView::static_type())
+            .and_downcast::<adw::ToolbarView>();
+        if let Some(tv) = tv {
+            if tv.reveals_top_bars() == shown {
+                return;
+            }
+            tv.set_reveal_top_bars(shown);
+        }
+        let from = header.opacity();
+        let to = if shown { 1.0 } else { 0.0 };
+        let target = adw::CallbackAnimationTarget::new({
+            let header = header.clone();
+            move |v| header.set_opacity(v)
+        });
+        let anim = adw::TimedAnimation::new(header, from, to, 300, target);
+        anim.set_easing(adw::Easing::EaseOutCubic);
         anim.play();
     }
 
@@ -7869,9 +7899,7 @@ impl AppModel {
             // needs: gone while the split hosts, back when it goes. What
             // remains of the reader starts at the remote-content banner, or
             // the subject block when there is none.
-            if let Some(h) = self.reader_header.get() {
-                h.set_visible(false);
-            }
+            self.show_reader_header(false);
             let slot = &self.reader_split_top;
             widget.set_vexpand(true);
             let wrap = gtk::Overlay::new();
