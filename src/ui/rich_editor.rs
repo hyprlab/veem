@@ -21,8 +21,14 @@ pub struct RichEditor {
 
 /// Push the spell-checking preference onto the shared web context (#114).
 /// Checking only happens in editable views, so the reader — which shares the
-/// context — is unaffected. With no languages configured the call is left to
-/// WebKit, whose own default follows the session locale.
+/// context — is unaffected.
+///
+/// The language is ALWAYS set when checking is on: enchant is given no
+/// language at all until told, so "enabled" without this call underlines
+/// nothing. The configured language wins; blank follows the session locale;
+/// and either is swapped for the closest installed dictionary when its own
+/// is missing, since a language without a dictionary silently checks
+/// nothing.
 pub fn apply_spellcheck() {
     let ctx = super::message_view::shared_web_context();
     let on = crate::config::load_spellcheck();
@@ -30,12 +36,64 @@ pub fn apply_spellcheck() {
     if !on {
         return;
     }
-    let setting = crate::config::load_spellcheck_langs();
-    let langs: Vec<&str> =
-        setting.split([',', ';', ' ']).map(str::trim).filter(|s| !s.is_empty()).collect();
-    if !langs.is_empty() {
-        ctx.set_spell_checking_languages(&langs);
+    let lang = resolved_spell_language();
+    ctx.set_spell_checking_languages(&[&lang]);
+}
+
+/// The language checking actually runs with: the configured one, else the
+/// session locale, either mapped onto an installed dictionary.
+pub fn resolved_spell_language() -> String {
+    let configured = crate::config::load_spellcheck_langs();
+    let want = configured
+        .split([',', ';', ' '])
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(locale_language)
+        .unwrap_or_else(|| "en_US".to_string());
+    let dicts = installed_dictionaries();
+    if dicts.is_empty() || dicts.iter().any(|d| *d == want) {
+        return want;
     }
+    // No dictionary for the exact code: any same-language variant beats
+    // checking nothing (en_GB for en_US), and any dictionary beats none.
+    let prefix = want.split('_').next().unwrap_or(&want).to_string();
+    dicts
+        .iter()
+        .find(|d| d.starts_with(&prefix))
+        .or_else(|| dicts.first())
+        .cloned()
+        .unwrap_or(want)
+}
+
+/// The session locale as a dictionary-style code ("en_US.UTF-8" → "en_US").
+fn locale_language() -> Option<String> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .filter_map(|v| std::env::var(v).ok())
+        .map(|l| l.split('.').next().unwrap_or_default().to_string())
+        .find(|l| !l.is_empty() && l != "C" && l != "POSIX")
+}
+
+/// The hunspell dictionaries that resolve to real files. Inside the Flatpak
+/// most of `/usr/share/hunspell` is dangling symlinks until the locale
+/// extension carries the language; `metadata()` follows symlinks, so a
+/// dangling one errs out and is rightly skipped.
+pub fn installed_dictionaries() -> Vec<String> {
+    let mut codes: std::collections::BTreeSet<String> = Default::default();
+    for dir in ["/usr/share/hunspell", "/usr/share/myspell"] {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let is_dic = p.extension().is_some_and(|x| x == "dic");
+            if is_dic && p.metadata().map(|m| m.is_file()).unwrap_or(false) {
+                if let Some(s) = p.file_stem().and_then(|s| s.to_str()) {
+                    codes.insert(s.to_string());
+                }
+            }
+        }
+    }
+    codes.into_iter().collect()
 }
 
 impl RichEditor {

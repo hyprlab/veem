@@ -657,13 +657,10 @@ impl Component for Preferences {
                             },
                         },
 
-                        #[name = "spell_langs_row"]
-                        adw::EntryRow {
-                            set_title: "Languages (comma-separated, blank = system language)",
-                            set_show_apply_button: true,
-                            connect_apply[sender] => move |row| {
-                                sender.input(PrefInput::SpellLangsEdited(row.text().to_string()));
-                            },
+                        #[name = "spell_lang_row"]
+                        adw::ComboRow {
+                            set_title: "Language",
+                            set_subtitle: "Dictionaries the app can see",
                         },
                     },
 
@@ -984,8 +981,44 @@ impl Component for Preferences {
         widgets.compose_inline_row.set_active(init.compose_inline);
         widgets.paste_plain_row.set_active(init.paste_plain);
         widgets.spellcheck_row.set_active(init.spellcheck);
-        widgets.spell_langs_row.set_text(&init.spellcheck_langs);
-        widgets.spelling_group.set_description(Some(&dictionary_summary()));
+        // The language dropdown offers exactly what checking can use: the
+        // installed dictionaries, behind a "System language" default. Typed
+        // codes are gone — a language nobody has a dictionary for silently
+        // checks nothing, so only real options are offered (#114).
+        {
+            let dicts = crate::ui::rich_editor::installed_dictionaries();
+            let list = gtk::StringList::new(&[]);
+            list.append(&format!(
+                "System language ({})",
+                crate::ui::rich_editor::resolved_spell_language()
+            ));
+            for d in &dicts {
+                list.append(d);
+            }
+            widgets.spell_lang_row.set_model(Some(&list));
+            let selected = dicts
+                .iter()
+                .position(|d| *d == init.spellcheck_langs)
+                .map(|i| i as u32 + 1)
+                .unwrap_or(0);
+            widgets.spell_lang_row.set_selected(selected);
+            if dicts.is_empty() {
+                widgets.spell_lang_row.set_sensitive(false);
+                widgets.spelling_group.set_description(Some(
+                    "No dictionaries are visible to the app. On Flatpak, add your \
+                     language with: flatpak config --set extra-languages <code>",
+                ));
+            }
+            let s = sender.clone();
+            // Connected after the initial set_selected, so restoring the
+            // saved choice doesn't immediately re-save it.
+            widgets.spell_lang_row.connect_selected_notify(move |row| {
+                let i = row.selected() as usize;
+                let code =
+                    if i == 0 { String::new() } else { dicts.get(i - 1).cloned().unwrap_or_default() };
+                s.input(PrefInput::SpellLangsEdited(code));
+            });
+        }
 
         // Date and clock combos.
         let date_labels: Vec<&str> = DATE_STYLES.iter().map(|(l, _)| *l).collect();
@@ -1244,41 +1277,4 @@ impl Component for Preferences {
             }
         }
     }
-}
-
-
-
-/// What spell-checking can actually use: the hunspell dictionaries that
-/// resolve to real files. Inside the Flatpak most of `/usr/share/hunspell` is
-/// dangling symlinks until the locale extension carries the language, and a
-/// language without a dictionary silently checks nothing — so the Spelling
-/// group says out loud what is installed (#114).
-fn dictionary_summary() -> String {
-    let mut codes: std::collections::BTreeSet<String> = Default::default();
-    for dir in ["/usr/share/hunspell", "/usr/share/myspell"] {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
-        for e in entries.flatten() {
-            let p = e.path();
-            let is_dic = p.extension().is_some_and(|x| x == "dic");
-            // metadata() follows symlinks: a dangling one (locale extension
-            // without that language) errs out and is rightly skipped.
-            if is_dic && p.metadata().map(|m| m.is_file()).unwrap_or(false) {
-                if let Some(s) = p.file_stem().and_then(|s| s.to_str()) {
-                    codes.insert(s.to_string());
-                }
-            }
-        }
-    }
-    if codes.is_empty() {
-        return "No dictionaries are visible to the app. On Flatpak, add your \
-                language with: flatpak config --set extra-languages <code>"
-            .to_string();
-    }
-    let total = codes.len();
-    let shown: Vec<String> = codes.into_iter().take(12).collect();
-    let mut out = format!("Installed dictionaries: {}", shown.join(", "));
-    if total > shown.len() {
-        out.push_str(&format!(" and {} more", total - shown.len()));
-    }
-    out
 }
