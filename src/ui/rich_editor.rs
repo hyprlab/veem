@@ -51,6 +51,9 @@ impl RichEditor {
         let settings = webkit6::Settings::new();
         settings.set_enable_javascript(true);
         settings.set_enable_developer_extras(false);
+        // A script error in the editor document (all our own code) is
+        // otherwise completely silent.
+        settings.set_enable_write_console_messages_to_stdout(true);
         webview.set_settings(&settings);
         // Transparent until the document paints: a fresh WebView otherwise
         // renders an opaque default surface (black) for its first frames,
@@ -245,17 +248,38 @@ fn detach_ctx_image(
     cb: std::rc::Rc<std::cell::RefCell<Option<Box<dyn Fn(std::path::PathBuf)>>>>,
 ) {
     webview.evaluate_javascript(
-        "(function(){var n=window.__vireoCtxImg;if(!n||n.tagName!=='IMG')return '';\
-          var s=n.src;if(s.indexOf('data:image/')!==0)return '';\
+        "(function(){var n=window.__vireoCtxImg;\
+          if(!n){var sel=getSelection();\
+            if(sel.rangeCount===1){var r=sel.getRangeAt(0);\
+              if(r.startContainer===r.endContainer&&r.endOffset-r.startOffset===1){\
+                var c=r.startContainer.childNodes[r.startOffset];\
+                if(c&&c.tagName==='IMG')n=c;}}}\
+          if(!n||n.tagName!=='IMG')return 'E:none';\
+          var s=n.src;if(s.indexOf('data:image/')!==0)return 'E:src:'+s.slice(0,40);\
           n.remove();window.__vireoCtxImg=null;return s;})()",
         None,
         None,
         gtk::gio::Cancellable::NONE,
         move |res| {
-            let Ok(v) = res else { return };
-            let Some(path) = data_uri_to_temp_file(&v.to_str()) else { return };
-            if let Some(f) = cb.borrow().as_ref() {
-                f(path);
+            let v = match res {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("img-attach: script failed: {e}");
+                    return;
+                }
+            };
+            let src = v.to_str();
+            if let Some(err) = src.strip_prefix("E:") {
+                tracing::warn!("img-attach: script declined: {err}");
+                return;
+            }
+            let Some(path) = data_uri_to_temp_file(&src) else {
+                tracing::warn!("img-attach: not a liftable data: image");
+                return;
+            };
+            match cb.borrow().as_ref() {
+                Some(f) => f(path),
+                None => tracing::warn!("img-attach: no attach callback set on this editor"),
             }
         },
     );
@@ -403,10 +427,14 @@ const PASTE_SCRIPT: &str = r#"<script>
   function insertImageFile(f){
     if(!f) return;
     var r = new FileReader();
-    r.onload = function(){ placeImage(String(r.result), f.type); };
+    r.onload = function(){
+      scaleUrl(String(r.result), f.type, function(url){
+        document.execCommand('insertHTML', false, '<img src="' + url + '" style="max-width:100%">');
+      });
+    };
     r.readAsDataURL(f);
   }
-  function placeImage(url, type){
+  function scaleUrl(url, type, done){
     var im = new Image();
     im.onload = function(){
       var w = im.naturalWidth, h = im.naturalHeight;
@@ -417,10 +445,38 @@ const PASTE_SCRIPT: &str = r#"<script>
         c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
         url = type === 'image/jpeg' ? c.toDataURL('image/jpeg', 0.85) : c.toDataURL('image/png');
       }
-      document.execCommand('insertHTML', false, '<img src="' + url + '" style="max-width:100%">');
+      done(url);
     };
     im.src = url;
   }
+  /* WebKit's own paste inserts images as blob: URLs — invisible to
+     clipboardData.items, dead on the wire, and never downscaled. Convert
+     every blob: image that appears, from any entry path, into the same
+     scaled data: URI a handled paste produces. */
+  function adoptBlobImage(img){
+    fetch(img.src).then(function(r){ return r.blob(); }).then(function(b){
+      var rd = new FileReader();
+      rd.onload = function(){
+        scaleUrl(String(rd.result), b.type, function(url){
+          img.src = url;
+          img.style.maxWidth = '100%';
+        });
+      };
+      rd.readAsDataURL(b);
+    }).catch(function(){});
+  }
+  new MutationObserver(function(muts){
+    muts.forEach(function(m){
+      Array.prototype.forEach.call(m.addedNodes || [], function(n){
+        if(n.nodeType !== 1) return;
+        var imgs = n.tagName === 'IMG' ? [n]
+          : (n.querySelectorAll ? n.querySelectorAll('img') : []);
+        Array.prototype.forEach.call(imgs, function(im){
+          if(im.src && im.src.indexOf('blob:') === 0) adoptBlobImage(im);
+        });
+      });
+    });
+  }).observe(document.documentElement, {childList: true, subtree: true});
   /* Clicking an image selects it whole, so it can be deleted, cut, or
      copied like any other selection. */
   document.addEventListener('click', function(e){
@@ -432,17 +488,21 @@ const PASTE_SCRIPT: &str = r#"<script>
   });
   /* A right-click on an image selects it (like a left click) and remembers
      the exact node: the menu's stock Cut/Copy then act on the image itself,
-     and Send as Attachment Instead knows which one to lift. */
-  document.addEventListener('contextmenu', function(e){
+     and Send as Attachment Instead knows which one to lift. Captured on
+     button-2 mousedown as well as contextmenu — whichever of the two WebKit
+     actually delivers before it opens the menu. */
+  function rememberImg(e){
     var t = e.target;
     if(t && t.tagName === 'IMG'){
       window.__vireoCtxImg = t;
       var r = document.createRange(); r.selectNode(t);
       var s = getSelection(); s.removeAllRanges(); s.addRange(r);
-    } else {
+    } else if(e.type === 'contextmenu'){
       window.__vireoCtxImg = null;
     }
-  }, true);
+  }
+  document.addEventListener('mousedown', function(e){ if(e.button === 2) rememberImg(e); }, true);
+  document.addEventListener('contextmenu', rememberImg, true);
   document.addEventListener('dragover', function(e){
     var it = (e.dataTransfer && e.dataTransfer.items) || [];
     for(var i = 0; i < it.length; i++){
