@@ -50,7 +50,7 @@ pub fn pill_widget() -> gtk::Box {
 pub fn edge_pill_widget() -> gtk::Box {
     let hit = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     hit.add_css_class("split-grab-hit");
-    hit.set_height_request(22);
+    hit.set_height_request(24);
     hit.set_hexpand(true);
     hit.set_halign(gtk::Align::Fill);
     hit.set_cursor_from_name(Some("ns-resize"));
