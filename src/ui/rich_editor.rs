@@ -393,6 +393,11 @@ fn document(content: &str, dark: bool) -> String {
            html,body{{height:100%;box-sizing:border-box;}}\
            body{{margin:0;padding:20px;font:14px/1.55 system-ui,sans-serif;outline:none;\
              background:Canvas;color:CanvasText;}}\
+           /* Every image fits the writing width — pasted, dropped, or\
+              quoted. The inline style on inserted images serves the\
+              recipient; this rule is what the composer itself obeys,\
+              whatever survives insertHTML. */\
+           img{{max-width:100%;height:auto;}}\
            blockquote{{margin:0 0 0 8px;padding-left:10px;\
              border-left:3px solid rgba(128,128,128,0.4);}}\
            .vireo-quote-attr{{opacity:0.7;margin:10px 0 4px;}}\
