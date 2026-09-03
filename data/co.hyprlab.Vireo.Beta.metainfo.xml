@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.20.0-beta.1" date="2026-09-03" type="development">
+
+      <description><p>Feature beta previewing 1.20.0: spell checking in the composer (body and subject, with bundled dictionaries and a personal word list), inline images (paste or drop pictures into the text), replies that follow Reply-To, grab handles for the split reply and attachment drawer, paste-as-plain-text by default, and attachment fixes for web Gmail, per-label duplicate downloads and split encoded-word filenames.</p></description>
+
+    </release>
     <release version="1.19.3-beta.1" date="2026-09-02" type="development">
 
       <description><p>Catch-up release: the beta matches stable 1.19.2 and its dark-mode email fix. No beta-only changes.</p></description>

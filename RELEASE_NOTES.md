@@ -2,7 +2,23 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
-## What's new in 1.19.3-beta.1
+## What's new in 1.20.0-beta.1
+
+A feature beta previewing 1.20.0.
+
+**Spell checking.** The composer underlines misspelled words in red, in the message body and the subject line alike, and checks the word you are typing before you finish it. Settings gains a Spelling section: turn checking off, pick a language from the dictionaries actually installed (each named in its own language), and manage the words you have taught the checker. The Flatpak now carries dictionaries for eleven languages beyond English.
+
+**Pictures in the message.** Paste or drop an image into the composer and it lands in the text where you put it, not as a file hanging off the bottom. Images are scaled to a sensible size, can be selected with a click, deleted, cut, copied, and demoted to an ordinary attachment from the right-click menu. Recipients see them in place, exactly as sent from other mail clients.
+
+**Replies go where the sender asked.** A message carrying a Reply-To address is answered there, not at its From line — mailing lists and "replies here please" senders finally get their wish.
+
+**A grab handle for the split reply and the attachment drawer.** Both panels are resized by a slim floating bar, iOS style: drag to size, click the drawer's to collapse or expand it. The split reply holds the height you set (pasting a long text no longer pushes it over the messages) and slides away on send or cancel the way it arrived.
+
+**Paste as plain text.** Ctrl+V pastes plain text by default; right-click always offers both plain and formatted paste, and a Settings switch flips the default.
+
+**Attachment fixes.** Small files sent from web Gmail are no longer missing from the attachment list, a labelled Gmail message's attachments download once instead of once per label, and filenames split across two encoded words keep their extension. Mail already synced by affected versions repairs itself on upgrade.
+
+**Smaller things.** Add Sender to Contacts in the message list's right-click menu; scrolling always works over extra-wide messages; Discord joined the About window's links.
 
 The beta channel catches up with stable 1.19.2: the dark-mode email fix in the next section. No beta-only changes.
 

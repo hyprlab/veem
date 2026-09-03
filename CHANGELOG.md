@@ -1,5 +1,60 @@
 # Changelog
 
+## 1.20.0-beta.1 — 2026-09-03
+
+Feature beta previewing 1.20.0.
+
+- **Spell checking in the composer** (discussion #114). WebKit's checker
+  runs in the message body; the subject line asks the same enchant
+  engine directly, since GTK entries have none of their own. Both check
+  the word being typed: the subject on every keystroke (exempting the
+  word under the cursor until a 400ms pause), the body's caret word via
+  a 600ms round trip drawn with the CSS Custom Highlight API. Settings
+  gains a Spelling group: an on-by-default switch, a language dropdown
+  offering exactly the installed dictionaries (named in their own
+  language), and an "Added words" list managing the personal dictionary
+  that Learn Spelling feeds. The Flatpak bundles eleven languages beyond
+  English; English variants are trimmed to the five anyone looks for.
+- **Inline images in the composer** (discussion #113). Pasting or
+  dropping a picture puts it in the text at the caret, downscaled to
+  1600px; sending lifts each into an inline cid: part inside
+  multipart/related, out of the recipient's attachment list. A click
+  selects an image whole (delete/cut/copy work on it); right-click
+  offers "Send as Attachment Instead". WebKit's native image paste
+  arrives as a blob: URL — invisible to clipboardData, dead on the
+  wire — so every blob: image is adopted into a scaled data: URI the
+  moment it appears.
+- **Reply follows Reply-To.** Summaries now carry the Reply-To list from
+  every ingestion path (ENVELOPE, iCloud raw-header fallback, POP3,
+  Graph); Reply and Reply All answer it instead of From, and Reply All
+  keeps the To address out of Cc. Cached mail heals as folders re-sync.
+- **Wide mail scrolls.** A message wider than the pane made its sandboxed
+  frame horizontally scrollable, and WebKit's wheel-latching swallowed
+  vertical scrolling over it. Frames now widen to their content inside a
+  panning wrapper, so the wheel always reaches the page and wide mail
+  pans sideways in place.
+- **Split reply reworked.** The panel holds the height it is given (a
+  big paste can no longer push it down), dragged by an iOS-style grab
+  pill floating at its bottom edge, and slides out on cancel/send the
+  way it slid in. The dragged height is remembered.
+- **Attachment drawer reworked.** The same grab pill replaces the
+  chevron: click toggles collapsed/expanded (animated, both ways), drag
+  resizes live — from collapsed too, where the release point becomes the
+  new height.
+- **Paste is plain text by default.** Ctrl+V strips formatting; the
+  editor's context menu always offers "Paste with Formatting" and
+  "Paste as Plain Text"; a Settings switch ("Paste as plain text", on by
+  default) flips the default.
+- **Attachment fixes** (#109, #111, #117 — PRs #110, #112, #118). Small
+  attachments sent from web Gmail are no longer dropped by the
+  inline-image heuristic; a labelled Gmail message's attachments are
+  fetched once, not once per label; filenames split across two RFC 2047
+  encoded-words are rejoined, keeping their extension. The attachment
+  cache is rebuilt once on upgrade (schema v13) so mail already synced
+  by affected builds heals too.
+- **Add Sender to Contacts** joins the message list's right-click menu.
+- **Discord** joins the About window's project links.
+
 ## 1.19.3-beta.1 — 2026-09-02
 
 Catch-up release: the beta matches stable 1.19.2 (next section). No

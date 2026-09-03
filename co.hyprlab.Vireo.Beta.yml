@@ -85,6 +85,35 @@ modules:
       - type: archive
         url: https://poppler.freedesktop.org/poppler-26.07.0.tar.xz
         sha256: 304832f48f8a47fdca90c6b6d1f684e68f37c10c9a0726f345f4ca9df4ca01e2
+  # Spell-checking dictionaries beyond the runtime's English (#114): a modest
+  # set of common languages from LibreOffice's collection, installed under
+  # /app/share/hunspell where enchant (and so both the composer body's WebKit
+  # checker and the subject line's) finds them via XDG_DATA_DIRS. Renamed to
+  # canonical lang_REGION codes so enchant's tag lookup matches. Languages
+  # beyond these still come via the runtime locale extension
+  # (flatpak config --set extra-languages).
+  - name: hunspell-dictionaries
+    buildsystem: simple
+    build-commands:
+      - install -d /app/share/hunspell
+      - install -m644 de/de_DE_frami.dic /app/share/hunspell/de_DE.dic
+      - install -m644 de/de_DE_frami.aff /app/share/hunspell/de_DE.aff
+      - install -m644 es/es_ES.dic es/es_ES.aff /app/share/hunspell/
+      - install -m644 fr_FR/dictionaries/fr.dic /app/share/hunspell/fr_FR.dic
+      - install -m644 fr_FR/dictionaries/fr.aff /app/share/hunspell/fr_FR.aff
+      - install -m644 it_IT/it_IT.dic it_IT/it_IT.aff /app/share/hunspell/
+      - install -m644 nl_NL/nl_NL.dic nl_NL/nl_NL.aff /app/share/hunspell/
+      - install -m644 pl_PL/pl_PL.dic pl_PL/pl_PL.aff /app/share/hunspell/
+      - install -m644 pt_BR/pt_BR.dic pt_BR/pt_BR.aff /app/share/hunspell/
+      - install -m644 pt_PT/pt_PT.dic pt_PT/pt_PT.aff /app/share/hunspell/
+      - install -m644 ru_RU/ru_RU.dic ru_RU/ru_RU.aff /app/share/hunspell/
+      - install -m644 sv_SE/dictionaries/sv_SE.dic /app/share/hunspell/sv_SE.dic
+      - install -m644 sv_SE/dictionaries/sv_SE.aff /app/share/hunspell/sv_SE.aff
+      - install -m644 uk_UA/uk_UA.dic uk_UA/uk_UA.aff /app/share/hunspell/
+    sources:
+      - type: archive
+        url: https://github.com/LibreOffice/dictionaries/archive/32b006a2c22a4ac7e8ed3f03346f7b3d85a970a4.tar.gz
+        sha256: cbd790eca560de5e8ec8bd64117a00dfd0bc06b091c8f52d23e44ea00d3e8461
   - name: vireo
     buildsystem: simple
     build-commands:
