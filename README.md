@@ -222,7 +222,7 @@ The project has the following foundational values that guide its development:
   the Linux desktop both visually pleasing and enjoyable through consistent and
   familiar UI/UX paradigms. New users to GNOME should be able to intuit how to
   use the app without needing to refer to documentation.
-- **Feature rich and choice-forward philosophy.** Providing means for the user
+- **Feature-rich and choice-forward philosophy.** Providing means for the user
   to maximally customize the app's feature set is a high priority. We maintain
   that Vireo is both beautiful and highly functional to tackle every email edge
   case.
