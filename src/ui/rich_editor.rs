@@ -155,6 +155,26 @@ impl RichEditor {
         // The document itself paints `Canvas` below, so the editor's normal
         // ground appears with the first real frame.
         webview.set_background_color(&gtk::gdk::RGBA::new(0.0, 0.0, 0.0, 0.0));
+        // The document paints asynchronously: the host panel slides in
+        // smoothly and the editor's content would land a beat later as a
+        // pop. Start the view invisible and fade it in when its load
+        // finishes — content arrives as a fade into the settled panel.
+        webview.set_opacity(0.0);
+        webview.connect_load_changed(|v, ev| {
+            if ev == webkit6::LoadEvent::Finished {
+                fade_in(v);
+            }
+        });
+        {
+            // Failsafe: whatever happens to the load, the editor must never
+            // stay invisible.
+            let v = webview.clone();
+            gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(1200), move || {
+                if v.opacity() < 1.0 {
+                    fade_in(&v);
+                }
+            });
+        }
         let dark = adw::StyleManager::default().is_dark();
         webview.load_html(&document(initial_html, dark), Some("https://vireo.localhost/editor"));
 
@@ -330,6 +350,27 @@ impl RichEditor {
 
 fn exec(webview: &webkit6::WebView, js: &str) {
     webview.evaluate_javascript(js, None, None, gtk::gio::Cancellable::NONE, |_| {});
+}
+
+/// Fade the editor view to full opacity. The animation object is parked on
+/// the view itself so it stays alive for its 200ms (a dropped animation
+/// stops); a repeat call replaces the parked one harmlessly.
+fn fade_in(webview: &webkit6::WebView) {
+    let anim = adw::TimedAnimation::new(
+        webview,
+        webview.opacity(),
+        1.0,
+        200,
+        adw::CallbackAnimationTarget::new({
+            let v = webview.clone();
+            move |o| v.set_opacity(o)
+        }),
+    );
+    anim.set_easing(adw::Easing::EaseOutCubic);
+    anim.play();
+    unsafe {
+        webview.set_data("vireo-fade-anim", anim);
+    }
 }
 
 /// "Send as Attachment Instead": pull the right-clicked image out of the

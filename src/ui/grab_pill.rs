@@ -35,20 +35,37 @@ pub fn paned_grab_pill(
 /// reliably, so the gestures live on the zone (the iOS home indicator does
 /// the same).
 pub fn pill_widget() -> gtk::Box {
+    let hit = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    hit.add_css_class("split-grab-hit");
+    hit.set_size_request(120, 20);
+    hit.set_halign(gtk::Align::Center);
+    hit.set_cursor_from_name(Some("ns-resize"));
+    hit.append(&pill_bar());
+    hit
+}
+
+/// The pill stretched into a full-width edge zone: the bar stays centred,
+/// but the gestures answer anywhere along the pane's edge — the attachment
+/// drawer's whole seam clicks and drags, not just the bar.
+pub fn edge_pill_widget() -> gtk::Box {
+    let hit = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    hit.add_css_class("split-grab-hit");
+    hit.set_height_request(22);
+    hit.set_hexpand(true);
+    hit.set_halign(gtk::Align::Fill);
+    hit.set_cursor_from_name(Some("ns-resize"));
+    hit.append(&pill_bar());
+    hit
+}
+
+fn pill_bar() -> gtk::Box {
     let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     bar.add_css_class("split-grab-pill");
     bar.set_size_request(100, 5);
     bar.set_hexpand(true);
     bar.set_halign(gtk::Align::Center);
     bar.set_valign(gtk::Align::Center);
-
-    let hit = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    hit.add_css_class("split-grab-hit");
-    hit.set_size_request(120, 20);
-    hit.set_halign(gtk::Align::Center);
-    hit.set_cursor_from_name(Some("ns-resize"));
-    hit.append(&bar);
-    hit
+    bar
 }
 
 /// The pointer travel below which a press-and-release still counts as a
