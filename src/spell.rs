@@ -106,6 +106,132 @@ fn checker_for(lang: &str) -> Option<Rc<SpellChecker>> {
     })
 }
 
+/// Dictionary codes people actually encounter, named in the language itself
+/// — a Russian speaker looking for their language finds "Русский", not a
+/// code. Covers the runtime's English variants, the languages the Flatpak
+/// bundles, and the common locale-extension arrivals.
+const LANGUAGE_NAMES: &[(&str, &str)] = &[
+    ("de_AT", "Deutsch (Österreich)"),
+    ("de_CH", "Deutsch (Schweiz)"),
+    ("de_DE", "Deutsch (Deutschland)"),
+    ("en_AG", "English (Antigua and Barbuda)"),
+    ("en_AU", "English (Australia)"),
+    ("en_BS", "English (Bahamas)"),
+    ("en_BW", "English (Botswana)"),
+    ("en_BZ", "English (Belize)"),
+    ("en_CA", "English (Canada)"),
+    ("en_DK", "English (Denmark)"),
+    ("en_GB", "English (United Kingdom)"),
+    ("en_GH", "English (Ghana)"),
+    ("en_HK", "English (Hong Kong)"),
+    ("en_IE", "English (Ireland)"),
+    ("en_IN", "English (India)"),
+    ("en_JM", "English (Jamaica)"),
+    ("en_MW", "English (Malawi)"),
+    ("en_NA", "English (Namibia)"),
+    ("en_NG", "English (Nigeria)"),
+    ("en_NZ", "English (New Zealand)"),
+    ("en_PH", "English (Philippines)"),
+    ("en_SG", "English (Singapore)"),
+    ("en_TT", "English (Trinidad and Tobago)"),
+    ("en_US", "English (United States)"),
+    ("en_ZA", "English (South Africa)"),
+    ("en_ZM", "English (Zambia)"),
+    ("en_ZW", "English (Zimbabwe)"),
+    ("es_AR", "Español (Argentina)"),
+    ("es_ES", "Español (España)"),
+    ("es_MX", "Español (México)"),
+    ("fr_BE", "Français (Belgique)"),
+    ("fr_CA", "Français (Canada)"),
+    ("fr_CH", "Français (Suisse)"),
+    ("fr_FR", "Français (France)"),
+    ("it_IT", "Italiano (Italia)"),
+    ("nl_BE", "Nederlands (België)"),
+    ("nl_NL", "Nederlands (Nederland)"),
+    ("pl_PL", "Polski (Polska)"),
+    ("pt_BR", "Português (Brasil)"),
+    ("pt_PT", "Português (Portugal)"),
+    ("ru_RU", "Русский (Россия)"),
+    ("sv_FI", "Svenska (Finland)"),
+    ("sv_SE", "Svenska (Sverige)"),
+    ("uk_UA", "Українська (Україна)"),
+];
+
+/// Language-only endonyms, for codes the exact table doesn't carry.
+const LANGUAGE_FAMILY_NAMES: &[(&str, &str)] = &[
+    ("af", "Afrikaans"),
+    ("ar", "العربية"),
+    ("be", "Беларуская"),
+    ("bg", "Български"),
+    ("bn", "বাংলা"),
+    ("ca", "Català"),
+    ("cs", "Čeština"),
+    ("cy", "Cymraeg"),
+    ("da", "Dansk"),
+    ("de", "Deutsch"),
+    ("el", "Ελληνικά"),
+    ("en", "English"),
+    ("es", "Español"),
+    ("et", "Eesti"),
+    ("eu", "Euskara"),
+    ("fa", "فارسی"),
+    ("fi", "Suomi"),
+    ("fr", "Français"),
+    ("ga", "Gaeilge"),
+    ("gl", "Galego"),
+    ("he", "עברית"),
+    ("hi", "हिन्दी"),
+    ("hr", "Hrvatski"),
+    ("hu", "Magyar"),
+    ("hy", "Հայերեն"),
+    ("id", "Bahasa Indonesia"),
+    ("is", "Íslenska"),
+    ("it", "Italiano"),
+    ("ka", "ქართული"),
+    ("kk", "Қазақша"),
+    ("ko", "한국어"),
+    ("lt", "Lietuvių"),
+    ("lv", "Latviešu"),
+    ("mk", "Македонски"),
+    ("nb", "Norsk bokmål"),
+    ("nl", "Nederlands"),
+    ("nn", "Norsk nynorsk"),
+    ("no", "Norsk"),
+    ("pl", "Polski"),
+    ("pt", "Português"),
+    ("ro", "Română"),
+    ("ru", "Русский"),
+    ("sk", "Slovenčina"),
+    ("sl", "Slovenščina"),
+    ("sq", "Shqip"),
+    ("sr", "Српски"),
+    ("sv", "Svenska"),
+    ("ta", "தமிழ்"),
+    ("th", "ไทย"),
+    ("tr", "Türkçe"),
+    ("uk", "Українська"),
+    ("uz", "Oʻzbekcha"),
+    ("vi", "Tiếng Việt"),
+];
+
+/// A dictionary code as a human reads it: the language named in itself
+/// ("Русский (Россия)" for ru_RU). Unknown regions fall back to the language
+/// name plus the raw region; unknown languages to the raw code — never
+/// nothing.
+pub fn language_display_name(code: &str) -> String {
+    if let Some((_, name)) = LANGUAGE_NAMES.iter().find(|(c, _)| *c == code) {
+        return (*name).to_string();
+    }
+    let lang = code.split(['_', '-']).next().unwrap_or(code);
+    if let Some((_, name)) = LANGUAGE_FAMILY_NAMES.iter().find(|(c, _)| *c == lang) {
+        return match code.split(['_', '-']).nth(1) {
+            Some(region) => format!("{name} ({region})"),
+            None => (*name).to_string(),
+        };
+    }
+    code.to_string()
+}
+
 /// Subject-line prefixes and mail shorthand no dictionary carries.
 const MAIL_WORDS: &[&str] = &["Re", "RE", "re", "Fwd", "FWD", "Fw", "FW"];
 

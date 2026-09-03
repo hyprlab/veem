@@ -1000,11 +1000,13 @@ impl Component for Preferences {
             let dicts = crate::ui::rich_editor::installed_dictionaries();
             let list = gtk::StringList::new(&[]);
             list.append(&format!(
-                "System language ({})",
-                crate::ui::rich_editor::resolved_spell_language()
+                "System language — {}",
+                crate::spell::language_display_name(
+                    &crate::ui::rich_editor::resolved_spell_language()
+                )
             ));
             for d in &dicts {
-                list.append(d);
+                list.append(&crate::spell::language_display_name(d));
             }
             widgets.spell_lang_row.set_model(Some(&list));
             let selected = dicts
