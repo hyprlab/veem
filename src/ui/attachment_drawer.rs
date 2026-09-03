@@ -378,7 +378,10 @@ impl SimpleComponent for AttachmentDrawer {
         // state: a plain click toggles the drawer, a drag resizes it live —
         // collapsed included, where the release point becomes the drawer's
         // new height.
-        let pill = crate::ui::grab_pill::pill_widget();
+        // The full-width edge variant: the whole seam clicks and drags, not
+        // just the centred bar — hunting a 120px target over a busy reader
+        // made the handle feel unreliable.
+        let pill = crate::ui::grab_pill::edge_pill_widget();
         pill.set_valign(gtk::Align::End);
         pill.set_visible(false); // no seam until attachments arrive
         {

@@ -148,10 +148,14 @@ pub struct AppModel {
     /// can't push it down over the messages — and its divider is the grab
     /// handle that resizes the panel. Hidden slot = hidden divider.
     reader_split: gtk::Paned,
-    /// The running close animation, if the split reply is currently sliding
-    /// out (see `animate_split_close`) — held so opening a new reply can skip
-    /// it to its end instead of fighting it over the divider.
+    /// The running slide (open or close) of the split reply — held so the
+    /// opposite motion can skip it to its end instead of fighting it over
+    /// the divider.
     split_close_anim: std::rc::Rc<std::cell::RefCell<Option<adw::TimedAnimation>>>,
+    /// The reader pane's own header bar: hidden while a split reply hosts,
+    /// since it would show a second set of window decorations mid-window and
+    /// spend vertical space the split needs.
+    reader_header: std::cell::OnceCell<adw::HeaderBar>,
     /// Same idea over the contacts view's detail pane: composing from a
     /// contact slides down right there instead of yanking the mail view back.
     contacts_compose_revealer: gtk::Revealer,
@@ -1671,6 +1675,7 @@ impl SimpleComponent for AppModel {
                 r
             },
             split_close_anim: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            reader_header: std::cell::OnceCell::new(),
             reader_split: {
                 let p = gtk::Paned::new(gtk::Orientation::Vertical);
                 // The separator itself is styled invisible — painted the
@@ -1925,6 +1930,7 @@ impl SimpleComponent for AppModel {
         // The app-wide theme choice must be in force before the first frame.
         apply_app_theme(model.app_theme);
         let widgets = view_output!();
+        let _ = model.reader_header.set(widgets.reader_header.clone());
         // Collapse the reader header's actions into the overflow menu when the
         // pane can no longer fit the full row — squeezing it further must never
         // push the window controls off the right edge. The threshold is
@@ -7527,10 +7533,18 @@ impl AppModel {
             r.set_can_target(false);
             r.set_child(None::<&gtk::Widget>);
         }
-        // In-flow (not overlay) slot: no click-swallowing to disarm. Remember
-        // the height the user dragged the panel to before it goes.
+        // In-flow (not overlay) slot: no click-swallowing to disarm. Settle
+        // any running slide, then remember the height the user dragged the
+        // panel to before it goes.
+        if let Some(prev) = self.split_close_anim.borrow_mut().take() {
+            prev.skip();
+        }
         if self.reader_split_top.is_visible() && self.reader_split_top.child().is_some() {
             config::save_split_reply_height(self.reader_split.position());
+        }
+        // The reader gets its header back with the pane.
+        if let Some(h) = self.reader_header.get() {
+            h.set_visible(true);
         }
         self.reader_split_top.set_reveal_child(false);
         // The composer sits inside the grab-pill Overlay wrapper: unparent it
@@ -7546,6 +7560,32 @@ impl AppModel {
         self.message_view.emit(MessageViewInput::BlurCard);
     }
 
+    /// Slide the covering composer away instead of blinking it out: the
+    /// revealer plays its slide-up, and the child is removed only once the
+    /// transition has had its time — removing it at once (what
+    /// `clear_compose_slots` does) skips the slide entirely. The removal
+    /// stands down if a new composer has taken the slot meanwhile. Pop-out
+    /// reparenting keeps using the instant clear: it needs the widget freed
+    /// immediately.
+    fn animate_cover_close(&self) {
+        for r in [&self.reader_compose_revealer, &self.contacts_compose_revealer] {
+            let Some(child) = r.child() else { continue };
+            r.set_can_target(false);
+            if !r.reveals_child() {
+                r.set_child(None::<&gtk::Widget>);
+                continue;
+            }
+            r.set_reveal_child(false);
+            let r2 = r.clone();
+            gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(340), move || {
+                if r2.child().as_ref() == Some(&child) && !r2.reveals_child() {
+                    r2.set_child(None::<&gtk::Widget>);
+                }
+            });
+        }
+        self.message_view.emit(MessageViewInput::BlurCard);
+    }
+
     /// Slide the split reply up and out the way it slid in, then tear the
     /// slot down. The Paned allocates the slot by divider position — not by
     /// the revealer's animated height — so the position is animated to zero
@@ -7555,6 +7595,11 @@ impl AppModel {
     fn animate_split_close(&self) {
         let slot = &self.reader_split_top;
         let Some(wrap) = slot.child() else { return };
+        // Settle any running slide first, so the height saved below is the
+        // real one and not a mid-animation reading.
+        if let Some(prev) = self.split_close_anim.borrow_mut().take() {
+            prev.skip();
+        }
         if slot.is_visible() {
             config::save_split_reply_height(self.reader_split.position());
         }
@@ -7562,9 +7607,6 @@ impl AppModel {
         // instant teardown.
         self.message_view.emit(MessageViewInput::BlurCard);
 
-        if let Some(prev) = self.split_close_anim.borrow_mut().take() {
-            prev.skip();
-        }
         let split = self.reader_split.clone();
         split.set_shrink_start_child(true);
         slot.set_reveal_child(false);
@@ -7577,6 +7619,7 @@ impl AppModel {
         anim.set_easing(adw::Easing::EaseOutCubic);
         let slot = slot.clone();
         let cell = self.split_close_anim.clone();
+        let header = self.reader_header.get().cloned();
         anim.connect_done(move |_| {
             cell.borrow_mut().take();
             split.set_shrink_start_child(false);
@@ -7586,6 +7629,10 @@ impl AppModel {
                 }
                 slot.set_child(None::<&gtk::Widget>);
                 slot.set_visible(false);
+                // The reader gets its header back with the pane.
+                if let Some(h) = &header {
+                    h.set_visible(true);
+                }
             }
         });
         *self.split_close_anim.borrow_mut() = Some(anim.clone());
@@ -7645,6 +7692,15 @@ impl AppModel {
             if let Some(prev) = prev_anim {
                 prev.skip();
             }
+            // The reader's own header would show a second set of window
+            // decorations mid-window (the composer header at the pane's top
+            // already carries them) and spend vertical space the split
+            // needs: gone while the split hosts, back when it goes. What
+            // remains of the reader starts at the remote-content banner, or
+            // the subject block when there is none.
+            if let Some(h) = self.reader_header.get() {
+                h.set_visible(false);
+            }
             let slot = &self.reader_split_top;
             widget.set_vexpand(true);
             let wrap = gtk::Overlay::new();
@@ -7658,8 +7714,37 @@ impl AppModel {
             let saved = config::load_split_reply_height();
             let h =
                 if saved > 0 { saved } else { ((pane_h as f64 * 0.45) as i32).clamp(300, 560) };
-            // Keep a usable slice of reader on screen whatever was saved.
-            self.reader_split.set_position(h.clamp(220, (pane_h - 200).max(220)));
+            // Keep a usable slice of reader on screen whatever was saved —
+            // and slide the panel in the way it slides out: the divider IS
+            // the animation, driven from zero to the opening height (the
+            // revealer's own transition can't run — it starts unmapped, and
+            // adw skips animations on unmapped widgets — so the divider
+            // does all the moving).
+            let target = h.clamp(220, (pane_h - 200).max(220));
+            let split = self.reader_split.clone();
+            split.set_shrink_start_child(true);
+            split.set_position(0);
+            let anim = adw::TimedAnimation::new(
+                &split,
+                0.0,
+                target as f64,
+                300,
+                adw::CallbackAnimationTarget::new({
+                    let split = split.clone();
+                    move |v| split.set_position(v as i32)
+                }),
+            );
+            anim.set_easing(adw::Easing::EaseOutCubic);
+            let cell = self.split_close_anim.clone();
+            anim.connect_done({
+                let cell = cell.clone();
+                move |_| {
+                    cell.borrow_mut().take();
+                    split.set_shrink_start_child(false);
+                }
+            });
+            *cell.borrow_mut() = Some(anim.clone());
+            anim.play();
             if let Some((fa, fid)) = focus {
                 // Put the card being answered at the top of the shortened
                 // reader, wearing the selection outline.
@@ -7676,7 +7761,11 @@ impl AppModel {
             let slot = self.compose_slot();
             slot.set_child(Some(widget));
             slot.set_can_target(true);
-            slot.set_reveal_child(true);
+            // Revealed a frame later: starting the transition in the same
+            // cycle the child was set finds it unmapped, and the slide is
+            // skipped — the composer pops in instead of sliding down.
+            let s = slot.clone();
+            gtk::glib::idle_add_local_once(move || s.set_reveal_child(true));
         }
         controller.emit(ComposeInput::FocusEditor);
         self.reader_compose = Some(ReaderCompose { id, controller, window: None });
@@ -7694,12 +7783,12 @@ impl AppModel {
                 self.composers.push(ComposeHost { id: r.id, controller: r.controller, window });
             }
             None => {
-                // A split reply slides out the way it slid in; the covering
-                // composer is torn down at once as before.
+                // Either kind of inline composer slides out the way it
+                // slid in.
                 if self.reader_split_top.child().is_some() {
                     self.animate_split_close();
                 } else {
-                    self.clear_compose_slots();
+                    self.animate_cover_close();
                 }
                 self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 r.controller.emit(ComposeInput::SaveDraftIfDirty);
@@ -7739,7 +7828,8 @@ impl AppModel {
                 let slot = self.compose_slot();
                 slot.set_child(Some(&widget));
                 slot.set_can_target(true);
-                slot.set_reveal_child(true);
+                let s = slot.clone();
+                gtk::glib::idle_add_local_once(move || s.set_reveal_child(true));
                 r.controller.emit(ComposeInput::SetWindowed(false));
             }
         }
@@ -7763,11 +7853,12 @@ impl AppModel {
                     window.destroy();
                 }
                 None => {
-                    // Cancel/send on a split reply: slide it out, not blink it.
+                    // Cancel/send on either inline composer: slide it out,
+                    // not blink it.
                     if self.reader_split_top.child().is_some() {
                         self.animate_split_close();
                     } else {
-                        self.clear_compose_slots();
+                        self.animate_cover_close();
                     }
                     self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 }
