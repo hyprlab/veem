@@ -761,8 +761,7 @@ impl Component for Preferences {
                         adw::SwitchRow {
                             set_title: "Unread mail in the tray menu",
                             set_subtitle: "List the newest unread inbox messages in the icon's \
-                                           menu, each with Reply, Mark as Read, Archive and \
-                                           Delete.",
+                                           menu; click one to open it.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleTrayMail(row.is_active()));
                             },

@@ -782,8 +782,8 @@ struct PrivacyFile {
     /// Which icon the tray item shows.
     #[serde(default)]
     tray_icon: TrayIcon,
-    /// Whether the tray menu lists unread inbox mail, each with Open, Mark
-    /// as Read, Archive and Delete beneath it.
+    /// Whether the tray menu lists unread inbox mail, each a row that opens
+    /// the message.
     #[serde(default = "default_tray_mail")]
     tray_mail: bool,
     /// Whether to say anything at all when remote content is blocked. Off hides
