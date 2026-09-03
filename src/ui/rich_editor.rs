@@ -81,8 +81,19 @@ fn locale_language() -> Option<String> {
 /// dangling one errs out and is rightly skipped.
 pub fn installed_dictionaries() -> Vec<String> {
     let mut codes: std::collections::BTreeSet<String> = Default::default();
-    for dir in ["/usr/share/hunspell", "/usr/share/myspell"] {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+    // The classic locations plus every XDG data dir — enchant searches the
+    // latter too, and /app/share/hunspell is where the Flatpak bundles its
+    // own set of common languages.
+    let mut dirs = vec![
+        std::path::PathBuf::from("/usr/share/hunspell"),
+        std::path::PathBuf::from("/usr/share/myspell"),
+    ];
+    for d in gtk::glib::system_data_dirs() {
+        dirs.push(d.join("hunspell"));
+    }
+    dirs.push(gtk::glib::user_data_dir().join("hunspell"));
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for e in entries.flatten() {
             let p = e.path();
             let is_dic = p.extension().is_some_and(|x| x == "dic");

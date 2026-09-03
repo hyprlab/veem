@@ -22,10 +22,12 @@ extern "C" {
 type BrokerInit = unsafe extern "C" fn() -> *mut c_void;
 type RequestDict = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
 type DictCheck = unsafe extern "C" fn(*mut c_void, *const c_char, isize) -> c_int;
+type DictAdd = unsafe extern "C" fn(*mut c_void, *const c_char, isize);
 
 pub struct SpellChecker {
     dict: *mut c_void,
     check: DictCheck,
+    add: DictAdd,
 }
 
 impl SpellChecker {
@@ -46,12 +48,14 @@ impl SpellChecker {
             let init = sym("enchant_broker_init");
             let req = sym("enchant_broker_request_dict");
             let check = sym("enchant_dict_check");
-            if init.is_null() || req.is_null() || check.is_null() {
+            let add = sym("enchant_dict_add");
+            if init.is_null() || req.is_null() || check.is_null() || add.is_null() {
                 return None;
             }
             let init: BrokerInit = std::mem::transmute(init);
             let req: RequestDict = std::mem::transmute(req);
             let check: DictCheck = std::mem::transmute(check);
+            let add: DictAdd = std::mem::transmute(add);
             let broker = init();
             if broker.is_null() {
                 return None;
@@ -61,7 +65,7 @@ impl SpellChecker {
             if dict.is_null() {
                 return None;
             }
-            Some(SpellChecker { dict, check })
+            Some(SpellChecker { dict, check, add })
         }
     }
 
@@ -70,6 +74,14 @@ impl SpellChecker {
     fn is_misspelled(&self, word: &str) -> bool {
         let Ok(w) = CString::new(word) else { return false };
         unsafe { (self.check)(self.dict, w.as_ptr(), word.len() as isize) > 0 }
+    }
+
+    /// Teach enchant a word: it joins the personal word list on disk (the
+    /// same file WebKit's Learn Spelling writes) and stops being flagged by
+    /// this checker at once.
+    fn learn(&self, word: &str) {
+        let Ok(w) = CString::new(word) else { return };
+        unsafe { (self.add)(self.dict, w.as_ptr(), word.len() as isize) }
     }
 }
 
@@ -175,6 +187,57 @@ pub fn error_attrs(text: &str, cursor: Option<usize>) -> Option<gtk::pango::Attr
         }
     }
     Some(attrs)
+}
+
+/// The personal word list for the active language: the plain
+/// one-word-per-line file enchant keeps in the user config dir — the same
+/// list the body's "Learn Spelling" menu item feeds.
+fn personal_dict_path() -> std::path::PathBuf {
+    let lang = crate::ui::rich_editor::resolved_spell_language();
+    gtk::glib::user_config_dir().join("enchant").join(format!("{lang}.dic"))
+}
+
+/// The words the user has taught the spell checker, for the active language.
+pub fn personal_words() -> Vec<String> {
+    std::fs::read_to_string(personal_dict_path())
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// Teach the checker a word: through enchant itself, so the file is written
+/// the way its own tooling writes it, and the subject's checker accepts the
+/// word immediately. The message body's checker (WebKit's own enchant
+/// instance) picks it up at the next launch.
+pub fn add_personal_word(word: &str) {
+    let word = word.trim();
+    if word.is_empty() {
+        return;
+    }
+    let lang = crate::ui::rich_editor::resolved_spell_language();
+    if let Some(c) = checker_for(&lang) {
+        c.learn(word);
+    }
+}
+
+/// Unlearn a word: enchant's own "remove" would blacklist it instead of
+/// forgetting it, so the personal list is rewritten without the word and the
+/// cached checker is dropped to reload the trimmed list. The message body
+/// applies the change at the next launch.
+pub fn remove_personal_word(word: &str) {
+    let path = personal_dict_path();
+    let Ok(content) = std::fs::read_to_string(&path) else { return };
+    let kept: Vec<&str> =
+        content.lines().filter(|l| l.trim() != word && !l.trim().is_empty()).collect();
+    let mut out = kept.join("\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    let _ = std::fs::write(&path, out);
+    CHECKER.with(|c| *c.borrow_mut() = None);
 }
 
 #[cfg(test)]
