@@ -17,8 +17,8 @@
 //! the sandbox and may not resolve our icon theme, and the dot has to be drawn
 //! on anyway. The Vireo icon is the app icon itself; the envelope variants are
 //! the reader's `mail-unread-symbolic` in plain white or black, for panels
-//! that don't recolour symbolic icons. On Cinnamon the icon is drawn at half
-//! size inside the pixmap, see [`panel_fill`].
+//! that don't recolour symbolic icons. On Cinnamon the icon is drawn smaller
+//! inside the pixmap, see [`panel_fill`].
 
 use gtk::cairo;
 use gtk::gdk_pixbuf::{InterpType, Pixbuf, PixbufLoader};
@@ -373,13 +373,13 @@ fn render_set(icon: TrayIcon, dotted: bool) -> Vec<Icon> {
 /// fills it. Cinnamon is the exception: its status applet takes a pixmap
 /// for a full-colour icon and draws it at the panel's colour icon size,
 /// while the symbolic icons beside it get the smaller symbolic size, so
-/// ours towered over them. Drawing at half size brings it level.
+/// ours towered over them. Drawing at five-eighths brings it level.
 fn panel_fill() -> f64 {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
     let cinnamon = desktop
         .split(':')
         .any(|d| d.eq_ignore_ascii_case("x-cinnamon") || d.eq_ignore_ascii_case("cinnamon"));
-    if cinnamon { 0.5 } else { 1.0 }
+    if cinnamon { 0.625 } else { 1.0 }
 }
 
 /// Decode the chosen icon, composite the dot over its top-right, and centre
