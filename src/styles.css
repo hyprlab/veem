@@ -1168,7 +1168,10 @@ headerbar.reader-toolbar button.image-button {
   box-shadow: none;
   outline: none;
   background: alpha(currentColor, 0.03);
-  min-height: 6px;
+  /* A hairline only: the separator's own drag gesture claims every press
+     (clicks die on it) and it wears its own row-resize cursor — the seam's
+     real handle is the pill zone above plus the drawer's edge strip. */
+  min-height: 1px;
 }
 .attachment-drawer-header {
   padding: 4px 8px;
@@ -1194,8 +1197,11 @@ headerbar.reader-toolbar button.image-button {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 /* The bar sits centred in a larger invisible hit zone that carries the
-   gestures; hovering anywhere in the zone lights the bar. */
-.split-grab-hit:hover .split-grab-pill {
+   gestures; hovering anywhere in the zone lights the bar. The drawer's edge
+   strip is a separate widget hovering the same logical handle — it sets the
+   `hot` class instead. */
+.split-grab-hit:hover .split-grab-pill,
+.split-grab-hit.hot .split-grab-pill {
   background-color: alpha(currentColor, 0.75);
 }
 .attachment-drawer-flow {

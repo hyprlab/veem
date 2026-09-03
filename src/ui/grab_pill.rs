@@ -39,7 +39,11 @@ pub fn pill_widget() -> gtk::Box {
     hit.add_css_class("split-grab-hit");
     hit.set_size_request(120, 20);
     hit.set_halign(gtk::Align::Center);
-    hit.set_cursor_from_name(Some("ns-resize"));
+    // row-resize (the arrows with the divider line), matching the split
+    // reply's own Paned separator right below — one cursor across that
+    // whole handle. The drawer's edge variant keeps plain ns-resize, since
+    // its native separator is inert and shows no cursor of its own.
+    hit.set_cursor_from_name(Some("row-resize"));
     hit.append(&pill_bar());
     hit
 }
