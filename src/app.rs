@@ -693,6 +693,9 @@ pub enum AppMsg {
     SetTrayMail(bool),
     /// Quit was chosen from the tray icon's menu.
     QuitFromTray,
+    /// "View all unread" was chosen from the tray icon's menu: go to All
+    /// Inboxes, or without it to the first inbox holding unread mail.
+    TrayViewUnread,
     /// A single-key shortcut fired.
     Shortcut(Shortcut),
     /// Show the keyboard-shortcut reference.
@@ -4019,6 +4022,26 @@ impl SimpleComponent for AppModel {
                 relm4::main_application().activate_action("quit", None);
             }
 
+            AppMsg::TrayViewUnread => {
+                let unified = self.show_unified_pref
+                    && (self.config.iter().filter(|c| c.enabled).count() > 1
+                        || (demo_mode() && self.accounts.len() > 1));
+                if unified {
+                    // Through the sidebar, so its highlight moves too; it
+                    // answers with UnifiedSelected.
+                    self.sidebar.emit(SidebarInput::SelectUnifiedRow);
+                } else if let Some((account_id, folder_id, name, path)) = self
+                    .accounts
+                    .iter()
+                    .filter(|a| self.inbox_unread(a.id) > 0)
+                    .filter_map(|a| self.inbox_of(a.id))
+                    .map(|f| (f.account_id, f.id, f.name.clone(), f.path.clone()))
+                    .next()
+                {
+                    self.select_folder(account_id, folder_id, name, path);
+                }
+            }
+
 
             AppMsg::SetSingleKey(on) => {
                 if self.single_key.get() != on {
@@ -6549,7 +6572,7 @@ impl AppModel {
     fn start_tray(&mut self, sender: &ComponentSender<Self>) {
         let unified = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
         let mail = self.tray_mail.then(|| self.tray_mail_list());
-        *self.tray_mail_key.borrow_mut() = mail.as_deref().map(tray_mail_key);
+        *self.tray_mail_key.borrow_mut() = mail.as_ref().map(tray_mail_key);
         self.tray = crate::tray::TrayHandle::start(
             sender.input_sender().clone(),
             self.tray_icon,
@@ -6562,7 +6585,7 @@ impl AppModel {
     fn push_tray_mail(&self) {
         let Some(tray) = &self.tray else { return };
         let mail = self.tray_mail.then(|| self.tray_mail_list());
-        let key = mail.as_deref().map(tray_mail_key);
+        let key = mail.as_ref().map(tray_mail_key);
         if *self.tray_mail_key.borrow() == key {
             return;
         }
@@ -6570,8 +6593,15 @@ impl AppModel {
         tray.set_mail(mail);
     }
 
-    /// The newest unread inbox messages across accounts, as tray cards.
-    fn tray_mail_list(&self) -> Vec<crate::tray::TrayMail> {
+    /// The newest unread inbox messages across accounts, as tray cards, with
+    /// the unread total the badges show (the cards may be fewer).
+    fn tray_mail_list(&self) -> crate::tray::TrayMailList {
+        let unread = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
+        let items = self.tray_mail_cards();
+        crate::tray::TrayMailList { items, unread }
+    }
+
+    fn tray_mail_cards(&self) -> Vec<crate::tray::TrayMail> {
         let several = self.accounts.len() > 1;
         let mut unread: Vec<(&Account, &Message)> = self
             .accounts
@@ -10264,10 +10294,15 @@ pub fn queue_mailto(uri: String) {
 /// cached [`Message`] (#38): the notified message may not be in the current
 /// view, but the worker upserts it into the cache before notifying, so the
 /// cache always has it.
-/// What identifies a tray mail list for change detection.
-fn tray_mail_key(mail: &[crate::tray::TrayMail]) -> Vec<(u32, u32, String, String)> {
-    mail.iter()
-        .map(|m| (m.account_id, m.message_id, m.heading.clone(), m.subject.clone()))
+/// What identifies a tray mail list for change detection: the total, then
+/// each card.
+fn tray_mail_key(mail: &crate::tray::TrayMailList) -> Vec<(u32, u32, String, String)> {
+    std::iter::once((u32::MAX, mail.unread, String::new(), String::new()))
+        .chain(
+            mail.items
+                .iter()
+                .map(|m| (m.account_id, m.message_id, m.heading.clone(), m.subject.clone())),
+        )
         .collect()
 }
 

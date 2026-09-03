@@ -47,8 +47,17 @@ pub struct TrayMail {
     pub icon: Vec<u8>,
 }
 
-/// How many unread messages the menu lists, newest first.
-pub const MAIL_LIMIT: usize = 10;
+/// How many unread messages the menu lists, newest first; past that, one
+/// row offers the rest in the window.
+pub const MAIL_LIMIT: usize = 5;
+
+/// The menu's mail section: the cards shown, and how many unread inbox
+/// messages there are in all (more than the cards when the list was cut).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct TrayMailList {
+    pub items: Vec<TrayMail>,
+    pub unread: u32,
+}
 
 /// The app icon, as shipped.
 const APP_ICON_PNG: &[u8] = include_bytes!("../data/icons/hicolor/256x256/apps/co.hyprlab.Vireo.png");
@@ -75,7 +84,7 @@ impl TrayHandle {
         sender: relm4::Sender<AppMsg>,
         icon: TrayIcon,
         unread: u32,
-        mail: Option<Vec<TrayMail>>,
+        mail: Option<TrayMailList>,
     ) -> Option<Self> {
         let tray = VireoTray {
             plain: render_set(icon, false),
@@ -112,7 +121,7 @@ impl TrayHandle {
     }
 
     /// Replace the menu's message list; `None` drops the section.
-    pub fn set_mail(&self, mail: Option<Vec<TrayMail>>) {
+    pub fn set_mail(&self, mail: Option<TrayMailList>) {
         self.handle.update(move |t| t.mail = mail);
     }
 
@@ -127,7 +136,7 @@ struct VireoTray {
     dotted: Vec<Icon>,
     unread: u32,
     /// Unread inbox mail for the menu, or `None` when that section is off.
-    mail: Option<Vec<TrayMail>>,
+    mail: Option<TrayMailList>,
     sender: relm4::Sender<AppMsg>,
 }
 
@@ -175,7 +184,7 @@ impl Tray for VireoTray {
         .into()];
         if let Some(mail) = &self.mail {
             items.push(MenuItem::Separator);
-            if mail.is_empty() {
+            if mail.items.is_empty() {
                 items.push(
                     StandardItem {
                         label: "No unread mail".to_string(),
@@ -185,7 +194,20 @@ impl Tray for VireoTray {
                     .into(),
                 );
             }
-            items.extend(mail.iter().map(mail_item));
+            items.extend(mail.items.iter().map(mail_item));
+            if mail.unread as usize > mail.items.len() {
+                items.push(
+                    StandardItem {
+                        label: format!("View all {} unread…", mail.unread),
+                        activate: Box::new(|t: &mut Self| {
+                            let _ = t.sender.send(AppMsg::PresentWindow);
+                            let _ = t.sender.send(AppMsg::TrayViewUnread);
+                        }),
+                        ..Default::default()
+                    }
+                    .into(),
+                );
+            }
         }
         items.extend([
             MenuItem::Separator,
