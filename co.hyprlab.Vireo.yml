@@ -28,6 +28,7 @@ finish-args:
   - --talk-name=org.gnome.Settings                 # "Open Online Accounts" button
   - --talk-name=org.gnome.evolution.dataserver.*  # GNOME Contacts (Evolution Data Server)
   - --talk-name=org.gnome.Contacts                 # "Open GNOME Contacts" button (D-Bus activation)
+  - --talk-name=org.kde.StatusNotifierWatcher      # optional tray icon (#116); absent on plain GNOME
   # Deliberately NOT --talk-name=org.freedesktop.Flatpak: that permits
   # `flatpak-spawn --host`, i.e. arbitrary command execution outside the
   # sandbox, which would make every other restriction here advisory. The

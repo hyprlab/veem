@@ -567,6 +567,19 @@ pub enum AppTheme {
     Dark,
 }
 
+/// Which icon the tray item wears (issue #116).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TrayIcon {
+    /// The app icon.
+    #[default]
+    Vireo,
+    /// `mail-unread-symbolic` in white, for dark panels.
+    EnvelopeLight,
+    /// `mail-unread-symbolic` in black, for light panels.
+    EnvelopeDark,
+}
+
 /// How email message content is themed, independent of the app UI theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -762,6 +775,13 @@ struct PrivacyFile {
     /// Start at login (only meaningful with `run_in_background`).
     #[serde(default)]
     autostart: bool,
+    /// Publish a tray icon (StatusNotifierItem) for desktops that draw one
+    /// (issue #116). Off by default: GNOME has no tray without an extension.
+    #[serde(default)]
+    tray: bool,
+    /// Which icon the tray item shows.
+    #[serde(default)]
+    tray_icon: TrayIcon,
     /// Whether to say anything at all when remote content is blocked. Off hides
     /// the banner; it never changes what is blocked, only whether you're told.
     #[serde(default = "default_show_remote_banner")]
@@ -940,6 +960,8 @@ impl Default for PrivacyFile {
             single_key_shortcuts: false,
             run_in_background: false,
             autostart: false,
+            tray: false,
+            tray_icon: TrayIcon::default(),
         }
     }
 }
@@ -1334,6 +1356,16 @@ pub fn load_autostart() -> bool {
     p.run_in_background && p.autostart
 }
 
+/// Whether Vireo publishes a tray icon.
+pub fn load_tray() -> bool {
+    load_privacy().tray
+}
+
+/// Which icon the tray item shows.
+pub fn load_tray_icon() -> TrayIcon {
+    load_privacy().tray_icon
+}
+
 /// Persist all app settings together (so no field is clobbered).
 #[allow(clippy::too_many_arguments)]
 pub fn save_privacy(
@@ -1373,6 +1405,8 @@ pub fn save_privacy(
     single_key_shortcuts: bool,
     run_in_background: bool,
     autostart: bool,
+    tray: bool,
+    tray_icon: TrayIcon,
     show_remote_banner: bool,
     sidebar_hover_expand: bool,
     app_theme: AppTheme,
@@ -1425,6 +1459,8 @@ pub fn save_privacy(
         single_key_shortcuts,
         run_in_background,
         autostart,
+        tray,
+        tray_icon,
         show_remote_banner,
         sidebar_hover_expand,
         app_theme,

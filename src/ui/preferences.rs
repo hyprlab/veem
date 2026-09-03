@@ -5,7 +5,7 @@
 use adw::prelude::*;
 use relm4::prelude::*;
 
-use crate::config::{AppTheme, ClockStyle, DateStyle, MessageTheme};
+use crate::config::{AppTheme, ClockStyle, DateStyle, MessageTheme, TrayIcon};
 
 /// Initial data for the settings window.
 #[derive(Debug)]
@@ -61,6 +61,8 @@ pub struct PrefInit {
     pub single_key_shortcuts: bool,
     pub run_in_background: bool,
     pub autostart: bool,
+    pub tray: bool,
+    pub tray_icon: TrayIcon,
     /// The accounts panel (built by the AccountsWindow component), shown
     /// behind the window's "Accounts" tab.
     pub accounts_panel: gtk::Widget,
@@ -72,6 +74,12 @@ pub struct PrefInit {
 
 
 /// App-chrome appearance options, in combo order.
+const TRAY_ICONS: &[(&str, TrayIcon)] = &[
+    ("Vireo icon", TrayIcon::Vireo),
+    ("Envelope, white", TrayIcon::EnvelopeLight),
+    ("Envelope, black", TrayIcon::EnvelopeDark),
+];
+
 const APP_THEMES: &[(&str, AppTheme)] = &[
     ("Follow system", AppTheme::System),
     ("Light", AppTheme::Light),
@@ -212,6 +220,8 @@ pub enum PrefInput {
     ImportSettings,
     ToggleRunInBackground(bool),
     ToggleAutostart(bool),
+    ToggleTray(bool),
+    ChangeTrayIcon(u32),
     ChangePaletteCollapse(u64),
     ChangeMessageTheme(u32),
     ChangeAppTheme(u32),
@@ -267,6 +277,8 @@ pub enum PrefOutput {
     SetSingleKey(bool),
     SetRunInBackground(bool),
     SetAutostart(bool),
+    SetTray(bool),
+    SetTrayIcon(TrayIcon),
     SetPaletteCollapse(u64),
     SetMessageTheme(MessageTheme),
     Closed,
@@ -720,6 +732,28 @@ impl Component for Preferences {
                             },
                         },
 
+                        #[name = "tray_row"]
+                        adw::SwitchRow {
+                            set_title: "Show a tray icon",
+                            set_subtitle: "An icon in the system tray, with a red dot while any \
+                                           inbox has unread mail. Click it to open Vireo. GNOME \
+                                           needs the AppIndicator extension; other desktops show \
+                                           it as they are.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleTray(row.is_active()));
+                            },
+                        },
+
+                        #[name = "tray_icon_row"]
+                        adw::ComboRow {
+                            set_title: "Tray icon",
+                            set_subtitle: "The Vireo icon, or a plain envelope in white or black \
+                                           to match the panel.",
+                            connect_selected_notify[sender] => move |row| {
+                                sender.input(PrefInput::ChangeTrayIcon(row.selected()));
+                            },
+                        },
+
                         #[name = "single_key_row"]
                         adw::SwitchRow {
                             set_title: "Single-key shortcuts",
@@ -908,6 +942,7 @@ impl Component for Preferences {
             &widgets.card_actions_row,
             &widgets.app_theme_row,
             &widgets.settings_open_row,
+            &widgets.tray_icon_row,
             &widgets.date_style_row,
             &widgets.clock_style_row,
             &widgets.chevron_side_row,
@@ -953,6 +988,24 @@ impl Component for Preferences {
             let autostart_row = widgets.autostart_row.clone();
             widgets.background_row.connect_active_notify(move |row| {
                 autostart_row.set_sensitive(row.is_active());
+            });
+        }
+        widgets.tray_row.set_active(init.tray);
+        let tray_icon_labels: Vec<&str> = TRAY_ICONS.iter().map(|(l, _)| *l).collect();
+        widgets
+            .tray_icon_row
+            .set_model(Some(&gtk::StringList::new(&tray_icon_labels)));
+        let tray_icon_sel = TRAY_ICONS
+            .iter()
+            .position(|(_, t)| *t == init.tray_icon)
+            .unwrap_or(0);
+        widgets.tray_icon_row.set_selected(tray_icon_sel as u32);
+        // The icon choice only means anything with a tray icon shown.
+        widgets.tray_icon_row.set_sensitive(init.tray);
+        {
+            let tray_icon_row = widgets.tray_icon_row.clone();
+            widgets.tray_row.connect_active_notify(move |row| {
+                tray_icon_row.set_sensitive(row.is_active());
             });
         }
         widgets.single_key_row.set_active(init.single_key_shortcuts);
@@ -1266,6 +1319,16 @@ impl Component for Preferences {
             }
             PrefInput::ToggleAutostart(on) => {
                 let _ = sender.output(PrefOutput::SetAutostart(on));
+            }
+            PrefInput::ToggleTray(on) => {
+                let _ = sender.output(PrefOutput::SetTray(on));
+            }
+            PrefInput::ChangeTrayIcon(index) => {
+                let icon = TRAY_ICONS
+                    .get(index as usize)
+                    .map(|(_, t)| *t)
+                    .unwrap_or_default();
+                let _ = sender.output(PrefOutput::SetTrayIcon(icon));
             }
             PrefInput::ChangePreviewLines(index) => {
                 // The combo lists Off, then 1, 2 and 3 lines — so the row index is

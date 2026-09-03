@@ -334,6 +334,11 @@ pub struct AppModel {
     run_in_background: std::rc::Rc<std::cell::Cell<bool>>,
     /// Whether Vireo starts at login (background running only).
     autostart: bool,
+    /// Tray icon (issue #116): the setting, the icon choice, and the running
+    /// item while the setting is on.
+    tray_enabled: bool,
+    tray_icon: config::TrayIcon,
+    tray: Option<crate::tray::TrayHandle>,
     /// Whether single-key (modifier-free) shortcuts are enabled. The window's key
     /// controller needs to read this without the model, so it is shared: with the
     /// feature off, keystrokes must pass straight through rather than be consumed
@@ -679,6 +684,10 @@ pub enum AppMsg {
     SetSingleKey(bool),
     SetRunInBackground(bool),
     SetAutostart(bool),
+    SetTray(bool),
+    SetTrayIcon(config::TrayIcon),
+    /// Quit was chosen from the tray icon's menu.
+    QuitFromTray,
     /// A single-key shortcut fired.
     Shortcut(Shortcut),
     /// Show the keyboard-shortcut reference.
@@ -1792,6 +1801,9 @@ impl SimpleComponent for AppModel {
                 config::load_run_in_background(),
             )),
             autostart: config::load_autostart(),
+            tray_enabled: config::load_tray(),
+            tray_icon: config::load_tray_icon(),
+            tray: None,
             single_key: std::rc::Rc::new(std::cell::Cell::new(
                 config::load_single_key_shortcuts(),
             )),
@@ -1845,6 +1857,9 @@ impl SimpleComponent for AppModel {
         };
         model.prime_from_cache();
         model.spawn_workers(&sender);
+        if model.tray_enabled {
+            model.start_tray(&sender);
+        }
         // Refresh visible avatars when the GNOME Contacts photo index
         // changes (first load finishing, or an EDS/CardDAV sync).
         crate::contacts::watch_photo_changes({
@@ -3966,6 +3981,33 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetTray(on) => {
+                if self.tray_enabled != on {
+                    self.tray_enabled = on;
+                    self.save_settings();
+                    if on {
+                        self.start_tray(&sender);
+                    } else if let Some(tray) = self.tray.take() {
+                        tray.stop();
+                    }
+                }
+            }
+
+            AppMsg::SetTrayIcon(icon) => {
+                if self.tray_icon != icon {
+                    self.tray_icon = icon;
+                    self.save_settings();
+                    if let Some(tray) = &self.tray {
+                        tray.set_icon(icon);
+                    }
+                }
+            }
+
+            AppMsg::QuitFromTray => {
+                // The same teardown as Ctrl+Q: geometry saved, then exit.
+                relm4::main_application().activate_action("quit", None);
+            }
+
             AppMsg::SetSingleKey(on) => {
                 if self.single_key.get() != on {
                     self.single_key.set(on);
@@ -5646,6 +5688,8 @@ impl AppModel {
             self.single_key.get(),
             self.run_in_background.get(),
             self.autostart,
+            self.tray_enabled,
+            self.tray_icon,
             self.show_remote_banner,
             self.sidebar_hover_expand,
             self.app_theme,
@@ -6490,6 +6534,20 @@ impl AppModel {
         if self.run_in_background.get() {
             crate::background::set_status(&crate::background::status_text(unified));
         }
+        // And what the tray icon's dot answers to.
+        if let Some(tray) = &self.tray {
+            tray.set_unread(unified);
+        }
+    }
+
+    /// Publish the tray item with the current icon and unread total.
+    fn start_tray(&mut self, sender: &ComponentSender<Self>) {
+        let unified = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
+        self.tray = crate::tray::TrayHandle::start(
+            sender.input_sender().clone(),
+            self.tray_icon,
+            unified,
+        );
     }
 
     /// Push the current accounts + folders to the sidebar, in the user's chosen
@@ -8876,6 +8934,8 @@ impl AppModel {
             single_key_shortcuts: self.single_key.get(),
             run_in_background: self.run_in_background.get(),
             autostart: self.autostart,
+            tray: self.tray_enabled,
+            tray_icon: self.tray_icon,
             accounts_panel: accounts.widget().clone().upcast::<gtk::Widget>(),
             start_on_accounts: on_accounts,
         };
@@ -8934,6 +8994,8 @@ impl AppModel {
                 PrefOutput::SetSingleKey(on) => AppMsg::SetSingleKey(on),
                 PrefOutput::SetRunInBackground(on) => AppMsg::SetRunInBackground(on),
                 PrefOutput::SetAutostart(on) => AppMsg::SetAutostart(on),
+                PrefOutput::SetTray(on) => AppMsg::SetTray(on),
+                PrefOutput::SetTrayIcon(icon) => AppMsg::SetTrayIcon(icon),
                 PrefOutput::SetPaletteCollapse(secs) => AppMsg::SetPaletteCollapse(secs),
                 PrefOutput::SetMessageTheme(t) => AppMsg::SetMessageTheme(t),
                 PrefOutput::Closed => AppMsg::ClosePreferences,
