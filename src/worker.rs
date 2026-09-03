@@ -2441,17 +2441,109 @@ fn extract_attachments(raw: &[u8]) -> Vec<crate::models::Attachment> {
     for (i, part) in parsed.attachments().enumerate() {
         // Decoration referenced from the body (a `cid:` logo) is rendered in
         // place, not listed — unless it's big enough to be real content.
-        if part.content_id().is_some() && part.contents().len() < INLINE_ATTACHMENT_MIN {
+        //
+        // A part the sender marked `Content-Disposition: attachment` is never
+        // decoration, however small. Gmail's composer stamps a Content-ID
+        // (`<f_…>`) on every file it uploads, so the size test alone silently
+        // dropped real attachments under 64 KiB: a message with two small PDFs
+        // and one large font file listed only the font. `structure_has_attachment`
+        // already tests disposition first, which is why such mail showed a
+        // paperclip and then an incomplete list — the two disagreed.
+        let declared_attachment = part
+            .content_disposition()
+            .is_some_and(|d| d.is_attachment());
+        if !declared_attachment
+            && part.content_id().is_some()
+            && part.contents().len() < INLINE_ATTACHMENT_MIN
+        {
             continue;
         }
-        let name = part
-            .attachment_name()
-            .map(|s| s.to_string())
+        let name = attachment_name_of(part, raw)
             .unwrap_or_else(|| format!("attachment-{}", i + 1));
         out.push(crate::models::Attachment {
             name,
             data: part.contents().to_vec(),
         });
+    }
+    out
+}
+
+/// An attachment part's filename, repaired if the sender split it across adjacent
+/// RFC 2047 encoded-words.
+///
+/// RFC 2047 §6.2 joins adjacent encoded-words separated only by linear whitespace
+/// and discards that whitespace — it is there so a long word can be folded, not as
+/// part of the text. `mail_parser` keeps the separator inside parameter values, so
+/// a file announced as
+///
+/// ```text
+/// Content-Disposition: attachment; filename="=?utf-8?q?docu?= =?utf-8?q?ment.pdf?="
+/// ```
+///
+/// arrives named `docu ment.pdf`. That is not a cosmetic problem: with no `.pdf`
+/// suffix [`guess_mime`] can't type the file, so it gets no PDF thumbnail and
+/// opens in nothing. A header folded between the encoded-words leaves a tab
+/// instead of a space, with the same result.
+///
+/// Splice such pairs in the raw header and let `mail_parser` decode the repaired
+/// version, so the charset handling stays in one place.
+fn attachment_name_of(part: &mail_parser::MessagePart<'_>, raw: &[u8]) -> Option<String> {
+    use mail_parser::{HeaderName, MessageParser, MimeHeaders};
+
+    let names = |h: &mail_parser::Header<'_>| {
+        matches!(
+            h.name,
+            HeaderName::ContentDisposition | HeaderName::ContentType
+        )
+    };
+    let plain = || part.attachment_name().map(|s| s.to_string());
+
+    let mut repaired = Vec::new();
+    let mut spliced = false;
+    for h in part.headers.iter().filter(|h| names(h)) {
+        let Some(value) = raw.get(h.offset_start..h.offset_end) else {
+            return plain();
+        };
+        let joined = splice_encoded_words(value);
+        spliced |= joined != value;
+        repaired.extend_from_slice(h.name().as_bytes());
+        repaired.push(b':');
+        repaired.extend_from_slice(&joined);
+        if !repaired.ends_with(b"\n") {
+            repaired.extend_from_slice(b"\r\n");
+        }
+    }
+    // Nothing to repair: the common case, and no second parse.
+    if !spliced {
+        return plain();
+    }
+    repaired.extend_from_slice(b"\r\n");
+    MessageParser::default()
+        .parse(&repaired)
+        .and_then(|m| m.attachment_name().map(|s| s.to_string()))
+        .or_else(plain)
+}
+
+/// Join adjacent RFC 2047 encoded-words, discarding the linear whitespace between
+/// them. Bytes are safe to scan directly: `?=`, `=?` and the whitespace are all
+/// ASCII, which never occurs inside a multi-byte UTF-8 sequence.
+fn splice_encoded_words(value: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(value.len());
+    let mut i = 0;
+    while i < value.len() {
+        if value[i..].starts_with(b"?=") {
+            let mut j = i + 2;
+            while matches!(value.get(j), Some(b' ' | b'\t' | b'\r' | b'\n')) {
+                j += 1;
+            }
+            if j > i + 2 && value[j..].starts_with(b"=?") {
+                out.extend_from_slice(b"?=");
+                i = j;
+                continue;
+            }
+        }
+        out.push(value[i]);
+        i += 1;
     }
     out
 }
@@ -2850,24 +2942,36 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
 
     use lettre::message::{header::ContentType, Attachment, MultiPart, SinglePart};
     let has_html = !msg.html.trim().is_empty();
+    // The message's readable half: alternative(plain, html) — wrapped in
+    // related() carrying an inline part per image the composer embedded as a
+    // `data:` URI (#113). Inline parts go out `Content-Disposition: inline`
+    // with a Content-ID the HTML references by `cid:`, so they render in
+    // place and stay out of the recipient's attachment list — the same
+    // distinction the reader's own `extract_attachments` draws.
+    let content = has_html.then(|| {
+        let (html, images) = extract_data_images(&msg.html);
+        let alt = MultiPart::alternative_plain_html(msg.body.clone(), html);
+        if images.is_empty() {
+            return alt;
+        }
+        let mut related = MultiPart::related().multipart(alt);
+        for img in images {
+            let ct = ContentType::parse(&img.mime)
+                .unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
+            related = related.singlepart(Attachment::new_inline(img.cid).body(img.data, ct));
+        }
+        related
+    });
     let email = if msg.attachments.is_empty() {
-        if has_html {
-            builder.multipart(MultiPart::alternative_plain_html(
-                msg.body.clone(),
-                msg.html.clone(),
-            ))?
-        } else {
-            builder.body(msg.body.clone())?
+        match content {
+            Some(content) => builder.multipart(content)?,
+            None => builder.body(msg.body.clone())?,
         }
     } else {
         // text part (plain, or alternative plain+html) followed by attachments.
-        let mut multipart = if has_html {
-            MultiPart::mixed().multipart(MultiPart::alternative_plain_html(
-                msg.body.clone(),
-                msg.html.clone(),
-            ))
-        } else {
-            MultiPart::mixed().singlepart(SinglePart::plain(msg.body.clone()))
+        let mut multipart = match content {
+            Some(content) => MultiPart::mixed().multipart(content),
+            None => MultiPart::mixed().singlepart(SinglePart::plain(msg.body.clone())),
         };
         for path in &msg.attachments {
             // Name the file in the error: "No such file or directory" on its own
@@ -2886,6 +2990,64 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
         builder.multipart(multipart)?
     };
     Ok(email)
+}
+
+/// One image the composer embedded, lifted out of the outgoing HTML: its
+/// generated Content-ID, MIME type, and decoded bytes.
+struct InlineImage {
+    cid: String,
+    mime: String,
+    data: Vec<u8>,
+}
+
+/// Lift every quoted `data:image/...;base64,...` URI out of outgoing HTML
+/// into an [`InlineImage`], replacing the URI with a `cid:` reference (#113).
+/// Anything that is not a well-formed base64 image data URI in an attribute
+/// value is left exactly as written.
+fn extract_data_images(html: &str) -> (String, Vec<InlineImage>) {
+    let bytes = html.as_bytes();
+    let mut out = String::with_capacity(html.len());
+    let mut parts: Vec<InlineImage> = Vec::new();
+    let mut i = 0usize;
+    // Content-IDs are per-message; the timestamp keeps them globally unique
+    // the way Message-IDs are, since some clients index by Content-ID alone.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    while let Some(off) = html[i..].find("data:image/") {
+        let start = i + off;
+        // Only splice an attribute value: the URI must sit right after a
+        // quote and run to the matching one.
+        let quote = match start.checked_sub(1).map(|p| bytes[p]) {
+            Some(q @ (b'"' | b'\'')) => Some(q as char),
+            _ => None,
+        };
+        let len = quote.and_then(|q| html[start..].find(q));
+        let lifted = len.and_then(|len| {
+            let uri = &html[start..start + len];
+            let (meta, payload) = uri.split_once(',')?;
+            let mime = meta.strip_prefix("data:")?.strip_suffix(";base64")?;
+            let data = crate::oauth::base64_decode(payload)?;
+            Some((len, mime.to_string(), data))
+        });
+        match lifted {
+            Some((len, mime, data)) => {
+                let cid = format!("{}.{}@vireo.inline", stamp, parts.len() + 1);
+                out.push_str(&html[i..start]);
+                out.push_str("cid:");
+                out.push_str(&cid);
+                parts.push(InlineImage { cid, mime, data });
+                i = start + len;
+            }
+            None => {
+                out.push_str(&html[i..start + "data:image/".len()]);
+                i = start + "data:image/".len();
+            }
+        }
+    }
+    out.push_str(&html[i..]);
+    (out, parts)
 }
 
 /// A Message-ID for outgoing mail: unique, and in the sender's own domain so it
@@ -4336,6 +4498,8 @@ fn summary_from_headers(account_id: u32, fetch: &Fetch, folder_id: u32) -> Messa
         .unwrap_or_else(|| internal_date_summary(fetch));
     let to = parsed.as_ref().map(|p| mp_list(p.to())).unwrap_or_default();
     let cc = parsed.as_ref().map(|p| mp_list(p.cc())).unwrap_or_default();
+    let reply_to = parsed.as_ref().map(|p| mp_list(p.reply_to())).unwrap_or_default();
+    let reply_to = if reply_to.eq_ignore_ascii_case(&from_addr) { String::new() } else { reply_to };
 
     // Best-effort attachment hint from the top-level Content-Type (BODYSTRUCTURE
     // isn't available on this path). multipart/mixed is the usual attachment case.
@@ -4360,6 +4524,7 @@ fn summary_from_headers(account_id: u32, fetch: &Fetch, folder_id: u32) -> Messa
         uid,
         from_name,
         from_addr,
+        reply_to,
         to,
         cc,
         subject,
@@ -4882,6 +5047,11 @@ fn build_summary(account_id: u32, fetch: &Fetch, folder_id: u32) -> Message {
         .unwrap_or_else(|| internal_date_summary(fetch));
     let to = address_list(env.and_then(|e| e.to.as_ref()));
     let cc = address_list(env.and_then(|e| e.cc.as_ref()));
+    // Where the sender asked replies to go. Servers echo From here when the
+    // header is absent; storing that echo would be noise, so keep it only
+    // when it actually differs.
+    let reply_to = address_list(env.and_then(|e| e.reply_to.as_ref()));
+    let reply_to = if reply_to.eq_ignore_ascii_case(&from_addr) { String::new() } else { reply_to };
 
     let has_attachment = fetch
         .bodystructure()
@@ -4909,6 +5079,7 @@ fn build_summary(account_id: u32, fetch: &Fetch, folder_id: u32) -> Message {
         uid,
         from_name,
         from_addr,
+        reply_to,
         to,
         cc,
         subject,
@@ -5236,6 +5407,8 @@ fn summary_from_raw(account_id: u32, folder_id: u32, uid: u32, raw: &[u8]) -> Me
     };
     let to = addr_list(parsed.as_ref().and_then(|p| p.to()));
     let cc = addr_list(parsed.as_ref().and_then(|p| p.cc()));
+    let reply_to = addr_list(parsed.as_ref().and_then(|p| p.reply_to()));
+    let reply_to = if reply_to.eq_ignore_ascii_case(&from_addr) { String::new() } else { reply_to };
     let has_attachment = parsed.as_ref().map(|p| p.attachment_count() > 0).unwrap_or(false);
     let (message_id, references) = mp_thread_ids(parsed.as_ref());
 
@@ -5246,6 +5419,7 @@ fn summary_from_raw(account_id: u32, folder_id: u32, uid: u32, raw: &[u8]) -> Me
         uid,
         from_name,
         from_addr,
+        reply_to,
         to,
         cc,
         subject,
@@ -6558,13 +6732,18 @@ fn graph_message(v: &serde_json::Value, account_id: u32, folder_id: u32) -> Opti
         .chars()
         .take(200)
         .collect();
+    let from_addr = v["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string();
+    let reply_to = graph_addrs(&v["replyTo"]);
+    let reply_to =
+        if reply_to.eq_ignore_ascii_case(&from_addr) { String::new() } else { reply_to };
     let msg = Message {
         id: uid,
         account_id,
         folder_id,
         uid,
         from_name: v["from"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
-        from_addr: v["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
+        from_addr,
+        reply_to,
         to: graph_addrs(&v["toRecipients"]),
         cc: graph_addrs(&v["ccRecipients"]),
         subject: v["subject"].as_str().unwrap_or("").to_string(),
@@ -6585,8 +6764,8 @@ fn graph_message(v: &serde_json::Value, account_id: u32, folder_id: u32) -> Opti
 }
 
 const GRAPH_MSG_SELECT: &str = "$select=id,internetMessageId,conversationId,subject,bodyPreview,\
-                                from,toRecipients,ccRecipients,receivedDateTime,isRead,flag,\
-                                hasAttachments";
+                                from,replyTo,toRecipients,ccRecipients,receivedDateTime,isRead,\
+                                flag,hasAttachments";
 
 /// List a folder's newest summaries (newest first).
 fn graph_list_messages(
@@ -8225,6 +8404,63 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// A picture pasted into the composer rides the HTML as a data: URI; the
+    /// wire message must carry it as an inline cid: part inside
+    /// multipart/related — rendered in place, absent from the recipient's
+    /// attachment list — with no data: URI left behind.
+    #[test]
+    fn pasted_images_go_out_as_inline_cid_parts() {
+        let png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02];
+        let uri = format!("data:image/png;base64,{}", crate::oauth::base64_encode(&png));
+        let msg = OutgoingMessage {
+            to: "ada@example.com".into(),
+            body: "see picture".into(),
+            html: format!("<p>see</p><img src=\"{uri}\" style=\"max-width:100%\"><p>picture</p>"),
+            ..sample_outgoing()
+        };
+        let email = build_email(&sample_account(), &msg).expect("email builds");
+        let raw = String::from_utf8_lossy(&email.formatted()).to_string();
+        assert!(raw.contains("multipart/related"), "{raw}");
+        assert!(raw.contains("Content-ID"), "{raw}");
+        assert!(raw.contains("cid:"), "{raw}");
+        assert!(raw.contains("Content-Disposition: inline"), "{raw}");
+        assert!(raw.contains("image/png"), "{raw}");
+        assert!(!raw.contains("data:image"), "{raw}");
+    }
+
+    /// HTML without an embedded image keeps the old, plain alternative shape.
+    #[test]
+    fn html_without_images_stays_a_plain_alternative() {
+        let msg = OutgoingMessage {
+            to: "ada@example.com".into(),
+            body: "hi".into(),
+            html: "<p>hi</p>".into(),
+            ..sample_outgoing()
+        };
+        let email = build_email(&sample_account(), &msg).expect("email builds");
+        let raw = String::from_utf8_lossy(&email.formatted()).to_string();
+        assert!(raw.contains("multipart/alternative"), "{raw}");
+        assert!(!raw.contains("multipart/related"), "{raw}");
+    }
+
+    /// The lift leaves anything that is not a well-formed quoted base64 image
+    /// data URI exactly as written.
+    #[test]
+    fn extract_data_images_leaves_odd_uris_alone() {
+        let html = "<p>data:image/png is a scheme</p><img src=\"data:image/png;base65,zzz\">";
+        let (out, imgs) = extract_data_images(html);
+        assert_eq!(out, html);
+        assert!(imgs.is_empty());
+
+        // Single-quoted attributes lift too.
+        let (out, imgs) =
+            extract_data_images("<img src='data:image/jpeg;base64,AAAA'>");
+        assert!(out.contains("src='cid:"), "{out}");
+        assert_eq!(imgs.len(), 1);
+        assert_eq!(imgs[0].mime, "image/jpeg");
+        assert_eq!(imgs[0].data, vec![0, 0, 0]);
+    }
+
     #[test]
     fn build_email_reports_a_missing_attachment_by_name() {
         let msg = OutgoingMessage {
@@ -8543,6 +8779,108 @@ mod tests {
     fn small_cid_image_is_still_only_decoration() {
         let raw = cid_mail_with_image_of(INLINE_ATTACHMENT_MIN - 1);
         assert!(extract_attachments(raw.as_bytes()).is_empty());
+    }
+
+    /// A message in the shape Gmail's composer sends: every uploaded file is
+    /// marked `Content-Disposition: attachment` *and* stamped with an `<f_…>`
+    /// Content-ID, whatever its size.
+    fn gmail_mail_with_files(files: &[(&str, &str, usize)]) -> String {
+        let mut raw = String::from("Content-Type: multipart/mixed; boundary=M\r\n");
+        raw.push_str("Subject: files\r\n\r\n");
+        raw.push_str("--M\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n");
+        raw.push_str("Body text.\r\n");
+        for (i, (name, ctype, bytes)) in files.iter().enumerate() {
+            raw.push_str("--M\r\n");
+            raw.push_str(&format!("Content-Type: {ctype}; name=\"{name}\"\r\n"));
+            raw.push_str(&format!(
+                "Content-Disposition: attachment; filename=\"{name}\"\r\n"
+            ));
+            raw.push_str("Content-Transfer-Encoding: base64\r\n");
+            raw.push_str(&format!("Content-ID: <f_a1b2c3d4{i}>\r\n\r\n"));
+            raw.push_str(&crate::oauth::base64_encode(&vec![0u8; *bytes]));
+            raw.push_str("\r\n");
+        }
+        raw.push_str("--M--\r\n");
+        raw
+    }
+
+    /// Two small files and one large one are sent together; only the large one
+    /// came back, because the small parts carried a Content-ID. A part the sender
+    /// declared an attachment is never decoration, however small.
+    #[test]
+    fn small_declared_attachments_survive_their_content_id() {
+        let raw = gmail_mail_with_files(&[
+            ("first.pdf", "application/pdf", 16_384),
+            ("second.pdf", "application/pdf", 40_960),
+            ("large.bin", "application/octet-stream", INLINE_ATTACHMENT_MIN + 1),
+        ]);
+        let found = extract_attachments(raw.as_bytes());
+        let names: Vec<&str> = found.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["first.pdf", "second.pdf", "large.bin"],
+            "found: {names:?}"
+        );
+        assert_eq!(found[0].data.len(), 16_384);
+        assert_eq!(found[1].data.len(), 40_960);
+    }
+
+    /// One attachment, its Content-Disposition supplied verbatim.
+    fn mail_with_disposition(disposition: &str) -> String {
+        format!(
+            concat!(
+                "Content-Type: multipart/mixed; boundary=B\r\n",
+                "Subject: file\r\n\r\n",
+                "--B\r\n",
+                "Content-Type: application/octet-stream\r\n",
+                "Content-Transfer-Encoding: base64\r\n",
+                "Content-Disposition: {disposition}\r\n\r\n",
+                "AAAAAA==\r\n",
+                "--B--\r\n",
+            ),
+            disposition = disposition
+        )
+    }
+
+    /// A sender split one filename across two encoded-words with a space between
+    /// them. RFC 2047 §6.2 joins those and drops the space; keeping it yields
+    /// `docu ment.pdf` — a PDF with no `.pdf` suffix, so nothing can open it.
+    #[test]
+    fn a_filename_split_across_encoded_words_is_rejoined() {
+        let raw =
+            mail_with_disposition("attachment; filename=\"=?utf-8?q?docu?= =?utf-8?q?ment.pdf?=\"");
+        let found = extract_attachments(raw.as_bytes());
+        assert_eq!(found.len(), 1, "found: {found:?}");
+        assert_eq!(found[0].name, "document.pdf");
+    }
+
+    /// The same split, folded across two lines: the separator arrives as a tab.
+    #[test]
+    fn a_filename_folded_between_encoded_words_is_rejoined() {
+        let raw = mail_with_disposition(
+            "attachment;\r\n\tfilename=\"=?utf-8?q?docu?=\r\n\t=?utf-8?q?ment.pdf?=\"",
+        );
+        let found = extract_attachments(raw.as_bytes());
+        assert_eq!(found.len(), 1, "found: {found:?}");
+        assert_eq!(found[0].name, "document.pdf");
+    }
+
+    /// `=20` is a space in the name itself, not a separator between two words.
+    #[test]
+    fn a_space_inside_one_encoded_word_is_kept() {
+        let raw = mail_with_disposition("attachment; filename=\"=?utf-8?q?my=20file.pdf?=\"");
+        let found = extract_attachments(raw.as_bytes());
+        assert_eq!(found.len(), 1, "found: {found:?}");
+        assert_eq!(found[0].name, "my file.pdf");
+    }
+
+    /// A plain filename with a space in it is nobody's business but the sender's.
+    #[test]
+    fn an_unencoded_filename_with_a_space_is_untouched() {
+        let raw = mail_with_disposition("attachment; filename=\"my file.pdf\"");
+        let found = extract_attachments(raw.as_bytes());
+        assert_eq!(found.len(), 1, "found: {found:?}");
+        assert_eq!(found[0].name, "my file.pdf");
     }
 
     #[test]

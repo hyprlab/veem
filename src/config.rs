@@ -728,6 +728,18 @@ struct PrivacyFile {
     /// reply) rather than in its own window.
     #[serde(default = "default_compose_inline")]
     compose_inline: bool,
+    /// Whether pasting into the composer strips the clipboard's formatting
+    /// (the default). Off, a paste keeps its formatting. The editor's context
+    /// menu always offers both, whichever way this is set.
+    #[serde(default = "default_paste_plain")]
+    paste_plain: bool,
+    /// Whether the composer underlines misspelled words as you type.
+    #[serde(default = "default_spellcheck")]
+    spellcheck: bool,
+    /// Languages to check against, comma-separated (e.g. "en_US, de_DE").
+    /// Empty = follow the session locale (WebKit's own default).
+    #[serde(default)]
+    spellcheck_langs: String,
     /// Hovering the icon rail (narrow-window or user-collapsed) floats the
     /// full sidebar out over the panes without needing the expand button.
     #[serde(default)]
@@ -861,6 +873,14 @@ fn default_card_actions_auto() -> bool {
     false
 }
 
+fn default_paste_plain() -> bool {
+    true
+}
+
+fn default_spellcheck() -> bool {
+    true
+}
+
 fn default_compose_inline() -> bool {
     true
 }
@@ -911,6 +931,9 @@ impl Default for PrivacyFile {
             list_palette: default_list_palette(),
             list_palette_hover: false,
             compose_inline: default_compose_inline(),
+            paste_plain: default_paste_plain(),
+            spellcheck: default_spellcheck(),
+            spellcheck_langs: String::new(),
             sidebar_hover_expand: false,
             app_theme: AppTheme::default(),
             preview_lines: default_preview_lines(),
@@ -1266,6 +1289,21 @@ pub fn load_compose_inline() -> bool {
     load_privacy().compose_inline
 }
 
+/// Whether pasting into the composer strips the clipboard's formatting.
+pub fn load_paste_plain() -> bool {
+    load_privacy().paste_plain
+}
+
+/// Whether the composer checks spelling as you type.
+pub fn load_spellcheck() -> bool {
+    load_privacy().spellcheck
+}
+
+/// The configured spell-checking languages (comma-separated; empty = locale).
+pub fn load_spellcheck_langs() -> String {
+    load_privacy().spellcheck_langs
+}
+
 pub fn load_sidebar_hover_expand() -> bool {
     load_privacy().sidebar_hover_expand
 }
@@ -1328,6 +1366,9 @@ pub fn save_privacy(
     list_palette: bool,
     list_palette_hover: bool,
     compose_inline: bool,
+    paste_plain: bool,
+    spellcheck: bool,
+    spellcheck_langs: String,
     preview_lines: u32,
     single_key_shortcuts: bool,
     run_in_background: bool,
@@ -1377,6 +1418,9 @@ pub fn save_privacy(
         list_palette,
         list_palette_hover,
         compose_inline,
+        paste_plain,
+        spellcheck,
+        spellcheck_langs,
         preview_lines,
         single_key_shortcuts,
         run_in_background,
@@ -1574,6 +1618,10 @@ struct StateFile {
     prefs_height: i32,
     #[serde(default = "default_about_height")]
     about_height: i32,
+    /// Split-reply panel height in px (the dragged divider). 0 = never
+    /// dragged: the panel opens at its computed default.
+    #[serde(default)]
+    split_reply_height: i32,
 }
 
 fn default_aux_height() -> i32 {
@@ -1739,6 +1787,19 @@ pub fn load_prefs_height() -> i32 {
 pub fn save_prefs_height(height: i32) {
     let mut s = load_state();
     s.prefs_height = height.clamp(400, 4000);
+    save_state(&s);
+}
+
+/// The split-reply panel's dragged height; 0 when it has never been dragged
+/// (the caller computes an opening default from the pane).
+pub fn load_split_reply_height() -> i32 {
+    let h = load_state().split_reply_height;
+    if h == 0 { 0 } else { h.clamp(220, 4000) }
+}
+
+pub fn save_split_reply_height(height: i32) {
+    let mut s = load_state();
+    s.split_reply_height = height.clamp(220, 4000);
     save_state(&s);
 }
 

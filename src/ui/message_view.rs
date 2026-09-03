@@ -1883,6 +1883,7 @@ impl MessageView {
                body{{margin:0;padding:0;background:{page};font:14px/1.55 system-ui,sans-serif;}}\
                body.vireo-conv{{padding:14px;}}\
                iframe.vireo-frame{{width:100%;border:0;display:block;background:{bg};}}\
+               .vireo-pan{{overflow-x:auto;}}\
                iframe.vireo-frame.anim{{transition:height 240ms cubic-bezier(0.4,0,0.2,1);}}\
                @media (prefers-reduced-motion:reduce){{iframe.vireo-frame.anim{{transition:none;}}}}\
                .vireo-msg{{background:{bg};\
@@ -3557,6 +3558,9 @@ function s(f){if(f._s)return;f._s=1;try{var d=f.contentDocument;if(!d)return;\
 var b=d.body,e=d.documentElement;\
 var sy=window.scrollY;var _r=f.getBoundingClientRect();\
 var above=_r.bottom<=0;var old=_r.height||0;\
+f.style.width='';void f.offsetWidth;\
+var w=Math.max(b?b.scrollWidth:0,e?e.scrollWidth:0);\
+if(w>f.clientWidth+1)f.style.width=w+'px';\
 var prev=f.style.height;f.style.height='0px';void f.offsetHeight;\
 var h=Math.max(b?b.scrollHeight:0,e?e.scrollHeight:0,b?b.offsetHeight:0);\
 if(h>0){f.style.height=h+'px';\
@@ -3838,8 +3842,16 @@ fn message_frame(body: &str, restrict: bool, dark: bool, key: (u32, u32), height
         // correctly on its first frame. Without it every card starts at the
         // browser's default and jumps once its content is measured, which is a
         // visible lurch on a thread that has simply been reopened.
-        "<iframe class=\"vireo-frame\" data-key=\"{aid}:{id}\"{style} \
-         sandbox=\"allow-same-origin allow-popups\" srcdoc=\"{doc}\"></iframe>",
+        // The `.vireo-pan` wrapper is the horizontal scroller for mail wider
+        // than the pane. The frame itself is widened to its content (see
+        // `s(f)`), so the sandboxed document is never scrollable — WebKit
+        // latches wheel gestures to the innermost scrollable area under the
+        // pointer, and a frame document that can scroll sideways swallows
+        // vertical wheel deltas it cannot use, leaving the reader stuck.
+        // A top-document div has no such latch: unused vertical deltas
+        // bubble on to the page.
+        "<div class=\"vireo-pan\"><iframe class=\"vireo-frame\" data-key=\"{aid}:{id}\"{style} \
+         sandbox=\"allow-same-origin allow-popups\" srcdoc=\"{doc}\"></iframe></div>",
         aid = key.0,
         id = key.1,
         style = match height {
@@ -4288,6 +4300,7 @@ mod tests {
             uid: 1,
             from_name: "Ada Lovelace".into(),
             from_addr: "ada@example.com".into(),
+            reply_to: String::new(),
             to: "me@example.com".into(),
             cc: "carol@example.com".into(),
             subject: "Quarterly numbers".into(),

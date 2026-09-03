@@ -42,6 +42,9 @@ pub struct PrefInit {
     pub list_palette_hover: bool,
     /// "New message" composes inline over the reading pane (vs a window).
     pub compose_inline: bool,
+    pub paste_plain: bool,
+    pub spellcheck: bool,
+    pub spellcheck_langs: String,
     pub message_theme: MessageTheme,
     pub app_theme: AppTheme,
     pub notifications: bool,
@@ -188,6 +191,9 @@ pub enum PrefInput {
     ToggleListPalette(bool),
     ToggleListPaletteHover(bool),
     ToggleComposeInline(bool),
+    TogglePastePlain(bool),
+    ToggleSpellcheck(bool),
+    SpellLangsEdited(String),
     ChangeFetchInterval(u32),
     TogglePush(bool),
     ToggleNotifications(bool),
@@ -237,6 +243,9 @@ pub enum PrefOutput {
     SetListPalette(bool),
     SetListPaletteHover(bool),
     SetComposeInline(bool),
+    SetPastePlain(bool),
+    SetSpellcheck(bool),
+    SetSpellcheckLangs(String),
     SetFetchInterval(u64),
     SetPush(bool),
     SetNotifications(bool),
@@ -615,6 +624,55 @@ impl Component for Preferences {
                                 sender.input(PrefInput::ToggleComposeInline(row.is_active()));
                             },
                         },
+
+                        #[name = "paste_plain_row"]
+                        adw::SwitchRow {
+                            set_title: "Paste as plain text",
+                            set_subtitle: "Pasting into a message strips the \
+                                           clipboard's formatting. Off, a paste \
+                                           keeps its formatting. Right-clicking \
+                                           the editor always offers both.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::TogglePastePlain(row.is_active()));
+                            },
+                        },
+                    },
+
+                    #[name = "spelling_group"]
+                    add = &adw::PreferencesGroup {
+                        set_title: "Spelling",
+                        // The description is filled in at init with the
+                        // dictionaries the app can actually see — checking a
+                        // language without one silently checks nothing, so
+                        // honesty about what is installed beats silence.
+
+                        #[name = "spellcheck_row"]
+                        adw::SwitchRow {
+                            set_title: "Check spelling as you type",
+                            set_subtitle: "Misspelled words in the message body \
+                                           are underlined; right-click a word \
+                                           for corrections.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleSpellcheck(row.is_active()));
+                            },
+                        },
+
+                        #[name = "spell_lang_row"]
+                        adw::ComboRow {
+                            set_title: "Language",
+                            set_subtitle: "Dictionaries the app can see",
+                        },
+
+                        // Words the user taught the checker ("Learn Spelling"
+                        // in the composer, or added right here). Populated
+                        // and maintained imperatively in init.
+                        #[name = "spell_words_row"]
+                        adw::ExpanderRow {
+                            set_title: "Added words",
+                            set_subtitle: "Words the spell checker was taught. \
+                                           The message body applies changes \
+                                           after a restart.",
+                        },
                     },
 
                     add = &adw::PreferencesGroup {
@@ -932,6 +990,65 @@ impl Component for Preferences {
         widgets.list_palette_row.set_active(init.list_palette);
         widgets.list_palette_hover_row.set_active(init.list_palette_hover);
         widgets.compose_inline_row.set_active(init.compose_inline);
+        widgets.paste_plain_row.set_active(init.paste_plain);
+        widgets.spellcheck_row.set_active(init.spellcheck);
+        // The language dropdown offers exactly what checking can use: the
+        // installed dictionaries, behind a "System language" default. Typed
+        // codes are gone — a language nobody has a dictionary for silently
+        // checks nothing, so only real options are offered (#114).
+        {
+            let dicts = crate::ui::rich_editor::installed_dictionaries();
+            let list = gtk::StringList::new(&[]);
+            list.append(&format!(
+                "System language — {}",
+                crate::spell::language_display_name(
+                    &crate::ui::rich_editor::resolved_spell_language()
+                )
+            ));
+            for d in &dicts {
+                list.append(&crate::spell::language_display_name(d));
+            }
+            widgets.spell_lang_row.set_model(Some(&list));
+            let selected = dicts
+                .iter()
+                .position(|d| *d == init.spellcheck_langs)
+                .map(|i| i as u32 + 1)
+                .unwrap_or(0);
+            widgets.spell_lang_row.set_selected(selected);
+            if dicts.is_empty() {
+                widgets.spell_lang_row.set_sensitive(false);
+                widgets.spelling_group.set_description(Some(
+                    "No dictionaries are visible to the app. On Flatpak, add your \
+                     language with: flatpak config --set extra-languages <code>",
+                ));
+            }
+            let s = sender.clone();
+            // Connected after the initial set_selected, so restoring the
+            // saved choice doesn't immediately re-save it.
+            widgets.spell_lang_row.connect_selected_notify(move |row| {
+                let i = row.selected() as usize;
+                let code =
+                    if i == 0 { String::new() } else { dicts.get(i - 1).cloned().unwrap_or_default() };
+                s.input(PrefInput::SpellLangsEdited(code));
+            });
+        }
+        {
+            // The learned-words list manages itself entirely in widget-land:
+            // the rows call the spell module directly and rebuild in place.
+            let exp = widgets.spell_words_row.clone();
+            let add = adw::EntryRow::builder().title("Add a word").build();
+            add.set_show_apply_button(true);
+            {
+                let exp = exp.clone();
+                add.connect_apply(move |row| {
+                    crate::spell::add_personal_word(&row.text());
+                    row.set_text("");
+                    rebuild_personal_words(&exp);
+                });
+            }
+            exp.add_row(&add);
+            rebuild_personal_words(&exp);
+        }
 
         // Date and clock combos.
         let date_labels: Vec<&str> = DATE_STYLES.iter().map(|(l, _)| *l).collect();
@@ -1079,6 +1196,15 @@ impl Component for Preferences {
             PrefInput::ToggleComposeInline(on) => {
                 let _ = sender.output(PrefOutput::SetComposeInline(on));
             }
+            PrefInput::TogglePastePlain(on) => {
+                let _ = sender.output(PrefOutput::SetPastePlain(on));
+            }
+            PrefInput::ToggleSpellcheck(on) => {
+                let _ = sender.output(PrefOutput::SetSpellcheck(on));
+            }
+            PrefInput::SpellLangsEdited(langs) => {
+                let _ = sender.output(PrefOutput::SetSpellcheckLangs(langs));
+            }
             PrefInput::ChangeFetchInterval(index) => {
                 let secs = FETCH_INTERVALS
                     .get(index as usize)
@@ -1183,3 +1309,56 @@ impl Component for Preferences {
     }
 }
 
+
+/// Rebuild the "Added words" expander's word rows from the personal word
+/// list. The permanent "Add a word" entry row is left alone; word rows are
+/// tagged with a widget name so only they are cleared. Each row's trash
+/// button forgets its word and rebuilds.
+fn rebuild_personal_words(exp: &adw::ExpanderRow) {
+    // Collect the old word rows first: ExpanderRow has no child iterator, so
+    // rows remember themselves via the widget name.
+    let mut stale: Vec<gtk::Widget> = Vec::new();
+    let mut child = exp.first_child();
+    while let Some(c) = child {
+        collect_named(&c, "vireo-spell-word", &mut stale);
+        child = c.next_sibling();
+    }
+    for row in &stale {
+        // The named widget is the ActionRow itself; ExpanderRow::remove
+        // wants the row it was handed in add_row.
+        exp.remove(row);
+    }
+    let words = crate::spell::personal_words();
+    exp.set_enable_expansion(true);
+    for w in words {
+        let row = adw::ActionRow::builder().title(&w).build();
+        row.set_widget_name("vireo-spell-word");
+        let del = gtk::Button::from_icon_name("co.hyprlab.Vireo-user-trash-symbolic");
+        del.add_css_class("flat");
+        del.set_valign(gtk::Align::Center);
+        del.set_tooltip_text(Some("Forget this word"));
+        {
+            let word = w.clone();
+            let exp = exp.clone();
+            del.connect_clicked(move |_| {
+                crate::spell::remove_personal_word(&word);
+                rebuild_personal_words(&exp);
+            });
+        }
+        row.add_suffix(&del);
+        exp.add_row(&row);
+    }
+}
+
+/// Depth-first search for widgets with the given name under `root`.
+fn collect_named(root: &gtk::Widget, name: &str, out: &mut Vec<gtk::Widget>) {
+    if root.widget_name() == name {
+        out.push(root.clone());
+        return;
+    }
+    let mut child = root.first_child();
+    while let Some(c) = child {
+        collect_named(&c, name, out);
+        child = c.next_sibling();
+    }
+}

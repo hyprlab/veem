@@ -19,15 +19,15 @@
 //! reader pane is allowed to shrink, resizing the drawer never grows the
 //! window; while the drawer is collapsed a drag snaps back, so only the
 //! expanded drawer resizes. The size slider in the header scales the
-//! thumbnails only; the chevron collapses the grid to just the header. The
-//! dragged height, collapsed state and view settings are persisted; thumbnail
-//! size is per-session.
+//! thumbnails only; a click on the grab pill collapses the grid to just the
+//! header. The dragged height, collapsed state and view settings are
+//! persisted; thumbnail size is per-session.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
+use adw::prelude::*;
 use gtk::glib;
-use gtk::prelude::*;
 use relm4::prelude::*;
 
 use crate::config::{self, DrawerState};
@@ -99,6 +99,12 @@ pub struct AttachmentDrawer {
     /// resize grip — native drag, and the reader shrinks rather than the window
     /// growing.
     paned: gtk::Paned,
+    /// The visible resize affordance: the shared grab pill floated just above
+    /// the seam (over the reader's bottom edge), like the split reply's.
+    /// Shown whenever the drawer is. A click toggles collapsed/expanded; a
+    /// drag resizes live — out of the collapse too, where the release point
+    /// becomes the drawer's new height.
+    pill: gtk::Box,
     /// True while we set the Paned position programmatically, so the resulting
     /// position-notify isn't mistaken for a user drag.
     adjusting: Rc<Cell<bool>>,
@@ -107,6 +113,17 @@ pub struct AttachmentDrawer {
     /// Debounces persisting the dragged height: position-notify fires for
     /// every pixel of a drag, and each save is a config write.
     height_save: Rc<std::cell::RefCell<Option<glib::SourceId>>>,
+    /// Whether the press currently on the pill has actually dragged (moved
+    /// past the slop). Tells a release apart from a click: a click toggles
+    /// the drawer, a drag's release must not.
+    pill_dragged: bool,
+    /// The running expand/collapse slide and its direction (`true` = closing
+    /// toward the header). Held so a toggle or drag mid-slide can skip it to
+    /// its end instead of fighting it over the divider.
+    toggle_anim: Rc<std::cell::RefCell<Option<(adw::TimedAnimation, bool)>>>,
+    /// Bumped whenever a slide is superseded, so a stale `ToggleSettled`
+    /// from a skipped animation is recognised and ignored.
+    toggle_gen: u64,
 }
 
 /// What the drawer asks the app to do.
@@ -125,8 +142,6 @@ pub enum AttachmentDrawerInput {
     SetThumbSize(i32),
     /// The Paned divider moved (user drag) — capture the new height.
     PositionChanged,
-    /// Toggle the collapsed/expanded state (chevron).
-    ToggleCollapsed,
     /// Switch between the thumbnail grid and the alphabetical list.
     ToggleListView,
     /// Flip the list's sort direction (A→Z / Z→A).
@@ -143,6 +158,16 @@ pub enum AttachmentDrawerInput {
     SaveAll,
     /// Right-click at (x, y) within the cell.
     ContextMenu { index: usize, x: f64, y: f64 },
+    /// A press landed on the grab pill (a drag may or may not follow).
+    PillDragBegin,
+    /// The grab pill was dragged to this candidate divider position.
+    PillDrag { want: i32 },
+    /// The press on the grab pill was released. A plain click (no drag in
+    /// between) toggles the drawer collapsed/expanded.
+    PillReleased,
+    /// The expand/collapse slide finished. Carries the state it was heading
+    /// for and the generation it belongs to (see `toggle_gen`).
+    ToggleSettled { collapsed: bool, gen: u64 },
 }
 
 #[relm4::component(pub)]
@@ -160,6 +185,8 @@ impl SimpleComponent for AttachmentDrawer {
             // a slim grabbable strip, no lines, no grip — and while the drawer
             // is collapsed it is made untargetable entirely (see
             // set_divider_draggable), so only the expanded drawer resizes.
+            // The visible affordance is the grab pill floated over the
+            // reader's bottom edge (built in init).
             add_css_class: "drawer-split",
             // The reader (start child) shrinks to make room; the drawer keeps its
             // set size. This is what prevents the window from growing.
@@ -183,26 +210,6 @@ impl SimpleComponent for AttachmentDrawer {
                     set_orientation: gtk::Orientation::Horizontal,
                     set_spacing: 8,
                     add_css_class: "attachment-drawer-header",
-                    gtk::Button {
-                        add_css_class: "flat",
-                        add_css_class: "circular",
-                        set_valign: gtk::Align::Center,
-                        #[watch]
-                        set_icon_name: if model.collapsed {
-                            "co.hyprlab.Vireo-pan-up-symbolic"
-                        } else {
-                            "co.hyprlab.Vireo-pan-down-symbolic"
-                        },
-                        #[watch]
-                        set_tooltip_text: Some(if model.collapsed {
-                            "Show attachments"
-                        } else {
-                            "Hide attachments"
-                        }),
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AttachmentDrawerInput::ToggleCollapsed);
-                        },
-                    },
                     gtk::Image {
                         set_icon_name: Some("co.hyprlab.Vireo-mail-attachment-symbolic"),
                         add_css_class: "dim-label",
@@ -365,6 +372,32 @@ impl SimpleComponent for AttachmentDrawer {
             flow.add_controller(key);
         }
 
+        // The grab pill floats just above the seam, over the reader's bottom
+        // edge — the same affordance, in the same place, as the split reply's.
+        // Its gestures route through update(), which knows the collapsed
+        // state: a plain click toggles the drawer, a drag resizes it live —
+        // collapsed included, where the release point becomes the drawer's
+        // new height.
+        let pill = crate::ui::grab_pill::pill_widget();
+        pill.set_valign(gtk::Align::End);
+        pill.set_visible(false); // no seam until attachments arrive
+        {
+            let s = sender.clone();
+            let s2 = sender.clone();
+            crate::ui::grab_pill::attach_drag(
+                &pill,
+                &root,
+                move |_| s.input(AttachmentDrawerInput::PillDragBegin),
+                move |want| s2.input(AttachmentDrawerInput::PillDrag { want }),
+            );
+            let click = gtk::GestureClick::new();
+            let s = sender.clone();
+            click.connect_released(move |_, _, _, _| {
+                s.input(AttachmentDrawerInput::PillReleased);
+            });
+            pill.add_controller(click);
+        }
+
         let model = AttachmentDrawer {
             items: Vec::new(),
             display_order: Vec::new(),
@@ -376,14 +409,22 @@ impl SimpleComponent for AttachmentDrawer {
             flow: flow.clone(),
             // The root of this component IS the Paned.
             paned: root.clone(),
+            pill: pill.clone(),
             adjusting: Rc::new(Cell::new(false)),
             positioned: Rc::new(Cell::new(false)),
             height_save: Rc::new(std::cell::RefCell::new(None)),
+            pill_dragged: false,
+            toggle_anim: Rc::new(std::cell::RefCell::new(None)),
+            toggle_gen: 0,
         };
 
         let widgets = view_output!();
-        // Dock the reader as the top pane (the drawer body is the bottom pane).
-        root.set_start_child(Some(&init.reader));
+        // Dock the reader as the top pane (the drawer body is the bottom pane),
+        // wrapped in the Overlay that floats the grab pill over its lower edge.
+        let reader_wrap = gtk::Overlay::new();
+        reader_wrap.set_child(Some(&init.reader));
+        reader_wrap.add_overlay(&pill);
+        root.set_start_child(Some(&reader_wrap));
         // A collapsed drawer starts with its divider locked.
         model.set_divider_draggable(!model.collapsed);
         ComponentParts { model, widgets }
@@ -394,6 +435,7 @@ impl SimpleComponent for AttachmentDrawer {
             AttachmentDrawerInput::SetItems(items) => {
                 let became_visible = self.items.is_empty() && !items.is_empty();
                 self.items = items;
+                self.update_pill_visibility();
                 self.rebuild(&sender);
                 // Apply the remembered split the first time the drawer appears
                 // (the Paned is allocated only once both children are visible).
@@ -425,12 +467,6 @@ impl SimpleComponent for AttachmentDrawer {
                     self.height = drawer_h;
                     self.schedule_height_save();
                 }
-            }
-            AttachmentDrawerInput::ToggleCollapsed => {
-                self.collapsed = !self.collapsed;
-                self.apply_position();
-                self.set_divider_draggable(!self.collapsed);
-                config::save_drawer_collapsed(self.collapsed);
             }
             AttachmentDrawerInput::ToggleListView => {
                 self.list_view = !self.list_view;
@@ -472,6 +508,47 @@ impl SimpleComponent for AttachmentDrawer {
             AttachmentDrawerInput::ContextMenu { index, x, y } => {
                 self.show_context_menu(index, x, y, &sender);
             }
+            AttachmentDrawerInput::PillDragBegin => {
+                self.pill_dragged = false;
+                // A drag takes over from any running slide: jump it to its
+                // end (settling the collapse it was heading for) so the two
+                // don't fight over the divider.
+                self.finish_running_toggle();
+            }
+            AttachmentDrawerInput::PillDrag { want } => {
+                self.pill_dragged = true;
+                if self.collapsed {
+                    // A real drag pulls the drawer straight out of the
+                    // collapse and follows the pointer from the seam; where
+                    // it is released is the drawer's new height (recorded by
+                    // position-notify like any other resize).
+                    self.collapsed = false;
+                    self.set_divider_draggable(true);
+                    config::save_drawer_collapsed(self.collapsed);
+                }
+                // The pill moves the divider live, exactly like a drag on the
+                // (invisible) separator. Position-notify records and persists
+                // the height as usual.
+                self.paned.set_position(want.max(0));
+            }
+            AttachmentDrawerInput::PillReleased => {
+                // A plain click — the press never travelled past the drag
+                // slop — toggles the drawer. A drag's release must not: the
+                // user just set a height.
+                if !self.pill_dragged {
+                    self.toggle_collapsed(&sender);
+                }
+            }
+            AttachmentDrawerInput::ToggleSettled { collapsed, gen } => {
+                // A skipped slide's settle arrives late; its work was already
+                // done synchronously when it was superseded.
+                if gen != self.toggle_gen {
+                    return;
+                }
+                if collapsed {
+                    self.settle_collapsed();
+                }
+            }
         }
     }
 }
@@ -480,6 +557,93 @@ impl AttachmentDrawer {
     /// The top-level window this drawer lives in (for modal children / dialogs).
     fn window(&self) -> Option<gtk::Window> {
         self.flow.root().and_downcast::<gtk::Window>()
+    }
+
+    /// The grab pill shows whenever the drawer does — collapsed included,
+    /// where a click or a drag brings the drawer back out. Only a message
+    /// with no attachments (no drawer, no seam) hides it.
+    fn update_pill_visibility(&self) {
+        self.pill.set_visible(!self.items.is_empty());
+    }
+
+    /// Flip collapsed/expanded — a plain click on the grab pill — sliding the
+    /// divider there like the split reply's entrance rather than jumping.
+    ///
+    /// Expanding shows the body at once so it rides the slide open; the
+    /// collapse keeps the body visible for the ride down and hides it when
+    /// the slide settles (`ToggleSettled`), else the thumbnails would vanish
+    /// a beat before the panel. Either way the drawer may momentarily be
+    /// squeezed below its minimum, so end-child shrink is allowed for the
+    /// duration.
+    fn toggle_collapsed(&mut self, sender: &ComponentSender<Self>) {
+        self.finish_running_toggle();
+        let total = self.paned.height();
+        if total <= 1 {
+            // Not allocated (never shown): the old instant flip.
+            self.collapsed = !self.collapsed;
+            self.apply_position();
+            self.set_divider_draggable(!self.collapsed);
+            config::save_drawer_collapsed(self.collapsed);
+            return;
+        }
+        let closing = !self.collapsed;
+        if !closing {
+            self.collapsed = false;
+            self.set_divider_draggable(true);
+        }
+        config::save_drawer_collapsed(closing);
+        let target_h = if closing { Self::header_height(&self.paned) } else { self.height };
+
+        let paned = self.paned.clone();
+        // The whole ride is programmatic — position-notify must not read it
+        // as a user drag.
+        self.adjusting.set(true);
+        paned.set_shrink_end_child(true);
+        let anim = adw::TimedAnimation::new(
+            &paned,
+            paned.position() as f64,
+            (total - target_h).max(0) as f64,
+            300,
+            adw::CallbackAnimationTarget::new({
+                let paned = paned.clone();
+                move |v| paned.set_position(v as i32)
+            }),
+        );
+        anim.set_easing(adw::Easing::EaseOutCubic);
+        self.toggle_gen += 1;
+        let gen = self.toggle_gen;
+        let cell = self.toggle_anim.clone();
+        let adjusting = self.adjusting.clone();
+        let s = sender.clone();
+        anim.connect_done(move |_| {
+            cell.borrow_mut().take();
+            paned.set_shrink_end_child(false);
+            adjusting.set(false);
+            s.input(AttachmentDrawerInput::ToggleSettled { collapsed: closing, gen });
+        });
+        *self.toggle_anim.borrow_mut() = Some((anim.clone(), closing));
+        anim.play();
+    }
+
+    /// If an expand/collapse slide is running, jump it to its end and settle
+    /// its target state synchronously. The `ToggleSettled` it queues on the
+    /// way out is voided by bumping the generation.
+    fn finish_running_toggle(&mut self) {
+        let running = self.toggle_anim.borrow_mut().take();
+        let Some((anim, closing)) = running else { return };
+        self.toggle_gen += 1;
+        anim.skip();
+        if closing {
+            self.settle_collapsed();
+        }
+    }
+
+    /// The end state of a collapse: body hidden, divider locked, position
+    /// pinned to exactly the header.
+    fn settle_collapsed(&mut self) {
+        self.collapsed = true;
+        self.set_divider_draggable(false);
+        self.apply_position();
     }
 
     /// Natural height of the drawer's header row (the first child of the end

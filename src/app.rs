@@ -9,33 +9,14 @@ use relm4::prelude::*;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Contributors whose work is in the app, shown in the About window's "Thanks"
-/// list: display name, GitHub handle, and what they contributed.
-const CONTRIBUTORS: &[(&str, &str, &str)] = &[
-    (
-        "Alfonso Lizárraga",
-        "alfonsolzrg",
-        "Sending to named recipients, startup message list, unread dot",
-    ),
-    (
-        "Chris Pouliot",
-        "chrispouliot",
-        "Proton Bridge connections (STARTTLS, local certificates)",
-    ),
-    (
-        "Isaac",
-        "thecalamityjoe87",
-        "The sidebar's pinned footer, thread expand/collapse animations, the list that stays put when rows vanish, PDF thumbnails, the attachment-opening fix, the reader's To line, remote-content option, GNOME-styled context menus",
-    ),
-    (
-        "Alexander Lubovenko",
-        "typedev",
-        "Gmail conversations: one message per thread, one fetch for its bodies",
-    ),
-    (
-        "Anton Palgunov",
-        "Toxblh",
-        "Contact photos as sender avatars; Online Accounts custom ports, Mail-toggle pausing",
-    ),
+/// list: display name and GitHub handle (which is also the link). What each
+/// person contributed is credited in the README and the changelog.
+const CONTRIBUTORS: &[(&str, &str)] = &[
+    ("Alfonso Lizárraga", "alfonsolzrg"),
+    ("Chris Pouliot", "chrispouliot"),
+    ("Isaac", "thecalamityjoe87"),
+    ("Alexander Lubovenko", "typedev"),
+    ("Anton Palgunov", "Toxblh"),
 ];
 
 // The message list's opening width now comes from config (the remembered pane
@@ -161,6 +142,16 @@ pub struct AppModel {
     /// Split-reply slot (#86): a reply slides down from the pane's top and
     /// the message(s) stay below it, visible and interactive.
     reader_split_top: gtk::Revealer,
+    /// The vertical Paned dividing the split reply (start child, the slot
+    /// above) from the reader (end child). A Paned allocates by divider
+    /// position, so the composer holds the height it was given — a big paste
+    /// can't push it down over the messages — and its divider is the grab
+    /// handle that resizes the panel. Hidden slot = hidden divider.
+    reader_split: gtk::Paned,
+    /// The running close animation, if the split reply is currently sliding
+    /// out (see `animate_split_close`) — held so opening a new reply can skip
+    /// it to its end instead of fighting it over the divider.
+    split_close_anim: std::rc::Rc<std::cell::RefCell<Option<adw::TimedAnimation>>>,
     /// Same idea over the contacts view's detail pane: composing from a
     /// contact slides down right there instead of yanking the mail view back.
     contacts_compose_revealer: gtk::Revealer,
@@ -416,6 +407,9 @@ pub struct AppModel {
     list_palette_hover: bool,
     /// "New message" composes inline over the reading pane (vs a window).
     compose_inline: bool,
+    paste_plain: bool,
+    spellcheck: bool,
+    spellcheck_langs: String,
     /// How email content is themed (message content only, not the app UI).
     message_theme: config::MessageTheme,
     /// The repeating auto-fetch timer, if armed.
@@ -654,6 +648,9 @@ pub enum AppMsg {
     SetListPalette(bool),
     SetListPaletteHover(bool),
     SetComposeInline(bool),
+    SetPastePlain(bool),
+    SetSpellcheck(bool),
+    SetSpellcheckLangs(String),
     /// Ctrl+Z: undo the most recent move/delete.
     Undo,
     SetFetchInterval(u64),
@@ -1673,6 +1670,16 @@ impl SimpleComponent for AppModel {
                 r.set_reveal_child(false);
                 r
             },
+            split_close_anim: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            reader_split: {
+                let p = gtk::Paned::new(gtk::Orientation::Vertical);
+                // The separator itself is styled invisible — painted the
+                // composer's own ground, so the panel reads as running to its
+                // edge. The visible affordance is the floating grab pill the
+                // split slot overlays on the composer (open_inline_reply).
+                p.add_css_class("reader-split");
+                p
+            },
             reader_compose_revealer: {
                 let r = gtk::Revealer::new();
                 r.set_transition_type(gtk::RevealerTransitionType::SlideDown);
@@ -1810,6 +1817,9 @@ impl SimpleComponent for AppModel {
             list_palette: config::load_list_palette(),
             list_palette_hover: config::load_list_palette_hover(),
             compose_inline: config::load_compose_inline(),
+            paste_plain: config::load_paste_plain(),
+            spellcheck: config::load_spellcheck(),
+            spellcheck_langs: config::load_spellcheck_langs(),
             message_theme: config::load_message_theme(),
             auto_fetch_source: None,
             notifications,
@@ -2006,14 +2016,27 @@ impl SimpleComponent for AppModel {
         {
             let pane = widgets.reader_bin.child().expect("reader pane");
             widgets.reader_bin.set_child(None::<&gtk::Widget>);
-            // Split-reply slots (#86) sandwich the reader; the full-cover
-            // revealer stays an overlay above the whole assembly.
+            // Split-reply slot (#86) above the reader; the full-cover
+            // revealer stays an overlay above the whole assembly. A Paned
+            // rather than a Box so the composer's height is the divider
+            // position — dragged by the user, immune to the editor's natural
+            // height — instead of whatever the composer asks for.
             pane.set_vexpand(true);
-            let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            vbox.append(&model.reader_split_top);
-            vbox.append(&pane);
+            let split = &model.reader_split;
+            split.set_start_child(Some(&model.reader_split_top));
+            split.set_end_child(Some(&pane));
+            // Window resizes go to the reader; the composer keeps its set
+            // height and never shrinks below its minimum. The reader may
+            // shrink — the divider clamp at open time is what keeps a slice
+            // of it on screen.
+            split.set_resize_start_child(false);
+            split.set_shrink_start_child(false);
+            split.set_resize_end_child(true);
+            split.set_shrink_end_child(true);
+            // Hidden while no split reply is open, which hides the divider too.
+            model.reader_split_top.set_visible(false);
             let overlay = gtk::Overlay::new();
-            overlay.set_child(Some(&vbox));
+            overlay.set_child(Some(split));
             overlay.add_overlay(&model.reader_compose_revealer);
             widgets.reader_bin.set_child(Some(&overlay));
         }
@@ -4186,6 +4209,31 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetPastePlain(on) => {
+                if self.paste_plain != on {
+                    self.paste_plain = on;
+                    self.save_settings();
+                }
+            }
+
+            AppMsg::SetSpellcheck(on) => {
+                if self.spellcheck != on {
+                    self.spellcheck = on;
+                    self.save_settings();
+                    // Takes effect in already-open composers too: the shared
+                    // web context is live.
+                    crate::ui::rich_editor::apply_spellcheck();
+                }
+            }
+
+            AppMsg::SetSpellcheckLangs(langs) => {
+                if self.spellcheck_langs != langs {
+                    self.spellcheck_langs = langs;
+                    self.save_settings();
+                    crate::ui::rich_editor::apply_spellcheck();
+                }
+            }
+
             AppMsg::SetMessageTheme(theme) => {
                 if self.message_theme != theme {
                     self.message_theme = theme;
@@ -5585,6 +5633,9 @@ impl AppModel {
             self.list_palette,
             self.list_palette_hover,
             self.compose_inline,
+            self.paste_plain,
+            self.spellcheck,
+            self.spellcheck_langs.clone(),
             self.preview_lines,
             self.single_key.get(),
             self.run_in_background.get(),
@@ -7476,11 +7527,86 @@ impl AppModel {
             r.set_can_target(false);
             r.set_child(None::<&gtk::Widget>);
         }
-        // In-flow (not overlay) slot: no click-swallowing to disarm.
+        // In-flow (not overlay) slot: no click-swallowing to disarm. Remember
+        // the height the user dragged the panel to before it goes.
+        if self.reader_split_top.is_visible() && self.reader_split_top.child().is_some() {
+            config::save_split_reply_height(self.reader_split.position());
+        }
         self.reader_split_top.set_reveal_child(false);
+        // The composer sits inside the grab-pill Overlay wrapper: unparent it
+        // from there explicitly, or hosting it elsewhere (pop-out, drain)
+        // would find it still parented.
+        if let Some(wrap) = self.reader_split_top.child().and_downcast::<gtk::Overlay>() {
+            wrap.set_child(None::<&gtk::Widget>);
+        }
         self.reader_split_top.set_child(None::<&gtk::Widget>);
+        // Hiding the slot hides the Paned divider with it.
+        self.reader_split_top.set_visible(false);
         // The split's reply-target outline goes with the composer.
         self.message_view.emit(MessageViewInput::BlurCard);
+    }
+
+    /// Slide the split reply up and out the way it slid in, then tear the
+    /// slot down. The Paned allocates the slot by divider position — not by
+    /// the revealer's animated height — so the position is animated to zero
+    /// in step with the revealer's own slide-up, with the slot briefly
+    /// allowed to shrink below the composer's minimum. The teardown at the
+    /// end is skipped if a new reply has taken the slot meanwhile.
+    fn animate_split_close(&self) {
+        let slot = &self.reader_split_top;
+        let Some(wrap) = slot.child() else { return };
+        if slot.is_visible() {
+            config::save_split_reply_height(self.reader_split.position());
+        }
+        // The reply-target outline goes with the composer, as on an
+        // instant teardown.
+        self.message_view.emit(MessageViewInput::BlurCard);
+
+        if let Some(prev) = self.split_close_anim.borrow_mut().take() {
+            prev.skip();
+        }
+        let split = self.reader_split.clone();
+        split.set_shrink_start_child(true);
+        slot.set_reveal_child(false);
+        let from = split.position() as f64;
+        let target = adw::CallbackAnimationTarget::new({
+            let split = split.clone();
+            move |v| split.set_position(v as i32)
+        });
+        let anim = adw::TimedAnimation::new(&split, from, 0.0, 300, target);
+        anim.set_easing(adw::Easing::EaseOutCubic);
+        let slot = slot.clone();
+        let cell = self.split_close_anim.clone();
+        anim.connect_done(move |_| {
+            cell.borrow_mut().take();
+            split.set_shrink_start_child(false);
+            if slot.child().as_ref() == Some(&wrap) {
+                if let Some(w) = wrap.downcast_ref::<gtk::Overlay>() {
+                    w.set_child(None::<&gtk::Widget>);
+                }
+                slot.set_child(None::<&gtk::Widget>);
+                slot.set_visible(false);
+            }
+        });
+        *self.split_close_anim.borrow_mut() = Some(anim.clone());
+        anim.play();
+    }
+
+    /// The split reply's grab handle: the shared grab pill, floated at the
+    /// panel's bottom edge and bounded like the panel's opening height — a
+    /// usable panel, a visible reader.
+    fn build_split_grab_pill(&self) -> gtk::Box {
+        let pill = crate::ui::grab_pill::paned_grab_pill(&self.reader_split, |split, want| {
+            want.clamp(220, (split.height() - 200).max(220))
+        });
+        pill.set_valign(gtk::Align::End);
+        // Bias the centred bar 6px downward inside its hit zone (a top margin
+        // shifts the centring by half its size): more air between the editor
+        // card and the bar, matching the attachment drawer's spacing.
+        if let Some(bar) = pill.first_child() {
+            bar.set_margin_top(12);
+        }
+        pill
     }
 
     fn open_inline_reply(
@@ -7503,13 +7629,37 @@ impl AppModel {
         if contextual && !self.showing_contacts {
             // A reply/forward splits the pane instead of covering it (#86):
             // the composer slides down from the top and the message(s) stay
-            // below, visible and interactive to refer to while writing.
+            // below, visible and interactive to refer to while writing. The
+            // composer fills whatever the Paned divider grants it, and the
+            // height it sets is final: pasting a novel into the body cannot
+            // push the panel down.
+            //
+            // The grab handle is a floating pill at the panel's bottom edge
+            // (the iOS home-indicator look) — the wrapper Overlay floats it
+            // over the composer, and dragging it moves the Paned divider,
+            // whose own separator is painted invisible.
+            // A still-running close animation would fight the new panel for
+            // the divider: jump it to its end (its teardown sees the slot's
+            // new occupant and stands down).
+            let prev_anim = self.split_close_anim.borrow_mut().take();
+            if let Some(prev) = prev_anim {
+                prev.skip();
+            }
             let slot = &self.reader_split_top;
-            let pane_h = slot.parent().map(|p| p.height()).filter(|h| *h > 0).unwrap_or(900);
-            widget.set_vexpand(false);
-            widget.set_height_request(((pane_h as f64 * 0.45) as i32).clamp(300, 560));
-            slot.set_child(Some(widget));
+            widget.set_vexpand(true);
+            let wrap = gtk::Overlay::new();
+            wrap.set_child(Some(widget));
+            wrap.add_overlay(&self.build_split_grab_pill());
+            slot.set_child(Some(&wrap));
+            slot.set_visible(true);
             slot.set_reveal_child(true);
+            let pane_h = self.reader_split.height();
+            let pane_h = if pane_h > 0 { pane_h } else { 900 };
+            let saved = config::load_split_reply_height();
+            let h =
+                if saved > 0 { saved } else { ((pane_h as f64 * 0.45) as i32).clamp(300, 560) };
+            // Keep a usable slice of reader on screen whatever was saved.
+            self.reader_split.set_position(h.clamp(220, (pane_h - 200).max(220)));
             if let Some((fa, fid)) = focus {
                 // Put the card being answered at the top of the shortened
                 // reader, wearing the selection outline.
@@ -7544,7 +7694,13 @@ impl AppModel {
                 self.composers.push(ComposeHost { id: r.id, controller: r.controller, window });
             }
             None => {
-                self.clear_compose_slots();
+                // A split reply slides out the way it slid in; the covering
+                // composer is torn down at once as before.
+                if self.reader_split_top.child().is_some() {
+                    self.animate_split_close();
+                } else {
+                    self.clear_compose_slots();
+                }
                 self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 r.controller.emit(ComposeInput::SaveDraftIfDirty);
                 self.draining_composers.push((r.id, r.controller));
@@ -7607,7 +7763,12 @@ impl AppModel {
                     window.destroy();
                 }
                 None => {
-                    self.clear_compose_slots();
+                    // Cancel/send on a split reply: slide it out, not blink it.
+                    if self.reader_split_top.child().is_some() {
+                        self.animate_split_close();
+                    } else {
+                        self.clear_compose_slots();
+                    }
                     self.reader_overflow_btn.set_visible(self.reader_actions_collapsed);
                 }
             }
@@ -8616,6 +8777,9 @@ impl AppModel {
             list_palette: self.list_palette,
             list_palette_hover: self.list_palette_hover,
             compose_inline: self.compose_inline,
+            paste_plain: self.paste_plain,
+            spellcheck: self.spellcheck,
+            spellcheck_langs: self.spellcheck_langs.clone(),
             app_theme: self.app_theme,
             preview_lines: self.preview_lines,
             single_key_shortcuts: self.single_key.get(),
@@ -8650,6 +8814,9 @@ impl AppModel {
                 PrefOutput::SetListPalette(on) => AppMsg::SetListPalette(on),
                 PrefOutput::SetListPaletteHover(on) => AppMsg::SetListPaletteHover(on),
                 PrefOutput::SetComposeInline(on) => AppMsg::SetComposeInline(on),
+                PrefOutput::SetPastePlain(on) => AppMsg::SetPastePlain(on),
+                PrefOutput::SetSpellcheck(on) => AppMsg::SetSpellcheck(on),
+                PrefOutput::SetSpellcheckLangs(l) => AppMsg::SetSpellcheckLangs(l),
                 PrefOutput::SetFetchInterval(secs) => AppMsg::SetFetchInterval(secs),
                 PrefOutput::SetPush(on) => AppMsg::SetPush(on),
                 PrefOutput::SetNotifications(on) => AppMsg::SetNotifications(on),
@@ -8864,6 +9031,7 @@ impl AppModel {
             "https://github.com/hyprlab/vireo/issues",
         ));
         links.append(&mk_row("Contact — hyprlab@proton.me", "mailto:hyprlab@proton.me"));
+        links.append(&mk_row("Discord — Join the community", "https://discord.gg/YfEJ4b6PFW"));
         links.append(&mk_row("Source Code", "https://github.com/hyprlab/vireo"));
         links.append(&mk_row("License (GNU AGPL v3)", "https://www.gnu.org/licenses/agpl-3.0.html"));
 
@@ -8892,10 +9060,10 @@ impl AppModel {
         let thanks = gtk::ListBox::new();
         thanks.add_css_class("boxed-list");
         thanks.set_selection_mode(gtk::SelectionMode::None);
-        for (name, handle, what) in CONTRIBUTORS {
+        for (name, handle) in CONTRIBUTORS {
             let row = adw::ActionRow::builder()
                 .title(*name)
-                .subtitle(format!("@{handle} — {what}"))
+                .subtitle(format!("@{handle}"))
                 .activatable(true)
                 .build();
             let url = format!("https://github.com/{handle}");
@@ -10253,7 +10421,8 @@ fn install_scheme_css() {
              .message-listbox > row.activatable:selected:active .message-row {{ \
                background-color: @accent_bg_color; color: white; }}\
              .remote-alert image {{ color: {shield}; }}\
-             .inline-compose-surface, .compose-pane {{ background-color: {page}; }}"
+             .inline-compose-surface, .compose-pane {{ background-color: {page}; }}\
+             .reader-split > separator {{ background-color: {page}; }}"
         ));
     };
     let style = adw::StyleManager::default();
@@ -10270,7 +10439,10 @@ fn reply_prefill(m: &Message) -> ComposePrefill {
     let text = message_text(&m.body);
     let attribution = format!("On {}, {} wrote:", m.date, m.from_name);
     ComposePrefill {
-        to: m.from_addr.clone(),
+        // A Reply-To header is the sender saying "answer me here instead" —
+        // a mailing list, a no-reply address with a monitored counterpart. It
+        // wins over the From address whenever it is present.
+        to: if m.reply_to.is_empty() { m.from_addr.clone() } else { m.reply_to.clone() },
         cc: String::new(),
         subject,
         // Who the original went to, so a mail addressed to one of the
@@ -10303,12 +10475,15 @@ fn reply_all_prefill(m: &Message, self_email: &str) -> ComposePrefill {
     let mut prefill = reply_prefill(m);
     let self_l = self_email.to_lowercase();
     let from_l = m.from_addr.to_lowercase();
+    // Whoever is already in To (the Reply-To address when one exists) must not
+    // be repeated in Cc.
+    let to_l = prefill.to.to_lowercase();
     let mut cc: Vec<String> = Vec::new();
     for list in [m.to.as_str(), m.cc.as_str()] {
         for addr in list.split(',') {
             let a = addr.trim();
             let al = a.to_lowercase();
-            if a.is_empty() || al == self_l || al == from_l {
+            if a.is_empty() || al == self_l || al == from_l || to_l.contains(&al) {
                 continue;
             }
             if !cc.iter().any(|x| x.eq_ignore_ascii_case(a)) {
@@ -10746,6 +10921,7 @@ mod tests {
             uid,
             from_name: String::new(),
             from_addr: String::new(),
+            reply_to: String::new(),
             to: String::new(),
             cc: String::new(),
             subject: String::new(),
@@ -10971,6 +11147,7 @@ mod tests {
             uid,
             from_name: String::new(),
             from_addr: String::new(),
+            reply_to: String::new(),
             to: String::new(),
             cc: String::new(),
             subject: String::new(),
@@ -10984,6 +11161,31 @@ mod tests {
             message_id: String::new(),
             references: String::new(),
         }
+    }
+
+    /// A sender's Reply-To wins over their From address, and Reply All must
+    /// not smuggle the sender back in through Cc.
+    #[test]
+    fn reply_goes_where_the_sender_asked() {
+        let mut m = msg(1, 1, 10);
+        m.from_addr = "no-reply@list.example".into();
+        m.reply_to = "editor@example.com".into();
+        m.to = "me@example.com, other@example.com".into();
+
+        let r = reply_prefill(&m);
+        assert_eq!(r.to, "editor@example.com");
+
+        let ra = reply_all_prefill(&m, "me@example.com");
+        assert_eq!(ra.to, "editor@example.com");
+        assert_eq!(ra.cc, "other@example.com", "no sender, no self, no repeat of To");
+    }
+
+    /// Without a Reply-To the sender's own address is still the reply target.
+    #[test]
+    fn reply_falls_back_to_the_sender() {
+        let mut m = msg(1, 1, 10);
+        m.from_addr = "ada@example.com".into();
+        assert_eq!(reply_prefill(&m).to, "ada@example.com");
     }
 
     #[test]

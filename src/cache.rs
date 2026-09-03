@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS messages (
     message_id     TEXT    NOT NULL DEFAULT '',
     references_    TEXT    NOT NULL DEFAULT '',
     preview        TEXT    NOT NULL DEFAULT '',
+    reply_to       TEXT    NOT NULL DEFAULT '',
     PRIMARY KEY (account_id, folder_path, uid)
 );
 CREATE TABLE IF NOT EXISTS bodies (
@@ -114,7 +115,11 @@ CREATE TABLE IF NOT EXISTS attachments_checked (
 /// v12: plain-text bodies no longer bake `padding:16px` into the cached
 /// document — the reader injects the default inset at render time — so cached
 /// bodies carrying the old baked padding must be dropped and re-rendered.
-const SCHEMA_VERSION: i64 = 12;
+/// v13: builds before the declared-attachment exemption dropped small files a
+/// web-Gmail sender attached, and stored one blob copy per Gmail label. The
+/// checked table remembers those messages as done, so the wrong lists would
+/// survive forever — drop both tables and let attachments re-fetch on demand.
+const SCHEMA_VERSION: i64 = 13;
 
 /// Most Message-IDs one cross-folder conversation lookup matches against. A
 /// thread's ancestry is short in practice, and the references half of that query
@@ -200,6 +205,16 @@ impl Cache {
             // next open. The message index is kept: it's expensive to rebuild.
             let _ = conn
                 .execute_batch("DROP TABLE IF EXISTS bodies; DROP TABLE IF EXISTS sender_checks;");
+            // Attachment lists cached by builds before v13 are wrong in place
+            // (small declared files missing, blobs duplicated per Gmail label),
+            // and `attachments_checked` would keep them from ever re-fetching.
+            // The re-fetch is bounded: the prefetch re-touches only the newest
+            // messages per folder, the rest heal lazily on open.
+            if version < 13 {
+                let _ = conn.execute_batch(
+                    "DROP TABLE IF EXISTS attachments; DROP TABLE IF EXISTS attachments_checked;",
+                );
+            }
         }
         conn.execute_batch(SCHEMA)?;
         // `messages` predates the preview column, and `CREATE TABLE IF NOT
@@ -207,6 +222,11 @@ impl Cache {
         // dropping the index, which would cost every user a full re-sync; the
         // error when it is already there is the expected outcome, not a problem.
         let _ = conn.execute("ALTER TABLE messages ADD COLUMN preview TEXT NOT NULL DEFAULT ''", []);
+        // Same in-place treatment for `reply_to` (added later still): existing
+        // rows carry an empty value until their folder's recent window
+        // re-syncs, and Reply falls back to the sender until then.
+        let _ =
+            conn.execute("ALTER TABLE messages ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''", []);
         // Previews cached by a build that showed MIME machinery or a tracking
         // link instead of the message: a multipart's boundary ("--b2=_cipk…") or
         // the rendered link a marketing mail opens with ("( https://…"). Clearing
@@ -325,7 +345,7 @@ impl Cache {
     pub fn load_messages(&self, account_id: u32, folder_path: &str, folder_id: u32) -> Vec<Message> {
         let run = || -> rusqlite::Result<Vec<Message>> {
             let mut stmt = self.conn.prepare(
-                "SELECT uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, preview
+                "SELECT uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, preview, reply_to
                  FROM messages WHERE account_id = ?1 AND folder_path = ?2 ORDER BY uid DESC",
             )?;
             let rows = stmt.query_map(params![account_id, folder_path], |row| {
@@ -337,6 +357,7 @@ impl Cache {
                     uid,
                     from_name: row.get(1)?,
                     from_addr: row.get(2)?,
+                    reply_to: row.get(14)?,
                     to: row.get(9)?,
                     cc: row.get(10)?,
                     subject: row.get(3)?,
@@ -411,12 +432,12 @@ impl Cache {
             for m in messages {
                 tx.execute(
                     "INSERT INTO messages
-                     (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                     (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, reply_to)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                     params![
                         account_id, folder_path, m.uid, m.from_name, m.from_addr, m.subject,
                         m.date, m.timestamp, m.unread, m.starred, m.has_attachment, m.to, m.cc,
-                        m.message_id, m.references
+                        m.message_id, m.references, m.reply_to
                     ],
                 )?;
             }
@@ -440,8 +461,8 @@ impl Cache {
                 // lost its preview.
                 tx.execute(
                     "INSERT INTO messages
-                     (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, preview)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                     (account_id, folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred, has_attachment, recipients, cc, message_id, references_, preview, reply_to)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
                      ON CONFLICT(account_id, folder_path, uid) DO UPDATE SET
                        from_name = excluded.from_name,
                        from_addr = excluded.from_addr,
@@ -455,11 +476,12 @@ impl Cache {
                        cc = excluded.cc,
                        message_id = excluded.message_id,
                        references_ = excluded.references_,
-                       preview = CASE WHEN excluded.preview = '' THEN messages.preview ELSE excluded.preview END",
+                       preview = CASE WHEN excluded.preview = '' THEN messages.preview ELSE excluded.preview END,
+                       reply_to = excluded.reply_to",
                     params![
                         account_id, folder_path, m.uid, m.from_name, m.from_addr, m.subject,
                         m.date, m.timestamp, m.unread, m.starred, m.has_attachment, m.to, m.cc,
-                        m.message_id, m.references, m.preview
+                        m.message_id, m.references, m.preview, m.reply_to
                     ],
                 )?;
             }
@@ -518,7 +540,7 @@ impl Cache {
             .collect::<Vec<_>>()
             .join(" OR ");
         let sql = format!(
-            "SELECT folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred,                     has_attachment, recipients, cc, message_id, references_, preview              FROM messages              WHERE account_id = ?{account} AND (message_id IN ({in_list}) OR {refs_match})              ORDER BY ts DESC LIMIT ?{limit}",
+            "SELECT folder_path, uid, from_name, from_addr, subject, date, ts, unread, starred,                     has_attachment, recipients, cc, message_id, references_, preview, reply_to              FROM messages             WHERE account_id = ?{account} AND (message_id IN ({in_list}) OR {refs_match})              ORDER BY ts DESC LIMIT ?{limit}",
             account = ids.len() * 2 + 1,
             limit = ids.len() * 2 + 2,
             in_list = slots(0),
@@ -548,6 +570,7 @@ impl Cache {
                         uid,
                         from_name: row.get(2)?,
                         from_addr: row.get(3)?,
+                        reply_to: row.get(15)?,
                         to: row.get(10)?,
                         cc: row.get(11)?,
                         subject: row.get(4)?,
@@ -907,7 +930,24 @@ impl Cache {
     }
 
     /// Whether a message's attachments have already been fetched/checked.
+    ///
+    /// Gmail shows one message under every label it carries, so the same mail
+    /// arrives as INBOX + a label + All Mail. [`load_attachments`] already reads
+    /// across those copies; without the same reach here the prefetch treats each
+    /// label as unfetched and downloads the message once per label, storing a
+    /// full second and third copy of blobs it can already answer from.
+    ///
+    /// [`load_attachments`]: Self::load_attachments
     pub fn attachments_checked(&self, account_id: u32, folder_path: &str, uid: u32) -> bool {
+        if self.checked_of(account_id, folder_path, uid) {
+            return true;
+        }
+        self.sibling_copies(account_id, folder_path, uid)
+            .into_iter()
+            .any(|(p, u)| self.checked_of(account_id, &p, u))
+    }
+
+    fn checked_of(&self, account_id: u32, folder_path: &str, uid: u32) -> bool {
         self.conn
             .query_row(
                 "SELECT 1 FROM attachments_checked WHERE account_id = ?1 AND folder_path = ?2 AND uid = ?3",
@@ -1521,6 +1561,30 @@ mod tests {
         let found = c.load_attachments(1, "INBOX", 42);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "spec.pdf");
+    }
+
+    /// One message under two labels is one download, not two. `load_attachments`
+    /// already answers for every label from whichever copy was fetched, so
+    /// fetching the others only stores the same blobs again.
+    #[test]
+    fn attachments_fetched_under_one_label_count_as_fetched_for_the_others() {
+        let c = Cache::in_memory();
+        add_threaded(&c, "INBOX", 42, 500, "same@x", "");
+        add_threaded(&c, "Work", 7, 500, "same@x", "");
+        c.mark_attachments_checked(1, "Work", 7);
+
+        assert!(c.attachments_checked(1, "INBOX", 42));
+    }
+
+    /// The reach stops at the message: an unrelated mail is still unfetched.
+    #[test]
+    fn another_message_being_fetched_does_not_count_as_this_one() {
+        let c = Cache::in_memory();
+        add_threaded(&c, "INBOX", 42, 500, "mine@x", "");
+        add_threaded(&c, "Work", 7, 500, "someone-else@x", "");
+        c.mark_attachments_checked(1, "Work", 7);
+
+        assert!(!c.attachments_checked(1, "INBOX", 42));
     }
 
     /// Two different messages must never answer for each other — the fallback

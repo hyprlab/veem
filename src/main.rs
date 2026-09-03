@@ -20,6 +20,7 @@ mod platform;
 mod power;
 mod ram_cache;
 mod rng;
+mod spell;
 mod ui;
 mod verify;
 mod worker;

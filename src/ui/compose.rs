@@ -368,6 +368,14 @@ impl Component for Compose {
             content.push_str(&sig_html(&current_sig));
         }
         let editor = RichEditor::new(&content);
+        // "Send as Attachment Instead" on an inline image: the editor lifts
+        // it to a temp file and it joins the attachment chips here.
+        {
+            let s = sender.input_sender().clone();
+            editor.connect_send_as_attachment(move |path| {
+                let _ = s.send(ComposeInput::AddAttachments(vec![path]));
+            });
+        }
 
         let model = Compose {
             accounts,
@@ -494,6 +502,47 @@ impl Component for Compose {
         widgets
             .subject_row
             .connect_changed(move |_| s.input(ComposeInput::MarkFieldsDirty));
+        // The subject gets the body's red underlines too (#114): every edit
+        // re-checks the line through enchant directly and paints error
+        // underlines onto the row's inner GtkText — the row itself exposes
+        // no Pango attributes. The word the cursor sits in is exempt while
+        // typing and joins the check after a 400ms pause, so mistakes show
+        // before the space without half-words flashing red mid-keystroke.
+        // Addresses stay uncheckable on purpose: only the subject is prose.
+        if let Some(text) = inner_text(widgets.subject_row.upcast_ref()) {
+            let t = text.clone();
+            let pending: std::rc::Rc<std::cell::RefCell<Option<gtk::glib::SourceId>>> =
+                std::rc::Rc::new(std::cell::RefCell::new(None));
+            widgets.subject_row.connect_changed(move |row| {
+                if let Some(prev) = pending.borrow_mut().take() {
+                    prev.remove();
+                }
+                let content = row.text().to_string();
+                // Editable positions count characters; attribute ranges
+                // count bytes.
+                let cursor = content
+                    .char_indices()
+                    .nth(row.position().max(0) as usize)
+                    .map(|(b, _)| b)
+                    .unwrap_or(content.len());
+                t.set_attributes(crate::spell::error_attrs(&content, Some(cursor)).as_ref());
+                let t = t.clone();
+                let row = row.clone();
+                let slot = pending.clone();
+                let id = gtk::glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(400),
+                    move || {
+                        slot.borrow_mut().take();
+                        t.set_attributes(crate::spell::error_attrs(&row.text(), None).as_ref());
+                    },
+                );
+                *pending.borrow_mut() = Some(id);
+            });
+            // Prefilled subjects (replies, drafts) get checked on open too.
+            text.set_attributes(
+                crate::spell::error_attrs(&widgets.subject_row.text(), None).as_ref(),
+            );
+        }
 
         // Drive the suggestion list from a single capture-phase key handler on
         // the window — the toplevel sees every key first, regardless of focus.
@@ -501,8 +550,20 @@ impl Component for Compose {
         key.set_propagation_phase(gtk::PropagationPhase::Capture);
         let s = sender.clone();
         let open = model.completion_open.clone();
-        key.connect_key_pressed(move |_, keyval, _, _| {
+        let editor = model.editor.clone();
+        key.connect_key_pressed(move |_, keyval, _, state| {
             use gtk::glib::Propagation;
+            // Ctrl+V pastes per the "Paste as plain text" preference, read
+            // here so a settings change applies to composers already open.
+            // Only over the body: the address and subject entries are plain
+            // text by nature, and the focus guard leaves their Ctrl+V alone.
+            if state.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+                && keyval == gtk::gdk::Key::v
+                && editor.has_focus()
+            {
+                editor.paste(!crate::config::load_paste_plain());
+                return Propagation::Stop;
+            }
             if !open.get() {
                 // Escape backs out of the whole composer — the same as Cancel,
                 // so an accidental reply is one key away from being undone. Only
@@ -994,4 +1055,20 @@ impl Compose {
         }
         flow.set_visible(!self.attachments.is_empty());
     }
+}
+
+/// The GtkText embedded somewhere inside a composite row — where Pango
+/// attributes (the spell-check underlines) actually live.
+fn inner_text(widget: &gtk::Widget) -> Option<gtk::Text> {
+    if let Some(t) = widget.downcast_ref::<gtk::Text>() {
+        return Some(t.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(c) = child {
+        if let Some(t) = inner_text(&c) {
+            return Some(t);
+        }
+        child = c.next_sibling();
+    }
+    None
 }

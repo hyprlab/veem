@@ -67,6 +67,9 @@ pub struct Message {
     pub uid: u32,
     pub from_name: String,
     pub from_addr: String,
+    /// Where the sender asked replies to go (comma-separated emails), from the
+    /// Reply-To header. Empty when the header is absent — reply to `from_addr`.
+    pub reply_to: String,
     /// Original recipients (comma-separated emails), used for Reply All.
     pub to: String,
     pub cc: String,
@@ -254,6 +257,7 @@ impl OutboxItem {
                 self.recipients.clone()
             },
             from_addr: self.from_addr.clone(),
+            reply_to: String::new(),
             to: self.recipients.clone(),
             cc: String::new(),
             subject: if self.subject.trim().is_empty() {
@@ -395,6 +399,7 @@ impl Message {
         for s in [
             &mut self.from_name,
             &mut self.from_addr,
+            &mut self.reply_to,
             &mut self.to,
             &mut self.cc,
             &mut self.subject,
