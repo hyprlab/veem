@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.20.0-beta.2 — 2026-09-03
+
+Polish on beta.1's composer work, from first-round beta feedback.
+
+- **Smooth composer entrances and exits.** The split reply slides in the
+  way it slides out (the divider is animated; the revealer's own
+  transition never ran, since it starts unmapped and adw skips
+  animations on unmapped widgets). New Message defers its reveal one
+  frame so its slide actually plays, and closing it slides up before
+  the composer is removed instead of blinking out. The editor fades in
+  when its document finishes loading, so content arrives as a fade into
+  the settled panel rather than a late pop.
+- **A slimmer split reply.** While a reply is open, the reader's own
+  header bar is hidden — it showed a second set of window decorations
+  mid-window and spent vertical space the split needs. The visible
+  reader starts at the remote-content banner, or the subject block
+  without one; the header returns when the reply closes.
+- **A findable drawer handle.** The attachment drawer's grab bar wears
+  a drop shadow so it reads on dark message content (it vanished in
+  dark mode), and its hit zone is the full width of the seam: click
+  anywhere along the drawer's edge to toggle it, grab anywhere along it
+  to resize.
+
 ## 1.20.0-beta.1 — 2026-09-03
 
 Feature beta previewing 1.20.0.

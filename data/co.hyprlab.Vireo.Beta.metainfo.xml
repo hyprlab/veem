@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.20.0-beta.2" date="2026-09-03" type="development">
+
+      <description><p>Polish on beta.1's composer work: the split reply and New Message slide in and out smoothly with the editor fading in, the reader sheds its header while a reply is open, and the attachment drawer's grab handle is visible in dark mode with its whole edge answering clicks and drags.</p></description>
+
+    </release>
     <release version="1.20.0-beta.1" date="2026-09-03" type="development">
 
       <description><p>Feature beta previewing 1.20.0: spell checking in the composer (body and subject, with bundled dictionaries and a personal word list), inline images (paste or drop pictures into the text), replies that follow Reply-To, grab handles for the split reply and attachment drawer, paste-as-plain-text by default, and attachment fixes for web Gmail, per-label duplicate downloads and split encoded-word filenames.</p></description>
