@@ -11,7 +11,8 @@
 <p align="center">
   <a href="https://vireo.hyprlab.co">Website</a> ·
   <a href="RELEASE_NOTES.md">Release notes</a> ·
-  <a href="https://github.com/hyprlab/vireo/releases">Releases</a>
+  <a href="https://github.com/hyprlab/vireo/releases">Releases</a> ·
+  <a href="https://discord.gg/YfEJ4b6PFW">Discord</a>
   <br>
   <img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue">
 </p>
@@ -32,6 +33,32 @@
 Vireo is a desktop email client for Wayland that feels at home in GNOME. It talks
 IMAP/SMTP directly, keeps your mail and credentials on your machine, and blocks
 trackers by default — no telemetry, no analytics.
+
+## The Vireo Manifesto
+
+Vireo exists to fill a need in the Linux desktop community for a modern,
+GNOME-native email client that doesn't sacrifice aesthetics for features.
+
+The project has the following foundational values that guide its development:
+
+- **Vireo is committed to free and open source software.** Vireo will never be
+  for sale and is committed to remaining that way through our AGPLv3 license
+  adherence.
+- **Vireo is community-driven and committed to putting humans at the center of
+  everything we do.** Our aim is to improve the lives of our users and the
+  Linux desktop as a whole.
+- **Vireo is committed to GNOME-first development** through deference to GNOME
+  HIG (human interface guidelines) where possible and ensuring 100%
+  compatibility with the latest GNOME release. This app was conceived for GNOME
+  and it will remain the desktop environment we target primarily.
+- **Aesthetics matter as much as features.** Vireo should make using email on
+  the Linux desktop both visually pleasing and enjoyable through consistent and
+  familiar UI/UX paradigms. New users to GNOME should be able to intuit how to
+  use the app without needing to refer to documentation.
+- **Feature rich and choice-forward philosophy.** Providing means for the user
+  to maximally customize the app's feature set is a high priority. We maintain
+  that Vireo is both beautiful and highly functional to tackle every email edge
+  case.
 
 ## Features
 
@@ -267,6 +294,7 @@ before it lands (with the change explained on the pull request).
 ## Contact & support
 
 - Website — [vireo.hyprlab.co](https://vireo.hyprlab.co)
+- Discord — [discord.gg/YfEJ4b6PFW](https://discord.gg/YfEJ4b6PFW)
 - Email — [hyprlab@proton.me](mailto:hyprlab@proton.me)
 - [Buy me a coffee](https://buymeacoffee.com/hyprlab) ☕
 
