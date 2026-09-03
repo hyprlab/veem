@@ -465,6 +465,9 @@ pub struct AppModel {
     undo_stack: Vec<UndoEntry>,
     /// A draft awaiting its body before opening in the compose editor.
     pending_draft: Option<Message>,
+    /// A reply asked for from the tray menu, started once the message it
+    /// names has been selected and shown (account, message id).
+    pending_tray_reply: Option<(u32, u32)>,
     /// Outstanding bulk MoveMessages requests awaiting a worker `BulkComplete`.
     /// Outstanding server-side bulk operations; while > 0 the refresh spinner
     /// spins and the status bar narrates.
@@ -695,6 +698,9 @@ pub enum AppMsg {
     QuitFromTray,
     /// Delete was chosen under a message in the tray icon's menu.
     TrayDelete { account_id: u32, folder_id: u32, message_id: u32 },
+    /// Reply was chosen under a message in the tray icon's menu: open the
+    /// message, then start the reply once it is on screen.
+    TrayReply { account_id: u32, folder_id: u32, message_id: u32 },
     /// A single-key shortcut fired.
     Shortcut(Shortcut),
     /// Show the keyboard-shortcut reference.
@@ -1745,6 +1751,7 @@ impl SimpleComponent for AppModel {
             body_cache: crate::ram_cache::RamCache::new(BODY_CACHE_BUDGET),
             sender_cache: HashMap::new(),
             pending_draft: None,
+            pending_tray_reply: None,
             popouts: HashMap::new(),
             current_thread: Vec::new(),
             list_selection: Vec::new(),
@@ -3379,6 +3386,13 @@ impl SimpleComponent for AppModel {
                         });
                     }
                 }
+
+                // A reply asked for from the tray menu, now that its message
+                // is the one on screen.
+                if self.pending_tray_reply == Some((account_id, m.id)) {
+                    self.pending_tray_reply = None;
+                    sender.input(AppMsg::Reply);
+                }
             }
 
             AppMsg::OpenMessageWindow { message: m, thread } => {
@@ -4019,6 +4033,18 @@ impl SimpleComponent for AppModel {
             AppMsg::QuitFromTray => {
                 // The same teardown as Ctrl+Q: geometry saved, then exit.
                 relm4::main_application().activate_action("quit", None);
+            }
+
+            AppMsg::TrayReply { account_id, folder_id, message_id } => {
+                // The inline reply needs the message in the reader first;
+                // selection lands as a later MessageSelected, which picks
+                // this up.
+                self.pending_tray_reply = Some((account_id, message_id));
+                sender.input(AppMsg::OpenMessageFromNotification {
+                    account_id,
+                    folder_id,
+                    message_id,
+                });
             }
 
             AppMsg::TrayDelete { account_id, folder_id, message_id } => {

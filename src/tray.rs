@@ -7,7 +7,7 @@
 //! the panel draws it. That is what "AppIndicator" means today.
 //!
 //! The item is an icon that wears a red dot while any inbox has unread mail,
-//! a tooltip saying how many, a menu (open, accounts, settings, quit), and a click that brings the
+//! a tooltip saying how many, a menu (open, unread mail with its actions, accounts, settings, quit), and a click that brings the
 //! window back. Off by default: on a desktop with no watcher nothing is drawn
 //! and nothing else changes — the Background Apps listing comes from the
 //! portal, which this never touches. The item keeps waiting, so enabling a
@@ -23,17 +23,17 @@ use gtk::cairo;
 use gtk::gdk_pixbuf::{InterpType, Pixbuf, PixbufLoader};
 use gtk::prelude::*;
 use ksni::blocking::{Handle, TrayMethods};
-use ksni::menu::{MenuItem, StandardItem, SubMenu};
+use ksni::menu::{MenuItem, StandardItem};
 use ksni::{Category, Icon, Status, ToolTip, Tray};
 
 use crate::app::AppMsg;
 use crate::config::TrayIcon;
 
 /// One unread message as the tray menu shows it (issue #116): a card-like
-/// row with the sender's picture, then Open, Mark as Read, Archive and
-/// Delete beneath it. A DBusMenu is drawn by the panel, so a row is an
-/// icon and text, and the actions have to be a submenu rather than
-/// buttons on the card.
+/// row with the sender's picture that opens it, then an icon row each for
+/// Reply, Mark as Read, Archive and Delete. A DBusMenu is drawn by the
+/// panel, so a row is an icon and text; buttons on the card aren't
+/// possible, and rows are the one-click alternative.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrayMail {
     pub account_id: u32,
@@ -48,8 +48,23 @@ pub struct TrayMail {
     pub icon: Vec<u8>,
 }
 
-/// How many unread messages the menu lists, newest first.
-pub const MAIL_LIMIT: usize = 10;
+/// How many unread messages the menu lists, newest first. Each takes five
+/// rows (the card and its four actions), so this keeps the menu on screen.
+pub const MAIL_LIMIT: usize = 5;
+
+/// The action rows' icons: the reader's own symbolic icons, rasterised once
+/// in a neutral grey that reads on a dark panel and a light one alike, since
+/// the panel draws pixel icons as they are.
+const ACTION_ICON_FILL: &str = "#9a9996";
+const REPLY_SVG: &str = include_str!(
+    "../resources/icons/scalable/actions/co.hyprlab.Vireo-mail-reply-sender-symbolic.svg"
+);
+const READ_SVG: &str =
+    include_str!("../resources/icons/scalable/actions/co.hyprlab.Vireo-mail-read-symbolic.svg");
+const ARCHIVE_SVG: &str =
+    include_str!("../resources/icons/scalable/actions/co.hyprlab.Vireo-mail-archive-symbolic.svg");
+const TRASH_SVG: &str =
+    include_str!("../resources/icons/scalable/actions/co.hyprlab.Vireo-user-trash-symbolic.svg");
 
 /// The app icon, as shipped.
 const APP_ICON_PNG: &[u8] = include_bytes!("../data/icons/hicolor/256x256/apps/co.hyprlab.Vireo.png");
@@ -186,7 +201,12 @@ impl Tray for VireoTray {
                     .into(),
                 );
             }
-            items.extend(mail.iter().map(mail_item));
+            for (i, m) in mail.iter().enumerate() {
+                if i > 0 {
+                    items.push(MenuItem::Separator);
+                }
+                items.extend(mail_items(m));
+            }
         }
         items.extend([
             MenuItem::Separator,
@@ -224,13 +244,17 @@ impl Tray for VireoTray {
     }
 }
 
-/// One message's row: the card as its label and picture, the actions
-/// beneath. Open is first, so it is one more click from the card.
-fn mail_item(m: &TrayMail) -> MenuItem<VireoTray> {
+/// One message's rows: the card (click opens it in the reader), then an
+/// icon row for each action, so nothing is a second click away.
+fn mail_items(m: &TrayMail) -> Vec<MenuItem<VireoTray>> {
     let (account_id, folder_id, message_id) = (m.account_id, m.folder_id, m.message_id);
-    let action = |label: &str, make: fn(u32, u32, u32) -> Vec<AppMsg>| -> MenuItem<VireoTray> {
+    let row = |label: &str,
+               icon: Vec<u8>,
+               make: fn(u32, u32, u32) -> Vec<AppMsg>|
+     -> MenuItem<VireoTray> {
         StandardItem {
             label: label.to_string(),
+            icon_data: icon,
             activate: Box::new(move |t: &mut VireoTray| {
                 for msg in make(account_id, folder_id, message_id) {
                     let _ = t.sender.send(msg);
@@ -249,30 +273,58 @@ fn mail_item(m: &TrayMail) -> MenuItem<VireoTray> {
         label.push('\n');
         label.push_str(&m.preview);
     }
-    SubMenu {
-        label: menu_text(&label),
-        icon_data: m.icon.clone(),
-        submenu: vec![
-            action("Open", |a, f, i| {
-                vec![AppMsg::PresentWindow, AppMsg::OpenMessageFromNotification {
-                    account_id: a,
-                    folder_id: f,
-                    message_id: i,
-                }]
-            }),
-            action("Mark as Read", |a, f, i| {
-                vec![AppMsg::NotificationMarkRead { account_id: a, folder_id: f, message_id: i }]
-            }),
-            action("Archive", |a, f, i| {
-                vec![AppMsg::NotificationArchive { account_id: a, folder_id: f, message_id: i }]
-            }),
-            action("Delete", |a, f, i| {
-                vec![AppMsg::TrayDelete { account_id: a, folder_id: f, message_id: i }]
-            }),
-        ],
-        ..Default::default()
-    }
-    .into()
+    let icons = action_icons();
+    vec![
+        row(&menu_text(&label), m.icon.clone(), |a, f, i| {
+            vec![AppMsg::PresentWindow, AppMsg::OpenMessageFromNotification {
+                account_id: a,
+                folder_id: f,
+                message_id: i,
+            }]
+        }),
+        row("Reply", icons.0.clone(), |a, f, i| {
+            vec![AppMsg::PresentWindow, AppMsg::TrayReply {
+                account_id: a,
+                folder_id: f,
+                message_id: i,
+            }]
+        }),
+        row("Mark as Read", icons.1.clone(), |a, f, i| {
+            vec![AppMsg::NotificationMarkRead { account_id: a, folder_id: f, message_id: i }]
+        }),
+        row("Archive", icons.2.clone(), |a, f, i| {
+            vec![AppMsg::NotificationArchive { account_id: a, folder_id: f, message_id: i }]
+        }),
+        row("Delete", icons.3.clone(), |a, f, i| {
+            vec![AppMsg::TrayDelete { account_id: a, folder_id: f, message_id: i }]
+        }),
+    ]
+}
+
+/// Reply, Mark as Read, Archive, Delete — rendered once.
+fn action_icons() -> &'static (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+    static ICONS: std::sync::OnceLock<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)> =
+        std::sync::OnceLock::new();
+    ICONS.get_or_init(|| {
+        (
+            symbolic_png(REPLY_SVG),
+            symbolic_png(READ_SVG),
+            symbolic_png(ARCHIVE_SVG),
+            symbolic_png(TRASH_SVG),
+        )
+    })
+}
+
+/// A 16 px PNG of one of the reader's symbolic icons in the action grey.
+fn symbolic_png(svg: &str) -> Vec<u8> {
+    let render = || -> Option<Vec<u8>> {
+        let loader = PixbufLoader::with_type("svg").ok()?;
+        loader.set_size(16, 16);
+        loader.write(svg.replace("#2e3436", ACTION_ICON_FILL).as_bytes()).ok()?;
+        loader.close().ok()?;
+        loader.pixbuf()?.save_to_bufferv("png", &[]).ok()
+    };
+    render().unwrap_or_default()
 }
 
 /// A menu label reads `_` as a mnemonic marker; mail text means it literally.
@@ -481,6 +533,14 @@ mod tests {
         assert_eq!(menu_text("snake_case"), "snake__case");
         assert_eq!(clip("  a   long\n line  of text ", 8), "a long …");
         assert_eq!(clip("short", 8), "short");
+    }
+
+    #[test]
+    fn action_icons_render() {
+        let icons = action_icons();
+        for png in [&icons.0, &icons.1, &icons.2, &icons.3] {
+            assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        }
     }
 
     #[test]
