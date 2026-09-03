@@ -13,6 +13,10 @@ pub struct RichEditor {
     /// The toolbar + editor, ready to be placed in a container.
     pub widget: gtk::Box,
     webview: webkit6::WebView,
+    /// Where "Send as Attachment Instead" delivers the lifted image, as a
+    /// temp-file path the host adds to its attachment list. Set by the host
+    /// via [`RichEditor::connect_send_as_attachment`].
+    attach_cb: std::rc::Rc<std::cell::RefCell<Option<Box<dyn Fn(std::path::PathBuf)>>>>,
 }
 
 /// Push the spell-checking preference onto the shared web context (#114).
@@ -59,7 +63,57 @@ impl RichEditor {
 
         // The stock editable menu's single "Paste" hides the plain/rich choice
         // behind the preference; the menu offers both, always, in its place.
-        webview.connect_context_menu(|view, menu, _hit| {
+        // Over an image the menu leads with image actions — cut, copy, and
+        // demoting an inline picture to an ordinary attachment — acting on
+        // the exact node the right-click landed on (`__vireoCtxImg`).
+        let attach_cb: std::rc::Rc<std::cell::RefCell<Option<Box<dyn Fn(std::path::PathBuf)>>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let menu_attach_cb = attach_cb.clone();
+        webview.connect_context_menu(move |view, menu, hit| {
+            if hit.context_is_image() {
+                // Stock image entries (copy/save/open variants) are replaced
+                // by ours, which also know about the editable document.
+                for item in menu.items().iter().filter(|i| {
+                    matches!(
+                        i.stock_action(),
+                        webkit6::ContextMenuAction::CopyImageToClipboard
+                            | webkit6::ContextMenuAction::CopyImageUrlToClipboard
+                            | webkit6::ContextMenuAction::DownloadImageToDisk
+                            | webkit6::ContextMenuAction::OpenImageInNewWindow
+                    )
+                }) {
+                    menu.remove(item);
+                }
+                let mut at = 0;
+                for (name, label, cmd) in [
+                    ("vireo-img-cut", "Cut Image", "Cut"),
+                    ("vireo-img-copy", "Copy Image", "Copy"),
+                ] {
+                    let action = gtk::gio::SimpleAction::new(name, None);
+                    let v = view.clone();
+                    action.connect_activate(move |_, _| with_ctx_image_selected(&v, cmd));
+                    menu.insert(&webkit6::ContextMenuItem::from_gaction(&action, label, None), at);
+                    at += 1;
+                }
+                // Only an embedded (data:) image can become an attachment —
+                // a remote image in quoted content has no bytes to lift.
+                if hit.image_uri().is_some_and(|u| u.starts_with("data:image/")) {
+                    let action = gtk::gio::SimpleAction::new("vireo-img-attach", None);
+                    let v = view.clone();
+                    let cb = menu_attach_cb.clone();
+                    action.connect_activate(move |_, _| detach_ctx_image(&v, cb.clone()));
+                    menu.insert(
+                        &webkit6::ContextMenuItem::from_gaction(
+                            &action,
+                            "Send as Attachment Instead",
+                            None,
+                        ),
+                        at,
+                    );
+                    at += 1;
+                }
+                menu.insert(&webkit6::ContextMenuItem::new_separator(), at);
+            }
             let items = menu.items();
             let Some(pos) = items
                 .iter()
@@ -101,7 +155,13 @@ impl RichEditor {
         bx.append(&toolbar);
         bx.append(&frame);
 
-        RichEditor { widget: bx, webview }
+        RichEditor { widget: bx, webview, attach_cb }
+    }
+
+    /// What "Send as Attachment Instead" does with the lifted image: the
+    /// host receives the temp file's path and adds it to its attachments.
+    pub fn connect_send_as_attachment(&self, f: impl Fn(std::path::PathBuf) + 'static) {
+        *self.attach_cb.borrow_mut() = Some(Box::new(f));
     }
 
     /// Replace the editor contents with `content` (HTML).
@@ -183,6 +243,77 @@ impl RichEditor {
 
 fn exec(webview: &webkit6::WebView, js: &str) {
     webview.evaluate_javascript(js, None, None, gtk::gio::Cancellable::NONE, |_| {});
+}
+
+/// Select the image the context menu was opened over, then run an editing
+/// command against the selection — how "Cut Image"/"Copy Image" work. The
+/// callback orders the selection and the command, since both travel to the
+/// web process asynchronously.
+fn with_ctx_image_selected(webview: &webkit6::WebView, cmd: &'static str) {
+    let v = webview.clone();
+    webview.evaluate_javascript(
+        "(function(){var n=window.__vireoCtxImg;if(!n)return;\
+          var r=document.createRange();r.selectNode(n);\
+          var s=getSelection();s.removeAllRanges();s.addRange(r);})()",
+        None,
+        None,
+        gtk::gio::Cancellable::NONE,
+        move |_| v.execute_editing_command(cmd),
+    );
+}
+
+/// "Send as Attachment Instead": pull the right-clicked image out of the
+/// document, decode its data: URI to a temp file, and hand the path to the
+/// host's callback (which adds it to the attachment list). The node is
+/// removed in the same script that reads it, so the demotion is atomic even
+/// if the same picture was pasted twice.
+fn detach_ctx_image(
+    webview: &webkit6::WebView,
+    cb: std::rc::Rc<std::cell::RefCell<Option<Box<dyn Fn(std::path::PathBuf)>>>>,
+) {
+    webview.evaluate_javascript(
+        "(function(){var n=window.__vireoCtxImg;if(!n||n.tagName!=='IMG')return '';\
+          var s=n.src;n.remove();window.__vireoCtxImg=null;return s;})()",
+        None,
+        None,
+        gtk::gio::Cancellable::NONE,
+        move |res| {
+            let Ok(v) = res else { return };
+            let Some(path) = data_uri_to_temp_file(&v.to_str()) else { return };
+            if let Some(f) = cb.borrow().as_ref() {
+                f(path);
+            }
+        },
+    );
+}
+
+/// Write a `data:image/...;base64,...` URI's bytes to a temp file the send
+/// path can read like any chosen attachment. The name it gets is the name
+/// that goes out on the wire.
+fn data_uri_to_temp_file(uri: &str) -> Option<std::path::PathBuf> {
+    let rest = uri.strip_prefix("data:")?;
+    let (meta, payload) = rest.split_once(',')?;
+    let mime = meta.strip_suffix(";base64")?;
+    if !mime.starts_with("image/") {
+        return None;
+    }
+    let data = crate::oauth::base64_decode(payload)?;
+    let ext = match mime {
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        _ => "png",
+    };
+    let dir = std::env::temp_dir().join("vireo-inline-images");
+    std::fs::create_dir_all(&dir).ok()?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!("image-{stamp}.{ext}"));
+    std::fs::write(&path, &data).ok()?;
+    Some(path)
 }
 
 /// One paste in an explicit mode: arm the document's one-shot flag, then run
@@ -316,6 +447,20 @@ const PASTE_SCRIPT: &str = r#"<script>
     };
     im.src = url;
   }
+  /* Clicking an image selects it whole, so it can be deleted, cut, or
+     copied like any other selection. */
+  document.addEventListener('click', function(e){
+    var t = e.target;
+    if(t && t.tagName === 'IMG'){
+      var r = document.createRange(); r.selectNode(t);
+      var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    }
+  });
+  /* Remember which image a context menu was opened over — the menu's own
+     actions (cut/copy/send-as-attachment) act on this exact node. */
+  document.addEventListener('contextmenu', function(e){
+    window.__vireoCtxImg = (e.target && e.target.tagName === 'IMG') ? e.target : null;
+  }, true);
   document.addEventListener('dragover', function(e){
     var it = (e.dataTransfer && e.dataTransfer.items) || [];
     for(var i = 0; i < it.length; i++){

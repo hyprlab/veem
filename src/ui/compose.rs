@@ -368,6 +368,14 @@ impl Component for Compose {
             content.push_str(&sig_html(&current_sig));
         }
         let editor = RichEditor::new(&content);
+        // "Send as Attachment Instead" on an inline image: the editor lifts
+        // it to a temp file and it joins the attachment chips here.
+        {
+            let s = sender.input_sender().clone();
+            editor.connect_send_as_attachment(move |path| {
+                let _ = s.send(ComposeInput::AddAttachments(vec![path]));
+            });
+        }
 
         let model = Compose {
             accounts,
