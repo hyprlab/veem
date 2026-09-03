@@ -7,7 +7,7 @@
 //! the panel draws it. That is what "AppIndicator" means today.
 //!
 //! The item is an icon that wears a red dot while any inbox has unread mail,
-//! a tooltip saying how many, a menu (open, quit), and a click that brings the
+//! a tooltip saying how many, a menu (open, accounts, settings, quit), and a click that brings the
 //! window back. Off by default: on a desktop with no watcher nothing is drawn
 //! and nothing else changes — the Background Apps listing comes from the
 //! portal, which this never touches. The item keeps waiting, so enabling a
@@ -135,6 +135,27 @@ impl Tray for VireoTray {
                 label: "Open Vireo".to_string(),
                 activate: Box::new(|t: &mut Self| {
                     let _ = t.sender.send(AppMsg::PresentWindow);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
+            // The settings window sits on the main window, so that comes
+            // back first when it was hidden.
+            StandardItem {
+                label: "Accounts".to_string(),
+                activate: Box::new(|t: &mut Self| {
+                    let _ = t.sender.send(AppMsg::PresentWindow);
+                    let _ = t.sender.send(AppMsg::OpenAccounts);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Settings".to_string(),
+                activate: Box::new(|t: &mut Self| {
+                    let _ = t.sender.send(AppMsg::PresentWindow);
+                    let _ = t.sender.send(AppMsg::OpenPreferences);
                 }),
                 ..Default::default()
             }
