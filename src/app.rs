@@ -337,7 +337,12 @@ pub struct AppModel {
     /// item while the setting is on.
     tray_enabled: bool,
     tray_icon: config::TrayIcon,
+    tray_mail: bool,
     tray: Option<crate::tray::TrayHandle>,
+    /// What the tray menu last listed (account, id, sender, subject; `None`
+    /// for no section), so an unchanged list isn't re-sent over D-Bus on
+    /// every unread-count push.
+    tray_mail_key: std::cell::RefCell<Option<Vec<(u32, u32, String, String)>>>,
     /// Whether single-key (modifier-free) shortcuts are enabled. The window's key
     /// controller needs to read this without the model, so it is shared: with the
     /// feature off, keystrokes must pass straight through rather than be consumed
@@ -685,8 +690,11 @@ pub enum AppMsg {
     SetAutostart(bool),
     SetTray(bool),
     SetTrayIcon(config::TrayIcon),
+    SetTrayMail(bool),
     /// Quit was chosen from the tray icon's menu.
     QuitFromTray,
+    /// Delete was chosen under a message in the tray icon's menu.
+    TrayDelete { account_id: u32, folder_id: u32, message_id: u32 },
     /// A single-key shortcut fired.
     Shortcut(Shortcut),
     /// Show the keyboard-shortcut reference.
@@ -1800,7 +1808,9 @@ impl SimpleComponent for AppModel {
             autostart: config::load_autostart(),
             tray_enabled: config::load_tray(),
             tray_icon: config::load_tray_icon(),
+            tray_mail: config::load_tray_mail(),
             tray: None,
+            tray_mail_key: std::cell::RefCell::new(None),
             single_key: std::rc::Rc::new(std::cell::Cell::new(
                 config::load_single_key_shortcuts(),
             )),
@@ -3994,9 +4004,31 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetTrayMail(on) => {
+                if self.tray_mail != on {
+                    self.tray_mail = on;
+                    self.save_settings();
+                    // A sentinel no real list equals, so the change is sent
+                    // whichever way the switch went.
+                    *self.tray_mail_key.borrow_mut() =
+                        Some(vec![(u32::MAX, u32::MAX, String::new(), String::new())]);
+                    self.push_tray_mail();
+                }
+            }
+
             AppMsg::QuitFromTray => {
                 // The same teardown as Ctrl+Q: geometry saved, then exit.
                 relm4::main_application().activate_action("quit", None);
+            }
+
+            AppMsg::TrayDelete { account_id, folder_id, message_id } => {
+                if let Some(m) = self
+                    .find_cached_message(account_id, message_id)
+                    .or_else(|| notified_message(account_id, folder_id, message_id, &self.folders))
+                {
+                    self.delete_messages(vec![m], &sender);
+                    crate::notify::withdraw_mail(account_id);
+                }
             }
 
             AppMsg::SetSingleKey(on) => {
@@ -5672,6 +5704,7 @@ impl AppModel {
             self.autostart,
             self.tray_enabled,
             self.tray_icon,
+            self.tray_mail,
             self.show_remote_banner,
             self.sidebar_hover_expand,
             self.app_theme,
@@ -6520,16 +6553,84 @@ impl AppModel {
         if let Some(tray) = &self.tray {
             tray.set_unread(unified);
         }
+        self.push_tray_mail();
     }
 
-    /// Publish the tray item with the current icon and unread total.
+    /// Publish the tray item with the current icon, unread total and mail list.
     fn start_tray(&mut self, sender: &ComponentSender<Self>) {
         let unified = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
+        let mail = self.tray_mail.then(|| self.tray_mail_list());
+        *self.tray_mail_key.borrow_mut() = mail.as_deref().map(tray_mail_key);
         self.tray = crate::tray::TrayHandle::start(
             sender.input_sender().clone(),
             self.tray_icon,
             unified,
+            mail,
         );
+    }
+
+    /// Send the tray menu its mail list when it has changed.
+    fn push_tray_mail(&self) {
+        let Some(tray) = &self.tray else { return };
+        let mail = self.tray_mail.then(|| self.tray_mail_list());
+        let key = mail.as_deref().map(tray_mail_key);
+        if *self.tray_mail_key.borrow() == key {
+            return;
+        }
+        *self.tray_mail_key.borrow_mut() = key;
+        tray.set_mail(mail);
+    }
+
+    /// The newest unread inbox messages across accounts, as tray cards.
+    fn tray_mail_list(&self) -> Vec<crate::tray::TrayMail> {
+        let several = self.accounts.len() > 1;
+        let mut unread: Vec<(&Account, &Message)> = self
+            .accounts
+            .iter()
+            .filter_map(|a| Some((a, self.inbox_of(a.id)?)))
+            .flat_map(|(a, inbox)| {
+                self.message_cache
+                    .get(&(a.id, inbox.id))
+                    .into_iter()
+                    .flat_map(|msgs| msgs.iter())
+                    .filter(|m| m.unread)
+                    .map(move |m| (a, m))
+            })
+            .collect();
+        unread.sort_by(|x, y| y.1.timestamp.cmp(&x.1.timestamp));
+        unread
+            .into_iter()
+            .take(crate::tray::MAIL_LIMIT)
+            .map(|(a, m)| {
+                let sender = if m.from_name.trim().is_empty() {
+                    m.from_addr.clone()
+                } else {
+                    m.from_name.clone()
+                };
+                let mut heading = crate::tray::clip(&sender, 40);
+                if several {
+                    heading.push_str(" · ");
+                    heading.push_str(&crate::tray::clip(&a.label, 24));
+                }
+                if !m.date.is_empty() {
+                    heading.push_str(" · ");
+                    heading.push_str(&m.date);
+                }
+                let texture = match crate::avatar::lookup(&m.from_addr, self.gravatar) {
+                    crate::avatar::CacheLookup::Texture(t) => Some(t),
+                    _ => None,
+                };
+                crate::tray::TrayMail {
+                    account_id: m.account_id,
+                    folder_id: m.folder_id,
+                    message_id: m.id,
+                    heading,
+                    subject: crate::tray::clip(&m.subject, 60),
+                    preview: crate::tray::clip(&m.preview, 70),
+                    icon: crate::tray::sender_icon(&m.from_name, &m.from_addr, texture),
+                }
+            })
+            .collect()
     }
 
     /// Push the current accounts + folders to the sidebar, in the user's chosen
@@ -8918,6 +9019,7 @@ impl AppModel {
             autostart: self.autostart,
             tray: self.tray_enabled,
             tray_icon: self.tray_icon,
+            tray_mail: self.tray_mail,
             accounts_panel: accounts.widget().clone().upcast::<gtk::Widget>(),
             start_on_accounts: on_accounts,
         };
@@ -8978,6 +9080,7 @@ impl AppModel {
                 PrefOutput::SetAutostart(on) => AppMsg::SetAutostart(on),
                 PrefOutput::SetTray(on) => AppMsg::SetTray(on),
                 PrefOutput::SetTrayIcon(icon) => AppMsg::SetTrayIcon(icon),
+                PrefOutput::SetTrayMail(on) => AppMsg::SetTrayMail(on),
                 PrefOutput::SetPaletteCollapse(secs) => AppMsg::SetPaletteCollapse(secs),
                 PrefOutput::SetMessageTheme(t) => AppMsg::SetMessageTheme(t),
                 PrefOutput::Closed => AppMsg::ClosePreferences,
@@ -10172,6 +10275,13 @@ pub fn queue_mailto(uri: String) {
 /// cached [`Message`] (#38): the notified message may not be in the current
 /// view, but the worker upserts it into the cache before notifying, so the
 /// cache always has it.
+/// What identifies a tray mail list for change detection.
+fn tray_mail_key(mail: &[crate::tray::TrayMail]) -> Vec<(u32, u32, String, String)> {
+    mail.iter()
+        .map(|m| (m.account_id, m.message_id, m.heading.clone(), m.subject.clone()))
+        .collect()
+}
+
 fn notified_message(
     account_id: u32,
     folder_id: u32,

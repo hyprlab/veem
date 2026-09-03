@@ -23,11 +23,33 @@ use gtk::cairo;
 use gtk::gdk_pixbuf::{InterpType, Pixbuf, PixbufLoader};
 use gtk::prelude::*;
 use ksni::blocking::{Handle, TrayMethods};
-use ksni::menu::{MenuItem, StandardItem};
+use ksni::menu::{MenuItem, StandardItem, SubMenu};
 use ksni::{Category, Icon, Status, ToolTip, Tray};
 
 use crate::app::AppMsg;
 use crate::config::TrayIcon;
+
+/// One unread message as the tray menu shows it (issue #116): a card-like
+/// row with the sender's picture, then Open, Mark as Read, Archive and
+/// Delete beneath it. A DBusMenu is drawn by the panel, so a row is an
+/// icon and text, and the actions have to be a submenu rather than
+/// buttons on the card.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrayMail {
+    pub account_id: u32,
+    pub folder_id: u32,
+    pub message_id: u32,
+    /// First line: sender, account when there are several, and the date.
+    pub heading: String,
+    pub subject: String,
+    /// The list's preview text; empty when previews are off.
+    pub preview: String,
+    /// PNG of the sender's picture or initials, sized for a menu.
+    pub icon: Vec<u8>,
+}
+
+/// How many unread messages the menu lists, newest first.
+pub const MAIL_LIMIT: usize = 10;
 
 /// The app icon, as shipped.
 const APP_ICON_PNG: &[u8] = include_bytes!("../data/icons/hicolor/256x256/apps/co.hyprlab.Vireo.png");
@@ -49,11 +71,18 @@ pub struct TrayHandle {
 impl TrayHandle {
     /// Publish the item. `None` when the session bus can't be reached at
     /// all; a missing watcher is not that — the item then waits for one.
-    pub fn start(sender: relm4::Sender<AppMsg>, icon: TrayIcon, unread: u32) -> Option<Self> {
+    /// `mail` is `None` when the menu is not to list messages at all.
+    pub fn start(
+        sender: relm4::Sender<AppMsg>,
+        icon: TrayIcon,
+        unread: u32,
+        mail: Option<Vec<TrayMail>>,
+    ) -> Option<Self> {
         let tray = VireoTray {
             plain: render_set(icon, false),
             dotted: render_set(icon, true),
             unread,
+            mail,
             sender,
         };
         match tray.disable_dbus_name(true).assume_sni_available(true).spawn() {
@@ -83,6 +112,11 @@ impl TrayHandle {
         });
     }
 
+    /// Replace the menu's message list; `None` drops the section.
+    pub fn set_mail(&self, mail: Option<Vec<TrayMail>>) {
+        self.handle.update(move |t| t.mail = mail);
+    }
+
     /// Take the item down.
     pub fn stop(self) {
         let _ = self.handle.shutdown();
@@ -93,6 +127,8 @@ struct VireoTray {
     plain: Vec<Icon>,
     dotted: Vec<Icon>,
     unread: u32,
+    /// Unread inbox mail for the menu, or `None` when that section is off.
+    mail: Option<Vec<TrayMail>>,
     sender: relm4::Sender<AppMsg>,
 }
 
@@ -130,15 +166,29 @@ impl Tray for VireoTray {
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
-        vec![
-            StandardItem {
-                label: "Open Vireo".to_string(),
-                activate: Box::new(|t: &mut Self| {
-                    let _ = t.sender.send(AppMsg::PresentWindow);
-                }),
-                ..Default::default()
+        let mut items: Vec<MenuItem<Self>> = vec![StandardItem {
+            label: "Open Vireo".to_string(),
+            activate: Box::new(|t: &mut Self| {
+                let _ = t.sender.send(AppMsg::PresentWindow);
+            }),
+            ..Default::default()
+        }
+        .into()];
+        if let Some(mail) = &self.mail {
+            items.push(MenuItem::Separator);
+            if mail.is_empty() {
+                items.push(
+                    StandardItem {
+                        label: "No unread mail".to_string(),
+                        enabled: false,
+                        ..Default::default()
+                    }
+                    .into(),
+                );
             }
-            .into(),
+            items.extend(mail.iter().map(mail_item));
+        }
+        items.extend([
             MenuItem::Separator,
             // The settings window sits on the main window, so that comes
             // back first when it was hidden.
@@ -169,8 +219,143 @@ impl Tray for VireoTray {
                 ..Default::default()
             }
             .into(),
-        ]
+        ]);
+        items
     }
+}
+
+/// One message's row: the card as its label and picture, the actions
+/// beneath. Open is first, so it is one more click from the card.
+fn mail_item(m: &TrayMail) -> MenuItem<VireoTray> {
+    let (account_id, folder_id, message_id) = (m.account_id, m.folder_id, m.message_id);
+    let action = |label: &str, make: fn(u32, u32, u32) -> Vec<AppMsg>| -> MenuItem<VireoTray> {
+        StandardItem {
+            label: label.to_string(),
+            activate: Box::new(move |t: &mut VireoTray| {
+                for msg in make(account_id, folder_id, message_id) {
+                    let _ = t.sender.send(msg);
+                }
+            }),
+            ..Default::default()
+        }
+        .into()
+    };
+    let mut label = m.heading.clone();
+    if !m.subject.is_empty() {
+        label.push('\n');
+        label.push_str(&m.subject);
+    }
+    if !m.preview.is_empty() {
+        label.push('\n');
+        label.push_str(&m.preview);
+    }
+    SubMenu {
+        label: menu_text(&label),
+        icon_data: m.icon.clone(),
+        submenu: vec![
+            action("Open", |a, f, i| {
+                vec![AppMsg::PresentWindow, AppMsg::OpenMessageFromNotification {
+                    account_id: a,
+                    folder_id: f,
+                    message_id: i,
+                }]
+            }),
+            action("Mark as Read", |a, f, i| {
+                vec![AppMsg::NotificationMarkRead { account_id: a, folder_id: f, message_id: i }]
+            }),
+            action("Archive", |a, f, i| {
+                vec![AppMsg::NotificationArchive { account_id: a, folder_id: f, message_id: i }]
+            }),
+            action("Delete", |a, f, i| {
+                vec![AppMsg::TrayDelete { account_id: a, folder_id: f, message_id: i }]
+            }),
+        ],
+        ..Default::default()
+    }
+    .into()
+}
+
+/// A menu label reads `_` as a mnemonic marker; mail text means it literally.
+fn menu_text(s: &str) -> String {
+    s.replace('_', "__")
+}
+
+/// Cut a line of mail text down to menu width, on a character boundary.
+pub fn clip(s: &str, max: usize) -> String {
+    let s: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if s.chars().count() <= max {
+        return s;
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+/// The menu's picture for a sender: the contact or Gravatar picture when the
+/// avatar cache has one, else their initials on a colour picked by name — the
+/// same fallback the message list shows.
+pub fn sender_icon(name: &str, email: &str, texture: Option<gtk::gdk::Texture>) -> Vec<u8> {
+    const SIZE: i32 = 32;
+    if let Some(png) = texture.and_then(|t| {
+        let loader = PixbufLoader::with_type("png").ok()?;
+        loader.write(&t.save_to_png_bytes()).ok()?;
+        loader.close().ok()?;
+        loader
+            .pixbuf()?
+            .scale_simple(SIZE, SIZE, InterpType::Bilinear)?
+            .save_to_bufferv("png", &[])
+            .ok()
+    }) {
+        return png;
+    }
+    initials_png(name, email, SIZE).unwrap_or_default()
+}
+
+fn initials_png(name: &str, email: &str, size: i32) -> Option<Vec<u8>> {
+    const PALETTE: [(f64, f64, f64); 6] = [
+        (0.21, 0.52, 0.89), // blue
+        (0.18, 0.76, 0.49), // green
+        (0.90, 0.65, 0.04), // yellow
+        (0.90, 0.38, 0.00), // orange
+        (0.57, 0.25, 0.67), // purple
+        (0.75, 0.11, 0.16), // red
+    ];
+    let seed = if name.is_empty() { email } else { name };
+    let hash = seed.bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize));
+    let (r, g, b) = PALETTE[hash % PALETTE.len()];
+    let initials: String = {
+        let src = if name.trim().is_empty() { email.split('@').next().unwrap_or("") } else { name };
+        let mut it = src
+            .split(|c: char| c.is_whitespace() || c == '.' || c == '_' || c == '-')
+            .filter_map(|w| w.chars().next())
+            .filter(|c| c.is_alphanumeric())
+            .map(|c| c.to_uppercase().next().unwrap_or(c));
+        match (it.next(), it.last()) {
+            (Some(a), Some(z)) => format!("{a}{z}"),
+            (Some(a), None) => a.to_string(),
+            _ => "?".to_string(),
+        }
+    };
+    let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, size, size).ok()?;
+    {
+        let cr = cairo::Context::new(&surface).ok()?;
+        let s = f64::from(size);
+        cr.set_source_rgb(r, g, b);
+        cr.arc(s / 2.0, s / 2.0, s / 2.0, 0.0, std::f64::consts::TAU);
+        cr.fill().ok()?;
+        cr.set_source_rgb(1.0, 1.0, 1.0);
+        cr.select_font_face("Cantarell", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+        cr.set_font_size(s * if initials.chars().count() > 1 { 0.44 } else { 0.5 });
+        let ext = cr.text_extents(&initials).ok()?;
+        cr.move_to(
+            s / 2.0 - ext.width() / 2.0 - ext.x_bearing(),
+            s / 2.0 - ext.height() / 2.0 - ext.y_bearing(),
+        );
+        cr.show_text(&initials).ok()?;
+    }
+    let mut png = Vec::new();
+    surface.write_to_png(&mut png).ok()?;
+    Some(png)
 }
 
 /// Every size of one icon, with or without the dot.
@@ -289,6 +474,20 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn menu_text_keeps_underscores_literal() {
+        assert_eq!(menu_text("snake_case"), "snake__case");
+        assert_eq!(clip("  a   long\n line  of text ", 8), "a long …");
+        assert_eq!(clip("short", 8), "short");
+    }
+
+    #[test]
+    fn initials_render_as_a_png() {
+        let png = sender_icon("Ada Lovelace", "ada@example.org", None);
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        assert!(!sender_icon("", "solo@example.org", None).is_empty());
     }
 
     #[test]

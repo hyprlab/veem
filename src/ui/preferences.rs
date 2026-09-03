@@ -63,6 +63,7 @@ pub struct PrefInit {
     pub autostart: bool,
     pub tray: bool,
     pub tray_icon: TrayIcon,
+    pub tray_mail: bool,
     /// The accounts panel (built by the AccountsWindow component), shown
     /// behind the window's "Accounts" tab.
     pub accounts_panel: gtk::Widget,
@@ -222,6 +223,7 @@ pub enum PrefInput {
     ToggleAutostart(bool),
     ToggleTray(bool),
     ChangeTrayIcon(u32),
+    ToggleTrayMail(bool),
     ChangePaletteCollapse(u64),
     ChangeMessageTheme(u32),
     ChangeAppTheme(u32),
@@ -279,6 +281,7 @@ pub enum PrefOutput {
     SetAutostart(bool),
     SetTray(bool),
     SetTrayIcon(TrayIcon),
+    SetTrayMail(bool),
     SetPaletteCollapse(u64),
     SetMessageTheme(MessageTheme),
     Closed,
@@ -754,6 +757,17 @@ impl Component for Preferences {
                             },
                         },
 
+                        #[name = "tray_mail_row"]
+                        adw::SwitchRow {
+                            set_title: "Unread mail in the tray menu",
+                            set_subtitle: "List the newest unread inbox messages in the icon's \
+                                           menu, each with Open, Mark as Read, Archive and \
+                                           Delete.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleTrayMail(row.is_active()));
+                            },
+                        },
+
                         #[name = "single_key_row"]
                         adw::SwitchRow {
                             set_title: "Single-key shortcuts",
@@ -1000,12 +1014,17 @@ impl Component for Preferences {
             .position(|(_, t)| *t == init.tray_icon)
             .unwrap_or(0);
         widgets.tray_icon_row.set_selected(tray_icon_sel as u32);
-        // The icon choice only means anything with a tray icon shown.
+        widgets.tray_mail_row.set_active(init.tray_mail);
+        // The icon choice and the menu's mail list only mean anything with
+        // a tray icon shown.
         widgets.tray_icon_row.set_sensitive(init.tray);
+        widgets.tray_mail_row.set_sensitive(init.tray);
         {
             let tray_icon_row = widgets.tray_icon_row.clone();
+            let tray_mail_row = widgets.tray_mail_row.clone();
             widgets.tray_row.connect_active_notify(move |row| {
                 tray_icon_row.set_sensitive(row.is_active());
+                tray_mail_row.set_sensitive(row.is_active());
             });
         }
         widgets.single_key_row.set_active(init.single_key_shortcuts);
@@ -1322,6 +1341,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleTray(on) => {
                 let _ = sender.output(PrefOutput::SetTray(on));
+            }
+            PrefInput::ToggleTrayMail(on) => {
+                let _ = sender.output(PrefOutput::SetTrayMail(on));
             }
             PrefInput::ChangeTrayIcon(index) => {
                 let icon = TRAY_ICONS
