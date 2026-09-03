@@ -4044,10 +4044,9 @@ impl SimpleComponent for AppModel {
                 } else if let Some((account_id, folder_id, name, path)) = self
                     .accounts
                     .iter()
-                    .filter(|a| self.inbox_unread(a.id) > 0)
-                    .filter_map(|a| self.inbox_of(a.id))
+                    .flat_map(|a| self.counted_folders(a.id))
+                    .find(|f| self.folder_unread_of(f) > 0)
                     .map(|f| (f.account_id, f.id, f.name.clone(), f.path.clone()))
-                    .next()
                 {
                     self.select_folder(account_id, folder_id, name, path);
                 }
@@ -4610,6 +4609,11 @@ impl SimpleComponent for AppModel {
                 // File whatever already sits in the inboxes under the new
                 // rules; reuses the blacklist's re-sync sweep.
                 self.sweep_blacklisted();
+                // The counted folders may have changed with the rules (#116):
+                // the total follows at once, and a newly counted folder's
+                // list is fetched for the tray menu.
+                self.push_unread_counts();
+                self.sync_unloaded_counted_folders();
             }
 
             AppMsg::OpenListSearch => {
@@ -4999,7 +5003,7 @@ impl SimpleComponent for AppModel {
             AppMsg::FolderUnread { account_id, folder_id, unread } => {
                 let prev = self.folder_unread.insert((account_id, folder_id), unread);
                 if prev != Some(unread) {
-                    self.sync_background_inbox(account_id, folder_id);
+                    self.sync_background_folder(account_id, folder_id);
                 }
                 self.push_unread_counts();
             }
@@ -5016,7 +5020,7 @@ impl SimpleComponent for AppModel {
                 if let Some(folder_id) = id {
                     let prev = self.folder_unread.insert((account_id, folder_id), unread);
                     if prev != Some(unread) {
-                        self.sync_background_inbox(account_id, folder_id);
+                        self.sync_background_folder(account_id, folder_id);
                     }
                     self.push_unread_counts();
                 }
@@ -6008,6 +6012,22 @@ impl AppModel {
                     self.unified_by_account.insert(account_id, messages);
                 }
             }
+            // The folders counting filters file into (#116) as well, so the
+            // tray menu can list their unread mail before any sync.
+            let counted = folders.iter().filter(|f| {
+                !matches!(f.kind, FolderKind::Inbox | FolderKind::Trash | FolderKind::Junk)
+                    && self.filters.iter().any(|r| {
+                        r.count_unread
+                            && r.account_email.eq_ignore_ascii_case(&c.email)
+                            && r.dest_path == f.path
+                    })
+            });
+            for f in counted {
+                let messages = cache.load_messages(account_id, &f.path, f.id);
+                if !messages.is_empty() {
+                    self.message_cache.insert((account_id, f.id), messages);
+                }
+            }
             for f in &folders {
                 if f.unread > 0 {
                     self.folder_unread.insert((account_id, f.id), f.unread);
@@ -6570,7 +6590,7 @@ impl AppModel {
     /// loaded message lists. Cheap enough to call on every read/sync.
     fn push_unread_counts(&self) {
         let folders = self.folder_unread.clone();
-        let unified = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
+        let unified = self.unified_unread();
         self.sidebar
             .emit(SidebarInput::SetUnread { folders, unified });
         // The same number is what GNOME shows beside Vireo in Background Apps,
@@ -6587,7 +6607,7 @@ impl AppModel {
 
     /// Publish the tray item with the current icon, unread total and mail list.
     fn start_tray(&mut self, sender: &ComponentSender<Self>) {
-        let unified = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
+        let unified = self.unified_unread();
         let mail = self.tray_mail.then(|| self.tray_mail_list());
         *self.tray_mail_key.borrow_mut() = mail.as_ref().map(tray_mail_key);
         self.tray = crate::tray::TrayHandle::start(
@@ -6610,10 +6630,10 @@ impl AppModel {
         tray.set_mail(mail);
     }
 
-    /// The newest unread inbox messages across accounts, as tray cards, with
-    /// the unread total the badges show (the cards may be fewer).
+    /// The newest unread messages across accounts' counted folders, as tray
+    /// cards, with the unread total the badges show (the cards may be fewer).
     fn tray_mail_list(&self) -> crate::tray::TrayMailList {
-        let unread = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
+        let unread = self.unified_unread();
         let items = self.tray_mail_cards();
         crate::tray::TrayMailList { items, unread }
     }
@@ -6623,10 +6643,10 @@ impl AppModel {
         let mut unread: Vec<(&Account, &Message)> = self
             .accounts
             .iter()
-            .filter_map(|a| Some((a, self.inbox_of(a.id)?)))
-            .flat_map(|(a, inbox)| {
+            .flat_map(|a| self.counted_folders(a.id).into_iter().map(move |f| (a, f)))
+            .flat_map(|(a, f)| {
                 self.message_cache
-                    .get(&(a.id, inbox.id))
+                    .get(&(a.id, f.id))
                     .into_iter()
                     .flat_map(|msgs| msgs.iter())
                     .filter(|m| m.unread)
@@ -6758,7 +6778,7 @@ impl AppModel {
                 // The demo has no config-file accounts, but its two mock accounts
                 // deserve the same All Inboxes opening as a real multi-account setup.
                 || (demo_mode() && self.accounts.len() > 1));
-        let unified_unread = self.accounts.iter().map(|a| self.inbox_unread(a.id)).sum();
+        let unified_unread = self.unified_unread();
         self.sidebar.emit(SidebarInput::SetContents {
             sections,
             show_unified,
@@ -9806,27 +9826,65 @@ impl AppModel {
     }
 
     /// Server-side unread count for an account's inbox.
-    fn inbox_unread(&self, account_id: u32) -> u32 {
-        self.inbox_of(account_id)
-            .and_then(|inbox| self.folder_unread.get(&(account_id, inbox.id)))
-            .copied()
-            .unwrap_or(0)
+    /// The folders whose unread mail makes up an account's unread total: its
+    /// inbox, then the destination of every filter rule marked to count
+    /// (#116), in rule order and without repeats. Trash and Junk never
+    /// count, whatever a rule says: mail filed there is being discarded.
+    fn counted_folders(&self, account_id: u32) -> Vec<&Folder> {
+        let mut out: Vec<&Folder> = Vec::new();
+        if let Some(inbox) = self.inbox_of(account_id) {
+            out.push(inbox);
+        }
+        let Some(folders) = self.folders.get(&account_id) else { return out };
+        let Some(email) = self.email_of(account_id) else { return out };
+        let rules = self
+            .filters
+            .iter()
+            .filter(|r| r.count_unread && r.account_email.eq_ignore_ascii_case(&email));
+        for r in rules {
+            let Some(f) = folders.iter().find(|f| f.path == r.dest_path) else { continue };
+            if matches!(f.kind, FolderKind::Trash | FolderKind::Junk)
+                || out.iter().any(|o| o.id == f.id)
+            {
+                continue;
+            }
+            out.push(f);
+        }
+        out
+    }
+
+    fn folder_unread_of(&self, f: &Folder) -> u32 {
+        self.folder_unread.get(&(f.account_id, f.id)).copied().unwrap_or(0)
+    }
+
+    /// An account's unread total over its [`counted_folders`](Self::counted_folders).
+    fn counted_unread(&self, account_id: u32) -> u32 {
+        self.counted_folders(account_id).iter().map(|f| self.folder_unread_of(f)).sum()
+    }
+
+    /// The number behind the All Inboxes chip, the tray icon's dot and
+    /// menu, and the Background Apps status: every account's counted
+    /// unread mail.
+    fn unified_unread(&self) -> u32 {
+        self.accounts.iter().map(|a| self.counted_unread(a.id)).sum()
     }
 
     /// A watcher or sweep reported a changed unread count for `folder_id`.
-    /// When that is an account's inbox and the worker's IDLE sits elsewhere
-    /// (another folder is open), the inbox's message list used to refresh
-    /// only when the inbox was next opened: the tray menu said "No unread
-    /// mail" under a count that said otherwise, and mail arriving there
-    /// raised no notification, since both read the list. Ask for a quiet
-    /// resync so the list follows the count. An open inbox (alone or as All
-    /// Inboxes) is the IDLE folder, whose own resync already covers it.
-    fn sync_background_inbox(&self, account_id: u32, folder_id: u32) {
-        let Some(inbox) = self.inbox_of(account_id) else { return };
-        if inbox.id != folder_id {
+    /// When that is one of the account's counted folders (its inbox, or a
+    /// folder a counting filter files into) and the worker's IDLE sits
+    /// elsewhere, the folder's message list used to refresh only when it
+    /// was next opened: the tray menu said "No unread mail" under a count
+    /// that said otherwise, and mail arriving in the inbox raised no
+    /// notification, since both read the list. Ask for a quiet resync so
+    /// the list follows the count. An open inbox (alone or as All Inboxes)
+    /// or an open folder is the IDLE folder, whose own resync covers it.
+    fn sync_background_folder(&self, account_id: u32, folder_id: u32) {
+        let Some(folder) =
+            self.counted_folders(account_id).into_iter().find(|f| f.id == folder_id)
+        else {
             return;
-        }
-        let open = self.unified
+        };
+        let open = (self.unified && folder.kind == FolderKind::Inbox)
             || self
                 .selected
                 .as_ref()
@@ -9834,8 +9892,24 @@ impl AppModel {
         if open {
             return;
         }
-        let path = inbox.path.clone();
+        let path = folder.path.clone();
         self.send_to(account_id, MailRequest::SyncFolder { folder_id, path });
+    }
+
+    /// Counted folders (#116) whose lists have never been loaded this run:
+    /// fetch them quietly, so the tray menu can show their unread mail
+    /// without waiting for their counts to move.
+    fn sync_unloaded_counted_folders(&self) {
+        for a in &self.accounts {
+            for f in self.counted_folders(a.id) {
+                if !self.message_cache.contains_key(&(a.id, f.id)) {
+                    self.send_to(a.id, MailRequest::SyncFolder {
+                        folder_id: f.id,
+                        path: f.path.clone(),
+                    });
+                }
+            }
+        }
     }
 
     /// Mark a cached message read in every list that holds it, so unread badges

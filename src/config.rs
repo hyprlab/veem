@@ -1105,6 +1105,16 @@ pub struct FilterRule {
     pub value: String,
     /// Destination folder path on the account.
     pub dest_path: String,
+    /// Whether the destination folder's unread mail counts toward the unread
+    /// total (the All Inboxes chip, the tray icon and its menu, the
+    /// Background Apps status), as inbox mail does (#116). Trash and Junk
+    /// destinations never count, whatever this says.
+    #[serde(default = "count_unread_default")]
+    pub count_unread: bool,
+}
+
+fn count_unread_default() -> bool {
+    true
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -2008,6 +2018,7 @@ mod filter_tests {
             matcher,
             value: value.into(),
             dest_path: "Archive".into(),
+            count_unread: true,
         }
     }
 
