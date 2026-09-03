@@ -159,6 +159,11 @@ pub enum SidebarInput {
         unified_unread: u32,
     },
     UnifiedRowSelected,
+    /// Select the "All Inboxes" row programmatically (the tray menu's
+    /// "View all unread"): the highlight follows, and the selection goes
+    /// out like a click. State is set before the row, so the row-selected
+    /// signal hits the already-selected guard.
+    SelectUnifiedRow,
     /// The "Attachments" row was chosen.
     AttachmentsRowSelected,
     /// The "Contacts" row was clicked (it acts as a launcher, not a selection).
@@ -450,6 +455,18 @@ impl Component for Sidebar {
                 }
                 self.selected = Sel::Unified;
                 self.clear_other_selections(Sel::Unified);
+                let _ = sender.output(SidebarOutput::UnifiedSelected);
+            }
+
+            SidebarInput::SelectUnifiedRow => {
+                if self.selected == Sel::Unified {
+                    return;
+                }
+                self.selected = Sel::Unified;
+                self.clear_other_selections(Sel::Unified);
+                if let Some(l) = &self.unified_list {
+                    l.select_row(l.row_at_index(0).as_ref());
+                }
                 let _ = sender.output(SidebarOutput::UnifiedSelected);
             }
 

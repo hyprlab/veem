@@ -782,6 +782,10 @@ struct PrivacyFile {
     /// Which icon the tray item shows.
     #[serde(default)]
     tray_icon: TrayIcon,
+    /// Whether the tray menu lists unread inbox mail, each a row that opens
+    /// the message.
+    #[serde(default = "default_tray_mail")]
+    tray_mail: bool,
     /// Whether to say anything at all when remote content is blocked. Off hides
     /// the banner; it never changes what is blocked, only whether you're told.
     #[serde(default = "default_show_remote_banner")]
@@ -962,6 +966,7 @@ impl Default for PrivacyFile {
             autostart: false,
             tray: false,
             tray_icon: TrayIcon::default(),
+            tray_mail: default_tray_mail(),
         }
     }
 }
@@ -1366,6 +1371,15 @@ pub fn load_tray_icon() -> TrayIcon {
     load_privacy().tray_icon
 }
 
+fn default_tray_mail() -> bool {
+    true
+}
+
+/// Whether the tray menu lists unread inbox mail.
+pub fn load_tray_mail() -> bool {
+    load_privacy().tray_mail
+}
+
 /// Persist all app settings together (so no field is clobbered).
 #[allow(clippy::too_many_arguments)]
 pub fn save_privacy(
@@ -1407,6 +1421,7 @@ pub fn save_privacy(
     autostart: bool,
     tray: bool,
     tray_icon: TrayIcon,
+    tray_mail: bool,
     show_remote_banner: bool,
     sidebar_hover_expand: bool,
     app_theme: AppTheme,
@@ -1461,6 +1476,7 @@ pub fn save_privacy(
         autostart,
         tray,
         tray_icon,
+        tray_mail,
         show_remote_banner,
         sidebar_hover_expand,
         app_theme,
