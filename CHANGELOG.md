@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.20.0-beta.5 — 2026-09-03
+
+Cached mail opens at once at startup, and a tray icon for the desktops
+that have one (#116).
+
+- **Cached mail opens at once, whatever the worker is syncing.** Each
+  account has one worker that takes requests strictly in order, and
+  every arm runs to completion before the next request is even read
+  from the channel. A folder sync, a backfill chunk of a thousand UIDs,
+  or an attachment prefetch (a whole raw message each) holds it for
+  seconds, and a click on a message whose body was cached long ago sat
+  behind all of it: at startup, with the initial sync running, the
+  reader showed its spinner over mail already on disk. (The beta.1
+  schema bump to v13 made it obvious: it also dropped the bodies table,
+  so every message was re-fetched once, each fetch queued behind the
+  sync.) A cache lane now sits in front of each worker: a thread of its
+  own that answers what the disk cache can (a body, a batch of bodies,
+  an attachment list, a conversation lookup) and passes only what needs
+  the network on to the worker, in the order it arrived.
+- **A tray icon for the desktops that have a tray (#116).** Vireo can
+  publish a StatusNotifierItem, which is what AppIndicator means today:
+  Cinnamon, KDE, MATE, XFCE, and GNOME with the AppIndicator extension
+  draw it. The item is the Vireo icon, or the reader's unread envelope
+  in white or black for panels that don't recolour symbolic icons, with
+  a red dot on its top-right corner while any inbox has unread mail, a
+  tooltip with the count, and a menu: Open Vireo, Accounts, Settings,
+  Quit. A click brings the window back. Off by default, as a switch and
+  an icon choice under Keep running in the background. On a desktop
+  with no tray nothing is drawn and Background Apps is untouched (the
+  item is a D-Bus object the portal never sees); the item keeps waiting,
+  so enabling a tray extension later picks it up without a restart.
+  Icons go as pixel data, since the panel is outside the sandbox. New
+  dependency: `ksni`. The Flatpak manifest gains
+  `--talk-name=org.kde.StatusNotifierWatcher`.
+
 ## 1.20.0-beta.4 — 2026-09-03
 
 The attachment drawer's seam, finished (beta.3 feedback).

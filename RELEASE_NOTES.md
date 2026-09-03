@@ -2,6 +2,10 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.20.0-beta.5
+
+Messages already on disk open the instant they are clicked, even while the startup sync is still running. And for desktops with a system tray (Cinnamon, KDE, MATE, XFCE, or GNOME with the AppIndicator extension), an optional tray icon (#116): the Vireo icon or a white or black envelope, a red dot while any inbox has unread mail, and a menu to open Vireo, Accounts, Settings, or quit. Off by default under Settings → Keep running in the background.
+
 ## What's new in 1.20.0-beta.4
 
 The attachment drawer's seam is finished: the dead click zone is gone at its root (the Paned's own hidden gestures were claiming presses), the whole edge is one continuous handle that highlights on hover, and each seam's cursor matches how it works.
