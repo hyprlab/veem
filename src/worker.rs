@@ -2864,24 +2864,36 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
 
     use lettre::message::{header::ContentType, Attachment, MultiPart, SinglePart};
     let has_html = !msg.html.trim().is_empty();
+    // The message's readable half: alternative(plain, html) — wrapped in
+    // related() carrying an inline part per image the composer embedded as a
+    // `data:` URI (#113). Inline parts go out `Content-Disposition: inline`
+    // with a Content-ID the HTML references by `cid:`, so they render in
+    // place and stay out of the recipient's attachment list — the same
+    // distinction the reader's own `extract_attachments` draws.
+    let content = has_html.then(|| {
+        let (html, images) = extract_data_images(&msg.html);
+        let alt = MultiPart::alternative_plain_html(msg.body.clone(), html);
+        if images.is_empty() {
+            return alt;
+        }
+        let mut related = MultiPart::related().multipart(alt);
+        for img in images {
+            let ct = ContentType::parse(&img.mime)
+                .unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
+            related = related.singlepart(Attachment::new_inline(img.cid).body(img.data, ct));
+        }
+        related
+    });
     let email = if msg.attachments.is_empty() {
-        if has_html {
-            builder.multipart(MultiPart::alternative_plain_html(
-                msg.body.clone(),
-                msg.html.clone(),
-            ))?
-        } else {
-            builder.body(msg.body.clone())?
+        match content {
+            Some(content) => builder.multipart(content)?,
+            None => builder.body(msg.body.clone())?,
         }
     } else {
         // text part (plain, or alternative plain+html) followed by attachments.
-        let mut multipart = if has_html {
-            MultiPart::mixed().multipart(MultiPart::alternative_plain_html(
-                msg.body.clone(),
-                msg.html.clone(),
-            ))
-        } else {
-            MultiPart::mixed().singlepart(SinglePart::plain(msg.body.clone()))
+        let mut multipart = match content {
+            Some(content) => MultiPart::mixed().multipart(content),
+            None => MultiPart::mixed().singlepart(SinglePart::plain(msg.body.clone())),
         };
         for path in &msg.attachments {
             // Name the file in the error: "No such file or directory" on its own
@@ -2900,6 +2912,64 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
         builder.multipart(multipart)?
     };
     Ok(email)
+}
+
+/// One image the composer embedded, lifted out of the outgoing HTML: its
+/// generated Content-ID, MIME type, and decoded bytes.
+struct InlineImage {
+    cid: String,
+    mime: String,
+    data: Vec<u8>,
+}
+
+/// Lift every quoted `data:image/...;base64,...` URI out of outgoing HTML
+/// into an [`InlineImage`], replacing the URI with a `cid:` reference (#113).
+/// Anything that is not a well-formed base64 image data URI in an attribute
+/// value is left exactly as written.
+fn extract_data_images(html: &str) -> (String, Vec<InlineImage>) {
+    let bytes = html.as_bytes();
+    let mut out = String::with_capacity(html.len());
+    let mut parts: Vec<InlineImage> = Vec::new();
+    let mut i = 0usize;
+    // Content-IDs are per-message; the timestamp keeps them globally unique
+    // the way Message-IDs are, since some clients index by Content-ID alone.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    while let Some(off) = html[i..].find("data:image/") {
+        let start = i + off;
+        // Only splice an attribute value: the URI must sit right after a
+        // quote and run to the matching one.
+        let quote = match start.checked_sub(1).map(|p| bytes[p]) {
+            Some(q @ (b'"' | b'\'')) => Some(q as char),
+            _ => None,
+        };
+        let len = quote.and_then(|q| html[start..].find(q));
+        let lifted = len.and_then(|len| {
+            let uri = &html[start..start + len];
+            let (meta, payload) = uri.split_once(',')?;
+            let mime = meta.strip_prefix("data:")?.strip_suffix(";base64")?;
+            let data = crate::oauth::base64_decode(payload)?;
+            Some((len, mime.to_string(), data))
+        });
+        match lifted {
+            Some((len, mime, data)) => {
+                let cid = format!("{}.{}@vireo.inline", stamp, parts.len() + 1);
+                out.push_str(&html[i..start]);
+                out.push_str("cid:");
+                out.push_str(&cid);
+                parts.push(InlineImage { cid, mime, data });
+                i = start + len;
+            }
+            None => {
+                out.push_str(&html[i..start + "data:image/".len()]);
+                i = start + "data:image/".len();
+            }
+        }
+    }
+    out.push_str(&html[i..]);
+    (out, parts)
 }
 
 /// A Message-ID for outgoing mail: unique, and in the sender's own domain so it
@@ -8254,6 +8324,63 @@ mod tests {
         assert!(raw.contains("base64"), "{raw}");
         assert!(raw.contains("JVBERi0xLjQAgP8="), "{raw}");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A picture pasted into the composer rides the HTML as a data: URI; the
+    /// wire message must carry it as an inline cid: part inside
+    /// multipart/related — rendered in place, absent from the recipient's
+    /// attachment list — with no data: URI left behind.
+    #[test]
+    fn pasted_images_go_out_as_inline_cid_parts() {
+        let png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02];
+        let uri = format!("data:image/png;base64,{}", crate::oauth::base64_encode(&png));
+        let msg = OutgoingMessage {
+            to: "ada@example.com".into(),
+            body: "see picture".into(),
+            html: format!("<p>see</p><img src=\"{uri}\" style=\"max-width:100%\"><p>picture</p>"),
+            ..sample_outgoing()
+        };
+        let email = build_email(&sample_account(), &msg).expect("email builds");
+        let raw = String::from_utf8_lossy(&email.formatted()).to_string();
+        assert!(raw.contains("multipart/related"), "{raw}");
+        assert!(raw.contains("Content-ID"), "{raw}");
+        assert!(raw.contains("cid:"), "{raw}");
+        assert!(raw.contains("Content-Disposition: inline"), "{raw}");
+        assert!(raw.contains("image/png"), "{raw}");
+        assert!(!raw.contains("data:image"), "{raw}");
+    }
+
+    /// HTML without an embedded image keeps the old, plain alternative shape.
+    #[test]
+    fn html_without_images_stays_a_plain_alternative() {
+        let msg = OutgoingMessage {
+            to: "ada@example.com".into(),
+            body: "hi".into(),
+            html: "<p>hi</p>".into(),
+            ..sample_outgoing()
+        };
+        let email = build_email(&sample_account(), &msg).expect("email builds");
+        let raw = String::from_utf8_lossy(&email.formatted()).to_string();
+        assert!(raw.contains("multipart/alternative"), "{raw}");
+        assert!(!raw.contains("multipart/related"), "{raw}");
+    }
+
+    /// The lift leaves anything that is not a well-formed quoted base64 image
+    /// data URI exactly as written.
+    #[test]
+    fn extract_data_images_leaves_odd_uris_alone() {
+        let html = "<p>data:image/png is a scheme</p><img src=\"data:image/png;base65,zzz\">";
+        let (out, imgs) = extract_data_images(html);
+        assert_eq!(out, html);
+        assert!(imgs.is_empty());
+
+        // Single-quoted attributes lift too.
+        let (out, imgs) =
+            extract_data_images("<img src='data:image/jpeg;base64,AAAA'>");
+        assert!(out.contains("src='cid:"), "{out}");
+        assert_eq!(imgs.len(), 1);
+        assert_eq!(imgs[0].mime, "image/jpeg");
+        assert_eq!(imgs[0].data, vec![0, 0, 0]);
     }
 
     #[test]

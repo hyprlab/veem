@@ -290,6 +290,50 @@ const PASTE_SCRIPT: &str = r#"<script>
   window.__vireoPasteOnce = null;
   var urlRe = /((?:https?:\/\/|www\.)[^\s<>()]+[^\s<>().,;:!?'"])/gi;
   function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  /* Inline images (#113): a pasted or dropped image lands in the text as an
+     <img src="data:..."> at the caret; the send path lifts it into a cid:
+     part. Oversized images are downscaled on insert — a phone screenshot is
+     thousands of pixels the recipient's pane will never show. */
+  var MAXPX = 1600;
+  function insertImageFile(f){
+    if(!f) return;
+    var r = new FileReader();
+    r.onload = function(){ placeImage(String(r.result), f.type); };
+    r.readAsDataURL(f);
+  }
+  function placeImage(url, type){
+    var im = new Image();
+    im.onload = function(){
+      var w = im.naturalWidth, h = im.naturalHeight;
+      if(w > MAXPX || h > MAXPX){
+        var s = Math.min(MAXPX / w, MAXPX / h);
+        var c = document.createElement('canvas');
+        c.width = Math.round(w * s); c.height = Math.round(h * s);
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        url = type === 'image/jpeg' ? c.toDataURL('image/jpeg', 0.85) : c.toDataURL('image/png');
+      }
+      document.execCommand('insertHTML', false, '<img src="' + url + '" style="max-width:100%">');
+    };
+    im.src = url;
+  }
+  document.addEventListener('dragover', function(e){
+    var it = (e.dataTransfer && e.dataTransfer.items) || [];
+    for(var i = 0; i < it.length; i++){
+      if(it[i].kind === 'file'){ e.preventDefault(); return; }
+    }
+  });
+  document.addEventListener('drop', function(e){
+    var fs = (e.dataTransfer && e.dataTransfer.files) || [];
+    var imgs = [];
+    for(var i = 0; i < fs.length; i++){ if(/^image\//.test(fs[i].type)) imgs.push(fs[i]); }
+    if(!imgs.length) return;
+    e.preventDefault();
+    if(document.caretRangeFromPoint){
+      var r = document.caretRangeFromPoint(e.clientX, e.clientY);
+      if(r){ var sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+    }
+    imgs.forEach(insertImageFile);
+  });
   function insertLinkified(text){
     urlRe.lastIndex = 0;
     var out='', last=0, m;
@@ -306,6 +350,16 @@ const PASTE_SCRIPT: &str = r#"<script>
   }
   document.addEventListener('paste', function(e){
     var cd = e.clipboardData; if(!cd) return;
+    /* An image on the clipboard beats any text flavour riding along with it,
+       and pastes inline whichever paste mode is set. */
+    var its = cd.items || [];
+    for(var i = 0; i < its.length; i++){
+      if(its[i].kind === 'file' && /^image\//.test(its[i].type)){
+        e.preventDefault();
+        insertImageFile(its[i].getAsFile());
+        return;
+      }
+    }
     var rich = window.__vireoPasteRich === true;
     if(window.__vireoPasteOnce !== null){ rich = window.__vireoPasteOnce; window.__vireoPasteOnce = null; }
     var html = cd.getData('text/html');
