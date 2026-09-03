@@ -183,13 +183,11 @@ impl SimpleComponent for AttachmentDrawer {
         #[root]
         gtk::Paned {
             set_orientation: gtk::Orientation::Vertical,
-            // No wide handle: its stock chrome is a bordered band with a grip.
-            // The plain separator is styled invisible (see `.drawer-split`) —
-            // a slim grabbable strip, no lines, no grip — and while the drawer
-            // is collapsed it is made untargetable entirely (see
-            // set_divider_draggable), so only the expanded drawer resizes.
-            // The visible affordance is the grab pill floated over the
-            // reader's bottom edge (built in init).
+            // No wide handle: its stock chrome is a bordered band with a
+            // grip. The plain separator is a permanently inert hairline (see
+            // `.drawer-split` and set_divider_draggable) — the grab pill
+            // floated over the reader's bottom edge and the drawer's own
+            // edge strip carry every click and drag.
             add_css_class: "drawer-split",
             // The reader (start child) shrinks to make room; the drawer keeps its
             // set size. This is what prevents the window from growing.
@@ -209,6 +207,18 @@ impl SimpleComponent for AttachmentDrawer {
                 // Hidden (and the divider disappears) when there's nothing to show.
                 #[watch]
                 set_visible: !model.items.is_empty(),
+
+                // The drawer's own top edge as a real widget: it clicks
+                // (toggle), drags (resize), and carries the same ns-resize
+                // cursor as the pill zone above, so the seam feels like one
+                // continuous handle. The native Paned separator is shrunk to
+                // a hairline — its drag gesture claims every press, which
+                // made it a click-dead band with its own cursor.
+                #[name = "drawer_edge"]
+                gtk::Box {
+                    set_height_request: 8,
+                    set_cursor_from_name: Some("ns-resize"),
+                },
 
                 gtk::Box {
                     set_orientation: gtk::Orientation::Horizontal,
@@ -433,47 +443,70 @@ impl SimpleComponent for AttachmentDrawer {
         reader_wrap.add_overlay(&pill);
         root.set_start_child(Some(&reader_wrap));
         // A collapsed drawer starts with its divider locked.
-        model.set_divider_draggable(!model.collapsed);
-
-        // The seam must never make the user hunt for a click target: the
-        // Paned separator itself toggles on click (dragging it already
-        // resizes), and so does the drawer's topmost strip — together with
-        // the full-width pill zone above, everything from over the bar down
-        // to a few px inside the drawer answers.
+        // The native separator is permanently inert: GTK gives it an
+        // enlarged invisible input region that wears its own row-resize
+        // cursor and steals presses landing near the seam — the pill zone
+        // and the drawer's edge strip carry every click and drag instead.
+        model.set_divider_draggable(false);
+        // Untargeting the separator is not enough: GtkPaned's pan gesture is
+        // attached to the PANED itself, in capture phase, hit-testing raw
+        // coordinates against an enlarged handle area. It claims presses
+        // near the seam before the zone or edge strip ever see them (hover
+        // and cursor stay ours, the click dies, and a drag "works" because
+        // the paned handles it natively). Remove the gesture outright.
         {
-            let start = root.start_child();
-            let end = root.end_child();
-            let mut child = root.first_child();
-            while let Some(c) = child {
-                if Some(&c) != start.as_ref() && Some(&c) != end.as_ref() {
-                    let click = gtk::GestureClick::new();
-                    let s = sender.clone();
-                    click.connect_released(move |_, _, _, _| {
-                        s.input(AttachmentDrawerInput::EdgeClicked);
-                    });
-                    c.add_controller(click);
+            // Both of them: the GestureDrag is what actually moves the
+            // divider (and eats the clicks); the GesturePan is its touch
+            // sibling. Only the keyboard ShortcutController stays.
+            let controllers = root.observe_controllers();
+            let mut doomed: Vec<gtk::EventController> = Vec::new();
+            for i in 0..controllers.n_items() {
+                let Some(c) =
+                    controllers.item(i).and_then(|o| o.downcast::<gtk::EventController>().ok())
+                else {
+                    continue;
+                };
+                if c.is::<gtk::GestureDrag>() || c.is::<gtk::GesturePan>() {
+                    doomed.push(c);
                 }
-                child = c.next_sibling();
+            }
+            tracing::debug!("removing {} paned gesture(s)", doomed.len());
+            for c in doomed {
+                root.remove_controller(&c);
             }
         }
+
         {
-            // Capture-phase on the drawer body, alive only in its top 6px so
-            // the header's buttons keep every ordinary click.
+            // The drawer's top-edge strip: a click toggles, a drag resizes —
+            // through the same inputs as the pill, so a drag out of the
+            // collapse and the click/drag distinction behave identically.
             let click = gtk::GestureClick::new();
-            click.set_propagation_phase(gtk::PropagationPhase::Capture);
-            click.connect_pressed(|g, _, _, y| {
-                if y > 6.0 {
-                    g.set_state(gtk::EventSequenceState::Denied);
-                }
-            });
             let s = sender.clone();
-            click.connect_released(move |g, _, _, y| {
-                if y <= 6.0 {
-                    g.set_state(gtk::EventSequenceState::Claimed);
-                    s.input(AttachmentDrawerInput::EdgeClicked);
-                }
+            click.connect_released(move |_, _, _, _| {
+                s.input(AttachmentDrawerInput::EdgeClicked);
             });
-            widgets.drawer_body.add_controller(click);
+            widgets.drawer_edge.add_controller(click);
+            // The bar lives in the zone above; hovering the strip is hovering
+            // the same logical handle, so it lights the bar too (CSS :hover
+            // cannot cross widgets — a class stands in for it).
+            let motion = gtk::EventControllerMotion::new();
+            {
+                let zone = pill.clone();
+                motion.connect_enter(move |_, _, _| zone.add_css_class("hot"));
+            }
+            {
+                let zone = pill.clone();
+                motion.connect_leave(move |_| zone.remove_css_class("hot"));
+            }
+            widgets.drawer_edge.add_controller(motion);
+            let s = sender.clone();
+            let s2 = sender.clone();
+            crate::ui::grab_pill::attach_drag(
+                &widgets.drawer_edge,
+                &root,
+                move |_| s.input(AttachmentDrawerInput::PillDragBegin),
+                move |want| s2.input(AttachmentDrawerInput::PillDrag { want }),
+            );
         }
         ComponentParts { model, widgets }
     }
@@ -571,7 +604,6 @@ impl SimpleComponent for AttachmentDrawer {
                     // it is released is the drawer's new height (recorded by
                     // position-notify like any other resize).
                     self.collapsed = false;
-                    self.set_divider_draggable(true);
                     config::save_drawer_collapsed(self.collapsed);
                 }
                 // The pill moves the divider live, exactly like a drag on the
@@ -594,7 +626,11 @@ impl SimpleComponent for AttachmentDrawer {
                 }
             }
             AttachmentDrawerInput::EdgeClicked => {
-                self.toggle_collapsed(&sender);
+                // The edge strip shares the pill's drag plumbing: a release
+                // that ended a drag just set a height and must not toggle.
+                if !self.pill_dragged {
+                    self.toggle_collapsed(&sender);
+                }
             }
             AttachmentDrawerInput::ToggleSettled { collapsed, gen } => {
                 // A skipped slide's settle arrives late; its work was already
@@ -646,14 +682,12 @@ impl AttachmentDrawer {
             // Not allocated (never shown): the old instant flip.
             self.collapsed = !self.collapsed;
             self.apply_position();
-            self.set_divider_draggable(!self.collapsed);
             config::save_drawer_collapsed(self.collapsed);
             return;
         }
         let closing = !self.collapsed;
         if !closing {
             self.collapsed = false;
-            self.set_divider_draggable(true);
         }
         config::save_drawer_collapsed(closing);
         let target_h = if closing { Self::header_height(&self.paned) } else { self.height };
@@ -710,19 +744,25 @@ impl AttachmentDrawer {
     /// pinned to exactly the header.
     fn settle_collapsed(&mut self) {
         self.collapsed = true;
-        self.set_divider_draggable(false);
         self.apply_position();
     }
 
     /// Natural height of the drawer's header row (the first child of the end
     /// pane) — the drawer's height when collapsed.
     fn header_height(paned: &gtk::Paned) -> i32 {
-        paned
-            .end_child()
-            .and_then(|body| body.first_child())
-            .map(|header| header.measure(gtk::Orientation::Vertical, -1).1)
-            .unwrap_or(44)
-            .max(1)
+        // The collapsed drawer keeps everything above the scroller: the edge
+        // strip and the header row.
+        let Some(body) = paned.end_child() else { return 44 };
+        let mut sum = 0;
+        let mut child = body.first_child();
+        while let Some(c) = child {
+            if c.is::<gtk::ScrolledWindow>() {
+                break;
+            }
+            sum += c.measure(gtk::Orientation::Vertical, -1).1;
+            child = c.next_sibling();
+        }
+        if sum > 0 { sum } else { 44 }
     }
 
     /// Move the Paned divider so the drawer body is the desired height: the
@@ -743,10 +783,12 @@ impl AttachmentDrawer {
         self.adjusting.set(false);
     }
 
-    /// Allow or forbid dragging the Paned divider. There is no lock API on
-    /// GtkPaned, so this walks its internal children and toggles pointer
-    /// targeting on the separator (the child that is neither pane) — while off
-    /// it takes no clicks and shows no resize cursor.
+    /// Make the Paned's own separator inert (there is no lock API on
+    /// GtkPaned, so this walks its internal children and untargets the child
+    /// that is neither pane). Called once at init and left off for good: the
+    /// separator's enlarged input region otherwise steals presses near the
+    /// seam and wears its own cursor. The pill zone and the drawer's edge
+    /// strip do all the clicking and dragging.
     fn set_divider_draggable(&self, on: bool) {
         let start = self.paned.start_child();
         let end = self.paned.end_child();
