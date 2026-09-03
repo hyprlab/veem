@@ -4997,7 +4997,10 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::FolderUnread { account_id, folder_id, unread } => {
-                self.folder_unread.insert((account_id, folder_id), unread);
+                let prev = self.folder_unread.insert((account_id, folder_id), unread);
+                if prev != Some(unread) {
+                    self.sync_background_inbox(account_id, folder_id);
+                }
                 self.push_unread_counts();
             }
 
@@ -5011,7 +5014,10 @@ impl SimpleComponent for AppModel {
                     .and_then(|fs| fs.iter().find(|f| f.path == path))
                     .map(|f| f.id);
                 if let Some(folder_id) = id {
-                    self.folder_unread.insert((account_id, folder_id), unread);
+                    let prev = self.folder_unread.insert((account_id, folder_id), unread);
+                    if prev != Some(unread) {
+                        self.sync_background_inbox(account_id, folder_id);
+                    }
                     self.push_unread_counts();
                 }
             }
@@ -9805,6 +9811,31 @@ impl AppModel {
             .and_then(|inbox| self.folder_unread.get(&(account_id, inbox.id)))
             .copied()
             .unwrap_or(0)
+    }
+
+    /// A watcher or sweep reported a changed unread count for `folder_id`.
+    /// When that is an account's inbox and the worker's IDLE sits elsewhere
+    /// (another folder is open), the inbox's message list used to refresh
+    /// only when the inbox was next opened: the tray menu said "No unread
+    /// mail" under a count that said otherwise, and mail arriving there
+    /// raised no notification, since both read the list. Ask for a quiet
+    /// resync so the list follows the count. An open inbox (alone or as All
+    /// Inboxes) is the IDLE folder, whose own resync already covers it.
+    fn sync_background_inbox(&self, account_id: u32, folder_id: u32) {
+        let Some(inbox) = self.inbox_of(account_id) else { return };
+        if inbox.id != folder_id {
+            return;
+        }
+        let open = self.unified
+            || self
+                .selected
+                .as_ref()
+                .is_some_and(|s| s.account_id == account_id && s.folder_id == folder_id);
+        if open {
+            return;
+        }
+        let path = inbox.path.clone();
+        self.send_to(account_id, MailRequest::SyncFolder { folder_id, path });
     }
 
     /// Mark a cached message read in every list that holds it, so unread badges

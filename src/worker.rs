@@ -120,6 +120,14 @@ const IDLE_START_TIMEOUT: Duration = Duration::from_secs(10);
 pub enum MailRequest {
     /// Load the message summaries for a folder.
     LoadMessages { folder_id: u32, path: String },
+    /// Resync a folder's message list in the background: the same fetch as
+    /// [`LoadMessages`](Self::LoadMessages), but quiet (no status), and the
+    /// folder is not adopted as the IDLE folder or put on the watch list.
+    /// Sent when a watcher or sweep sees an inbox's unread count move while
+    /// another folder is open, so its list (the tray menu, the new-mail
+    /// notification) follows the count instead of waiting for the inbox
+    /// to be opened.
+    SyncFolder { folder_id: u32, path: String },
     /// Load cached attachments across the account's folders, for the gallery.
     LoadGallery,
     /// Load the full body of a single message.
@@ -1068,12 +1076,17 @@ async fn run_imap(
         }
         // On a connection-shaped failure we drop the session to force a reconnect.
         let mut lost = false;
+        // A background resync keeps quiet and leaves IDLE/watching alone.
+        let background = matches!(req, MailRequest::SyncFolder { .. });
 
         match req {
             // Served from cache before this network match; never reached here.
             MailRequest::LoadGallery | MailRequest::LoadRelated { .. } => {}
-            MailRequest::LoadMessages { folder_id, path } => {
-                emit(WorkerEvent::Status("Syncing…".into()));
+            MailRequest::LoadMessages { folder_id, path }
+            | MailRequest::SyncFolder { folder_id, path } => {
+                if !background {
+                    emit(WorkerEvent::Status("Syncing…".into()));
+                }
                 // Fast first page (or a recent-window refresh over the cached
                 // index); the background backfill indexes the rest of the folder.
                 // Reads retry once across a reconnect, so an idle-dropped session
@@ -1121,18 +1134,21 @@ async fn run_imap(
                             cache.as_ref(),
                             account_id,
                         );
-                        idle_folder = Some((folder_id, path.clone()));
-                        // Opening a folder is "use": keep it push-watched for
-                        // the next lease hour, so changes still land instantly
-                        // after the user moves on to another folder.
-                        let kind = cache.as_ref().and_then(|c| {
-                            c.load_folders(account_id)
-                                .into_iter()
-                                .find(|f| f.path == path)
-                                .map(|f| f.kind)
-                        });
-                        if kind.is_some_and(watchable) {
-                            watch_active_folder(&mut watchers, &account, &path, 0, &emit);
+                        if !background {
+                            idle_folder = Some((folder_id, path.clone()));
+                            // Opening a folder is "use": keep it push-watched
+                            // for the next lease hour, so changes still land
+                            // instantly after the user moves on to another
+                            // folder.
+                            let kind = cache.as_ref().and_then(|c| {
+                                c.load_folders(account_id)
+                                    .into_iter()
+                                    .find(|f| f.path == path)
+                                    .map(|f| f.kind)
+                            });
+                            if kind.is_some_and(watchable) {
+                                watch_active_folder(&mut watchers, &account, &path, 0, &emit);
+                            }
                         }
                         emit(WorkerEvent::Messages { folder_id, messages });
                         // Refresh the true unread count (catches new mail and
@@ -5605,7 +5621,8 @@ async fn run_pop3(
             MailRequest::LoadRelated { message_id, .. } => {
                 emit(WorkerEvent::Related { message_id, messages: Vec::new() });
             }
-            MailRequest::LoadMessages { folder_id, path } => {
+            MailRequest::LoadMessages { folder_id, path }
+            | MailRequest::SyncFolder { folder_id, path } => {
                 if path != INBOX {
                     emit(WorkerEvent::Messages { folder_id, messages: Vec::new() });
                     emit(WorkerEvent::BackfillDone { folder_id });
@@ -5956,7 +5973,8 @@ async fn run_mock(
             MailRequest::LoadRelated { message_id, .. } => {
                 emit(WorkerEvent::Related { message_id, messages: Vec::new() });
             }
-            MailRequest::LoadMessages { folder_id, .. } => {
+            MailRequest::LoadMessages { folder_id, .. }
+            | MailRequest::SyncFolder { folder_id, .. } => {
                 emit(WorkerEvent::Messages {
                     folder_id,
                     messages: backend.messages(folder_id),
@@ -6991,7 +7009,8 @@ async fn run_graph(
                 emit(WorkerEvent::Related { message_id, messages });
             }
 
-            MailRequest::LoadMessages { folder_id, path } => {
+            MailRequest::LoadMessages { folder_id, path }
+            | MailRequest::SyncFolder { folder_id, path } => {
                 if let Some(c) = cache.as_ref() {
                     let cached = c.load_messages(account_id, &path, folder_id);
                     if !cached.is_empty() {
