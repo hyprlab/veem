@@ -84,35 +84,25 @@ impl RichEditor {
                 }) {
                     menu.remove(item);
                 }
-                let mut at = 0;
-                for (name, label, cmd) in [
-                    ("vireo-img-cut", "Cut Image", "Cut"),
-                    ("vireo-img-copy", "Copy Image", "Copy"),
-                ] {
-                    let action = gtk::gio::SimpleAction::new(name, None);
-                    let v = view.clone();
-                    action.connect_activate(move |_, _| with_ctx_image_selected(&v, cmd));
-                    menu.insert(&webkit6::ContextMenuItem::from_gaction(&action, label, None), at);
-                    at += 1;
-                }
-                // Only an embedded (data:) image can become an attachment —
-                // a remote image in quoted content has no bytes to lift.
-                if hit.image_uri().is_some_and(|u| u.starts_with("data:image/")) {
-                    let action = gtk::gio::SimpleAction::new("vireo-img-attach", None);
-                    let v = view.clone();
-                    let cb = menu_attach_cb.clone();
-                    action.connect_activate(move |_, _| detach_ctx_image(&v, cb.clone()));
-                    menu.insert(
-                        &webkit6::ContextMenuItem::from_gaction(
-                            &action,
-                            "Send as Attachment Instead",
-                            None,
-                        ),
-                        at,
-                    );
-                    at += 1;
-                }
-                menu.insert(&webkit6::ContextMenuItem::new_separator(), at);
+                // The stock Cut/Copy already act on the image — the
+                // right-click selected it. The one image-specific verb is
+                // demoting it to an ordinary attachment; the script that
+                // lifts it declines non-embedded (remote) images itself,
+                // since the hit test doesn't surface data: URIs to check
+                // against here.
+                let action = gtk::gio::SimpleAction::new("vireo-img-attach", None);
+                let v = view.clone();
+                let cb = menu_attach_cb.clone();
+                action.connect_activate(move |_, _| detach_ctx_image(&v, cb.clone()));
+                menu.insert(
+                    &webkit6::ContextMenuItem::from_gaction(
+                        &action,
+                        "Send as Attachment Instead",
+                        None,
+                    ),
+                    0,
+                );
+                menu.insert(&webkit6::ContextMenuItem::new_separator(), 1);
             }
             let items = menu.items();
             let Some(pos) = items
@@ -245,23 +235,6 @@ fn exec(webview: &webkit6::WebView, js: &str) {
     webview.evaluate_javascript(js, None, None, gtk::gio::Cancellable::NONE, |_| {});
 }
 
-/// Select the image the context menu was opened over, then run an editing
-/// command against the selection — how "Cut Image"/"Copy Image" work. The
-/// callback orders the selection and the command, since both travel to the
-/// web process asynchronously.
-fn with_ctx_image_selected(webview: &webkit6::WebView, cmd: &'static str) {
-    let v = webview.clone();
-    webview.evaluate_javascript(
-        "(function(){var n=window.__vireoCtxImg;if(!n)return;\
-          var r=document.createRange();r.selectNode(n);\
-          var s=getSelection();s.removeAllRanges();s.addRange(r);})()",
-        None,
-        None,
-        gtk::gio::Cancellable::NONE,
-        move |_| v.execute_editing_command(cmd),
-    );
-}
-
 /// "Send as Attachment Instead": pull the right-clicked image out of the
 /// document, decode its data: URI to a temp file, and hand the path to the
 /// host's callback (which adds it to the attachment list). The node is
@@ -273,7 +246,8 @@ fn detach_ctx_image(
 ) {
     webview.evaluate_javascript(
         "(function(){var n=window.__vireoCtxImg;if(!n||n.tagName!=='IMG')return '';\
-          var s=n.src;n.remove();window.__vireoCtxImg=null;return s;})()",
+          var s=n.src;if(s.indexOf('data:image/')!==0)return '';\
+          n.remove();window.__vireoCtxImg=null;return s;})()",
         None,
         None,
         gtk::gio::Cancellable::NONE,
@@ -456,10 +430,18 @@ const PASTE_SCRIPT: &str = r#"<script>
       var s = getSelection(); s.removeAllRanges(); s.addRange(r);
     }
   });
-  /* Remember which image a context menu was opened over — the menu's own
-     actions (cut/copy/send-as-attachment) act on this exact node. */
+  /* A right-click on an image selects it (like a left click) and remembers
+     the exact node: the menu's stock Cut/Copy then act on the image itself,
+     and Send as Attachment Instead knows which one to lift. */
   document.addEventListener('contextmenu', function(e){
-    window.__vireoCtxImg = (e.target && e.target.tagName === 'IMG') ? e.target : null;
+    var t = e.target;
+    if(t && t.tagName === 'IMG'){
+      window.__vireoCtxImg = t;
+      var r = document.createRange(); r.selectNode(t);
+      var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    } else {
+      window.__vireoCtxImg = null;
+    }
   }, true);
   document.addEventListener('dragover', function(e){
     var it = (e.dataTransfer && e.dataTransfer.items) || [];
