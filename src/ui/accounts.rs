@@ -219,6 +219,8 @@ pub enum AccountsInput {
     RemoveBlacklistRow(String),
     AddFilter,
     RemoveFilter(usize),
+    /// The rule's "count unread" switch was flipped (#116).
+    SetFilterCounted(usize, bool),
     FilterAdded(crate::config::FilterRule),
 }
 
@@ -1575,6 +1577,15 @@ impl Component for AccountsWindow {
                 self.rebuild_filter_rows(&sender);
                 let _ = sender.output(AccountsOutput::SetFilters(self.filter_rules.clone()));
             }
+            AccountsInput::SetFilterCounted(i, on) => {
+                if let Some(r) = self.filter_rules.get_mut(i) {
+                    if r.count_unread != on {
+                        r.count_unread = on;
+                        let _ = sender
+                            .output(AccountsOutput::SetFilters(self.filter_rules.clone()));
+                    }
+                }
+            }
         }
     }
 
@@ -2538,6 +2549,22 @@ impl AccountsWindow {
                 .map(|(_, name)| name.clone())
                 .unwrap_or_else(|| r.dest_path.clone());
             row.set_subtitle(&format!("{} \u{2192} {}", r.account_email, dest));
+            // Whether the folder's unread mail joins the unread total (#116).
+            let count_label = gtk::Label::new(Some("Count unread"));
+            count_label.add_css_class("dim-label");
+            count_label.set_valign(gtk::Align::Center);
+            let count = gtk::Switch::new();
+            count.set_active(r.count_unread);
+            count.set_valign(gtk::Align::Center);
+            count.set_tooltip_text(Some(
+                "Include this folder's unread mail in the unread count and the tray icon",
+            ));
+            let s = sender.clone();
+            count.connect_active_notify(move |sw| {
+                s.input(AccountsInput::SetFilterCounted(i, sw.is_active()))
+            });
+            row.add_suffix(&count_label);
+            row.add_suffix(&count);
             let rm = gtk::Button::from_icon_name("co.hyprlab.Vireo-user-trash-symbolic");
             rm.add_css_class("flat");
             rm.set_valign(gtk::Align::Center);
@@ -2620,11 +2647,20 @@ impl AccountsWindow {
             account_row.connect_selected_notify(move |row| fill_dest(row.selected() as usize));
         }
 
+        // Filed mail is still new mail: counted by default, so the unread
+        // total stays true to what sits unread; a rule filing newsletters
+        // can opt its folder out (#116).
+        let count_row = adw::SwitchRow::new();
+        count_row.set_title("Count unread mail");
+        count_row.set_subtitle("Include the folder's unread mail in the unread count and the tray icon");
+        count_row.set_active(true);
+
         form.append(&account_row);
         form.append(&field_row);
         form.append(&match_row);
         form.append(&value_row);
         form.append(&dest_row);
+        form.append(&count_row);
         dialog.set_extra_child(Some(&form));
 
         let s = sender.clone();
@@ -2656,6 +2692,7 @@ impl AccountsWindow {
                 },
                 value,
                 dest_path: dest.clone(),
+                count_unread: count_row.is_active(),
             };
             s.input(AccountsInput::FilterAdded(rule));
         });
