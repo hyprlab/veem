@@ -172,6 +172,9 @@ pub enum AccountsInput {
     SetFolderChoices(std::collections::HashMap<String, Vec<(String, String)>>),
     AddAccount,
     EditAccount(usize),
+    /// Open the editor for the account with this address (the sidebar's
+    /// "Account Settings…"), leaving another account's editor if one is up.
+    EditAccountByEmail(String),
     /// The email field changed — mirror it into the (auto-filled) label field.
     EmailChanged,
     MoveRow { from: usize, to: usize },
@@ -967,6 +970,26 @@ impl Component for AccountsWindow {
                 // A prior GOA edit may have hidden the provider picker.
                 widgets.provider_row.set_visible(true);
                 widgets.nav.push_by_tag("editor");
+            }
+
+            AccountsInput::EditAccountByEmail(email) => {
+                let Some(i) = self.accounts.iter().position(|a| a.email == email) else {
+                    return;
+                };
+                let editor_up = widgets
+                    .nav
+                    .visible_page()
+                    .and_then(|p| p.tag())
+                    .is_some_and(|tag| tag == "editor");
+                if editor_up {
+                    if self.editing == Some(i) {
+                        return;
+                    }
+                    // Another account's editor is up: back to the list first,
+                    // since a page can't be pushed while it is in the stack.
+                    widgets.nav.pop();
+                }
+                sender.input(AccountsInput::EditAccount(i));
             }
 
             AccountsInput::EditAccount(i) => {

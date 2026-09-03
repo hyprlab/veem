@@ -265,7 +265,8 @@ pub enum CtxAction {
     RefreshFolder { account_id: u32, folder_id: u32 },
     MarkAllInboxesRead,
     RefreshAllInboxes,
-    OpenAccountSettings,
+    /// Open Settings → Accounts with this account's editor up.
+    OpenAccountSettings(u32),
     RemoveAccount(u32),
     /// Create a new custom folder under this account.
     NewFolder(u32),
@@ -1359,7 +1360,7 @@ impl Sidebar {
                                     account_id: r.account_id,
                                     folder_id: r.folder_id,
                                 }),
-                                ("Account Settings…", CtxAction::OpenAccountSettings),
+                                ("Account Settings…", CtxAction::OpenAccountSettings(r.account_id)),
                             ],
                             &cs,
                         );
@@ -1675,7 +1676,7 @@ impl Sidebar {
                     }));
                 }
                 items.push(("New Folder…", CtxAction::NewFolder(id)));
-                items.push(("Account Settings…", CtxAction::OpenAccountSettings));
+                items.push(("Account Settings…", CtxAction::OpenAccountSettings(id)));
                 items.push(("Remove Account…", CtxAction::RemoveAccount(id)));
                 show_sidebar_menu(&header_w, x, y, items, &cs);
             });

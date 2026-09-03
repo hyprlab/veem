@@ -3092,7 +3092,18 @@ impl SimpleComponent for AppModel {
                         self.send_to(account_id, MailRequest::LoadMessages { folder_id, path });
                     }
                 }
-                CtxAction::OpenAccountSettings => sender.input(AppMsg::OpenAccounts),
+                CtxAction::OpenAccountSettings(account_id) => {
+                    // Straight to this account's editor, not the accounts list.
+                    let email = self
+                        .accounts
+                        .iter()
+                        .find(|a| a.id == account_id)
+                        .map(|a| a.email.clone());
+                    self.open_settings_window(&sender, true, false);
+                    if let (Some(email), Some(acc)) = (email, &self.accounts_win) {
+                        acc.emit(crate::ui::accounts::AccountsInput::EditAccountByEmail(email));
+                    }
+                }
                 CtxAction::RemoveAccount(account_id) => {
                     self.confirm_remove_account(account_id, &sender);
                 }
