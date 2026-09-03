@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.20.0-beta.8" date="2026-09-03" type="development">
+
+      <description><p>The tray menu's unread list and new-mail notifications keep up with the inbox while another folder is open (#116). Account Settings… from the sidebar opens that account's editor. The split reply closes in one motion.</p></description>
+
+    </release>
     <release version="1.20.0-beta.7" date="2026-09-03" type="development">
 
       <description><p>The tray icon (#116) now appears in the beta Flatpak, whose sandbox lacked permission to reach the tray watcher. On Cinnamon it is drawn smaller, level with the panel's other icons.</p></description>

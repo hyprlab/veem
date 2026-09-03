@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.20.0-beta.8 — 2026-09-03
+
+The tray menu and new-mail notifications follow the inbox while another
+folder is open (#116), Account Settings… opens the right account, and
+the split reply closes in one motion.
+
+- **An inbox's list follows its unread count while another folder is
+  open (#116).** The worker's IDLE sits on the folder last opened, so
+  with another folder in view the inbox only ever got count updates
+  from its watcher and the sweep; its message list refreshed when the
+  inbox was next opened. Both the tray menu's cards and the new-mail
+  notification read that list: the menu said "No unread mail" under a
+  "View all 1 unread" row, and mail arriving while a filtered folder
+  was open raised no notification. A changed inbox count now asks the
+  worker for a quiet resync (`MailRequest::SyncFolder`): the same fetch
+  as opening the folder, without the status text and without adopting
+  the folder for IDLE or the watch list. An open inbox (alone or as All
+  Inboxes) is skipped, being the IDLE folder already. The sweep
+  re-emits every count each pass, so only a changed value triggers it.
+- **Account Settings… from the sidebar opens that account's editor.**
+  Right-clicking an account header or one of its folders and choosing
+  Account Settings… opened Settings on the Accounts list; it now opens
+  the editor for that account, stepping back from another account's
+  editor first if one is up.
+- **The split reply's exit slides the reader header in with it.**
+  Closing the split reply slid the panel up, then re-showed the
+  reader's header bar in one frame: the reader jumped up as the panel
+  went and back down as the header popped in, with the icons flashing
+  on. The header now returns through the toolbar view's reveal
+  transition, started with the panel's slide, and its icons fade in
+  over the same 300ms. The teardown no longer forbids shrinking the
+  slot before emptying it, which re-clamped the divider to the
+  composer's minimum for a frame (the bounce at the end). Opening
+  slides the header out the same way instead of hiding it.
+
 ## 1.20.0-beta.7 — 2026-09-03
 
 The tray icon now appears in the beta Flatpak, and sits level with its
