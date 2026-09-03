@@ -3092,7 +3092,18 @@ impl SimpleComponent for AppModel {
                         self.send_to(account_id, MailRequest::LoadMessages { folder_id, path });
                     }
                 }
-                CtxAction::OpenAccountSettings => sender.input(AppMsg::OpenAccounts),
+                CtxAction::OpenAccountSettings(account_id) => {
+                    // Straight to this account's editor, not the accounts list.
+                    let email = self
+                        .accounts
+                        .iter()
+                        .find(|a| a.id == account_id)
+                        .map(|a| a.email.clone());
+                    self.open_settings_window(&sender, true, false);
+                    if let (Some(email), Some(acc)) = (email, &self.accounts_win) {
+                        acc.emit(crate::ui::accounts::AccountsInput::EditAccountByEmail(email));
+                    }
+                }
                 CtxAction::RemoveAccount(account_id) => {
                     self.confirm_remove_account(account_id, &sender);
                 }
@@ -4986,7 +4997,10 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::FolderUnread { account_id, folder_id, unread } => {
-                self.folder_unread.insert((account_id, folder_id), unread);
+                let prev = self.folder_unread.insert((account_id, folder_id), unread);
+                if prev != Some(unread) {
+                    self.sync_background_inbox(account_id, folder_id);
+                }
                 self.push_unread_counts();
             }
 
@@ -5000,7 +5014,10 @@ impl SimpleComponent for AppModel {
                     .and_then(|fs| fs.iter().find(|f| f.path == path))
                     .map(|f| f.id);
                 if let Some(folder_id) = id {
-                    self.folder_unread.insert((account_id, folder_id), unread);
+                    let prev = self.folder_unread.insert((account_id, folder_id), unread);
+                    if prev != Some(unread) {
+                        self.sync_background_inbox(account_id, folder_id);
+                    }
                     self.push_unread_counts();
                 }
             }
@@ -7703,9 +7720,7 @@ impl AppModel {
             config::save_split_reply_height(self.reader_split.position());
         }
         // The reader gets its header back with the pane.
-        if let Some(h) = self.reader_header.get() {
-            h.set_visible(true);
-        }
+        self.show_reader_header(true);
         self.reader_split_top.set_reveal_child(false);
         // The composer sits inside the grab-pill Overlay wrapper: unparent it
         // from there explicitly, or hosting it elsewhere (pop-out, drain)
@@ -7770,6 +7785,11 @@ impl AppModel {
         let split = self.reader_split.clone();
         split.set_shrink_start_child(true);
         slot.set_reveal_child(false);
+        // The reader's header comes back in step with the panel's exit: it
+        // slides down while the panel slides up, its icons fading in, so the
+        // reader below moves in one motion rather than jumping up as the
+        // panel goes and back down as the header pops in after it.
+        self.show_reader_header(true);
         let from = split.position() as f64;
         let target = adw::CallbackAnimationTarget::new({
             let split = split.clone();
@@ -7779,23 +7799,50 @@ impl AppModel {
         anim.set_easing(adw::Easing::EaseOutCubic);
         let slot = slot.clone();
         let cell = self.split_close_anim.clone();
-        let header = self.reader_header.get().cloned();
         anim.connect_done(move |_| {
             cell.borrow_mut().take();
-            split.set_shrink_start_child(false);
             if slot.child().as_ref() == Some(&wrap) {
                 if let Some(w) = wrap.downcast_ref::<gtk::Overlay>() {
                     w.set_child(None::<&gtk::Widget>);
                 }
                 slot.set_child(None::<&gtk::Widget>);
                 slot.set_visible(false);
-                // The reader gets its header back with the pane.
-                if let Some(h) = &header {
-                    h.set_visible(true);
-                }
             }
+            // Only once the slot is empty (or a new panel owns it): with the
+            // composer still in the slot, forbidding shrink first would
+            // re-clamp the divider to the composer's minimum for a frame —
+            // the bounce at the end of the slide.
+            split.set_shrink_start_child(false);
         });
         *self.split_close_anim.borrow_mut() = Some(anim.clone());
+        anim.play();
+    }
+
+    /// Slide the reader's header bar in or out of its toolbar view, fading
+    /// its icons with it. The toolbar view animates the bar's height (its
+    /// reveal-top-bars transition), so the content below slides rather than
+    /// jumping by the bar's height; the opacity animation keeps the icons
+    /// from appearing at full strength on the first frame of the slide.
+    /// Timed to match the split reply's own 300ms slide, which it accompanies.
+    fn show_reader_header(&self, shown: bool) {
+        let Some(header) = self.reader_header.get() else { return };
+        let tv = header
+            .ancestor(adw::ToolbarView::static_type())
+            .and_downcast::<adw::ToolbarView>();
+        if let Some(tv) = tv {
+            if tv.reveals_top_bars() == shown {
+                return;
+            }
+            tv.set_reveal_top_bars(shown);
+        }
+        let from = header.opacity();
+        let to = if shown { 1.0 } else { 0.0 };
+        let target = adw::CallbackAnimationTarget::new({
+            let header = header.clone();
+            move |v| header.set_opacity(v)
+        });
+        let anim = adw::TimedAnimation::new(header, from, to, 300, target);
+        anim.set_easing(adw::Easing::EaseOutCubic);
         anim.play();
     }
 
@@ -7858,9 +7905,7 @@ impl AppModel {
             // needs: gone while the split hosts, back when it goes. What
             // remains of the reader starts at the remote-content banner, or
             // the subject block when there is none.
-            if let Some(h) = self.reader_header.get() {
-                h.set_visible(false);
-            }
+            self.show_reader_header(false);
             let slot = &self.reader_split_top;
             widget.set_vexpand(true);
             let wrap = gtk::Overlay::new();
@@ -9766,6 +9811,31 @@ impl AppModel {
             .and_then(|inbox| self.folder_unread.get(&(account_id, inbox.id)))
             .copied()
             .unwrap_or(0)
+    }
+
+    /// A watcher or sweep reported a changed unread count for `folder_id`.
+    /// When that is an account's inbox and the worker's IDLE sits elsewhere
+    /// (another folder is open), the inbox's message list used to refresh
+    /// only when the inbox was next opened: the tray menu said "No unread
+    /// mail" under a count that said otherwise, and mail arriving there
+    /// raised no notification, since both read the list. Ask for a quiet
+    /// resync so the list follows the count. An open inbox (alone or as All
+    /// Inboxes) is the IDLE folder, whose own resync already covers it.
+    fn sync_background_inbox(&self, account_id: u32, folder_id: u32) {
+        let Some(inbox) = self.inbox_of(account_id) else { return };
+        if inbox.id != folder_id {
+            return;
+        }
+        let open = self.unified
+            || self
+                .selected
+                .as_ref()
+                .is_some_and(|s| s.account_id == account_id && s.folder_id == folder_id);
+        if open {
+            return;
+        }
+        let path = inbox.path.clone();
+        self.send_to(account_id, MailRequest::SyncFolder { folder_id, path });
     }
 
     /// Mark a cached message read in every list that holds it, so unread badges
