@@ -253,6 +253,7 @@ impl Component for AttachmentsGallery {
                             gtk::Button {
                                 add_css_class: "flat",
                                 set_width_request: 170,
+                                set_hexpand: false,
                                 connect_clicked => GalleryInput::SortColumn(1),
                                 gtk::Label {
                                     #[watch]
@@ -263,6 +264,7 @@ impl Component for AttachmentsGallery {
                             gtk::Button {
                                 add_css_class: "flat",
                                 set_width_request: 90,
+                                set_hexpand: false,
                                 connect_clicked => GalleryInput::SortColumn(4),
                                 gtk::Label {
                                     #[watch]
@@ -273,6 +275,7 @@ impl Component for AttachmentsGallery {
                             gtk::Button {
                                 add_css_class: "flat",
                                 set_width_request: 110,
+                                set_hexpand: false,
                                 connect_clicked => GalleryInput::SortColumn(2),
                                 gtk::Label {
                                     #[watch]
@@ -280,15 +283,19 @@ impl Component for AttachmentsGallery {
                                     set_xalign: 0.0,
                                 },
                             },
+                            // Only Name expands, as in the rows: a header
+                            // that also took spare width (a child's hexpand
+                            // propagates to its button) would shift every
+                            // column between them off its cells.
                             gtk::Button {
                                 add_css_class: "flat",
                                 set_width_request: 90,
+                                set_hexpand: false,
                                 connect_clicked => GalleryInput::SortColumn(3),
                                 gtk::Label {
                                     #[watch]
                                     set_label: &column_header("Size", model.sort, SortBy::Smallest, SortBy::Largest),
                                     set_xalign: 1.0,
-                                    set_hexpand: true,
                                 },
                             },
                             // Aligns with the rows' trailing actions column.
