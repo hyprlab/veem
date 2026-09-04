@@ -2261,9 +2261,10 @@ impl Sidebar {
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::Single);
         list.add_css_class("navigation-sidebar");
-        // The gap to the first account section below (see the inbox
-        // sub-list, which carries it when this section is absent).
-        list.set_margin_bottom(14);
+        // The gap to the first account section below (the inbox sub-list
+        // carries 14 when this section is absent; the folder rows' own
+        // bottom padding makes 10 read the same here).
+        list.set_margin_bottom(10);
         for r in &self.unified_folders {
             let Some(section) = sections.iter().find(|s| s.account.id == r.account_id) else {
                 continue;
