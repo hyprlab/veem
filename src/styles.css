@@ -395,6 +395,9 @@ button.star-active {
 /* Tighter onto its first folder row (Jason, 2026-09-04: 7px less). */
 .unified-folders-toggle .folder-row {
   padding-bottom: 0;
+  /* Its folded-up chip onto the folder rows' chip column: the heading's
+     button padding otherwise leaves it 2px short. */
+  padding-right: 6px;
 }
 
 
