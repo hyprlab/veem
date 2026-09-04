@@ -253,6 +253,7 @@ impl Component for AttachmentsGallery {
                             gtk::Button {
                                 add_css_class: "flat",
                                 set_width_request: 170,
+                                set_hexpand: false,
                                 connect_clicked => GalleryInput::SortColumn(1),
                                 gtk::Label {
                                     #[watch]
@@ -263,6 +264,7 @@ impl Component for AttachmentsGallery {
                             gtk::Button {
                                 add_css_class: "flat",
                                 set_width_request: 90,
+                                set_hexpand: false,
                                 connect_clicked => GalleryInput::SortColumn(4),
                                 gtk::Label {
                                     #[watch]
@@ -273,6 +275,7 @@ impl Component for AttachmentsGallery {
                             gtk::Button {
                                 add_css_class: "flat",
                                 set_width_request: 110,
+                                set_hexpand: false,
                                 connect_clicked => GalleryInput::SortColumn(2),
                                 gtk::Label {
                                     #[watch]
@@ -280,15 +283,19 @@ impl Component for AttachmentsGallery {
                                     set_xalign: 0.0,
                                 },
                             },
+                            // Only Name expands, as in the rows: a header
+                            // that also took spare width (a child's hexpand
+                            // propagates to its button) would shift every
+                            // column between them off its cells.
                             gtk::Button {
                                 add_css_class: "flat",
                                 set_width_request: 90,
+                                set_hexpand: false,
                                 connect_clicked => GalleryInput::SortColumn(3),
                                 gtk::Label {
                                     #[watch]
                                     set_label: &column_header("Size", model.sort, SortBy::Smallest, SortBy::Largest),
                                     set_xalign: 1.0,
-                                    set_hexpand: true,
                                 },
                             },
                             // Aligns with the rows' trailing actions column.
@@ -1132,8 +1139,16 @@ fn folder_label(path: &str) -> String {
 }
 
 /// The lowercase extension of a filename (empty when there is none).
+/// The file's extension, lower-cased, or empty when the name has none: a
+/// generated "attachment-1", or a dotless name from a sender's client.
+/// Whatever follows the last dot only counts as an extension when it looks
+/// like one (short, alphanumeric), so "Report v1.2 draft" has none either.
 fn ext_of(name: &str) -> String {
-    name.rsplit('.').next().unwrap_or("").to_ascii_lowercase()
+    let Some((_, ext)) = name.rsplit_once('.') else { return String::new() };
+    if ext.is_empty() || ext.len() > 8 || !ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return String::new();
+    }
+    ext.to_ascii_lowercase()
 }
 
 /// Searchable category words for a file, keyed off its extension, so a query
@@ -1236,22 +1251,30 @@ fn build_row(
     sender_label.set_max_width_chars(1);
     line.append(&sender_label);
 
-    let kind = gtk::Label::new(Some(&ext_of(&item.name).to_ascii_uppercase()));
-    kind.set_xalign(0.0);
-    kind.set_width_request(90);
-    kind.add_css_class("dim-label");
+    // Every fixed-width cell is clipped to its column (the width request is
+    // the floor, the one-char max the ceiling): a value wider than its
+    // column would otherwise widen the cell, and with the row's width
+    // fixed, the expanding Name cell would give up the difference — sliding
+    // Sender left of its header on that row alone.
+    let fixed = |text: &str, width: i32, xalign: f32| {
+        let l = gtk::Label::new(Some(text));
+        l.set_xalign(xalign);
+        l.set_width_request(width);
+        l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        l.set_max_width_chars(1);
+        l.add_css_class("dim-label");
+        l
+    };
+    // No extension: say so, rather than showing the name again.
+    let ext = ext_of(&item.name);
+    let kind_text = if ext.is_empty() { "File".to_string() } else { ext.to_ascii_uppercase() };
+    let kind = fixed(&kind_text, 90, 0.0);
     line.append(&kind);
 
-    let date = gtk::Label::new(Some(&date_text(item.timestamp)));
-    date.set_xalign(0.0);
-    date.set_width_request(110);
-    date.add_css_class("dim-label");
+    let date = fixed(&date_text(item.timestamp), 110, 0.0);
     line.append(&date);
 
-    let size = gtk::Label::new(Some(&item.human_size()));
-    size.set_xalign(1.0);
-    size.set_width_request(90);
-    size.add_css_class("dim-label");
+    let size = fixed(&item.human_size(), 90, 1.0);
     size.add_css_class("numeric");
     line.append(&size);
 
