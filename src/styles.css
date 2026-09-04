@@ -392,9 +392,9 @@ button.star-active {
 .unified-folders-toggle image {
   opacity: 0.75;
 }
-/* Tighter onto its first folder row (Jason, 2026-09-04: 5px less). */
+/* Tighter onto its first folder row (Jason, 2026-09-04: 7px less). */
 .unified-folders-toggle .folder-row {
-  padding-bottom: 2px;
+  padding-bottom: 0;
 }
 
 
