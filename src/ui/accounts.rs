@@ -2560,40 +2560,50 @@ impl AccountsWindow {
                 .map(|(_, name)| name.clone())
                 .unwrap_or_else(|| r.dest_path.clone());
             row.set_subtitle(&format!("{} \u{2192} {}", r.account_email, dest));
-            // Whether the folder's unread mail joins the unread total (#116).
-            let count_label = gtk::Label::new(Some("Count unread"));
-            count_label.add_css_class("dim-label");
-            count_label.set_valign(gtk::Align::Center);
-            let count = gtk::Switch::new();
-            count.set_active(r.count_unread);
-            count.set_valign(gtk::Align::Center);
-            count.set_tooltip_text(Some(
+            // The rule's two switches stacked in a narrow two-column grid —
+            // labels right-aligned against their switches — so the row's
+            // title keeps its width: "Count unread" (whether the folder's
+            // unread mail joins the unread total, #116) over "All Inboxes"
+            // (whether the folder is listed in All Inboxes' Filtered
+            // Folders section).
+            let grid = gtk::Grid::new();
+            grid.set_column_spacing(8);
+            grid.set_row_spacing(4);
+            grid.set_valign(gtk::Align::Center);
+            let mut place = |line: i32, text: &str, active: bool, tip: &str| -> gtk::Switch {
+                let label = gtk::Label::new(Some(text));
+                label.add_css_class("dim-label");
+                label.set_halign(gtk::Align::End);
+                label.set_valign(gtk::Align::Center);
+                let sw = gtk::Switch::new();
+                sw.set_active(active);
+                sw.set_valign(gtk::Align::Center);
+                sw.set_tooltip_text(Some(tip));
+                grid.attach(&label, 0, line, 1, 1);
+                grid.attach(&sw, 1, line, 1, 1);
+                sw
+            };
+            let count = place(
+                0,
+                "Count unread",
+                r.count_unread,
                 "Include this folder's unread mail in the unread count and the tray icon",
-            ));
+            );
             let s = sender.clone();
             count.connect_active_notify(move |sw| {
                 s.input(AccountsInput::SetFilterCounted(i, sw.is_active()))
             });
-            row.add_suffix(&count_label);
-            row.add_suffix(&count);
-            // Whether the folder is listed under All Inboxes, in its
-            // collapsible "Filtered Folders" section.
-            let unified_label = gtk::Label::new(Some("All Inboxes"));
-            unified_label.add_css_class("dim-label");
-            unified_label.set_valign(gtk::Align::Center);
-            unified_label.set_margin_start(6);
-            let unified = gtk::Switch::new();
-            unified.set_active(r.show_in_unified);
-            unified.set_valign(gtk::Align::Center);
-            unified.set_tooltip_text(Some(
+            let unified = place(
+                1,
+                "All Inboxes",
+                r.show_in_unified,
                 "List this folder under All Inboxes, in its Filtered Folders section",
-            ));
+            );
             let s = sender.clone();
             unified.connect_active_notify(move |sw| {
                 s.input(AccountsInput::SetFilterUnified(i, sw.is_active()))
             });
-            row.add_suffix(&unified_label);
-            row.add_suffix(&unified);
+            row.add_suffix(&grid);
             let rm = gtk::Button::from_icon_name("co.hyprlab.Vireo-user-trash-symbolic");
             rm.add_css_class("flat");
             rm.set_valign(gtk::Align::Center);

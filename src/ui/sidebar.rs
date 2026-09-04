@@ -2176,12 +2176,9 @@ impl Sidebar {
             hb.append(&gtk::Image::from_icon_name("co.hyprlab.Vireo-folder-symbolic"));
             toggle.set_tooltip_text(Some("Filtered Folders"));
         } else {
-            if self.chevrons_left {
-                // Same nudge as the account sections' "Folders" header: a
-                // chevron's ink sits deeper in its canvas than an icon's.
-                chevron.set_margin_start(2);
-            }
-            hb.append(&chevron);
+            // The chevron follows Settings → Chevron placement like All
+            // Inboxes and the account headers above and below it: leading
+            // or, classically, trailing at the row's end.
             let lbl = gtk::Label::new(Some(&format!(
                 "Filtered Folders ({})",
                 self.unified_folders.len()
@@ -2189,7 +2186,18 @@ impl Sidebar {
             lbl.set_halign(gtk::Align::Start);
             lbl.set_hexpand(true);
             lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            hb.append(&lbl);
+            if self.chevrons_left {
+                // Same nudge as the account sections' "Folders" header: a
+                // chevron's ink sits deeper in its canvas than an icon's.
+                chevron.set_margin_start(2);
+                hb.append(&chevron);
+                hb.append(&lbl);
+            } else {
+                hb.append(&lbl);
+                hb.append(&chevron);
+                toggle.add_css_class("unified-folders-toggle");
+                toggle.add_css_class("chev-right");
+            }
         }
         toggle.set_child(Some(&hb));
         let st = sender.input_sender().clone();

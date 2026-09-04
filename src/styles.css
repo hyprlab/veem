@@ -377,6 +377,14 @@ button.star-active {
   opacity: 0.6;
 }
 
+/* The "Filtered Folders" header inside All Inboxes, trailing-chevron
+   layout: pull its chevron out to the same column as the All Inboxes and
+   account-header chevrons (their buttons reach further into the row's
+   padding than this plain image does). */
+.unified-folders-toggle.chev-right .folder-row {
+  padding-right: 2px;
+}
+
 /* Unread count: a perfect circle for a single digit that grows horizontally
    into a pill for larger numbers, but never taller. */
 .unread-badge {
