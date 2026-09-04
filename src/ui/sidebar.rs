@@ -2171,9 +2171,12 @@ impl Sidebar {
         toggle.add_css_class("folders-toggle");
         let hb = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         hb.add_css_class("folder-row");
+        // Jason's filter-folder glyph (a folder with a funnel's bars) names
+        // the section; it carries the rail's toggle alone.
+        let icon = gtk::Image::from_icon_name("co.hyprlab.Vireo-filter-folder-symbolic");
         if self.collapsed {
             hb.set_halign(gtk::Align::Center);
-            hb.append(&gtk::Image::from_icon_name("co.hyprlab.Vireo-folder-symbolic"));
+            hb.append(&icon);
             toggle.set_tooltip_text(Some("Filtered Folders"));
         } else {
             // The chevron follows Settings → Chevron placement like All
@@ -2186,13 +2189,17 @@ impl Sidebar {
             lbl.set_halign(gtk::Align::Start);
             lbl.set_hexpand(true);
             lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            icon.add_css_class("folder-icon");
+            pin_icon_size(&icon);
             if self.chevrons_left {
                 // Same nudge as the account sections' "Folders" header: a
                 // chevron's ink sits deeper in its canvas than an icon's.
                 chevron.set_margin_start(2);
                 hb.append(&chevron);
+                hb.append(&icon);
                 hb.append(&lbl);
             } else {
+                hb.append(&icon);
                 hb.append(&lbl);
                 hb.append(&chevron);
                 toggle.add_css_class("unified-folders-toggle");
