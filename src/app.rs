@@ -2615,6 +2615,14 @@ impl SimpleComponent for AppModel {
                         });
                     });
                 }
+                // VIREO_SHOWCASE_FOLD_FILTERED folds All Inboxes' Filtered
+                // Folders section, to check its folded header.
+                if std::env::var("VIREO_SHOWCASE_FOLD_FILTERED").is_ok() {
+                    let sb = model.sidebar.sender().clone();
+                    gtk::glib::timeout_add_seconds_local_once(3, move || {
+                        let _ = sb.send(SidebarInput::ToggleUnifiedFoldersExpand);
+                    });
+                }
                 // VIREO_SHOWCASE_SETTINGS=accounts|prefs opens the Settings
                 // window on that panel and captures it instead of the main
                 // window, so its pages can be checked in stills too.

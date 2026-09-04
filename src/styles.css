@@ -376,6 +376,12 @@ button.star-active {
 .folders-toggle image {
   opacity: 0.6;
 }
+/* The Filtered Folders header's folded-up unread chip: a real chip, not a
+   dimmed heading label. */
+.folders-toggle label.unread-badge {
+  opacity: 1;
+  font-weight: 700;
+}
 
 /* The "Filtered Folders" header inside All Inboxes, trailing-chevron
    layout: pull its chevron out to the same column as the All Inboxes and

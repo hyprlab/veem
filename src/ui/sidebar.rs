@@ -164,6 +164,10 @@ pub struct Sidebar {
     unified_folder_list: Option<gtk::ListBox>,
     /// Unread badges for the filtered-folder rows, by (account_id, folder_id).
     unified_folder_badges: HashMap<(u32, u32), gtk::Label>,
+    /// The "Filtered Folders" header's own unread chip (the section's total),
+    /// shown only while the section is folded up, like All Inboxes' chip.
+    unified_folders_badge: Option<gtk::Label>,
+    unified_folders_unread: u32,
     /// Inbox unread badge overlaid on each account's avatar circle, shown only
     /// while that account's section is collapsed (its Inbox row — and normal
     /// chip — is then hidden inside the revealer). Keyed by account_id.
@@ -428,6 +432,8 @@ impl Component for Sidebar {
             unified_folders_chevron: None,
             unified_folder_list: None,
             unified_folder_badges: HashMap::new(),
+            unified_folders_badge: None,
+            unified_folders_unread: 0,
             account_circle_badges: HashMap::new(),
         };
 
@@ -483,6 +489,8 @@ impl Component for Sidebar {
                 self.chevrons_left = chevrons_left;
                 self.unified_unread = unified_unread;
                 self.unified_folders = unified_folders;
+                self.unified_folders_unread =
+                    self.unified_folders.iter().map(|r| r.folder.unread).sum();
                 // A selected filtered folder that just left the section (its
                 // rule opted out, or the section was switched off) is still
                 // the open folder: carry the highlight to the account
@@ -649,6 +657,13 @@ impl Component for Sidebar {
                 if let Some(rev) = &self.unified_folders_revealer {
                     rev.set_reveal_child(self.unified_folders_expanded);
                 }
+                // Folded: the header wears the section's total; open, each
+                // row carries its own count and the total bows out.
+                if let Some(label) = &self.unified_folders_badge {
+                    label.set_visible(
+                        self.unified_folders_unread > 0 && !self.unified_folders_expanded,
+                    );
+                }
                 if let Some(ch) = &self.unified_folders_chevron {
                     ch.set_icon_name(Some(if self.unified_folders_expanded {
                         "co.hyprlab.Vireo-pan-down-symbolic"
@@ -722,6 +737,16 @@ impl Component for Sidebar {
                     label.set_visible(
                         unified > 0 && !self.unified_expanded && self.show_unified_chip,
                     );
+                }
+                let filtered: u32 = self
+                    .unified_folder_badges
+                    .keys()
+                    .map(|k| folders.get(k).copied().unwrap_or(0))
+                    .sum();
+                self.unified_folders_unread = filtered;
+                if let Some(label) = &self.unified_folders_badge {
+                    label.set_text(&filtered.to_string());
+                    label.set_visible(filtered > 0 && !self.unified_folders_expanded);
                 }
                 // Keep the avatar-circle badges in sync too. They only show while
                 // the account is collapsed (toggled live in ToggleCollapseLocal),
@@ -1103,6 +1128,7 @@ impl Sidebar {
         self.unified_folders_chevron = None;
         self.unified_folder_list = None;
         self.unified_folder_badges.clear();
+        self.unified_folders_badge = None;
         self.account_circle_badges.clear();
 
         // No accounts yet: show a prompt to add the first one instead of an empty
@@ -2092,7 +2118,8 @@ impl Sidebar {
             let text = crate::color::readable_text(&s.color);
             css.push_str(&format!(
                 ".acct-color-{0} {{ background-color: {1}; }} \
-                 .acct-color-{0} label {{ color: {2}; }}\n",
+                 .acct-color-{0} label {{ color: {2}; }} \
+                 .acct-tint-{0} {{ color: {1}; }}\n",
                 s.account.id, s.color, text
             ));
         }
@@ -2172,25 +2199,36 @@ impl Sidebar {
         let hb = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         hb.add_css_class("folder-row");
         // Jason's filter-folder glyph (a folder with a funnel's bars) names
-        // the section; it carries the rail's toggle alone.
+        // the section; it carries the rail's toggle alone. The header's
+        // unread chip — the section's total — shows only while the section
+        // is folded up, as All Inboxes' does.
         let icon = gtk::Image::from_icon_name("co.hyprlab.Vireo-filter-folder-symbolic");
+        let show_chip = self.unified_folders_unread > 0 && !self.unified_folders_expanded;
         if self.collapsed {
             hb.set_halign(gtk::Align::Center);
-            hb.append(&icon);
-            toggle.set_tooltip_text(Some("Filtered Folders"));
+            let (overlay, badge) = with_unread_overlay(&icon, self.unified_folders_unread);
+            badge.set_visible(show_chip);
+            hb.append(&overlay);
+            self.unified_folders_badge = Some(badge);
+            toggle.set_tooltip_text(Some(&if self.unified_folders_unread > 0 {
+                format!("Filtered Folders ({})", self.unified_folders_unread)
+            } else {
+                "Filtered Folders".to_string()
+            }));
         } else {
             // The chevron follows Settings → Chevron placement like All
             // Inboxes and the account headers above and below it: leading
             // or, classically, trailing at the row's end.
-            let lbl = gtk::Label::new(Some(&format!(
-                "Filtered Folders ({})",
-                self.unified_folders.len()
-            )));
+            let lbl = gtk::Label::new(Some("Filtered Folders"));
             lbl.set_halign(gtk::Align::Start);
             lbl.set_hexpand(true);
             lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
             icon.add_css_class("folder-icon");
             pin_icon_size(&icon);
+            let badge = gtk::Label::new(Some(&self.unified_folders_unread.to_string()));
+            badge.add_css_class("unread-badge");
+            badge.set_valign(gtk::Align::Center);
+            badge.set_visible(show_chip);
             if self.chevrons_left {
                 // Same nudge as the account sections' "Folders" header: a
                 // chevron's ink sits deeper in its canvas than an icon's.
@@ -2198,13 +2236,16 @@ impl Sidebar {
                 hb.append(&chevron);
                 hb.append(&icon);
                 hb.append(&lbl);
+                hb.append(&badge);
             } else {
                 hb.append(&icon);
                 hb.append(&lbl);
+                hb.append(&badge);
                 hb.append(&chevron);
                 toggle.add_css_class("unified-folders-toggle");
                 toggle.add_css_class("chev-right");
             }
+            self.unified_folders_badge = Some(badge);
         }
         toggle.set_child(Some(&hb));
         let st = sender.input_sender().clone();
@@ -2225,8 +2266,15 @@ impl Sidebar {
                 continue;
             };
             let tip = format!("{} \u{2014} {}", r.folder.name, section.account.label);
+            // The filter-folder glyph in the account's colour stands in for
+            // the inbox rows' account pill.
+            let icon = gtk::Image::from_icon_name("co.hyprlab.Vireo-filter-folder-symbolic");
+            icon.add_css_class(&format!("acct-tint-{}", section.account.id));
+            pin_icon_size(&icon);
             let (row, badge) = build_unified_sub_row(
-                section,
+                &icon,
+                // Centre the 16px glyph on the 21px pills above it.
+                2,
                 &r.folder.name,
                 &tip,
                 r.folder.unread,
@@ -2617,33 +2665,9 @@ fn build_unified_inbox_row(
     // Show the account's configured label (defaults to its email) so accounts are
     // easy to tell apart in the All Inboxes view.
     let label = &section.account.label;
-    build_unified_sub_row(section, label, label, inbox.unread, collapsed, inset)
-}
-
-/// A row nested under "All Inboxes" — an inbox sub-row or a filtered
-/// folder's: the account's small pill, `title`, and an unread badge. In the
-/// compact rail only the pill is shown (centred), with the count as a corner
-/// chip and `tip` (plus the count) as the tooltip. Returns the badge for
-/// in-place updates.
-fn build_unified_sub_row(
-    section: &SectionData,
-    title: &str,
-    tip: &str,
-    unread: u32,
-    collapsed: bool,
-    inset: bool,
-) -> (gtk::ListBoxRow, gtk::Label) {
-    let id = section.account.id;
-    let row = gtk::ListBoxRow::new();
-    let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    hbox.add_css_class("folder-row");
-    if !collapsed {
-        hbox.add_css_class("unified-subrow");
-    }
-
-    let name_str = section.account.label.clone();
 
     // Small account pill (colour + initials/emoji), like the header circle.
+    let id = section.account.id;
     let circle = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     circle.add_css_class("account-circle-sm");
     circle.add_css_class(&format!("acct-color-{id}"));
@@ -2660,9 +2684,34 @@ fn build_unified_sub_row(
             glyph.set_text(em);
             glyph.add_css_class("account-emoji");
         }
-        _ => glyph.set_text(&account_initials(&name_str, &section.account.email)),
+        _ => glyph.set_text(&account_initials(label, &section.account.email)),
     }
     circle.append(&glyph);
+
+    build_unified_sub_row(&circle, 0, label, label, inbox.unread, collapsed, inset)
+}
+
+/// A row nested under "All Inboxes" — an inbox sub-row or a filtered
+/// folder's: `lead` (the account's pill, or a tinted glyph), `title`, and an
+/// unread badge. `lead_shift` is extra left margin for a lead narrower than
+/// the pills, to centre on their column. In the compact rail only the lead
+/// is shown (centred), with the count as a corner chip and `tip` (plus the
+/// count) as the tooltip. Returns the badge for in-place updates.
+fn build_unified_sub_row(
+    lead: &impl IsA<gtk::Widget>,
+    lead_shift: i32,
+    title: &str,
+    tip: &str,
+    unread: u32,
+    collapsed: bool,
+    inset: bool,
+) -> (gtk::ListBoxRow, gtk::Label) {
+    let row = gtk::ListBoxRow::new();
+    let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    hbox.add_css_class("folder-row");
+    if !collapsed {
+        hbox.add_css_class("unified-subrow");
+    }
 
     let badge = if collapsed {
         hbox.set_halign(gtk::Align::Center);
@@ -2672,20 +2721,18 @@ fn build_unified_sub_row(
             tip.to_string()
         };
         row.set_tooltip_text(Some(&tip));
-        let (overlay, badge) = with_unread_overlay(&circle, unread);
+        let (overlay, badge) = with_unread_overlay(lead, unread);
         hbox.append(&overlay);
         badge
     } else {
-        if inset {
-            circle.set_margin_start(ROW_LEFT_INSET - 6);
-        }
-        hbox.append(&circle);
+        lead.set_margin_start(lead_shift + if inset { ROW_LEFT_INSET - 6 } else { 0 });
+        hbox.append(lead);
         if tip != title {
             row.set_tooltip_text(Some(tip));
         }
 
         let name = gtk::Label::new(Some(title));
-        name.set_margin_start(6);
+        name.set_margin_start(6 + lead_shift);
         name.set_hexpand(true);
         name.set_halign(gtk::Align::Start);
         name.set_ellipsize(gtk::pango::EllipsizeMode::End);
