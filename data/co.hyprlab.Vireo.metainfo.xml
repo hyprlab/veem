@@ -56,6 +56,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.20.1" date="2026-09-04">
+
+      <description><p>Filter-rule folders can be listed in a Filtered Folders section inside All Inboxes, switched on per rule beside Count unread mail, with a global switch under Settings → Sidebar.</p></description>
+
+    </release>
     <release version="1.20.0" date="2026-09-04">
 
       <description><p>Spell checking and inline images in the composer, an optional tray icon with your newest unread mail in its menu, filtered folders counting toward unread per rule, cached mail opening instantly during sync, Reply-To honoured, grab handles for the split reply and attachment drawer, plain-text paste by default, and attachment fixes for web Gmail senders.</p></description>
