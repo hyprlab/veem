@@ -376,6 +376,30 @@ button.star-active {
 .folders-toggle image {
   opacity: 0.6;
 }
+/* The Filtered Folders header's folded-up unread chip: a real chip, not a
+   dimmed heading label. */
+.folders-toggle label.unread-badge {
+  opacity: 1;
+  font-weight: 700;
+}
+
+/* The "Filtered Folders" header inside All Inboxes reads like the All
+   Inboxes row above it — full-strength label, icon at the folder rows'
+   weight — rather than like the accounts' dimmed "Folders" heading. */
+.unified-folders-toggle label {
+  opacity: 1;
+}
+.unified-folders-toggle image {
+  opacity: 0.75;
+}
+/* Tighter onto its first folder row (Jason, 2026-09-04: 7px less). */
+.unified-folders-toggle .folder-row {
+  padding-bottom: 0;
+  /* Its folded-up chip onto the folder rows' chip column: the heading's
+     button padding otherwise leaves it 2px short. */
+  padding-right: 6px;
+}
+
 
 /* Unread count: a perfect circle for a single digit that grows horizontally
    into a pill for larger numbers, but never taller. */

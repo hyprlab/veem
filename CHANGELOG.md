@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.20.2-beta.1 — 2026-09-04
+
+The beta channel catches up with stable 1.20.1: the same code, no
+beta-only changes. Everything since 1.20.1-beta.1 is in the 1.20.1
+section below (Filtered Folders under All Inboxes).
+
+## 1.20.1 — 2026-09-04
+
+Filter-rule folders reachable from All Inboxes, per rule.
+
+- **Filtered Folders under All Inboxes.** Each filter rule gains a "Show
+  under All Inboxes" switch, off by default, beside "Count unread mail"
+  in Settings → Accounts → Filters and in the Add Filter dialog; the two
+  switches stack in a two-column grid so rule titles keep their width.
+  Folders of rules that opt in are listed in a collapsible "Filtered
+  Folders" section inside All Inboxes, under the per-account inbox rows.
+  The heading leads with its caret like the accounts' "Folders" heading
+  and, folded up, wears the section's unread total as a chip that hides
+  while the section is open, as the All Inboxes chip does. Rows come from
+  the same builder as the folders under an account's "Folders" heading
+  (leaf expander indent included), with a new filter-folder glyph tinted
+  in the account's colour in place of the folder icon. Selecting a row
+  opens the folder, right-click offers Mark as Read and Refresh, and
+  unread chips update in place. The section folds with All Inboxes; in
+  the icon-only rail it is a glyph toggle over tinted glyphs. A selected
+  filtered folder that leaves the section (its rule opted out, or the
+  section switched off) keeps its highlight on the account section's own
+  row. The rule flag is `show_in_unified` in filters.toml, defaulting to
+  off so existing rule files load unchanged.
+- **Settings → Sidebar: "Filtered folders under All Inboxes".** A global
+  switch, on by default, that hides the section whatever the rules say;
+  greyed out while All Inboxes itself is off. Stored as
+  `unified_filtered` in privacy.toml.
+- **Dev: showcase hooks.** `VIREO_SHOWCASE_SETTINGS=accounts|prefs`
+  captures the Settings window instead of the main one,
+  `VIREO_SHOWCASE_SCROLL=<0..1>` makes it tall and scrolls its panels that
+  far down first, and `VIREO_SHOWCASE_FOLD_FILTERED` folds the Filtered
+  Folders section, for checking those states in stills.
+
 ## 1.20.1-beta.1 — 2026-09-04
 
 The beta channel catches up with stable 1.20.0: the same code, no

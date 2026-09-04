@@ -221,6 +221,8 @@ pub enum AccountsInput {
     RemoveFilter(usize),
     /// The rule's "count unread" switch was flipped (#116).
     SetFilterCounted(usize, bool),
+    /// Toggle whether a rule's folder is listed under All Inboxes.
+    SetFilterUnified(usize, bool),
     FilterAdded(crate::config::FilterRule),
 }
 
@@ -1586,6 +1588,15 @@ impl Component for AccountsWindow {
                     }
                 }
             }
+            AccountsInput::SetFilterUnified(i, on) => {
+                if let Some(r) = self.filter_rules.get_mut(i) {
+                    if r.show_in_unified != on {
+                        r.show_in_unified = on;
+                        let _ = sender
+                            .output(AccountsOutput::SetFilters(self.filter_rules.clone()));
+                    }
+                }
+            }
         }
     }
 
@@ -2549,22 +2560,50 @@ impl AccountsWindow {
                 .map(|(_, name)| name.clone())
                 .unwrap_or_else(|| r.dest_path.clone());
             row.set_subtitle(&format!("{} \u{2192} {}", r.account_email, dest));
-            // Whether the folder's unread mail joins the unread total (#116).
-            let count_label = gtk::Label::new(Some("Count unread"));
-            count_label.add_css_class("dim-label");
-            count_label.set_valign(gtk::Align::Center);
-            let count = gtk::Switch::new();
-            count.set_active(r.count_unread);
-            count.set_valign(gtk::Align::Center);
-            count.set_tooltip_text(Some(
+            // The rule's two switches stacked in a narrow two-column grid —
+            // labels right-aligned against their switches — so the row's
+            // title keeps its width: "Count unread" (whether the folder's
+            // unread mail joins the unread total, #116) over "All Inboxes"
+            // (whether the folder is listed in All Inboxes' Filtered
+            // Folders section).
+            let grid = gtk::Grid::new();
+            grid.set_column_spacing(8);
+            grid.set_row_spacing(4);
+            grid.set_valign(gtk::Align::Center);
+            let mut place = |line: i32, text: &str, active: bool, tip: &str| -> gtk::Switch {
+                let label = gtk::Label::new(Some(text));
+                label.add_css_class("dim-label");
+                label.set_halign(gtk::Align::End);
+                label.set_valign(gtk::Align::Center);
+                let sw = gtk::Switch::new();
+                sw.set_active(active);
+                sw.set_valign(gtk::Align::Center);
+                sw.set_tooltip_text(Some(tip));
+                grid.attach(&label, 0, line, 1, 1);
+                grid.attach(&sw, 1, line, 1, 1);
+                sw
+            };
+            let count = place(
+                0,
+                "Count unread",
+                r.count_unread,
                 "Include this folder's unread mail in the unread count and the tray icon",
-            ));
+            );
             let s = sender.clone();
             count.connect_active_notify(move |sw| {
                 s.input(AccountsInput::SetFilterCounted(i, sw.is_active()))
             });
-            row.add_suffix(&count_label);
-            row.add_suffix(&count);
+            let unified = place(
+                1,
+                "All Inboxes",
+                r.show_in_unified,
+                "List this folder under All Inboxes, in its Filtered Folders section",
+            );
+            let s = sender.clone();
+            unified.connect_active_notify(move |sw| {
+                s.input(AccountsInput::SetFilterUnified(i, sw.is_active()))
+            });
+            row.add_suffix(&grid);
             let rm = gtk::Button::from_icon_name("co.hyprlab.Vireo-user-trash-symbolic");
             rm.add_css_class("flat");
             rm.set_valign(gtk::Align::Center);
@@ -2655,12 +2694,23 @@ impl AccountsWindow {
         count_row.set_subtitle("Include the folder's unread mail in the unread count and the tray icon");
         count_row.set_active(true);
 
+        // Listing the folder under All Inboxes is the rule's choice: off
+        // unless asked, so the unified view's Filtered Folders section only
+        // ever holds folders someone put there.
+        let unified_row = adw::SwitchRow::new();
+        unified_row.set_title("Show under All Inboxes");
+        unified_row.set_subtitle(
+            "List the folder in the Filtered Folders section inside All Inboxes",
+        );
+        unified_row.set_active(false);
+
         form.append(&account_row);
         form.append(&field_row);
         form.append(&match_row);
         form.append(&value_row);
         form.append(&dest_row);
         form.append(&count_row);
+        form.append(&unified_row);
         dialog.set_extra_child(Some(&form));
 
         let s = sender.clone();
@@ -2693,6 +2743,7 @@ impl AccountsWindow {
                 value,
                 dest_path: dest.clone(),
                 count_unread: count_row.is_active(),
+                show_in_unified: unified_row.is_active(),
             };
             s.input(AccountsInput::FilterAdded(rule));
         });
