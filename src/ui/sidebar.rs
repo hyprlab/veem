@@ -1879,7 +1879,7 @@ impl Sidebar {
             list.add_css_class("navigation-sidebar");
             for folder in &essential {
                 let (row, badge) =
-                    build_folder_row(folder, self.collapsed, 0, None, self.chevrons_left);
+                    build_folder_row(folder, self.collapsed, 0, None, self.chevrons_left, None);
                 row.add_controller(folder_drop_target(id, folder.path.clone(), sender));
                 list.append(&row);
                 if let Some(badge) = badge {
@@ -1964,6 +1964,7 @@ impl Sidebar {
                             depth,
                             lead.as_ref(),
                             self.chevrons_left,
+                            None,
                         );
                     // Hidden while any ancestor is collapsed; the row still
                     // exists, so selection indices stay stable. Its content
@@ -2196,7 +2197,12 @@ impl Sidebar {
         let toggle = gtk::Button::new();
         toggle.add_css_class("flat");
         toggle.add_css_class("folders-toggle");
-        let hb = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        // Styled like the All Inboxes row above it (full-strength label and
+        // icon), not like the account sections' dimmed "Folders" heading.
+        toggle.add_css_class("unified-folders-toggle");
+        // The All Inboxes row's icon-to-label spacing, so the two headers'
+        // labels share a column.
+        let hb = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         hb.add_css_class("folder-row");
         // Jason's filter-folder glyph (a folder with a funnel's bars) names
         // the section; it carries the rail's toggle alone. The header's
@@ -2220,6 +2226,7 @@ impl Sidebar {
             // Inboxes and the account headers above and below it: leading
             // or, classically, trailing at the row's end.
             let lbl = gtk::Label::new(Some("Filtered Folders"));
+            lbl.add_css_class("account-name");
             lbl.set_halign(gtk::Align::Start);
             lbl.set_hexpand(true);
             lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -2242,7 +2249,6 @@ impl Sidebar {
                 hb.append(&lbl);
                 hb.append(&badge);
                 hb.append(&chevron);
-                toggle.add_css_class("unified-folders-toggle");
                 toggle.add_css_class("chev-right");
             }
             self.unified_folders_badge = Some(badge);
@@ -2266,21 +2272,35 @@ impl Sidebar {
                 continue;
             };
             let tip = format!("{} \u{2014} {}", r.folder.name, section.account.label);
-            // The filter-folder glyph in the account's colour stands in for
-            // the inbox rows' account pill.
+            // Laid out exactly like a folder under an account's "Folders"
+            // heading — same builder, same leaf expander slot — so folders
+            // read the same wherever they sit in the sidebar. Only the icon
+            // differs: the filter-folder glyph in the account's colour, which
+            // is what says whose folder this is.
             let icon = gtk::Image::from_icon_name("co.hyprlab.Vireo-filter-folder-symbolic");
             icon.add_css_class(&format!("acct-tint-{}", section.account.id));
-            pin_icon_size(&icon);
-            let (row, badge) = build_unified_sub_row(
-                &icon,
-                // Centre the 16px glyph on the 21px pills above it.
-                2,
-                &r.folder.name,
-                &tip,
-                r.folder.unread,
+            let lead: Option<gtk::Widget> = if self.collapsed {
+                None
+            } else {
+                let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                spacer.set_width_request(TREE_EXPANDER_WIDTH);
+                Some(spacer.upcast())
+            };
+            let (row, badge) = build_folder_row(
+                &r.folder,
                 self.collapsed,
+                0,
+                lead.as_ref(),
                 self.chevrons_left,
+                Some(icon),
             );
+            let Some(badge) = badge else { continue };
+            // Name the account too: the tint alone is a hint.
+            row.set_tooltip_text(Some(&if self.collapsed && r.folder.unread > 0 {
+                format!("{tip} ({})", r.folder.unread)
+            } else {
+                tip.clone()
+            }));
             list.append(&row);
             self.unified_folder_badges.insert((r.account_id, r.folder.id), badge);
         }
@@ -2688,18 +2708,15 @@ fn build_unified_inbox_row(
     }
     circle.append(&glyph);
 
-    build_unified_sub_row(&circle, 0, label, label, inbox.unread, collapsed, inset)
+    build_unified_sub_row(&circle, label, label, inbox.unread, collapsed, inset)
 }
 
-/// A row nested under "All Inboxes" — an inbox sub-row or a filtered
-/// folder's: `lead` (the account's pill, or a tinted glyph), `title`, and an
-/// unread badge. `lead_shift` is extra left margin for a lead narrower than
-/// the pills, to centre on their column. In the compact rail only the lead
-/// is shown (centred), with the count as a corner chip and `tip` (plus the
-/// count) as the tooltip. Returns the badge for in-place updates.
+/// A row nested under "All Inboxes": `lead` (the account's pill), `title`,
+/// and an unread badge. In the compact rail only the lead is shown
+/// (centred), with the count as a corner chip and `tip` (plus the count) as
+/// the tooltip. Returns the badge for in-place updates.
 fn build_unified_sub_row(
     lead: &impl IsA<gtk::Widget>,
-    lead_shift: i32,
     title: &str,
     tip: &str,
     unread: u32,
@@ -2725,14 +2742,16 @@ fn build_unified_sub_row(
         hbox.append(&overlay);
         badge
     } else {
-        lead.set_margin_start(lead_shift + if inset { ROW_LEFT_INSET - 6 } else { 0 });
+        if inset {
+            lead.set_margin_start(ROW_LEFT_INSET - 6);
+        }
         hbox.append(lead);
         if tip != title {
             row.set_tooltip_text(Some(tip));
         }
 
         let name = gtk::Label::new(Some(title));
-        name.set_margin_start(6 + lead_shift);
+        name.set_margin_start(6);
         name.set_hexpand(true);
         name.set_halign(gtk::Align::Start);
         name.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -2813,6 +2832,7 @@ fn build_folder_row(
     depth: usize,
     lead: Option<&gtk::Widget>,
     inset: bool,
+    icon: Option<gtk::Image>,
 ) -> (gtk::ListBoxRow, Option<gtk::Label>) {
     let row = gtk::ListBoxRow::new();
     let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -2837,7 +2857,9 @@ fn build_folder_row(
         hbox.set_margin_start(14 * depth.min(4) as i32);
     }
 
-    let img = gtk::Image::from_icon_name(folder.kind.icon());
+    // The folder kind's icon, unless the caller brought its own (the
+    // Filtered Folders rows' account-tinted glyph).
+    let img = icon.unwrap_or_else(|| gtk::Image::from_icon_name(folder.kind.icon()));
     img.add_css_class("folder-icon");
     pin_icon_size(&img);
 
