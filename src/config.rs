@@ -799,6 +799,11 @@ struct PrivacyFile {
     /// counts granularly and the total is never shown).
     #[serde(default = "default_unified_chip")]
     unified_chip: bool,
+    /// Whether All Inboxes lists the folders that filter rules file into (for
+    /// rules whose "Show under All Inboxes" switch is on) in a collapsible
+    /// section of its own. Off hides that section whatever the rules say.
+    #[serde(default = "default_unified_filtered")]
+    unified_filtered: bool,
     /// Whether the sidebar's disclosure chevrons (All Inboxes, account
     /// headers) LEAD their rows; off puts them back at the row's end.
     #[serde(default = "default_chevrons_left")]
@@ -824,6 +829,10 @@ fn default_show_unified() -> bool {
 }
 
 fn default_unified_chip() -> bool {
+    true
+}
+
+fn default_unified_filtered() -> bool {
     true
 }
 
@@ -925,6 +934,7 @@ impl Default for PrivacyFile {
             show_remote_banner: default_show_remote_banner(),
             show_unified: default_show_unified(),
             unified_chip: default_unified_chip(),
+            unified_filtered: default_unified_filtered(),
             chevrons_left: default_chevrons_left(),
             console_mode: false,
             read_mark: ReadMark::default(),
@@ -1067,6 +1077,10 @@ pub fn load_unified_chip() -> bool {
     load_privacy().unified_chip
 }
 
+pub fn load_unified_filtered() -> bool {
+    load_privacy().unified_filtered
+}
+
 pub fn load_chevrons_left() -> bool {
     load_privacy().chevrons_left
 }
@@ -1111,6 +1125,12 @@ pub struct FilterRule {
     /// destinations never count, whatever this says.
     #[serde(default = "count_unread_default")]
     pub count_unread: bool,
+    /// Whether the destination folder is listed under All Inboxes, in its
+    /// collapsible "Filtered Folders" section, so filed mail is a click away
+    /// from the unified view. Off by default: a rule opts its folder in.
+    /// Settings → Sidebar can switch the whole section off regardless.
+    #[serde(default)]
+    pub show_in_unified: bool,
 }
 
 fn count_unread_default() -> bool {
@@ -1437,6 +1457,7 @@ pub fn save_privacy(
     app_theme: AppTheme,
     show_unified: bool,
     unified_chip: bool,
+    unified_filtered: bool,
     chevrons_left: bool,
     console_mode: bool,
     read_mark: ReadMark,
@@ -1492,6 +1513,7 @@ pub fn save_privacy(
         app_theme,
         show_unified,
         unified_chip,
+        unified_filtered,
         chevrons_left,
         console_mode,
         read_mark,
@@ -2019,6 +2041,7 @@ mod filter_tests {
             value: value.into(),
             dest_path: "Archive".into(),
             count_unread: true,
+            show_in_unified: false,
         }
     }
 

@@ -79,7 +79,7 @@ use crate::ui::message_window::{
 use crate::ui::notifications::{NotificationCenter, NotifyInput, NotifyOutput};
 use crate::ui::preferences::{PrefInit, PrefInput, PrefOutput, Preferences};
 use crate::ui::sidebar::{
-    CtxAction, SectionData, Sidebar, SidebarInit, SidebarInput, SidebarOutput,
+    CtxAction, SectionData, Sidebar, SidebarInit, SidebarInput, SidebarOutput, UnifiedFolderRef,
 };
 use crate::worker::{self, MailRequest, OutgoingMessage, WorkerEvent};
 
@@ -386,6 +386,9 @@ pub struct AppModel {
     show_unified_pref: bool,
     /// Whether the collapsed "All Inboxes" row wears its total-unread chip.
     unified_chip: bool,
+    /// Whether All Inboxes lists the folders that opted-in filter rules file
+    /// into, in its "Filtered Folders" section (Settings → Sidebar).
+    unified_filtered: bool,
     /// Whether the sidebar's disclosure chevrons lead their rows.
     chevrons_left: bool,
     /// Console mode offered in the status bar (Settings → System & Appearance).
@@ -674,6 +677,7 @@ pub enum AppMsg {
     SetContactsRow(bool),
     SetShowUnified(bool),
     SetUnifiedChip(bool),
+    SetUnifiedFiltered(bool),
     SetChevronsLeft(bool),
     /// The message list's visible-count text changed.
     ListCount(String),
@@ -1828,6 +1832,7 @@ impl SimpleComponent for AppModel {
             always_show_recipients: config::load_always_show_recipients(),
             show_unified_pref: config::load_show_unified(),
             unified_chip: config::load_unified_chip(),
+            unified_filtered: config::load_unified_filtered(),
             chevrons_left: config::load_chevrons_left(),
             console_mode: config::load_console_mode(),
             read_mark: config::load_read_mark(),
@@ -2610,9 +2615,58 @@ impl SimpleComponent for AppModel {
                         });
                     });
                 }
+                // VIREO_SHOWCASE_SETTINGS=accounts|prefs opens the Settings
+                // window on that panel and captures it instead of the main
+                // window, so its pages can be checked in stills too.
+                let settings = std::env::var("VIREO_SHOWCASE_SETTINGS").ok();
+                if let Some(panel) = settings.clone() {
+                    let s = sender.clone();
+                    gtk::glib::timeout_add_seconds_local_once(3, move || {
+                        s.input(if panel == "accounts" {
+                            AppMsg::OpenAccounts
+                        } else {
+                            AppMsg::OpenPreferences
+                        });
+                    });
+                }
+                let main: gtk::Window = root.clone().upcast();
+                let settings_window = move || {
+                    let tops = gtk::Window::toplevels();
+                    (0..tops.n_items())
+                        .filter_map(|i| tops.item(i))
+                        .filter_map(|o| o.downcast::<gtk::Window>().ok())
+                        .find(|w| *w != main && w.is_visible())
+                };
+                // With VIREO_SHOWCASE_SCROLL set, the Settings window is
+                // made tall a beat after opening and every scroller in it
+                // is run to its end just before the capture, so the lower
+                // groups of a panel can be checked.
+                // The value is the fraction of the way down (default 1).
+                let scroll: Option<f64> = std::env::var("VIREO_SHOWCASE_SCROLL")
+                    .ok()
+                    .map(|v| v.parse().unwrap_or(1.0));
+                if let (Some(_), Some(frac)) = (&settings, scroll) {
+                    let find = settings_window.clone();
+                    gtk::glib::timeout_add_seconds_local_once(4, move || {
+                        if let Some(w) = find() {
+                            w.set_default_size(720, 1300);
+                        }
+                    });
+                    let find = settings_window.clone();
+                    gtk::glib::timeout_add_seconds_local_once(delay.saturating_sub(1), move || {
+                        if let Some(w) = find() {
+                            scroll_all_to(w.upcast_ref::<gtk::Widget>(), frac);
+                        }
+                    });
+                }
                 let win = root.clone();
                 gtk::glib::timeout_add_seconds_local_once(delay, move || {
-                    showcase_capture(win.upcast_ref::<gtk::Widget>(), &shot);
+                    let target = settings
+                        .as_ref()
+                        .and_then(|_| settings_window())
+                        .map(|w| w.upcast::<gtk::Widget>())
+                        .unwrap_or_else(|| win.clone().upcast::<gtk::Widget>());
+                    showcase_capture(&target, &shot);
                 });
             }
         }
@@ -4139,6 +4193,15 @@ impl SimpleComponent for AppModel {
                 }
             }
 
+            AppMsg::SetUnifiedFiltered(show) => {
+                if self.unified_filtered != show {
+                    self.unified_filtered = show;
+                    self.save_settings();
+                    // Adds or removes the Filtered Folders section.
+                    self.rebuild_sidebar();
+                }
+            }
+
             AppMsg::SetChevronsLeft(left) => {
                 if self.chevrons_left != left {
                     self.chevrons_left = left;
@@ -4605,7 +4668,14 @@ impl SimpleComponent for AppModel {
 
             AppMsg::SetFilters(rules) => {
                 config::save_filters(&rules);
+                let listed_before = self.unified_folder_keys();
                 self.filters = rules;
+                // A rule opting its folder in or out of All Inboxes changes
+                // the sidebar's Filtered Folders section; nothing else
+                // about the rules is drawn there.
+                if self.unified_folder_keys() != listed_before {
+                    self.rebuild_sidebar();
+                }
                 // File whatever already sits in the inboxes under the new
                 // rules; reuses the blacklist's re-sync sweep.
                 self.sweep_blacklisted();
@@ -5743,6 +5813,7 @@ impl AppModel {
             self.app_theme,
             self.show_unified_pref,
             self.unified_chip,
+            self.unified_filtered,
             self.chevrons_left,
             self.console_mode,
             self.read_mark,
@@ -6779,12 +6850,14 @@ impl AppModel {
                 // deserve the same All Inboxes opening as a real multi-account setup.
                 || (demo_mode() && self.accounts.len() > 1));
         let unified_unread = self.unified_unread();
+        let unified_folders = self.unified_folder_refs();
         self.sidebar.emit(SidebarInput::SetContents {
             sections,
             show_unified,
             unified_chip: self.unified_chip,
             chevrons_left: self.chevrons_left,
             unified_unread,
+            unified_folders,
         });
 
         // Keep the list's per-account tint colours in sync.
@@ -9083,6 +9156,7 @@ impl AppModel {
             show_contacts: self.show_contacts,
             show_unified: self.show_unified_pref,
             unified_chip: self.unified_chip,
+            unified_filtered: self.unified_filtered,
             chevrons_left: self.chevrons_left,
             console_mode: self.console_mode,
             read_mark: self.read_mark,
@@ -9146,6 +9220,7 @@ impl AppModel {
                 PrefOutput::SetContactsRow(show) => AppMsg::SetContactsRow(show),
                 PrefOutput::SetShowUnified(show) => AppMsg::SetShowUnified(show),
                 PrefOutput::SetUnifiedChip(show) => AppMsg::SetUnifiedChip(show),
+                PrefOutput::SetUnifiedFiltered(show) => AppMsg::SetUnifiedFiltered(show),
                 PrefOutput::SetChevronsLeft(left) => AppMsg::SetChevronsLeft(left),
                 PrefOutput::SetConsoleMode(on) => AppMsg::SetConsoleMode(on),
                 PrefOutput::SetReadMark(policy) => AppMsg::SetReadMark(policy),
@@ -9853,6 +9928,46 @@ impl AppModel {
         out
     }
 
+    /// The folders listed in All Inboxes' "Filtered Folders" section: the
+    /// destination of every rule whose "Show under All Inboxes" switch is
+    /// on, in account order then rule order, without repeats; nothing when
+    /// Settings → Sidebar has the section off. An inbox destination is
+    /// already an All Inboxes row and is skipped.
+    fn unified_folder_refs(&self) -> Vec<UnifiedFolderRef> {
+        let mut out: Vec<UnifiedFolderRef> = Vec::new();
+        if !self.unified_filtered {
+            return out;
+        }
+        for email in self.ordered_emails() {
+            let Some(account) = self.accounts.iter().find(|a| a.email == email) else { continue };
+            let Some(folders) = self.folders.get(&account.id) else { continue };
+            let rules = self.filters.iter().filter(|r| {
+                r.show_in_unified && r.account_email.eq_ignore_ascii_case(&email)
+            });
+            for r in rules {
+                let Some(f) = folders.iter().find(|f| f.path == r.dest_path) else { continue };
+                if f.kind == FolderKind::Inbox
+                    || out.iter().any(|o| o.account_id == account.id && o.folder.id == f.id)
+                {
+                    continue;
+                }
+                let mut folder = f.clone();
+                folder.unread = self.folder_unread_of(f);
+                out.push(UnifiedFolderRef { account_id: account.id, folder });
+            }
+        }
+        out
+    }
+
+    /// The identity of [`unified_folder_refs`](Self::unified_folder_refs),
+    /// for telling whether a rule change moved anything in or out.
+    fn unified_folder_keys(&self) -> Vec<(u32, u32)> {
+        self.unified_folder_refs()
+            .into_iter()
+            .map(|r| (r.account_id, r.folder.id))
+            .collect()
+    }
+
     fn folder_unread_of(&self, f: &Folder) -> u32 {
         self.folder_unread.get(&(f.account_id, f.id)).copied().unwrap_or(0)
     }
@@ -10551,6 +10666,20 @@ fn parse_mailto(uri: &str) -> Option<crate::ui::compose::ComposePrefill> {
 /// Render the window's widget tree to a PNG at 2x (crisp text for marketing
 /// shots). Content only — the compositor's shadow/frame is not part of the
 /// tree, which is exactly what the site and store screenshots want.
+/// Showcase helper: scroll every scrolled window under `w` `frac` of the
+/// way down (1.0 = its end).
+fn scroll_all_to(w: &gtk::Widget, frac: f64) {
+    if let Some(sw) = w.downcast_ref::<gtk::ScrolledWindow>() {
+        let adj = sw.vadjustment();
+        adj.set_value((adj.upper() - adj.page_size()) * frac.clamp(0.0, 1.0));
+    }
+    let mut child = w.first_child();
+    while let Some(c) = child {
+        scroll_all_to(&c, frac);
+        child = c.next_sibling();
+    }
+}
+
 pub(crate) fn showcase_capture(win: &gtk::Widget, path: &str) {
     let (w, h) = (win.width(), win.height());
     if w == 0 || h == 0 {

@@ -25,6 +25,15 @@ struct InboxRef {
     path: String,
 }
 
+/// A folder a filter rule files into, listed in the "Filtered Folders"
+/// section inside All Inboxes. The app resolves the rules to these; the
+/// sidebar only draws them (account pill + folder name + unread chip).
+#[derive(Debug, Clone)]
+pub struct UnifiedFolderRef {
+    pub account_id: u32,
+    pub folder: Folder,
+}
+
 /// One account's section data, as handed to the sidebar.
 #[derive(Debug, Clone)]
 pub struct SectionData {
@@ -64,6 +73,9 @@ enum Sel {
     Folder(u32, String),
     /// An account's inbox selected via the "All Inboxes" sub-list.
     UnifiedInbox(u32),
+    /// A filtered folder (account, path) selected via the "Filtered Folders"
+    /// section inside All Inboxes.
+    UnifiedFolder(u32, String),
 }
 
 pub struct Sidebar {
@@ -143,6 +155,15 @@ pub struct Sidebar {
     unified_inboxes: Vec<InboxRef>,
     /// Unread badges for the sub-list rows, by (account_id, inbox folder_id).
     unified_inbox_badges: HashMap<(u32, u32), gtk::Label>,
+    /// The filtered folders listed inside All Inboxes, in row order.
+    unified_folders: Vec<UnifiedFolderRef>,
+    /// Whether the "Filtered Folders" section inside All Inboxes is open.
+    unified_folders_expanded: bool,
+    unified_folders_revealer: Option<gtk::Revealer>,
+    unified_folders_chevron: Option<gtk::Image>,
+    unified_folder_list: Option<gtk::ListBox>,
+    /// Unread badges for the filtered-folder rows, by (account_id, folder_id).
+    unified_folder_badges: HashMap<(u32, u32), gtk::Label>,
     /// Inbox unread badge overlaid on each account's avatar circle, shown only
     /// while that account's section is collapsed (its Inbox row — and normal
     /// chip — is then hidden inside the revealer). Keyed by account_id.
@@ -157,6 +178,9 @@ pub enum SidebarInput {
         unified_chip: bool,
         chevrons_left: bool,
         unified_unread: u32,
+        /// Filter-rule folders to list inside All Inboxes (already
+        /// narrowed to the rules that opt in and the Settings switch).
+        unified_folders: Vec<UnifiedFolderRef>,
     },
     UnifiedRowSelected,
     /// Select the "All Inboxes" row programmatically (the tray menu's
@@ -178,6 +202,10 @@ pub enum SidebarInput {
     UnifiedInboxRowSelected(i32),
     /// Toggle the "All Inboxes" per-account inbox sub-list.
     ToggleUnifiedExpand,
+    /// A filtered-folder row inside "All Inboxes" was chosen.
+    UnifiedFolderRowSelected(i32),
+    /// Toggle the "Filtered Folders" section inside "All Inboxes".
+    ToggleUnifiedFoldersExpand,
     ToggleCollapseLocal(u32),
     /// Set icon-only mode outright (the app's narrow-window breakpoint) —
     /// unlike ToggleCollapsed this never reports CollapsedChanged, so it can't
@@ -394,6 +422,12 @@ impl Component for Sidebar {
             unified_inbox_list: None,
             unified_inboxes: Vec::new(),
             unified_inbox_badges: HashMap::new(),
+            unified_folders: Vec::new(),
+            unified_folders_expanded: true,
+            unified_folders_revealer: None,
+            unified_folders_chevron: None,
+            unified_folder_list: None,
+            unified_folder_badges: HashMap::new(),
             account_circle_badges: HashMap::new(),
         };
 
@@ -421,7 +455,14 @@ impl Component for Sidebar {
         _root: &Self::Root,
     ) {
         match msg {
-            SidebarInput::SetContents { mut sections, show_unified, unified_chip, chevrons_left, unified_unread } => {
+            SidebarInput::SetContents {
+                mut sections,
+                show_unified,
+                unified_chip,
+                chevrons_left,
+                unified_unread,
+                unified_folders,
+            } => {
                 // Order each account's folders essential-first, then custom, so
                 // the essential/custom split lines up with row indices (the main
                 // list holds indices 0..E, the custom list E..).
@@ -441,6 +482,21 @@ impl Component for Sidebar {
                 self.show_unified_chip = unified_chip;
                 self.chevrons_left = chevrons_left;
                 self.unified_unread = unified_unread;
+                self.unified_folders = unified_folders;
+                // A selected filtered folder that just left the section (its
+                // rule opted out, or the section was switched off) is still
+                // the open folder: carry the highlight to the account
+                // section's own row for it.
+                if let Sel::UnifiedFolder(acc, path) = &self.selected {
+                    let listed = show_unified
+                        && self
+                            .unified_folders
+                            .iter()
+                            .any(|r| r.account_id == *acc && r.folder.path == *path);
+                    if !listed {
+                        self.selected = Sel::Folder(*acc, path.clone());
+                    }
+                }
                 self.rebuild_normal(
                     &widgets.pinned_box,
                     &widgets.normal_box,
@@ -571,6 +627,37 @@ impl Component for Sidebar {
                 }
             }
 
+            SidebarInput::UnifiedFolderRowSelected(index) => {
+                if let Some(r) = self.unified_folders.get(index as usize).cloned() {
+                    let key = Sel::UnifiedFolder(r.account_id, r.folder.path.clone());
+                    if self.selected == key {
+                        return;
+                    }
+                    self.selected = key.clone();
+                    self.clear_other_selections(key);
+                    let _ = sender.output(SidebarOutput::FolderSelected {
+                        account_id: r.account_id,
+                        folder_id: r.folder.id,
+                        name: r.folder.name,
+                        path: r.folder.path,
+                    });
+                }
+            }
+
+            SidebarInput::ToggleUnifiedFoldersExpand => {
+                self.unified_folders_expanded = !self.unified_folders_expanded;
+                if let Some(rev) = &self.unified_folders_revealer {
+                    rev.set_reveal_child(self.unified_folders_expanded);
+                }
+                if let Some(ch) = &self.unified_folders_chevron {
+                    ch.set_icon_name(Some(if self.unified_folders_expanded {
+                        "co.hyprlab.Vireo-pan-down-symbolic"
+                    } else {
+                        "co.hyprlab.Vireo-pan-end-symbolic"
+                    }));
+                }
+            }
+
             SidebarInput::FolderRowSelected { account_id, index } => {
                 let folder = self
                     .sections
@@ -607,6 +694,10 @@ impl Component for Sidebar {
                 {
                     return;
                 }
+                // Likewise a click on a filtered folder inside All Inboxes.
+                if self.selected == Sel::UnifiedFolder(account_id, path.clone()) {
+                    return;
+                }
                 let key = Sel::Folder(account_id, path.clone());
                 if self.selected != key {
                     self.selected = key.clone();
@@ -616,7 +707,12 @@ impl Component for Sidebar {
             }
 
             SidebarInput::SetUnread { folders, unified } => {
-                for ((aid, fid), label) in self.folder_badges.iter().chain(&self.unified_inbox_badges) {
+                for ((aid, fid), label) in self
+                    .folder_badges
+                    .iter()
+                    .chain(&self.unified_inbox_badges)
+                    .chain(&self.unified_folder_badges)
+                {
                     let n = folders.get(&(*aid, *fid)).copied().unwrap_or(0);
                     label.set_text(&n.to_string());
                     label.set_visible(n > 0);
@@ -1003,6 +1099,10 @@ impl Sidebar {
         self.unified_inbox_list = None;
         self.unified_inboxes.clear();
         self.unified_inbox_badges.clear();
+        self.unified_folders_revealer = None;
+        self.unified_folders_chevron = None;
+        self.unified_folder_list = None;
+        self.unified_folder_badges.clear();
         self.account_circle_badges.clear();
 
         // No accounts yet: show a prompt to add the first one instead of an empty
@@ -1310,8 +1410,12 @@ impl Sidebar {
                 sub.set_selection_mode(gtk::SelectionMode::Single);
                 sub.add_css_class("navigation-sidebar");
                 // Breathing room between the expanded sub-list and the first
-                // account section below; folds away with the revealer.
-                sub.set_margin_bottom(14);
+                // account section below; folds away with the revealer. With
+                // a Filtered Folders section underneath, that section's list
+                // carries the gap instead.
+                if self.unified_folders.is_empty() {
+                    sub.set_margin_bottom(14);
+                }
                 for section in &sections {
                     let Some(inbox) =
                         section.folders.iter().find(|f| f.kind == FolderKind::Inbox)
@@ -1368,6 +1472,15 @@ impl Sidebar {
                 });
                 sub.add_controller(click);
 
+                // Everything that folds away with All Inboxes: the inbox
+                // sub-list, then (when any rule opts in) the collapsible
+                // "Filtered Folders" section beneath it.
+                let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                body.append(&sub);
+                if !self.unified_folders.is_empty() {
+                    self.build_unified_folders(&body, &sections, sender);
+                }
+
                 let revealer = gtk::Revealer::new();
                 revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
                 // 0 during the rebuild: an animated reveal grows the content's
@@ -1375,7 +1488,7 @@ impl Sidebar {
                 // mid-rebuild. Real duration restored one frame later (below).
                 revealer.set_transition_duration(0);
                 revealer.set_reveal_child(self.unified_expanded);
-                revealer.set_child(Some(&sub));
+                revealer.set_child(Some(&body));
                 pinned.append(&revealer);
                 self.unified_revealer = Some(revealer);
                 self.unified_inbox_list = Some(sub);
@@ -1996,6 +2109,7 @@ impl Sidebar {
                 .chain(self.tree_row_revealers.values().flatten())
                 .cloned()
                 .chain(self.unified_revealer.clone())
+                .chain(self.unified_folders_revealer.clone())
                 .collect();
             gtk::glib::idle_add_local_once(move || {
                 for r in &revs {
@@ -2037,6 +2151,123 @@ impl Sidebar {
 
     /// Re-apply the current selection after a rebuild; on first populate (no
     /// prior selection) default to the unified row if shown, else the first folder.
+    /// The "Filtered Folders" section inside All Inboxes: a toggle header
+    /// and, under an animated revealer, one row per folder that a filter
+    /// rule opted in (account pill, folder name, unread chip). In the rail
+    /// the header is a folder-icon button and the rows are account pills.
+    fn build_unified_folders(
+        &mut self,
+        body: &gtk::Box,
+        sections: &[SectionData],
+        sender: &ComponentSender<Self>,
+    ) {
+        let chevron = gtk::Image::from_icon_name(if self.unified_folders_expanded {
+            "co.hyprlab.Vireo-pan-down-symbolic"
+        } else {
+            "co.hyprlab.Vireo-pan-end-symbolic"
+        });
+        let toggle = gtk::Button::new();
+        toggle.add_css_class("flat");
+        toggle.add_css_class("folders-toggle");
+        let hb = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        hb.add_css_class("folder-row");
+        if self.collapsed {
+            hb.set_halign(gtk::Align::Center);
+            hb.append(&gtk::Image::from_icon_name("co.hyprlab.Vireo-folder-symbolic"));
+            toggle.set_tooltip_text(Some("Filtered Folders"));
+        } else {
+            if self.chevrons_left {
+                // Same nudge as the account sections' "Folders" header: a
+                // chevron's ink sits deeper in its canvas than an icon's.
+                chevron.set_margin_start(2);
+            }
+            hb.append(&chevron);
+            let lbl = gtk::Label::new(Some(&format!(
+                "Filtered Folders ({})",
+                self.unified_folders.len()
+            )));
+            lbl.set_halign(gtk::Align::Start);
+            lbl.set_hexpand(true);
+            lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            hb.append(&lbl);
+        }
+        toggle.set_child(Some(&hb));
+        let st = sender.input_sender().clone();
+        toggle.connect_clicked(move |_| {
+            let _ = st.send(SidebarInput::ToggleUnifiedFoldersExpand);
+        });
+        body.append(&toggle);
+        self.unified_folders_chevron = Some(chevron);
+
+        let list = gtk::ListBox::new();
+        list.set_selection_mode(gtk::SelectionMode::Single);
+        list.add_css_class("navigation-sidebar");
+        // The gap to the first account section below (see the inbox
+        // sub-list, which carries it when this section is absent).
+        list.set_margin_bottom(14);
+        for r in &self.unified_folders {
+            let Some(section) = sections.iter().find(|s| s.account.id == r.account_id) else {
+                continue;
+            };
+            let tip = format!("{} \u{2014} {}", r.folder.name, section.account.label);
+            let (row, badge) = build_unified_sub_row(
+                section,
+                &r.folder.name,
+                &tip,
+                r.folder.unread,
+                self.collapsed,
+                self.chevrons_left,
+            );
+            list.append(&row);
+            self.unified_folder_badges.insert((r.account_id, r.folder.id), badge);
+        }
+        let ss = sender.input_sender().clone();
+        list.connect_row_selected(move |_, row| {
+            if let Some(row) = row {
+                let _ = ss.send(SidebarInput::UnifiedFolderRowSelected(row.index()));
+            }
+        });
+        // Right-click a filtered folder: act on that folder alone.
+        let click = gtk::GestureClick::new();
+        click.set_button(gtk::gdk::BUTTON_SECONDARY);
+        let cs = sender.clone();
+        let list_w = list.clone();
+        let refs = self.unified_folders.clone();
+        click.connect_pressed(move |_, _, x, y| {
+            if let Some(r) = list_w
+                .row_at_y(y as i32)
+                .and_then(|row| refs.get(row.index() as usize))
+            {
+                show_sidebar_menu(
+                    &list_w,
+                    x,
+                    y,
+                    vec![
+                        ("Mark as Read", CtxAction::MarkFolderRead {
+                            account_id: r.account_id,
+                            folder_id: r.folder.id,
+                        }),
+                        ("Refresh", CtxAction::RefreshFolder {
+                            account_id: r.account_id,
+                            folder_id: r.folder.id,
+                        }),
+                    ],
+                    &cs,
+                );
+            }
+        });
+        list.add_controller(click);
+
+        let revealer = gtk::Revealer::new();
+        revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+        revealer.set_transition_duration(0);
+        revealer.set_reveal_child(self.unified_folders_expanded);
+        revealer.set_child(Some(&list));
+        body.append(&revealer);
+        self.unified_folders_revealer = Some(revealer);
+        self.unified_folder_list = Some(list);
+    }
+
     /// Deselect every list except the one owning `keep` (whose own list keeps its
     /// selection). Used when a selection moves between sections.
     fn clear_other_selections(&self, keep: Sel) {
@@ -2059,6 +2290,11 @@ impl Sidebar {
         }
         if !matches!(keep, Sel::UnifiedInbox(_)) {
             if let Some(l) = &self.unified_inbox_list {
+                l.unselect_all();
+            }
+        }
+        if !matches!(keep, Sel::UnifiedFolder(..)) {
+            if let Some(l) = &self.unified_folder_list {
                 l.unselect_all();
             }
         }
@@ -2112,6 +2348,7 @@ impl Sidebar {
             Sel::Outbox => self.select_outbox(),
             Sel::Folder(acc, path) => self.select_folder(acc, &path),
             Sel::UnifiedInbox(acc) => self.select_unified_inbox(acc),
+            Sel::UnifiedFolder(acc, path) => self.select_unified_folder(acc, &path),
             Sel::None => {
                 if self.show_unified {
                     self.select_unified();
@@ -2141,6 +2378,20 @@ impl Sidebar {
                 .unified_inboxes
                 .iter()
                 .position(|r| r.account_id == account_id)
+            {
+                if let Some(row) = list.row_at_index(idx as i32) {
+                    list.select_row(Some(&row));
+                }
+            }
+        }
+    }
+
+    fn select_unified_folder(&self, account_id: u32, path: &str) {
+        if let Some(list) = &self.unified_folder_list {
+            if let Some(idx) = self
+                .unified_folders
+                .iter()
+                .position(|r| r.account_id == account_id && r.folder.path == path)
             {
                 if let Some(row) = list.row_at_index(idx as i32) {
                     list.select_row(Some(&row));
@@ -2348,6 +2599,25 @@ fn build_unified_inbox_row(
     collapsed: bool,
     inset: bool,
 ) -> (gtk::ListBoxRow, gtk::Label) {
+    // Show the account's configured label (defaults to its email) so accounts are
+    // easy to tell apart in the All Inboxes view.
+    let label = &section.account.label;
+    build_unified_sub_row(section, label, label, inbox.unread, collapsed, inset)
+}
+
+/// A row nested under "All Inboxes" — an inbox sub-row or a filtered
+/// folder's: the account's small pill, `title`, and an unread badge. In the
+/// compact rail only the pill is shown (centred), with the count as a corner
+/// chip and `tip` (plus the count) as the tooltip. Returns the badge for
+/// in-place updates.
+fn build_unified_sub_row(
+    section: &SectionData,
+    title: &str,
+    tip: &str,
+    unread: u32,
+    collapsed: bool,
+    inset: bool,
+) -> (gtk::ListBoxRow, gtk::Label) {
     let id = section.account.id;
     let row = gtk::ListBoxRow::new();
     let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
@@ -2356,8 +2626,6 @@ fn build_unified_inbox_row(
         hbox.add_css_class("unified-subrow");
     }
 
-    // Show the account's configured label (defaults to its email) so accounts are
-    // easy to tell apart in the All Inboxes view.
     let name_str = section.account.label.clone();
 
     // Small account pill (colour + initials/emoji), like the header circle.
@@ -2383,13 +2651,13 @@ fn build_unified_inbox_row(
 
     let badge = if collapsed {
         hbox.set_halign(gtk::Align::Center);
-        let tip = if inbox.unread > 0 {
-            format!("{} ({})", name_str, inbox.unread)
+        let tip = if unread > 0 {
+            format!("{tip} ({unread})")
         } else {
-            name_str.clone()
+            tip.to_string()
         };
         row.set_tooltip_text(Some(&tip));
-        let (overlay, badge) = with_unread_overlay(&circle, inbox.unread);
+        let (overlay, badge) = with_unread_overlay(&circle, unread);
         hbox.append(&overlay);
         badge
     } else {
@@ -2397,18 +2665,21 @@ fn build_unified_inbox_row(
             circle.set_margin_start(ROW_LEFT_INSET - 6);
         }
         hbox.append(&circle);
+        if tip != title {
+            row.set_tooltip_text(Some(tip));
+        }
 
-        let name = gtk::Label::new(Some(&name_str));
+        let name = gtk::Label::new(Some(title));
         name.set_margin_start(6);
         name.set_hexpand(true);
         name.set_halign(gtk::Align::Start);
         name.set_ellipsize(gtk::pango::EllipsizeMode::End);
         hbox.append(&name);
 
-        let badge = gtk::Label::new(Some(&inbox.unread.to_string()));
+        let badge = gtk::Label::new(Some(&unread.to_string()));
         badge.add_css_class("unread-badge");
         badge.set_valign(gtk::Align::Center);
-        badge.set_visible(inbox.unread > 0);
+        badge.set_visible(unread > 0);
         hbox.append(&badge);
         badge
     };

@@ -53,6 +53,7 @@ pub struct PrefInit {
     pub show_contacts: bool,
     pub show_unified: bool,
     pub unified_chip: bool,
+    pub unified_filtered: bool,
     pub chevrons_left: bool,
     pub console_mode: bool,
     pub read_mark: crate::config::ReadMark,
@@ -211,6 +212,7 @@ pub enum PrefInput {
     ToggleContactsRow(bool),
     ToggleShowUnified(bool),
     ToggleUnifiedChip(bool),
+    ToggleUnifiedFiltered(bool),
     ChangeChevronSide(u32),
     ToggleSidebarHoverExpand(bool),
     ChangePreviewLines(u32),
@@ -266,6 +268,7 @@ pub enum PrefOutput {
     SetContactsRow(bool),
     SetShowUnified(bool),
     SetUnifiedChip(bool),
+    SetUnifiedFiltered(bool),
     SetChevronsLeft(bool),
     SetConsoleMode(bool),
     SetReadMark(crate::config::ReadMark),
@@ -402,6 +405,20 @@ impl Component for Preferences {
                                            while its per-account list is folded up.",
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleUnifiedChip(row.is_active()));
+                            },
+                        },
+
+                        #[name = "unified_filtered_row"]
+                        adw::SwitchRow {
+                            #[watch]
+                            set_sensitive: model.show_unified,
+                            set_title: "Filtered folders under All Inboxes",
+                            set_subtitle: "List the folders your filter rules file into in a \
+                                           collapsible section inside All Inboxes. Each rule \
+                                           chooses whether its folder appears there; this \
+                                           switch hides the section altogether.",
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleUnifiedFiltered(row.is_active()));
                             },
                         },
 
@@ -984,6 +1001,7 @@ impl Component for Preferences {
         widgets.show_contacts_row.set_active(init.show_contacts);
         widgets.show_unified_row.set_active(init.show_unified);
         widgets.unified_chip_row.set_active(init.unified_chip);
+        widgets.unified_filtered_row.set_active(init.unified_filtered);
         widgets.chevron_side_row.set_model(Some(&gtk::StringList::new(&["Left", "Right"])));
         widgets.chevron_side_row.set_selected(if init.chevrons_left { 0 } else { 1 });
         widgets.sidebar_hover_expand_row.set_active(init.sidebar_hover_expand);
@@ -1302,6 +1320,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleUnifiedChip(on) => {
                 let _ = sender.output(PrefOutput::SetUnifiedChip(on));
+            }
+            PrefInput::ToggleUnifiedFiltered(on) => {
+                let _ = sender.output(PrefOutput::SetUnifiedFiltered(on));
             }
             PrefInput::ChangeChevronSide(idx) => {
                 let _ = sender.output(PrefOutput::SetChevronsLeft(idx == 0));
