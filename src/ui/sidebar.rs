@@ -161,6 +161,8 @@ pub struct Sidebar {
     unified_folders_expanded: bool,
     unified_folders_revealer: Option<gtk::Revealer>,
     unified_folders_chevron: Option<gtk::Image>,
+    /// The section's header button, for its folded-up bottom margin.
+    unified_folders_toggle: Option<gtk::Button>,
     unified_folder_list: Option<gtk::ListBox>,
     /// Unread badges for the filtered-folder rows, by (account_id, folder_id).
     unified_folder_badges: HashMap<(u32, u32), gtk::Label>,
@@ -430,6 +432,7 @@ impl Component for Sidebar {
             unified_folders_expanded: true,
             unified_folders_revealer: None,
             unified_folders_chevron: None,
+            unified_folders_toggle: None,
             unified_folder_list: None,
             unified_folder_badges: HashMap::new(),
             unified_folders_badge: None,
@@ -656,6 +659,9 @@ impl Component for Sidebar {
                 self.unified_folders_expanded = !self.unified_folders_expanded;
                 if let Some(rev) = &self.unified_folders_revealer {
                     rev.set_reveal_child(self.unified_folders_expanded);
+                }
+                if let Some(t) = &self.unified_folders_toggle {
+                    t.set_margin_bottom(unified_folders_toggle_gap(self.unified_folders_expanded));
                 }
                 // Folded: the header wears the section's total; open, each
                 // row carries its own count and the total bows out.
@@ -1126,6 +1132,7 @@ impl Sidebar {
         self.unified_inbox_badges.clear();
         self.unified_folders_revealer = None;
         self.unified_folders_chevron = None;
+        self.unified_folders_toggle = None;
         self.unified_folder_list = None;
         self.unified_folder_badges.clear();
         self.unified_folders_badge = None;
@@ -2246,8 +2253,10 @@ impl Sidebar {
         toggle.connect_clicked(move |_| {
             let _ = st.send(SidebarInput::ToggleUnifiedFoldersExpand);
         });
+        toggle.set_margin_bottom(unified_folders_toggle_gap(self.unified_folders_expanded));
         body.append(&toggle);
         self.unified_folders_chevron = Some(chevron);
+        self.unified_folders_toggle = Some(toggle);
 
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::Single);
@@ -2768,6 +2777,13 @@ fn pin_icon_size(icon: &gtk::Image) {
     icon.set_pixel_size(16);
     icon.set_halign(gtk::Align::Center);
     icon.set_valign(gtk::Align::Center);
+}
+
+/// Room under the "Filtered Folders" heading: folded up, its list (and the
+/// list's gap to the first account section) is gone, so the heading itself
+/// keeps the accounts at a balanced distance; open, the list carries it.
+fn unified_folders_toggle_gap(expanded: bool) -> i32 {
+    if expanded { 0 } else { 16 }
 }
 
 /// Extra left inset on every expanded row's leading icon in the leading-
