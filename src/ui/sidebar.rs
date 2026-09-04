@@ -2197,20 +2197,18 @@ impl Sidebar {
         let toggle = gtk::Button::new();
         toggle.add_css_class("flat");
         toggle.add_css_class("folders-toggle");
-        // Styled like the All Inboxes row above it (full-strength label and
-        // icon), not like the account sections' dimmed "Folders" heading.
+        // Styled like the All Inboxes row above it (full-strength label),
+        // not like the account sections' dimmed "Folders" heading.
         toggle.add_css_class("unified-folders-toggle");
-        // The All Inboxes row's icon-to-label spacing, so the two headers'
-        // labels share a column.
-        let hb = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let hb = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         hb.add_css_class("folder-row");
-        // Jason's filter-folder glyph (a folder with a funnel's bars) names
-        // the section; it carries the rail's toggle alone. The header's
-        // unread chip — the section's total — shows only while the section
-        // is folded up, as All Inboxes' does.
-        let icon = gtk::Image::from_icon_name("co.hyprlab.Vireo-filter-folder-symbolic");
+        // The header's unread chip — the section's total — shows only while
+        // the section is folded up, as All Inboxes' does.
         let show_chip = self.unified_folders_unread > 0 && !self.unified_folders_expanded;
         if self.collapsed {
+            // The rail has no room for a label: Jason's filter-folder glyph
+            // (a folder with a funnel's bars) carries the toggle alone.
+            let icon = gtk::Image::from_icon_name("co.hyprlab.Vireo-filter-folder-symbolic");
             hb.set_halign(gtk::Align::Center);
             let (overlay, badge) = with_unread_overlay(&icon, self.unified_folders_unread);
             badge.set_visible(show_chip);
@@ -2222,35 +2220,25 @@ impl Sidebar {
                 "Filtered Folders".to_string()
             }));
         } else {
-            // The chevron follows Settings → Chevron placement like All
-            // Inboxes and the account headers above and below it: leading
-            // or, classically, trailing at the row's end.
+            // A leading caret and the label, like the accounts' "Folders"
+            // heading; the glyph belongs to the rows beneath.
+            if self.chevrons_left {
+                // Same nudge as that heading: a chevron's ink sits deeper
+                // in its canvas than an icon's.
+                chevron.set_margin_start(2);
+            }
+            hb.append(&chevron);
             let lbl = gtk::Label::new(Some("Filtered Folders"));
             lbl.add_css_class("account-name");
             lbl.set_halign(gtk::Align::Start);
             lbl.set_hexpand(true);
             lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            icon.add_css_class("folder-icon");
-            pin_icon_size(&icon);
+            hb.append(&lbl);
             let badge = gtk::Label::new(Some(&self.unified_folders_unread.to_string()));
             badge.add_css_class("unread-badge");
             badge.set_valign(gtk::Align::Center);
             badge.set_visible(show_chip);
-            if self.chevrons_left {
-                // Same nudge as the account sections' "Folders" header: a
-                // chevron's ink sits deeper in its canvas than an icon's.
-                chevron.set_margin_start(2);
-                hb.append(&chevron);
-                hb.append(&icon);
-                hb.append(&lbl);
-                hb.append(&badge);
-            } else {
-                hb.append(&icon);
-                hb.append(&lbl);
-                hb.append(&badge);
-                hb.append(&chevron);
-                toggle.add_css_class("chev-right");
-            }
+            hb.append(&badge);
             self.unified_folders_badge = Some(badge);
         }
         toggle.set_child(Some(&hb));
