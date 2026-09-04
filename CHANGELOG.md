@@ -1,5 +1,144 @@
 # Changelog
 
+## 1.20.0 — 2026-09-04
+
+The 1.20 feature release, previewed through nine betas (1.20.0-beta.1
+to beta.9). Spell checking and inline images were proposed in
+discussions #114 and #113 (@typedev); the attachment fixes are
+@typedev's PRs #110, #112 and #118 for #109, #111 and #117 (#109
+confirmed by @mfreeman72); the tray icon and the unread-count work
+answer #116 (@mfreeman72, with @p-mitana's off-by-default advice and
+@yioannides' icon offer), refined through @mfreeman72's beta testing on
+Linux Mint.
+
+- **Spell checking in the composer (#114).** WebKit's checker runs in
+  the message body; the subject line asks the same enchant engine
+  directly, since GTK entries have none of their own. Both check the
+  word being typed: the subject on every keystroke (exempting the word
+  under the cursor until a 400ms pause), the body's caret word via a
+  600ms round trip drawn with the CSS Custom Highlight API. Settings
+  gains a Spelling group: an on-by-default switch, a language dropdown
+  offering exactly the installed dictionaries (named in their own
+  language), and an "Added words" list managing the personal dictionary
+  that Learn Spelling feeds. The Flatpak bundles eleven languages beyond
+  English; English variants are trimmed to the five anyone looks for.
+- **Inline images in the composer (#113).** Pasting or dropping a
+  picture puts it in the text at the caret, downscaled to 1600px and
+  obeying the composer's writing width; sending lifts each into an
+  inline cid: part inside multipart/related, out of the recipient's
+  attachment list. A click selects an image whole (delete/cut/copy work
+  on it); right-click offers "Send as Attachment Instead". WebKit's
+  native image paste arrives as a blob: URL, invisible to clipboardData
+  and dead on the wire, so every blob: image is adopted into a scaled
+  data: URI the moment it appears.
+- **A tray icon for the desktops that have a tray (#116).** Vireo can
+  publish a StatusNotifierItem, which is what AppIndicator means today:
+  Cinnamon, KDE, MATE, XFCE, and GNOME with the AppIndicator extension
+  draw it. The item is the Vireo icon, or the reader's unread envelope
+  in white or black for panels that don't recolour symbolic icons, with
+  a red dot on its top-right corner while there is unread mail, a
+  tooltip with the count, and a menu: the newest five unread messages
+  as card rows (the sender's picture or initials; sender, account when
+  there are several, and date; subject; preview line), each opening in
+  the reader, then "View all N unread…" (All Inboxes, or the first
+  counted folder with unread mail), Open Vireo, Accounts, Settings,
+  Quit. A click on the icon brings the window back. Off by default: a
+  switch, an icon choice and a mail-list switch under Keep running in
+  the background. On a desktop with no tray nothing is drawn and
+  Background Apps is untouched; the item keeps waiting, so enabling a
+  tray extension later picks it up without a restart. On Cinnamon the
+  icon is drawn at five-eighths of the pixmap, since its applet draws
+  the pixmap at the colour icon size beside 16px symbolics. Actions on
+  a message stay in the reader: a DBusMenu is a vertical list of
+  icon-and-text rows and cannot carry buttons. New dependency: `ksni`.
+  The Flatpak manifest gains `--talk-name=org.kde.StatusNotifierWatcher`.
+- **Filtered folders count toward unread, per rule (#116).** Each
+  filter rule carries a "Count unread mail" switch (`count_unread`, on
+  by default, in the rule's row and the Add Filter dialog; existing
+  rules load with it on). The unread total behind the All Inboxes chip,
+  the tray icon's dot and menu, and the Background Apps status is the
+  inbox plus the folders of counting rules; Trash and Junk destinations
+  never count. The tray menu lists unread mail from those folders too;
+  their lists are primed from the disk cache at startup and fetched
+  quietly when a rule starts counting a folder. Server-side sorting
+  Vireo does not know about is not counted.
+- **A folder's list follows its unread count in the background
+  (#116).** The worker's IDLE sits on the folder last opened, so with
+  another folder in view the inbox only ever got count updates from its
+  watcher and the sweep; its message list refreshed when the inbox was
+  next opened. The tray menu's cards and the new-mail notification both
+  read that list, so the menu said "No unread mail" under a live count
+  and mail arriving while a filtered folder was open raised no
+  notification. A changed count on a counted folder now asks the
+  worker for a quiet resync (`MailRequest::SyncFolder`): the same fetch
+  as opening the folder, without the status text and without adopting
+  the folder for IDLE or the watch list.
+- **Cached mail opens at once, whatever the worker is syncing.** Each
+  account's worker takes requests strictly in order, so a click on a
+  message whose body was cached long ago sat behind a folder sync, a
+  backfill chunk or an attachment prefetch: at startup the reader
+  showed its spinner over mail already on disk. A cache lane now sits
+  in front of each worker: a thread of its own that answers what the
+  disk cache can (a body, a batch of bodies, an attachment list, a
+  conversation lookup) and passes only network work on, in order.
+- **Reply follows Reply-To.** Summaries carry the Reply-To list from
+  every ingestion path (ENVELOPE, iCloud raw-header fallback, POP3,
+  Graph); Reply and Reply All answer it instead of From, and Reply All
+  keeps the To address out of Cc. Cached mail heals as folders re-sync.
+- **Wide mail scrolls.** A message wider than the pane made its
+  sandboxed frame horizontally scrollable, and WebKit's wheel-latching
+  swallowed vertical scrolling over it. Frames now widen to their
+  content inside a panning wrapper, so the wheel always reaches the
+  page and wide mail pans sideways in place.
+- **Split reply reworked.** The panel holds the height it is given (a
+  big paste can no longer push it down), dragged by an iOS-style grab
+  pill floating at its bottom edge, and slides in and out on one
+  animated divider (the revealer's own transition never ran: it starts
+  unmapped, and adw skips animations on unmapped widgets). While a
+  reply is open the reader's header bar slides out, since it showed a
+  second set of window decorations mid-window; on close it slides back
+  in step with the panel, its icons fading in, and the teardown no
+  longer re-clamps the divider for a frame. The editor fades in when
+  its document has loaded; New Message defers its reveal one frame so
+  its slide plays, and closing it slides up before removal. The
+  dragged height is remembered.
+- **Attachment drawer reworked.** The same grab pill replaces the
+  chevron: click toggles collapsed/expanded (animated, both ways), drag
+  resizes live, from collapsed too. GtkPaned's own capture-phase drag
+  and pan gestures, which hit-tested an enlarged handle area and left
+  dead click zones near the seam, are removed; the seam is one
+  continuous handle (grab zone, hairline, edge strip) that lights on
+  hover, with a cursor matching how it works. Collapsing no longer
+  flashes, and a resized drawer reopens at its dragged height.
+- **Paste is plain text by default.** Ctrl+V strips formatting; the
+  editor's context menu always offers "Paste with Formatting" and
+  "Paste as Plain Text"; a Settings switch ("Paste as plain text", on
+  by default) flips the default.
+- **Attachment fixes (#109, #111, #117; PRs #110, #112, #118).** Small
+  attachments sent from web Gmail are no longer dropped by the
+  inline-image heuristic; a labelled Gmail message's attachments are
+  fetched once, not once per label; filenames split across two RFC
+  2047 encoded-words are rejoined, keeping their extension. The
+  attachment cache is rebuilt once on upgrade (schema v13) so mail
+  already synced by affected builds heals too.
+- **Account Settings… from the sidebar opens that account's editor.**
+  Right-clicking an account header or one of its folders and choosing
+  Account Settings… opened Settings on the Accounts list; it now opens
+  the editor for that account, stepping back from another account's
+  editor first if one is up.
+- **The attachments gallery's table keeps its columns.** The Size
+  header's label had hexpand set, which propagates to its button, so
+  the header row split spare width between Name and Size while the
+  rows gave it all to Name; every header between them sat left of its
+  column. A dotless filename (a generated attachment-1) had the whole
+  name for an extension, widening its Type cell and sliding that row's
+  Sender left. Only the Name header expands, every fixed-width cell is
+  clipped to its column, and an extension has to look like one (short,
+  alphanumeric, after a dot) or the cell says File.
+- **Add Sender to Contacts** joins the message list's right-click menu.
+- **Discord** joins the About window's project links, and the README
+  gains the Vireo Manifesto.
+
 ## 1.19.2 — 2026-09-02
 
 - **Emails with their own dark mode render on the right ground.** A

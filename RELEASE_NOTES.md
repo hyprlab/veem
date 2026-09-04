@@ -2,6 +2,30 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.20.0
+
+The 1.20 feature release, previewed through nine betas. Spell checking and inline images were proposed by @typedev (discussions #114 and #113), who also fixed three attachment bugs in PRs #110, #112 and #118; the tray icon and the unread-count work answer #116 from @mfreeman72, who tested every beta on Linux Mint, with advice from @p-mitana and @yioannides.
+
+**Spell checking.** The composer underlines misspelled words in red, in the message body and the subject line alike, and checks the word you are typing before you finish it. Settings gains a Spelling section: turn checking off, pick a language from the dictionaries actually installed (each named in its own language), and manage the words you have taught the checker. The Flatpak carries dictionaries for eleven languages beyond English.
+
+**Pictures in the message.** Paste or drop an image into the composer and it lands in the text where you put it, not as a file hanging off the bottom. Images are scaled to a sensible size, can be selected with a click, deleted, cut, copied, and demoted to an ordinary attachment from the right-click menu. Recipients see them in place.
+
+**A tray icon (#116).** For desktops with a system tray (Cinnamon, KDE, MATE, XFCE, or GNOME with the AppIndicator extension), an optional tray icon: the Vireo icon or a white or black envelope, a red dot while there is unread mail, and a menu listing your newest five unread messages with the sender's picture, subject and a preview line. Click one to open it; past five, "View all unread" takes you to All Inboxes. Off by default under Settings → Keep running in the background.
+
+**Filtered mail counts as unread (#116).** Mail your filter rules file into folders now counts toward the unread total. Each rule has a "Count unread mail" switch, on by default, in Settings → Accounts → Filters and in the Add Filter dialog. The All Inboxes badge, the tray icon and the Background Apps status all use the same number: the inbox plus the folders of counting rules. Trash and Junk never count. Those folders also stay current while you are reading elsewhere, so the tray list and new-mail notifications no longer lag behind the count.
+
+**Cached mail opens instantly.** Messages already on disk open the moment they are clicked, even while the startup sync is still running.
+
+**Replies go where the sender asked.** A message carrying a Reply-To address is answered there, not at its From line.
+
+**Grab handles for the split reply and the attachment drawer.** Both panels are resized by a slim floating bar, iOS style: drag to size, click the drawer's to collapse or expand it. The split reply holds the height you set, slides in and out smoothly with the reader's header sliding back in behind it, and remembers its height. The drawer's whole edge answers clicks and drags, with no dead zones.
+
+**Paste as plain text.** Ctrl+V pastes plain text by default; right-click always offers both plain and formatted paste, and a Settings switch flips the default.
+
+**Attachment fixes (#109, #111, #117).** Small files sent from web Gmail are no longer missing from the attachment list, a labelled Gmail message's attachments download once instead of once per label, and filenames split across two encoded words keep their extension. Mail already synced by affected versions repairs itself on upgrade.
+
+**Smaller things.** Account Settings… in the sidebar's right-click menu opens that account's editor; the attachments gallery's table keeps its columns lined up; Add Sender to Contacts in the message list's right-click menu; scrolling always works over extra-wide messages; Discord joined the About window's links.
+
 ## What's new in 1.19.2
 
 A fix for messages with their own dark mode. Some emails, like Google Calendar invitations, carry their own dark-mode styling that the reader was applying based on your desktop's light/dark setting rather than the theme the message is shown in. With the desktop in dark mode but a message displayed on a light background, that left light-grey text on white, hard to read. Emails now follow the background they are actually shown on, in both light and dark.
