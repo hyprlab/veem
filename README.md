@@ -211,9 +211,9 @@ The project has the following foundational values that guide its development:
 - **Vireo is committed to free and open source software.** Vireo will never be
   for sale and is committed to remaining that way through our AGPLv3 license
   adherence.
-- **Vireo is community-driven and committed to putting humans at the center of
-  everything we do.** Our aim is to improve the lives of our users and the
-  Linux desktop as a whole.
+- **This project is community-driven and committed to putting humans at the
+  center of everything we do.** Our aim is to improve the lives of our users
+  and the Linux desktop as a whole.
 - **Vireo is committed to GNOME-first development** through deference to GNOME
   HIG (human interface guidelines) where appropriate and ensuring 100%
   compatibility with the latest GNOME release. This app was conceived for GNOME
