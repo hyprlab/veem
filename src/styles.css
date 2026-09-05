@@ -209,6 +209,15 @@ headerbar.rail-header {
   margin-right: -8px;
 }
 
+/* Filter rule rows in the Accounts window: extra breathing room around the
+   two-line title and the stacked switches. */
+.filter-rule-row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
 /* Draggable account rows in the Accounts window. */
 .account-list-row {
   padding: 14px 12px;

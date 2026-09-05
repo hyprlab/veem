@@ -2643,7 +2643,9 @@ impl SimpleComponent for AppModel {
                     (0..tops.n_items())
                         .filter_map(|i| tops.item(i))
                         .filter_map(|o| o.downcast::<gtk::Window>().ok())
-                        .find(|w| *w != main && w.is_visible())
+                        .filter(|w| *w != main && w.is_visible())
+                        // The newest: a dialog over Settings, when one is up.
+                        .last()
                 };
                 // With VIREO_SHOWCASE_SCROLL set, the Settings window is
                 // made tall a beat after opening and every scroller in it
@@ -6776,7 +6778,16 @@ impl AppModel {
         &self,
     ) -> std::collections::HashMap<String, Vec<(String, String)>> {
         let mut map = std::collections::HashMap::new();
-        for (i, cfg) in self.config.iter().enumerate() {
+        // The demo's accounts live only at the backend, so give the
+        // Accounts panel's stand-in configs their folders as well.
+        let demo;
+        let cfgs: &[AccountConfig] = if self.config.is_empty() && demo_mode() {
+            demo = demo_account_configs();
+            &demo
+        } else {
+            &self.config
+        };
+        for (i, cfg) in cfgs.iter().enumerate() {
             let id = i as u32 + 1;
             let list = self
                 .folders
@@ -9256,6 +9267,16 @@ impl AppModel {
         accounts.emit(crate::ui::accounts::AccountsInput::SetFolderChoices(
             self.folder_choice_map(),
         ));
+        // Showcase hook: VIREO_SHOWCASE_EDIT_FILTER=<index> opens that
+        // filter rule's editor once the panel is up, for a capture.
+        if let Some(Ok(i)) = std::env::var("VIREO_SHOWCASE_EDIT_FILTER").ok().map(|v| v.parse::<usize>()) {
+            if demo_mode() {
+                let a = accounts.sender().clone();
+                gtk::glib::timeout_add_seconds_local_once(2, move || {
+                    let _ = a.send(crate::ui::accounts::AccountsInput::EditFilter(i));
+                });
+            }
+        }
         self.accounts_win = Some(accounts);
         self.prefs = Some(prefs);
     }
