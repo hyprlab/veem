@@ -6734,10 +6734,14 @@ impl AppModel {
         );
     }
 
-    /// The heads-up after an icon change: the desktop follows on its own
-    /// (usually — some panels hold on until a logout), Vireo's own windows
-    /// after a restart. Offered, never forced, over whichever window the
-    /// change came from.
+    /// The heads-up after an icon change. The launcher already carries the
+    /// new icon, so the app grid shows it — but GNOME Shell keeps a running
+    /// app's windows bound to the app object it created for the old
+    /// launcher (a changed launcher only replaces the object, it never
+    /// re-tracks the windows), so the dock's running entry, like Vireo's
+    /// own window icon, only switches once every window has closed: a
+    /// restart. Offered, never forced, over whichever window the change
+    /// came from.
     fn offer_restart_for_icon(&self, sender: &ComponentSender<Self>) {
         let parent: gtk::Window = match self.prefs.as_ref().filter(|p| p.widget().is_visible()) {
             Some(p) => p.widget().clone().upcast(),
@@ -6747,8 +6751,9 @@ impl AppModel {
             Some(&parent),
             Some("Restart to finish switching icons?"),
             Some(
-                "The new icon is in place and the desktop is already using it. Vireo's \
-                 own windows keep the old one until it restarts.",
+                "The new icon is in place: the app grid shows it already. The dock keeps \
+                 the old one for the running app, and so do Vireo's own windows, until \
+                 Vireo restarts.",
             ),
         );
         dialog.add_responses(&[("later", "Later"), ("restart", "Restart Now")]);
