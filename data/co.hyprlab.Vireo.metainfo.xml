@@ -56,6 +56,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.21.0" date="2026-09-05">
+
+      <description><p>Choose the app icon from a set of eighteen in Settings or the welcome wizard, with a new default icon; existing installs keep the classic envelope. Redrawn wordmark.</p></description>
+
+    </release>
     <release version="1.20.2" date="2026-09-04">
 
       <description><p>Filter rules can be edited in place from Settings → Accounts → Filters, and the rule rows have more room.</p></description>

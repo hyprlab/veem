@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.21.0 — 2026-09-05
+
+Choose the app icon, a new default icon, and the redrawn wordmark.
+
+- **App icon gallery.** Settings → System & Appearance gains an "App
+  icon" row: a sideways-scrolling strip of eighteen icons — the yellow
+  default, fifteen colour and pattern variants, the bird, and the
+  classic envelope — with the current choice ringed and the edges fading
+  where more lie beyond. The welcome wizard's "Make it yours" page
+  carries the same strip. The set is embedded in the binary
+  (`data/icons/alt`, 512px). A choice is applied by writing the art
+  under its own name (`<app id>-<choice>`) into
+  `~/.local/share/icons/hicolor` at 512 and 256, and pointing a per-user
+  copy of the launcher in `~/.local/share/applications` at that file by
+  absolute path — the mechanism menu editors use, and the only one GNOME
+  Shell honours at once: it caches app icons by name for the session and
+  only re-scans icon directories on its own schedule. The copy carries
+  `TryExec` so it hides itself once the app is uninstalled; Default
+  removes it. A launcher the user's own install owns (install.sh, a
+  source tree) has its `Icon=` line edited in place. The Flatpak
+  manifests add `--filesystem=xdg-data/icons/hicolor:create` and
+  `--filesystem=xdg-data/applications:create`.
+- **New default icon.** The shipped icon is the yellow squircle; the
+  round envelope stays available as "Classic". Existing installs keep
+  the envelope: the first start that finds no choice records "legacy"
+  when settings already exist on disk, and only a fresh install gets the
+  new default (the wizard lets it pick). The beta channel ships the
+  ribboned yellow icon as its own Default and never offers it as a
+  colour; "Classic" is hidden there, since it would hide the ribbon.
+- **Tray.** The tray's "Vireo icon" option draws the chosen app icon.
+- **Restart offer.** Changing the icon shows a heads-up with Later and
+  Restart Now. The app grid follows at once; GNOME Shell keeps a running
+  app's windows bound to the app object it created for the old launcher,
+  so the dock's running entry and Vireo's own windows switch on restart.
+  Restart Now keeps the window up, under a modal with a spinner, until
+  nine seconds have passed since the launcher was written — the shell
+  rate-limits its watch on the launcher directory and reloads five
+  seconds later, and a relaunch inside that window binds to the old
+  object — then hands off. Outside Flatpak the app spawns itself as a
+  helper (`--restart-helper`) that waits for the D-Bus name to free and
+  execs a fresh instance. Inside Flatpak a spawned child dies with the
+  sandbox, so the helper is the exported D-Bus service
+  `co.hyprlab.Vireo.Restart` (`data/*.Restart.service`), activated by
+  the bus as a new sandbox instance; the app quits only once the bus
+  confirms the helper owns its name, else a toast says to reopen by hand.
+- **Wizard.** Finishing the wizard is recorded in `state.toml`, so an
+  install still without an account is not greeted again on the next
+  start (a restart right after the wizard looped back into it). The
+  restart helper drops the `VIREO_WELCOME` and `VIREO_SHOWCASE*` review
+  switches. The window's yellow is now #fec200.
+- **Wordmark and artwork.** The redrawn wordmark (viewBox 1329×483) in
+  the wizard and About window; the README logo and every icon refreshed
+  from the new files.
+
 ## 1.20.2 — 2026-09-04
 
 Filter rules can be edited, and their rows get more room.

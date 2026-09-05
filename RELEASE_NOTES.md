@@ -2,6 +2,18 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.21.0
+
+**Pick your app icon.** Settings → System & Appearance has a new "App icon" row: scroll through the set — the yellow default, colour and pattern variants, the bird, and the classic envelope — and click one. The dock, app grid, app switcher and the tray icon follow. New installs choose on the "Make it yours" page of the welcome wizard.
+
+![The app icon row in Settings](https://raw.githubusercontent.com/hyprlab/vireo/v1.21.0/docs/screenshots/1.21.0/settings-app-icon.png)
+
+**A new default icon.** Vireo's icon is now the yellow squircle with the V. If you already had Vireo installed, nothing changes on its own: your dock keeps the classic envelope until you pick something else. Fresh installs get the new icon. The beta channel wears the same icon with a "beta" ribbon.
+
+**Restart to finish.** After a change, the app grid shows the new icon right away. The dock's entry for the running app, and Vireo's own windows, switch after a restart, which Vireo offers on the spot: Restart Now waits a few seconds for the desktop to take the change in, then closes and reopens Vireo by itself.
+
+**Also.** The redrawn wordmark in the wizard and About window. Finishing the welcome wizard without adding an account no longer brings it back on the next start.
+
 ## What's new in 1.20.2
 
 **Edit a filter.** Click a rule in Settings → Accounts → Filters (each row now carries a pencil beside its trash button) to open it in the filter dialog with everything filled in: account, field, match, text, destination folder, and both switches. Save replaces the rule in place. Adding a filter works as before.
