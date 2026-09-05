@@ -241,12 +241,32 @@ impl RichEditor {
                 let action =
                     gtk::gio::SimpleAction::new(if rich { "vireo-paste-rich" } else { "vireo-paste-plain" }, None);
                 let v = view.clone();
-                action.connect_activate(move |_, _| paste_into(&v, rich));
+                let cb = menu_attach_cb.clone();
+                action.connect_activate(move |_, _| paste_into(&v, rich, &cb));
                 menu.insert(&webkit6::ContextMenuItem::from_gaction(&action, label, None), at);
                 at += 1;
             }
             false
         });
+
+        // Files dropped from a file manager never reach the document: WebKitGTK
+        // hands the page a uri-list it then refuses to serve, so the drop
+        // handler in PASTE_SCRIPT sees an empty `DataTransfer.files` and lets
+        // WebKit insert the path as a link. Only the widget can see them, so
+        // the widget takes them — declaring just `GdkFileList` leaves every
+        // other drag (text, an image dragged out of the reader) to WebKit.
+        {
+            let drop =
+                gtk::DropTarget::new(gtk::gdk::FileList::static_type(), gtk::gdk::DragAction::COPY);
+            drop.set_propagation_phase(gtk::PropagationPhase::Capture);
+            let v = webview.clone();
+            let cb = attach_cb.clone();
+            drop.connect_drop(move |_, value, x, y| {
+                let Ok(list) = value.get::<gtk::gdk::FileList>() else { return false };
+                deliver_files(&v, &list.files(), Some((x, y)), &cb)
+            });
+            webview.add_controller(drop);
+        }
 
         let toolbar = build_toolbar(&webview);
 
@@ -302,7 +322,7 @@ impl RichEditor {
     /// clipboard's formatting for this one paste, whatever the standing
     /// preference says.
     pub fn paste(&self, rich: bool) {
-        paste_into(&self.webview, rich);
+        paste_into(&self.webview, rich, &self.attach_cb);
     }
 
     /// Whether the body has been edited since it was loaded (async read of a JS
@@ -453,7 +473,44 @@ fn data_uri_to_temp_file(uri: &str) -> Option<std::path::PathBuf> {
 /// the editing command once the flag is in place (the callback orders the two,
 /// since both travel to the web process asynchronously). The DOM paste handler
 /// consumes the flag — see [`PASTE_SCRIPT`].
-fn paste_into(webview: &webkit6::WebView, rich: bool) {
+///
+/// A file copied in a file manager is taken first, for the same reason the
+/// drop target exists: the clipboard offers `GdkFileList`, but by the time
+/// WebKit has turned it into a paste the document sees an empty
+/// `clipboardData` and the bare path arrives as text. The formats are checked
+/// synchronously so an ordinary text paste is not delayed by a read that was
+/// always going to fail.
+fn paste_into(
+    webview: &webkit6::WebView,
+    rich: bool,
+    cb: &std::rc::Rc<std::cell::RefCell<Option<Box<dyn Fn(std::path::PathBuf)>>>>,
+) {
+    if webview.clipboard().formats().contains_type(gtk::gdk::FileList::static_type()) {
+        let v = webview.clone();
+        let cb = cb.clone();
+        webview.clipboard().read_value_async(
+            gtk::gdk::FileList::static_type(),
+            gtk::glib::Priority::DEFAULT,
+            gtk::gio::Cancellable::NONE,
+            move |res| {
+                let taken = res
+                    .ok()
+                    .and_then(|val| val.get::<gtk::gdk::FileList>().ok())
+                    .is_some_and(|list| deliver_files(&v, &list.files(), None, &cb));
+                // Nothing usable on the clipboard after all: the ordinary
+                // paste still owes the user whatever else is on it.
+                if !taken {
+                    paste_via_webkit(&v, rich);
+                }
+            },
+        );
+        return;
+    }
+    paste_via_webkit(webview, rich);
+}
+
+/// The stock paste: arm the one-shot mode flag, then let WebKit paste.
+fn paste_via_webkit(webview: &webkit6::WebView, rich: bool) {
     let v = webview.clone();
     webview.evaluate_javascript(
         &format!("window.__vireoPasteOnce={rich};"),
@@ -462,6 +519,97 @@ fn paste_into(webview: &webkit6::WebView, rich: bool) {
         gtk::gio::Cancellable::NONE,
         move |_| v.execute_editing_command("Paste"),
     );
+}
+
+/// Images inline, everything else attached. `at` is the drop point in widget
+/// coordinates (which are the document's viewport coordinates), placing the
+/// caret where the picture was let go; a paste keeps the caret it has.
+/// Returns whether any file was taken, so a caller can fall back.
+///
+/// Reading and encoding happen here rather than in the document because the
+/// document is never given the file in the first place — see [`paste_into`].
+fn deliver_files(
+    webview: &webkit6::WebView,
+    files: &[gtk::gio::File],
+    at: Option<(f64, f64)>,
+    cb: &std::rc::Rc<std::cell::RefCell<Option<Box<dyn Fn(std::path::PathBuf)>>>>,
+) -> bool {
+    let mut took = false;
+    let mut point = at;
+    for file in files {
+        let Some(path) = file.path() else { continue };
+        match read_image_for_insert(file, &path) {
+            Some((b64, mime)) => {
+                let (x, y) = point.take().map_or(("null".into(), "null".into()), |(x, y)| {
+                    (format!("{x}"), format!("{y}"))
+                });
+                // The base64 goes in unescaped on purpose: its alphabet has
+                // nothing a JS string literal cares about, and running the
+                // escape over tens of megabytes of it costs real time. Only
+                // the MIME type comes from outside.
+                let mime = js_escape(&mime);
+                exec(
+                    webview,
+                    &format!(
+                        "window.__vireoInsertImageURL('data:{mime};base64,{b64}','{mime}',{x},{y})"
+                    ),
+                );
+                took = true;
+            }
+            // Not a picture, or too big to carry in the body: the composer's
+            // attachment list is where it belongs. Inline images are lifted
+            // into `cid:` parts at send time either way, so an attachment is
+            // the same journey with a different disposition.
+            None => match cb.borrow().as_ref() {
+                Some(f) => {
+                    f(path);
+                    took = true;
+                }
+                None => tracing::warn!("editor drop: no attach callback set on this editor"),
+            },
+        }
+    }
+    took
+}
+
+/// An image small enough to inline, as base64 of its bytes plus its MIME type.
+/// Anything else — a document, an unreadable file, or a picture so large that
+/// base64 of it would be a burden to ferry into the web process — returns
+/// `None` and becomes an attachment instead. The cap is deliberately generous:
+/// the document downscales to 1600px on insert, so the size that matters to
+/// the recipient is decided there, not here.
+fn read_image_for_insert(
+    file: &gtk::gio::File,
+    path: &std::path::Path,
+) -> Option<(String, String)> {
+    const MAX_INLINE_BYTES: u64 = 32 * 1024 * 1024;
+    let info = file
+        .query_info(
+            "standard::content-type,standard::size",
+            gtk::gio::FileQueryInfoFlags::NONE,
+            gtk::gio::Cancellable::NONE,
+        )
+        .ok()?;
+    let mime = info.content_type()?.to_string();
+    // Deliberately a list, not `image/*`: a type the engine cannot decode
+    // would insert a broken <img> carrying the whole file as base64 — a RAW
+    // photo or an HEIC off a phone is tens of megabytes of nothing. A
+    // renderable format missing from this list merely becomes an attachment,
+    // which is the harmless way to be wrong.
+    const INLINE_MIMES: &[&str] = &[
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "image/bmp",
+        "image/svg+xml",
+        "image/avif",
+    ];
+    if !INLINE_MIMES.contains(&mime.as_str()) || info.size() as u64 > MAX_INLINE_BYTES {
+        return None;
+    }
+    let data = std::fs::read(path).ok()?;
+    Some((crate::oauth::base64_encode(&data), mime))
 }
 
 fn build_toolbar(webview: &webkit6::WebView) -> gtk::Box {
@@ -582,8 +730,34 @@ const PASTE_SCRIPT: &str = r#"<script>
       }
       done(url);
     };
+    /* A picture the engine can't decode still has to let go of the queue
+       below, or every image after it waits forever. */
+    im.onerror = function(){ done(url); };
     im.src = url;
   }
+  /* The way in for a file the widget read for us: dropped or pasted from a
+     file manager, which the document itself never gets to see (the app's
+     drop target and paste path explain why). One queue keeps a batch in the
+     order it was dropped — each insert waits on an image decode, so parallel
+     calls would race and land backwards. `x`/`y` place the caret at the drop
+     point and are given for the first of a batch only; the rest follow the
+     caret the previous insert left behind. */
+  var insertQ = Promise.resolve();
+  window.__vireoInsertImageURL = function(url, type, x, y){
+    insertQ = insertQ.then(function(){
+      return new Promise(function(done){
+        if(x !== null && document.caretRangeFromPoint){
+          var r = document.caretRangeFromPoint(x, y);
+          if(r){ var s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+        }
+        scaleUrl(url, type, function(u){
+          document.execCommand('insertHTML', false,
+            '<img src="' + u + '" style="max-width:100%">');
+          done();
+        });
+      });
+    });
+  };
   /* WebKit's own paste inserts images as blob: URLs — invisible to
      clipboardData.items, dead on the wire, and never downscaled. Convert
      every blob: image that appears, from any entry path, into the same
@@ -703,6 +877,10 @@ const PASTE_SCRIPT: &str = r#"<script>
       if(it[i].kind === 'file'){ e.preventDefault(); return; }
     }
   });
+  /* Files from a file manager are taken by the widget's drop target before
+     this runs — WebKitGTK leaves `dataTransfer.files` empty for them. What
+     reaches here is a drag that really does carry file data, such as an
+     image dragged out of another page. */
   document.addEventListener('drop', function(e){
     var fs = (e.dataTransfer && e.dataTransfer.files) || [];
     var imgs = [];
