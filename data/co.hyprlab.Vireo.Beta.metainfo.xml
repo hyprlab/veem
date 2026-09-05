@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.21.1-beta.1" date="2026-09-05" type="development">
+
+      <description><p>The beta channel catches up with stable 1.21.0. No beta-only changes.</p></description>
+
+    </release>
     <release version="1.20.3-beta.1" date="2026-09-04" type="development">
 
       <description><p>The beta channel catches up with stable 1.20.2. No beta-only changes.</p></description>

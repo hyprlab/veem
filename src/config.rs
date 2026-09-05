@@ -1706,6 +1706,16 @@ struct StateFile {
     /// dragged: the panel opens at its computed default.
     #[serde(default)]
     split_reply_height: i32,
+    /// The welcome wizard has been completed once (Start Reading pressed),
+    /// so an install with no accounts is not greeted with it again — a
+    /// restart right after the wizard, for the app icon, must not loop.
+    #[serde(default)]
+    wizard_completed: bool,
+    /// The chosen app icon (an id from `app_icon::catalog`). Absent until
+    /// the first start of a build that offers the choice settles it — see
+    /// `app_icon::init_on_startup`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    app_icon: Option<String>,
 }
 
 fn default_aux_height() -> i32 {
@@ -1753,6 +1763,39 @@ fn save_state(state: &StateFile) {
     if let Ok(toml) = toml::to_string_pretty(state) {
         let _ = std::fs::write(&path, toml);
     }
+}
+
+/// Whether the welcome wizard has been completed before.
+pub fn wizard_completed() -> bool {
+    load_state().wizard_completed
+}
+
+pub fn mark_wizard_completed() {
+    let mut s = load_state();
+    if !s.wizard_completed {
+        s.wizard_completed = true;
+        save_state(&s);
+    }
+}
+
+/// The chosen app icon id, if one has been settled.
+pub fn load_app_icon() -> Option<String> {
+    load_state().app_icon.filter(|s| !s.is_empty())
+}
+
+pub fn save_app_icon(id: &str) {
+    let mut s = load_state();
+    s.app_icon = Some(id.to_string());
+    save_state(&s);
+}
+
+/// Whether this install has any settings on disk at all — how a build that
+/// changes a default tells an existing install from a fresh one.
+pub fn settings_on_disk() -> bool {
+    let Some(dir) = config_base().map(|b| b.join("vireo")) else { return false };
+    ["accounts.toml", "privacy.toml", "state.toml", "sidebar.toml", "window.toml"]
+        .iter()
+        .any(|f| dir.join(f).exists())
 }
 
 /// Whether the one-time Mint keyring setup tip has already been dismissed.

@@ -1,6 +1,7 @@
 //! Vireo — a clean, fast, GNOME-native email client built with Rust + relm4.
 
 mod app;
+mod app_icon;
 mod background;
 mod avatar;
 mod backend;
@@ -68,6 +69,12 @@ fn main() {
             .compact()
             .with_filter(tracing_subscriber::EnvFilter::new("vireo=debug"));
         tracing_subscriber::registry().with(stderr).with(console).init();
+    }
+
+    // The restart helper (see app_icon.rs) never builds a UI: it waits for
+    // the running instance to leave, then becomes the new one.
+    if std::env::args().any(|a| a == app_icon::RESTART_FLAG) {
+        app_icon::run_restart_helper();
     }
 
     migrate_legacy_dirs();
@@ -140,7 +147,8 @@ fn main() {
     // welcome wizard alone; the main window appears when the wizard finishes
     // or is closed (app.rs presents it from the wizard's hand-off).
     let first_run = std::env::var("VIREO_DEMO").is_err()
-        && config::load().unwrap_or_default().is_empty();
+        && config::load().unwrap_or_default().is_empty()
+        && !config::wizard_completed();
     let app = RelmApp::from_app(adw_app)
         .with_args(args)
         .visible_on_activate(!hidden && !first_run);
@@ -148,7 +156,7 @@ fn main() {
 }
 
 /// Whether another instance already owns the app's D-Bus name.
-fn primary_instance_running() -> bool {
+pub(crate) fn primary_instance_running() -> bool {
     use gtk::glib::prelude::ToVariant;
     let Ok(conn) = gtk::gio::bus_get_sync(gtk::gio::BusType::Session, gtk::gio::Cancellable::NONE)
     else {

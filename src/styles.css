@@ -1321,7 +1321,7 @@ headerbar.reader-toolbar button.image-button {
 /* The whole window wears the icon's yellow; every page floats on it. */
 window.welcome-window,
 .welcome-window > * {
-  background-color: #ffc600;
+  background-color: #fec200;
 }
 .welcome-window headerbar {
   background: transparent;
@@ -1404,6 +1404,53 @@ window.welcome-window,
 
 .welcome-window carouselindicatordots {
   color: rgba(0, 0, 0, 0.8);
+}
+
+/* ---- App icon gallery (icon_picker.rs): Settings + wizard ---- */
+
+.icon-gallery {
+  background: transparent;
+}
+.icon-gallery flowboxchild {
+  border-radius: 14px;
+  padding: 8px 6px 6px;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.icon-gallery flowboxchild:hover {
+  background-color: alpha(currentColor, 0.06);
+}
+.icon-gallery flowboxchild:selected {
+  background-color: alpha(@accent_bg_color, 0.14);
+  box-shadow: inset 0 0 0 2px @accent_bg_color;
+}
+.icon-gallery flowboxchild:focus-visible {
+  outline: none;
+}
+.icon-gallery-label {
+  font-size: 0.78em;
+  opacity: 0.7;
+}
+.icon-gallery flowboxchild:selected .icon-gallery-label {
+  opacity: 1;
+  font-weight: 700;
+}
+/* The strip's edges melt into the card where more icons lie beyond. */
+.icon-strip-fade.left {
+  background: linear-gradient(to right, @card_bg_color, alpha(@card_bg_color, 0));
+}
+.icon-strip-fade.right {
+  background: linear-gradient(to left, @card_bg_color, alpha(@card_bg_color, 0));
+}
+/* On the wizard's yellow the selection ring wears the wordmark blue. */
+.welcome-window .icon-gallery flowboxchild:hover {
+  background-color: rgba(0, 0, 0, 0.06);
+}
+.welcome-window .icon-gallery flowboxchild:selected {
+  background-color: rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 0 0 2px #006dff;
+}
+.welcome-window .icon-gallery-label {
+  color: rgba(0, 0, 0, 0.7);
 }
 
 /* ---- Console mode (notifications.rs): dracula on an old tube ---- */

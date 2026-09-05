@@ -338,6 +338,10 @@ pub struct AppModel {
     tray_enabled: bool,
     tray_icon: config::TrayIcon,
     tray_mail: bool,
+    /// The chosen app icon (an `app_icon::catalog` id); the tray draws it.
+    app_icon: String,
+    /// A restart is on its way (Restart Now clicked, settle timer running).
+    restart_pending: bool,
     tray: Option<crate::tray::TrayHandle>,
     /// What the tray menu last listed (account, id, sender, subject; `None`
     /// for no section), so an unchanged list isn't re-sent over D-Bus on
@@ -695,6 +699,13 @@ pub enum AppMsg {
     SetTray(bool),
     SetTrayIcon(config::TrayIcon),
     SetTrayMail(bool),
+    /// Preference: the app icon (Settings gallery or the wizard).
+    SetAppIcon(String),
+    /// "Restart Now" from the app-icon heads-up: quit into the restart
+    /// helper once the desktop has taken the new launcher in.
+    RestartApp,
+    /// The settle time is up: hand off to the restart helper and quit.
+    RestartNow,
     /// Quit was chosen from the tray icon's menu.
     QuitFromTray,
     /// "View all unread" was chosen from the tray icon's menu: go to All
@@ -1814,6 +1825,8 @@ impl SimpleComponent for AppModel {
             tray_enabled: config::load_tray(),
             tray_icon: config::load_tray_icon(),
             tray_mail: config::load_tray_mail(),
+            app_icon: crate::app_icon::init_on_startup(),
+            restart_pending: false,
             tray: None,
             tray_mail_key: std::cell::RefCell::new(None),
             single_key: std::rc::Rc::new(std::cell::Cell::new(
@@ -1906,8 +1919,12 @@ impl SimpleComponent for AppModel {
         if model.config.is_empty() || std::env::var("VIREO_WELCOME").is_ok() {
             model.rebuild_sidebar();
             // VIREO_WELCOME=1 forces the wizard over an existing config, for
-            // design review and screenshots.
-            if !demo_mode() || std::env::var("VIREO_WELCOME").is_ok() {
+            // design review and screenshots. A wizard already completed once
+            // (Start Reading pressed, even with no account added) doesn't
+            // come back on its own — a restart right after it must not loop.
+            if std::env::var("VIREO_WELCOME").is_ok()
+                || (!demo_mode() && !config::wizard_completed())
+            {
                 model.open_wizard(&sender);
             }
         }
@@ -4075,10 +4092,55 @@ impl SimpleComponent for AppModel {
                     self.tray_icon = icon;
                     self.save_settings();
                     if let Some(tray) = &self.tray {
-                        tray.set_icon(icon);
+                        tray.set_icon(icon, crate::app_icon::png_for(&self.app_icon));
                     }
                 }
             }
+
+            AppMsg::SetAppIcon(id) => {
+                let id = crate::app_icon::set(&id);
+                if self.app_icon != id {
+                    self.app_icon = id;
+                    if let Some(tray) = &self.tray {
+                        tray.set_icon(self.tray_icon, crate::app_icon::png_for(&self.app_icon));
+                    }
+                    self.offer_restart_for_icon(&sender);
+                }
+            }
+
+            AppMsg::RestartApp => {
+                if self.restart_pending {
+                    return;
+                }
+                self.restart_pending = true;
+                // GNOME Shell only replaces a launcher's app object some
+                // seconds after the launcher changed; quitting before that
+                // brings the new window up under the old one, old icon and
+                // all. Wait it out with the window still up.
+                let wait = crate::app_icon::launcher_settle_remaining();
+                self.show_restarting_dialog();
+                if wait.is_zero() {
+                    sender.input(AppMsg::RestartNow);
+                } else {
+                    let s = sender.clone();
+                    gtk::glib::timeout_add_local_once(wait, move || s.input(AppMsg::RestartNow));
+                }
+            }
+
+            AppMsg::RestartNow => match crate::app_icon::launch_restart_helper() {
+                Ok(()) => relm4::main_application().activate_action("quit", None),
+                Err(e) => {
+                    tracing::warn!("restart helper failed: {e}");
+                    self.restart_pending = false;
+                    self.notifications.emit(NotifyInput::Push {
+                        text: "Couldn't restart automatically — quit and reopen Vireo \
+                               to finish switching the icon."
+                            .into(),
+                        error: true,
+                        connectivity: false,
+                    });
+                }
+            },
 
             AppMsg::SetTrayMail(on) => {
                 if self.tray_mail != on {
@@ -4849,6 +4911,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ApplyWelcomePrefs(p) => {
+                config::mark_wizard_completed();
                 // Route every choice through its normal handler (each saves and
                 // updates the live UI); drop the wizard controller afterwards.
                 sender.input(AppMsg::SetAutoRemoteContent(!p.block_remote));
@@ -4858,6 +4921,7 @@ impl SimpleComponent for AppModel {
                 sender.input(AppMsg::SetPreviewLines(p.preview_lines));
                 sender.input(AppMsg::SetAvatars(p.avatars));
                 sender.input(AppMsg::SetThreading(p.threading));
+                sender.input(AppMsg::SetAppIcon(p.app_icon));
                 self.welcome = None;
             }
 
@@ -6694,9 +6758,64 @@ impl AppModel {
         self.tray = crate::tray::TrayHandle::start(
             sender.input_sender().clone(),
             self.tray_icon,
+            crate::app_icon::png_for(&self.app_icon),
             unified,
             mail,
         );
+    }
+
+    /// The window a dialog about the icon change belongs over: Settings
+    /// while it is open, else the main window.
+    fn icon_dialog_parent(&self) -> gtk::Window {
+        match self.prefs.as_ref().filter(|p| p.widget().is_visible()) {
+            Some(p) => p.widget().clone().upcast(),
+            None => self.window.clone().upcast(),
+        }
+    }
+
+    /// While a restart waits for the desktop to take the launcher in: a
+    /// modal with a spinner, so the pause reads as progress rather than a
+    /// stuck app. It has no way to close — the app quits from under it.
+    fn show_restarting_dialog(&self) {
+        let dialog = adw::MessageDialog::new(
+            Some(&self.icon_dialog_parent()),
+            Some("Restarting Vireo"),
+            Some("Applying your new app icon. Vireo will close and reopen in a moment."),
+        );
+        let spinner = gtk::Spinner::new();
+        spinner.set_size_request(32, 32);
+        spinner.set_halign(gtk::Align::Center);
+        spinner.set_margin_top(6);
+        spinner.start();
+        dialog.set_extra_child(Some(&spinner));
+        dialog.present();
+    }
+
+    /// The heads-up after an icon change. The launcher already carries the
+    /// new icon, so the app grid shows it — but GNOME Shell keeps a running
+    /// app's windows bound to the app object it created for the old
+    /// launcher (a changed launcher only replaces the object, it never
+    /// re-tracks the windows), so the dock's running entry, like Vireo's
+    /// own window icon, only switches once every window has closed: a
+    /// restart. Offered, never forced, over whichever window the change
+    /// came from.
+    fn offer_restart_for_icon(&self, sender: &ComponentSender<Self>) {
+        let dialog = adw::MessageDialog::new(
+            Some(&self.icon_dialog_parent()),
+            Some("Restart to finish switching icons?"),
+            Some("The dock and Vireo's own windows keep the old icon until Vireo restarts."),
+        );
+        dialog.add_responses(&[("later", "Later"), ("restart", "Restart Now")]);
+        dialog.set_response_appearance("restart", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("later"));
+        dialog.set_close_response("later");
+        let s = sender.clone();
+        dialog.connect_response(None, move |_, resp| {
+            if resp == "restart" {
+                s.input(AppMsg::RestartApp);
+            }
+        });
+        dialog.present();
     }
 
     /// Send the tray menu its mail list when it has changed.
@@ -9197,6 +9316,7 @@ impl AppModel {
             tray: self.tray_enabled,
             tray_icon: self.tray_icon,
             tray_mail: self.tray_mail,
+            app_icon: self.app_icon.clone(),
             accounts_panel: accounts.widget().clone().upcast::<gtk::Widget>(),
             start_on_accounts: on_accounts,
         };
@@ -9259,6 +9379,7 @@ impl AppModel {
                 PrefOutput::SetTray(on) => AppMsg::SetTray(on),
                 PrefOutput::SetTrayIcon(icon) => AppMsg::SetTrayIcon(icon),
                 PrefOutput::SetTrayMail(on) => AppMsg::SetTrayMail(on),
+                PrefOutput::SetAppIcon(id) => AppMsg::SetAppIcon(id),
                 PrefOutput::SetPaletteCollapse(secs) => AppMsg::SetPaletteCollapse(secs),
                 PrefOutput::SetMessageTheme(t) => AppMsg::SetMessageTheme(t),
                 PrefOutput::Closed => AppMsg::ClosePreferences,
@@ -9345,7 +9466,7 @@ impl AppModel {
         // wins over both width requests and clamps.
         let wm_pic = crate::ui::welcome::wordmark_picture(120);
         let wm_frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        wm_frame.set_size_request(120, 120 * 214 / 600);
+        wm_frame.set_size_request(120, crate::ui::welcome::wordmark_height(120.0));
         let wm = gtk::Overlay::new();
         wm.set_child(Some(&wm_frame));
         wm.add_overlay(&wm_pic);
@@ -10899,6 +11020,12 @@ fn register_icons() {
         // Dev-only: lets the window/about app icon resolve when running from the
         // source tree (uninstalled). Silently ignored on installed systems.
         theme.add_search_path(concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons"));
+        // The user's icon directory, where a chosen app icon lives under
+        // its own name (app_icon.rs). Inside Flatpak XDG_DATA_HOME is the
+        // sandbox's, so GTK wouldn't look there on its own.
+        if let Some(home) = std::env::var_os("HOME") {
+            theme.add_search_path(std::path::Path::new(&home).join(".local/share/icons"));
+        }
     }
     gtk::Window::set_default_icon_name(crate::APP_ID);
 }

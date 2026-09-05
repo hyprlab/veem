@@ -1,7 +1,7 @@
 //! First-run welcome wizard: a guided, five-step setup shown when Vireo starts
 //! with no accounts configured.
 //!
-//! The whole window wears the icon's yellow (#feb900) with the wordmark as the
+//! The whole window wears the icon's yellow (#fec200) with the wordmark as the
 //! hero, and content floating on window-coloured cards — deliberate and warm,
 //! not a form dump. Steps: welcome → add an account (one-click GNOME Online
 //! Accounts imports + a manual IMAP form with provider presets) → privacy →
@@ -20,7 +20,7 @@ const WORDMARK_SVG: &[u8] = include_bytes!("../../data/welcome/wordmark-blue.svg
 
 /// The settings chosen on the privacy + personalize pages, applied by the app
 /// through its normal Set* handlers when the wizard finishes.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct WelcomePrefs {
     pub block_remote: bool,
     pub gravatar: bool,
@@ -29,6 +29,8 @@ pub struct WelcomePrefs {
     pub preview_lines: u32,
     pub avatars: bool,
     pub threading: bool,
+    /// The app icon picked from the gallery (an `app_icon::catalog` id).
+    pub app_icon: String,
 }
 
 #[derive(Debug)]
@@ -99,6 +101,8 @@ pub struct WelcomeWidgets {
     preview_row: adw::ComboRow,
     sw_avatars: adw::SwitchRow,
     sw_threading: adw::SwitchRow,
+    /// The gallery's latest pick, read when the wizard finishes.
+    icon_choice: std::rc::Rc<std::cell::RefCell<String>>,
     finish_btn: gtk::Button,
 }
 
@@ -223,9 +227,12 @@ const SMALL_TOP: f64 = 6.0;
 const SMALL_BOTTOM: f64 = 16.0;
 const SMALL_SIZE: f64 = 100.0;
 
-/// The wordmark's height for a given width (the art is 600x214).
-fn wordmark_height(width: f64) -> i32 {
-    (width * 214.0 / 600.0) as i32
+/// The wordmark art's aspect (its viewBox is 1329x483).
+const WORDMARK_ASPECT: f64 = 483.0 / 1329.0;
+
+/// The wordmark's height for a given width.
+pub(crate) fn wordmark_height(width: f64) -> i32 {
+    (width * WORDMARK_ASPECT) as i32
 }
 
 /// Tie the wordmark's size and lift to the carousel's live position: while
@@ -493,6 +500,35 @@ impl Component for Welcome {
         pers_card.append(&sw_avatars);
         pers_card.append(&sw_threading);
         pers.append(&pers_card);
+
+        // The app icon: the whole set as one sideways-scrolling row on its
+        // own card, the default ringed.
+        let icon_hdr = gtk::Label::new(Some("Pick your app icon"));
+        icon_hdr.add_css_class("welcome-section");
+        icon_hdr.set_halign(gtk::Align::Start);
+        icon_hdr.set_margin_top(6);
+        pers.append(&icon_hdr);
+        let icon_choice = std::rc::Rc::new(std::cell::RefCell::new(
+            crate::config::load_app_icon().unwrap_or_else(|| crate::app_icon::DEFAULT_ID.to_string()),
+        ));
+        let icon_card = card();
+        let icon_row = gtk::ListBoxRow::new();
+        icon_row.set_activatable(false);
+        icon_row.set_focusable(false);
+        let strip = {
+            let choice = icon_choice.clone();
+            crate::ui::icon_picker::strip(
+                &icon_choice.borrow(),
+                52,
+                std::rc::Rc::new(move |id: &str| *choice.borrow_mut() = id.to_string()),
+            )
+        };
+        strip.set_margin_top(8);
+        strip.set_margin_start(6);
+        strip.set_margin_end(6);
+        icon_row.set_child(Some(&strip));
+        icon_card.append(&icon_row);
+        pers.append(&icon_card);
         carousel.append(&scrolled(&page(&pers)));
 
         // ---- Page 5: done ----
@@ -589,6 +625,7 @@ impl Component for Welcome {
             preview_row,
             sw_avatars,
             sw_threading,
+            icon_choice,
             finish_btn,
         };
         rebuild_goa_rows(&widgets.goa_list, &model.goa, &sender);
@@ -763,6 +800,7 @@ impl Component for Welcome {
                     preview_lines: widgets.preview_row.selected(),
                     avatars: widgets.sw_avatars.is_active(),
                     threading: widgets.sw_threading.is_active(),
+                    app_icon: widgets.icon_choice.borrow().clone(),
                 };
                 let _ = sender.output(WelcomeOutput::Prefs(prefs));
                 let _ = sender.output(WelcomeOutput::Done);

@@ -42,6 +42,13 @@ finish-args:
   # Read the old Veem app's sandbox data so accounts, settings and cached mail
   # migrate automatically on first run (Veem was renamed Vireo in 1.6.0).
   - --filesystem=~/.var/app/com.getveem.Veem:ro
+  # The chosen app icon (Settings → App icon) is written over the app's icon
+  # name in the user's icon directory, which every desktop searches before the
+  # Flatpak export's — that is how the dock and app grid follow the choice.
+  - --filesystem=xdg-data/icons/hicolor:create
+  # …and the app's launcher is re-pointed at that icon through a per-user
+  # copy of its .desktop entry (the desktop caches app icons by name).
+  - --filesystem=xdg-data/applications:create
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
@@ -123,12 +130,15 @@ modules:
       - install -Dm644 data/co.hyprlab.Vireo.desktop /app/share/applications/co.hyprlab.Vireo.desktop
       - install -Dm644 data/icons/hicolor/256x256/apps/co.hyprlab.Vireo.png /app/share/icons/hicolor/256x256/apps/co.hyprlab.Vireo.png
       - install -Dm644 data/icons/hicolor/512x512/apps/co.hyprlab.Vireo.png /app/share/icons/hicolor/512x512/apps/co.hyprlab.Vireo.png
+      # The restart helper's D-Bus service (Settings → App icon → Restart Now):
+      # exported by Flatpak, so the bus can start a fresh sandbox instance.
+      - install -Dm644 data/co.hyprlab.Vireo.Restart.service /app/share/dbus-1/services/co.hyprlab.Vireo.Restart.service
       - install -Dm644 data/co.hyprlab.Vireo.metainfo.xml /app/share/metainfo/co.hyprlab.Vireo.metainfo.xml
     sources:
       - type: git
         url: https://github.com/hyprlab/vireo.git
-        tag: v1.20.2
-        commit: ee17e33effaa90d501fed62febefe306745d5629
+        tag: v1.21.0
+        commit: 42271c06b036e144d9190ca6d2aaedd052480785
       # Vendored crate sources for the offline Flatpak build. Generate with:
       #   flatpak-cargo-generator.py Cargo.lock -o cargo-sources.json
       - cargo-sources.json

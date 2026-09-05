@@ -65,6 +65,8 @@ pub struct PrefInit {
     pub tray: bool,
     pub tray_icon: TrayIcon,
     pub tray_mail: bool,
+    /// The chosen app icon (an `app_icon::catalog` id).
+    pub app_icon: String,
     /// The accounts panel (built by the AccountsWindow component), shown
     /// behind the window's "Accounts" tab.
     pub accounts_panel: gtk::Widget,
@@ -226,6 +228,7 @@ pub enum PrefInput {
     ToggleTray(bool),
     ChangeTrayIcon(u32),
     ToggleTrayMail(bool),
+    ChangeAppIcon(String),
     ChangePaletteCollapse(u64),
     ChangeMessageTheme(u32),
     ChangeAppTheme(u32),
@@ -285,6 +288,7 @@ pub enum PrefOutput {
     SetTray(bool),
     SetTrayIcon(TrayIcon),
     SetTrayMail(bool),
+    SetAppIcon(String),
     SetPaletteCollapse(u64),
     SetMessageTheme(MessageTheme),
     Closed,
@@ -721,6 +725,15 @@ impl Component for Preferences {
                             },
                         },
 
+                        // The app-icon gallery; its content is built in init
+                        // (a grid of textures the view! macro can't declare).
+                        #[name = "app_icon_row"]
+                        adw::PreferencesRow {
+                            set_title: "App icon",
+                            set_activatable: false,
+                            set_focusable: false,
+                        },
+
                         #[name = "settings_open_row"]
                         adw::ComboRow {
                             set_title: "This window opens to",
@@ -1021,6 +1034,39 @@ impl Component for Preferences {
                 autostart_row.set_sensitive(row.is_active());
             });
         }
+        // App icon: title + subtitle in the row's own voice, the gallery
+        // beneath. Picks go straight out; the app applies and offers the
+        // restart.
+        {
+            let body = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            body.set_margin_top(12);
+            body.set_margin_bottom(8);
+            body.set_margin_start(12);
+            body.set_margin_end(12);
+            let title = gtk::Label::new(Some("App icon"));
+            title.set_halign(gtk::Align::Start);
+            title.set_xalign(0.0);
+            let subtitle = gtk::Label::new(Some(
+                "Shown in the dock, app grid and switcher, and by the tray icon.",
+            ));
+            subtitle.add_css_class("dim-label");
+            subtitle.add_css_class("caption");
+            subtitle.set_halign(gtk::Align::Start);
+            subtitle.set_xalign(0.0);
+            subtitle.set_wrap(true);
+            body.append(&title);
+            body.append(&subtitle);
+            let s = sender.clone();
+            let strip = crate::ui::icon_picker::strip(
+                &init.app_icon,
+                56,
+                std::rc::Rc::new(move |id: &str| s.input(PrefInput::ChangeAppIcon(id.to_string()))),
+            );
+            strip.set_margin_top(6);
+            body.append(&strip);
+            widgets.app_icon_row.set_child(Some(&body));
+        }
+
         widgets.tray_row.set_active(init.tray);
         let tray_icon_labels: Vec<&str> = TRAY_ICONS.iter().map(|(l, _)| *l).collect();
         widgets
@@ -1364,6 +1410,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleTrayMail(on) => {
                 let _ = sender.output(PrefOutput::SetTrayMail(on));
+            }
+            PrefInput::ChangeAppIcon(id) => {
+                let _ = sender.output(PrefOutput::SetAppIcon(id));
             }
             PrefInput::ChangeTrayIcon(index) => {
                 let icon = TRAY_ICONS
