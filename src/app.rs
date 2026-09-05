@@ -6775,7 +6775,7 @@ impl AppModel {
         let dialog = adw::MessageDialog::new(
             Some(&self.icon_dialog_parent()),
             Some("Restarting Vireo"),
-            Some("Applying your new app icon. Vireo will close and reopen in a moment."),
+            Some("Vireo will close and reopen in a moment."),
         );
         let spinner = gtk::Spinner::new();
         spinner.set_size_request(32, 32);
