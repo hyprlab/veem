@@ -1,6 +1,7 @@
 //! Vireo — a clean, fast, GNOME-native email client built with Rust + relm4.
 
 mod app;
+mod app_icon;
 mod background;
 mod avatar;
 mod backend;
@@ -68,6 +69,12 @@ fn main() {
             .compact()
             .with_filter(tracing_subscriber::EnvFilter::new("vireo=debug"));
         tracing_subscriber::registry().with(stderr).with(console).init();
+    }
+
+    // The restart helper (see app_icon.rs) never builds a UI: it waits for
+    // the running instance to leave, then becomes the new one.
+    if std::env::args().any(|a| a == app_icon::RESTART_FLAG) {
+        app_icon::run_restart_helper();
     }
 
     migrate_legacy_dirs();
@@ -148,7 +155,7 @@ fn main() {
 }
 
 /// Whether another instance already owns the app's D-Bus name.
-fn primary_instance_running() -> bool {
+pub(crate) fn primary_instance_running() -> bool {
     use gtk::glib::prelude::ToVariant;
     let Ok(conn) = gtk::gio::bus_get_sync(gtk::gio::BusType::Session, gtk::gio::Cancellable::NONE)
     else {

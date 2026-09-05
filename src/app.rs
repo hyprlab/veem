@@ -338,6 +338,8 @@ pub struct AppModel {
     tray_enabled: bool,
     tray_icon: config::TrayIcon,
     tray_mail: bool,
+    /// The chosen app icon (an `app_icon::catalog` id); the tray draws it.
+    app_icon: String,
     tray: Option<crate::tray::TrayHandle>,
     /// What the tray menu last listed (account, id, sender, subject; `None`
     /// for no section), so an unchanged list isn't re-sent over D-Bus on
@@ -695,6 +697,11 @@ pub enum AppMsg {
     SetTray(bool),
     SetTrayIcon(config::TrayIcon),
     SetTrayMail(bool),
+    /// Preference: the app icon (Settings gallery or the wizard).
+    SetAppIcon(String),
+    /// "Restart Now" from the app-icon heads-up: hand off to the restart
+    /// helper and quit.
+    RestartApp,
     /// Quit was chosen from the tray icon's menu.
     QuitFromTray,
     /// "View all unread" was chosen from the tray icon's menu: go to All
@@ -1814,6 +1821,7 @@ impl SimpleComponent for AppModel {
             tray_enabled: config::load_tray(),
             tray_icon: config::load_tray_icon(),
             tray_mail: config::load_tray_mail(),
+            app_icon: crate::app_icon::init_on_startup(),
             tray: None,
             tray_mail_key: std::cell::RefCell::new(None),
             single_key: std::rc::Rc::new(std::cell::Cell::new(
@@ -4075,10 +4083,35 @@ impl SimpleComponent for AppModel {
                     self.tray_icon = icon;
                     self.save_settings();
                     if let Some(tray) = &self.tray {
-                        tray.set_icon(icon);
+                        tray.set_icon(icon, crate::app_icon::png_for(&self.app_icon));
                     }
                 }
             }
+
+            AppMsg::SetAppIcon(id) => {
+                let id = crate::app_icon::set(&id);
+                if self.app_icon != id {
+                    self.app_icon = id;
+                    if let Some(tray) = &self.tray {
+                        tray.set_icon(self.tray_icon, crate::app_icon::png_for(&self.app_icon));
+                    }
+                    self.offer_restart_for_icon(&sender);
+                }
+            }
+
+            AppMsg::RestartApp => match crate::app_icon::launch_restart_helper() {
+                Ok(()) => relm4::main_application().activate_action("quit", None),
+                Err(e) => {
+                    tracing::warn!("restart helper failed: {e}");
+                    self.notifications.emit(NotifyInput::Push {
+                        text: "Couldn't restart automatically — quit and reopen Vireo \
+                               to finish switching the icon."
+                            .into(),
+                        error: true,
+                        connectivity: false,
+                    });
+                }
+            },
 
             AppMsg::SetTrayMail(on) => {
                 if self.tray_mail != on {
@@ -4858,6 +4891,7 @@ impl SimpleComponent for AppModel {
                 sender.input(AppMsg::SetPreviewLines(p.preview_lines));
                 sender.input(AppMsg::SetAvatars(p.avatars));
                 sender.input(AppMsg::SetThreading(p.threading));
+                sender.input(AppMsg::SetAppIcon(p.app_icon));
                 self.welcome = None;
             }
 
@@ -6694,9 +6728,41 @@ impl AppModel {
         self.tray = crate::tray::TrayHandle::start(
             sender.input_sender().clone(),
             self.tray_icon,
+            crate::app_icon::png_for(&self.app_icon),
             unified,
             mail,
         );
+    }
+
+    /// The heads-up after an icon change: the desktop follows on its own
+    /// (usually — some panels hold on until a logout), Vireo's own windows
+    /// after a restart. Offered, never forced, over whichever window the
+    /// change came from.
+    fn offer_restart_for_icon(&self, sender: &ComponentSender<Self>) {
+        let parent: gtk::Window = match self.prefs.as_ref().filter(|p| p.widget().is_visible()) {
+            Some(p) => p.widget().clone().upcast(),
+            None => self.window.clone().upcast(),
+        };
+        let dialog = adw::MessageDialog::new(
+            Some(&parent),
+            Some("Restart to finish switching icons?"),
+            Some(
+                "The new icon is in place. The dock and app switcher pick it up on their \
+                 own on most desktops (a few hold on to the old one until you log out); \
+                 Vireo's own windows switch when it restarts.",
+            ),
+        );
+        dialog.add_responses(&[("later", "Later"), ("restart", "Restart Now")]);
+        dialog.set_response_appearance("restart", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("later"));
+        dialog.set_close_response("later");
+        let s = sender.clone();
+        dialog.connect_response(None, move |_, resp| {
+            if resp == "restart" {
+                s.input(AppMsg::RestartApp);
+            }
+        });
+        dialog.present();
     }
 
     /// Send the tray menu its mail list when it has changed.
@@ -9197,6 +9263,7 @@ impl AppModel {
             tray: self.tray_enabled,
             tray_icon: self.tray_icon,
             tray_mail: self.tray_mail,
+            app_icon: self.app_icon.clone(),
             accounts_panel: accounts.widget().clone().upcast::<gtk::Widget>(),
             start_on_accounts: on_accounts,
         };
@@ -9259,6 +9326,7 @@ impl AppModel {
                 PrefOutput::SetTray(on) => AppMsg::SetTray(on),
                 PrefOutput::SetTrayIcon(icon) => AppMsg::SetTrayIcon(icon),
                 PrefOutput::SetTrayMail(on) => AppMsg::SetTrayMail(on),
+                PrefOutput::SetAppIcon(id) => AppMsg::SetAppIcon(id),
                 PrefOutput::SetPaletteCollapse(secs) => AppMsg::SetPaletteCollapse(secs),
                 PrefOutput::SetMessageTheme(t) => AppMsg::SetMessageTheme(t),
                 PrefOutput::Closed => AppMsg::ClosePreferences,
@@ -9345,7 +9413,7 @@ impl AppModel {
         // wins over both width requests and clamps.
         let wm_pic = crate::ui::welcome::wordmark_picture(120);
         let wm_frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        wm_frame.set_size_request(120, 120 * 214 / 600);
+        wm_frame.set_size_request(120, crate::ui::welcome::wordmark_height(120.0));
         let wm = gtk::Overlay::new();
         wm.set_child(Some(&wm_frame));
         wm.add_overlay(&wm_pic);

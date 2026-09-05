@@ -60,8 +60,9 @@ pub struct TrayMailList {
     pub unread: u32,
 }
 
-/// The app icon, as shipped.
-const APP_ICON_PNG: &[u8] = include_bytes!("../data/icons/hicolor/256x256/apps/co.hyprlab.Vireo.png");
+/// The app icon the tray shows: the one the user chose for the app (see
+/// `app_icon.rs`), passed in as PNG bytes so a change follows live.
+pub type AppIconPng = &'static [u8];
 /// The envelope, as the reader draws it; its fill is swapped for the chosen colour.
 const ENVELOPE_SVG: &str =
     include_str!("../resources/icons/scalable/actions/co.hyprlab.Vireo-mail-unread-symbolic.svg");
@@ -84,12 +85,13 @@ impl TrayHandle {
     pub fn start(
         sender: relm4::Sender<AppMsg>,
         icon: TrayIcon,
+        app_png: AppIconPng,
         unread: u32,
         mail: Option<TrayMailList>,
     ) -> Option<Self> {
         let tray = VireoTray {
-            plain: render_set(icon, false),
-            dotted: render_set(icon, true),
+            plain: render_set(icon, app_png, false),
+            dotted: render_set(icon, app_png, true),
             unread,
             mail,
             sender,
@@ -112,9 +114,9 @@ impl TrayHandle {
     }
 
     /// Swap the icon set.
-    pub fn set_icon(&self, icon: TrayIcon) {
-        let plain = render_set(icon, false);
-        let dotted = render_set(icon, true);
+    pub fn set_icon(&self, icon: TrayIcon, app_png: AppIconPng) {
+        let plain = render_set(icon, app_png, false);
+        let dotted = render_set(icon, app_png, true);
         self.handle.update(move |t| {
             t.plain = plain;
             t.dotted = dotted;
@@ -359,11 +361,11 @@ fn initials_png(name: &str, email: &str, size: i32) -> Option<Vec<u8>> {
 }
 
 /// Every size of one icon, with or without the dot.
-fn render_set(icon: TrayIcon, dotted: bool) -> Vec<Icon> {
+fn render_set(icon: TrayIcon, app_png: AppIconPng, dotted: bool) -> Vec<Icon> {
     let fill = panel_fill();
     SIZES
         .iter()
-        .filter_map(|&size| render(icon, dotted, size, fill))
+        .filter_map(|&size| render(icon, app_png, dotted, size, fill))
         .collect()
 }
 
@@ -384,9 +386,9 @@ fn panel_fill() -> f64 {
 
 /// Decode the chosen icon, composite the dot over its top-right, and centre
 /// it in a `size` canvas, of which it fills `fill`.
-fn render(icon: TrayIcon, dotted: bool, size: i32, fill: f64) -> Option<Icon> {
+fn render(icon: TrayIcon, app_png: AppIconPng, dotted: bool, size: i32, fill: f64) -> Option<Icon> {
     let glyph = ((f64::from(size) * fill).round() as i32).clamp(1, size);
-    let pixbuf = base_pixbuf(icon, glyph)?;
+    let pixbuf = base_pixbuf(icon, app_png, glyph)?;
     let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, size, size).ok()?;
     {
         let cr = cairo::Context::new(&surface).ok()?;
@@ -426,13 +428,13 @@ fn render(icon: TrayIcon, dotted: bool, size: i32, fill: f64) -> Option<Icon> {
 
 /// The icon's pixels before any dot: the app icon scaled down, or the
 /// envelope rasterised in the chosen colour.
-fn base_pixbuf(icon: TrayIcon, size: i32) -> Option<Pixbuf> {
+fn base_pixbuf(icon: TrayIcon, app_png: AppIconPng, size: i32) -> Option<Pixbuf> {
     match icon {
         TrayIcon::Vireo => {
             let loader = PixbufLoader::with_type("png").ok()?;
-            loader.write(APP_ICON_PNG).ok()?;
+            loader.write(app_png).ok()?;
             loader.close().ok()?;
-            loader.pixbuf()?.scale_simple(size, size, InterpType::Bilinear)
+            loader.pixbuf()?.scale_simple(size, size, InterpType::Hyper)
         }
         TrayIcon::EnvelopeLight | TrayIcon::EnvelopeDark => {
             let fill = if icon == TrayIcon::EnvelopeLight { "#ffffff" } else { "#000000" };
