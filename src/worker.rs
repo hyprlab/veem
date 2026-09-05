@@ -3079,7 +3079,11 @@ fn build_email(account: &AccountConfig, msg: &OutgoingMessage) -> Result<LettreM
         for img in images {
             let ct = ContentType::parse(&img.mime)
                 .unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
-            related = related.singlepart(Attachment::new_inline(img.cid).body(img.data, ct));
+            let part = match img.name {
+                Some(name) => Attachment::new_inline_with_name(img.cid, name),
+                None => Attachment::new_inline(img.cid),
+            };
+            related = related.singlepart(part.body(img.data, ct));
         }
         related
     });
@@ -3119,6 +3123,9 @@ struct InlineImage {
     cid: String,
     mime: String,
     data: Vec<u8>,
+    /// The file's own name, when the composer knew one — carried on the
+    /// `<img>` as `alt`. Pasted image *bytes* never have one.
+    name: Option<String>,
 }
 
 /// Lift every quoted `data:image/...;base64,...` URI out of outgoing HTML
@@ -3155,10 +3162,11 @@ fn extract_data_images(html: &str) -> (String, Vec<InlineImage>) {
         match lifted {
             Some((len, mime, data)) => {
                 let cid = format!("{}.{}@vireo.inline", stamp, parts.len() + 1);
+                let name = alt_of_enclosing_tag(html, start, start + len);
                 out.push_str(&html[i..start]);
                 out.push_str("cid:");
                 out.push_str(&cid);
-                parts.push(InlineImage { cid, mime, data });
+                parts.push(InlineImage { cid, mime, data, name });
                 i = start + len;
             }
             None => {
@@ -3169,6 +3177,35 @@ fn extract_data_images(html: &str) -> (String, Vec<InlineImage>) {
     }
     out.push_str(&html[i..]);
     (out, parts)
+}
+
+/// The `alt` of the tag a lifted `data:` URI sat in — the filename the
+/// composer put there for a picture that came from a file (see the editor's
+/// insert script). The tag is delimited by the `<` before the URI and the `>`
+/// after it; anything unterminated, or a value that is not a plain filename,
+/// yields `None` and the part simply goes out unnamed as before.
+fn alt_of_enclosing_tag(html: &str, uri_start: usize, uri_end: usize) -> Option<String> {
+    let open = html[..uri_start].rfind('<')?;
+    let close = uri_end + html[uri_end..].find('>')?;
+    let tag = &html[open..close];
+    let at = tag.find("alt=")?;
+    let rest = &tag[at + "alt=".len()..];
+    let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+    let value = &rest[quote.len_utf8()..];
+    let value = &value[..value.find(quote)?];
+    let unescaped = value
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&");
+    // Only ever a bare filename: `alt` is attacker-reachable through a quoted
+    // reply, and it ends up in a Content-Disposition header.
+    let name = std::path::Path::new(&unescaped).file_name()?.to_str()?.to_string();
+    let clean = !name.is_empty()
+        && name.len() <= 200
+        && !name.chars().any(|c| c.is_control() || c == '"' || c == '\\');
+    clean.then_some(name)
 }
 
 /// A Message-ID for outgoing mail: unique, and in the sender's own domain so it
@@ -8537,6 +8574,49 @@ mod tests {
         assert!(raw.contains("Content-Disposition: inline"), "{raw}");
         assert!(raw.contains("image/png"), "{raw}");
         assert!(!raw.contains("data:image"), "{raw}");
+    }
+
+    /// A picture dropped in from a file manager keeps the name it had; one
+    /// pasted as raw bytes has none to keep.
+    #[test]
+    fn an_images_own_filename_reaches_the_inline_part() {
+        let png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00];
+        let uri = format!("data:image/png;base64,{}", crate::oauth::base64_encode(&png));
+        let raw_for = |img: String| {
+            let msg = OutgoingMessage {
+                to: "ada@example.com".into(),
+                body: "see picture".into(),
+                html: format!("<p>see</p>{img}"),
+                ..sample_outgoing()
+            };
+            let email = build_email(&sample_account(), &msg).expect("email builds");
+            String::from_utf8_lossy(&email.formatted()).to_string()
+        };
+        let named = raw_for(format!("<img src=\"{uri}\" alt=\"holiday snap.png\">"));
+        assert!(named.contains("holiday snap.png"), "{named}");
+        let anonymous = raw_for(format!("<img src=\"{uri}\">"));
+        assert!(anonymous.contains("Content-Disposition: inline"), "{anonymous}");
+        assert!(!anonymous.contains("filename"), "{anonymous}");
+    }
+
+    /// `alt` arrives from outside on any quoted reply and lands in a header,
+    /// so a quote, a backslash or a control character never reaches one, and
+    /// a value that is no filename at all names nothing.
+    #[test]
+    fn an_alt_that_is_not_a_plain_filename_names_nothing() {
+        let html = "<img src='data:image/png;base64,AAAA' alt='%s'>";
+        for bad in ["a\"b", "a\\b", "a\nb", "", ".", ".."] {
+            let doc = html.replace("%s", bad);
+            let (_, imgs) = extract_data_images(&doc);
+            assert_eq!(imgs.len(), 1, "{doc}");
+            assert_eq!(imgs[0].name.as_deref(), None, "{doc}");
+        }
+        // A path is not rejected but reduced: only its last segment can name
+        // the part, so a traversal cannot escape into the header.
+        let (_, ok) = extract_data_images(
+            "<img src='data:image/png;base64,AAAA' alt='../../etc/report.png'>",
+        );
+        assert_eq!(ok[0].name.as_deref(), Some("report.png"));
     }
 
     /// HTML without an embedded image keeps the old, plain alternative shape.

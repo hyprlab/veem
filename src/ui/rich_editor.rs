@@ -548,10 +548,14 @@ fn deliver_files(
                 // escape over tens of megabytes of it costs real time. Only
                 // the MIME type comes from outside.
                 let mime = js_escape(&mime);
+                let name = js_escape(
+                    &path.file_name().unwrap_or_default().to_string_lossy(),
+                );
                 exec(
                     webview,
                     &format!(
-                        "window.__vireoInsertImageURL('data:{mime};base64,{b64}','{mime}',{x},{y})"
+                        "window.__vireoInsertImageURL(\
+                         'data:{mime};base64,{b64}','{mime}','{name}',{x},{y})"
                     ),
                 );
                 took = true;
@@ -743,7 +747,7 @@ const PASTE_SCRIPT: &str = r#"<script>
      point and are given for the first of a batch only; the rest follow the
      caret the previous insert left behind. */
   var insertQ = Promise.resolve();
-  window.__vireoInsertImageURL = function(url, type, x, y){
+  window.__vireoInsertImageURL = function(url, type, name, x, y){
     insertQ = insertQ.then(function(){
       return new Promise(function(done){
         if(x !== null && document.caretRangeFromPoint){
@@ -751,8 +755,14 @@ const PASTE_SCRIPT: &str = r#"<script>
           if(r){ var s = getSelection(); s.removeAllRanges(); s.addRange(r); }
         }
         scaleUrl(url, type, function(u){
+          /* The file's own name rides along as alt, which is the only place
+             left to keep it: the picture is a data: URI by now, and the send
+             path reads this back to name the cid: part. It is also what an
+             alt attribute is for, so a recipient whose client blocks images
+             reads the filename rather than nothing. */
+          var a = name ? ' alt="' + esc(name).replace(/"/g, '&quot;') + '"' : '';
           document.execCommand('insertHTML', false,
-            '<img src="' + u + '" style="max-width:100%">');
+            '<img src="' + u + '"' + a + ' style="max-width:100%">');
           done();
         });
       });
