@@ -244,6 +244,22 @@ impl RichEditor {
                     );
                     at += 1;
                 }
+                {
+                    let action = gtk::gio::SimpleAction::new("vireo-img-fit", None);
+                    let v = view.clone();
+                    action.connect_activate(move |_, _| {
+                        exec(&v, "window.__vireoToggleFit()");
+                    });
+                    menu.insert(
+                        &webkit6::ContextMenuItem::from_gaction(
+                            &action,
+                            "Recompress to This Size on Send",
+                            None,
+                        ),
+                        at,
+                    );
+                    at += 1;
+                }
                 menu.insert(&webkit6::ContextMenuItem::new_separator(), at);
             }
             let items = menu.items();
@@ -374,10 +390,22 @@ impl RichEditor {
         );
     }
 
+    /// Read the body for *sending*: any picture armed with "Recompress to
+    /// This Size on Send" is recut to the size it is drawn at first. Drafts
+    /// go through [`RichEditor::extract`], which never touches the pixels —
+    /// a save must not cost quality.
+    pub fn extract_for_send(&self, cb: impl FnOnce(String, String) + 'static) {
+        self.read_body("window.__vireoBodyHtmlForSend()", cb);
+    }
+
     /// Read the current body HTML and a plain-text rendering asynchronously.
     pub fn extract(&self, cb: impl FnOnce(String, String) + 'static) {
+        self.read_body("window.__vireoBodyHtml()", cb);
+    }
+
+    fn read_body(&self, reader: &str, cb: impl FnOnce(String, String) + 'static) {
         self.webview.evaluate_javascript(
-            "window.__vireoBodyHtml() + '\\u0000' + document.body.innerText",
+            &format!("{reader} + '\\u0000' + document.body.innerText"),
             None,
             None,
             gtk::gio::Cancellable::NONE,
@@ -886,7 +914,17 @@ const PASTE_SCRIPT: &str = r#"<script>
      everything the document hands back (see `__vireoBodyHtml`). They are
      also contenteditable=false, so the caret cannot wander into them. */
   var rsBox = null, rsImg = null;
+  /* Blue is an ordinary selection; red says the picture will be recut when
+     the message is sent, which is the one thing here that cannot be undone.
+     The same red the spelling underline and the tray dot use. */
+  var RS_BLUE = '#3584e4', RS_RED = '#e01b24';
   function rsRemove(){ if(rsBox){ rsBox.remove(); rsBox = null; rsImg = null; } }
+  function rsTint(){
+    if(!rsBox || !rsImg) return;
+    var c = rsImg.hasAttribute('data-vireo-fit') ? RS_RED : RS_BLUE;
+    rsBox.style.outlineColor = c;
+    Array.prototype.forEach.call(rsBox.children, function(h){ h.style.background = c; });
+  }
   function rsPlace(){
     if(!rsBox || !rsImg) return;
     if(!rsImg.isConnected){ rsRemove(); return; }
@@ -949,6 +987,7 @@ const PASTE_SCRIPT: &str = r#"<script>
     });
     document.body.appendChild(rsBox);
     rsPlace();
+    rsTint();
   }
   /* The context menu's size entries. `original` drops the explicit width so
      the picture falls back to its natural size, still held to the writing
@@ -966,13 +1005,59 @@ const PASTE_SCRIPT: &str = r#"<script>
     }
     if(img === rsImg) rsPlace(); else rsShow(img);
   };
+  /* Resizing a picture changes how big it is drawn, not how many bytes it
+     is: the full-resolution data: URI still goes out, and the recipient can
+     still save the original. Arming this asks for the bytes to be recut to
+     the size shown, once, as the message is sent — irreversible, so it is
+     off until asked for and marked on the picture while it is on. */
+  window.__vireoToggleFit = function(){
+    var img = window.__vireoCtxImg || rsImg;
+    if(!img) return;
+    if(img.hasAttribute('data-vireo-fit')){
+      img.removeAttribute('data-vireo-fit');
+      img.removeAttribute('title');
+    } else {
+      img.setAttribute('data-vireo-fit', '1');
+      img.title = 'Will be recompressed to the size shown when this is sent';
+    }
+    if(img === rsImg) rsTint(); else rsShow(img);
+  };
+  /* Recut every armed picture to the width it is drawn at. drawImage on an
+     already-loaded image and toDataURL are both synchronous, so the send
+     path can do this and read the body in one go. Enlarged pictures are left
+     alone: there are no extra pixels to be had. */
+  function rsFlatten(){
+    Array.prototype.forEach.call(
+      document.querySelectorAll('img[data-vireo-fit]'), function(im){
+        var w = Math.round(im.getBoundingClientRect().width);
+        if(!w || !im.naturalWidth || w >= im.naturalWidth) return;
+        try{
+          var c = document.createElement('canvas');
+          c.width = w;
+          c.height = Math.max(1, Math.round(w * im.naturalHeight / im.naturalWidth));
+          c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+          var m = /^data:(image\/[a-z+]+)/.exec(im.src);
+          var type = m ? m[1] : 'image/png';
+          im.src = type === 'image/jpeg'
+            ? c.toDataURL('image/jpeg', 0.85) : c.toDataURL('image/png');
+        }catch(_){}
+      });
+  }
   /* What the host reads instead of body.innerHTML: the same content with
-     this script's own furniture taken out. */
+     this script's own furniture taken out, and the marks it reads by. */
   window.__vireoBodyHtml = function(){
     var c = document.body.cloneNode(true);
     Array.prototype.forEach.call(c.querySelectorAll('[data-vireo-ui]'),
       function(n){ n.remove(); });
+    Array.prototype.forEach.call(c.querySelectorAll('img[data-vireo-fit]'),
+      function(n){ n.removeAttribute('data-vireo-fit'); n.removeAttribute('title'); });
     return c.innerHTML;
+  };
+  /* Sending, and only sending: recut first, then read. A draft is saved
+     through the plain reader above, so quality is never lost to a save. */
+  window.__vireoBodyHtmlForSend = function(){
+    rsFlatten();
+    return window.__vireoBodyHtml();
   };
   addEventListener('scroll', rsPlace, true);
   addEventListener('resize', rsPlace);
@@ -1001,6 +1086,7 @@ const PASTE_SCRIPT: &str = r#"<script>
       window.__vireoCtxImg = t;
       var r = document.createRange(); r.selectNode(t);
       var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      rsShow(t);
     } else if(e.type === 'contextmenu'){
       window.__vireoCtxImg = null;
     }
@@ -1093,6 +1179,8 @@ fn document(content: &str, dark: bool) -> String {
               recipient; this rule is what the composer itself obeys,\
               whatever survives insertHTML. */\
            img{{max-width:100%;height:auto;}}\
+           /* A picture armed to be recut when the message is sent. */\
+           img[data-vireo-fit]{{outline:2px dashed #e01b24;outline-offset:2px;}}\
            /* The in-progress word's misspelling mark (Custom Highlight API);\
               the tint backs up engines that skip decorations in highlights. */\
            ::highlight(vireo-misspell){{\
