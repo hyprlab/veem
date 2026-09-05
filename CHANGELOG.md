@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.22.0-beta.3 — 2026-09-05
+
+French, and two strings that had stayed English.
+
+- **French translation.** `po/fr.po`, contributed by @frenchy82 (#122):
+  every string in the interface, the launcher and the metainfo. The app
+  follows the desktop's language; a French session gets French. Two
+  maintainer edits: one shortcut description, and the two strings below.
+- **Inbox and the recipient chip.** The INBOX folder's display name and
+  the reader's "{n} recipients" chip were fixed English; both now go
+  through the catalogue, the chip with proper plurals.
+
 ## 1.22.0-beta.2 — 2026-09-05
 
 The beta channel catches up with stable 1.21.1: the refreshed icon set,
