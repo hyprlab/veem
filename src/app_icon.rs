@@ -69,6 +69,7 @@ const CATALOG: &[IconChoice] = &[
     alt!("pattern-pink", "Pattern, pink"),
     alt!("pattern-teal", "Pattern, teal"),
     alt!("bird-blue", "Bird"),
+    alt!("bird-blue-at-symbol", "Bird, @"),
     alt!("legacy", "Classic"),
 ];
 
