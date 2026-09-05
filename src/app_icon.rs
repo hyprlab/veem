@@ -170,10 +170,18 @@ const SIZES: [i32; 2] = [512, 256];
 /// icon directory, and the launcher pointed at that name.
 fn apply(id: &str) {
     let name = icon_name(id);
-    if let Some(hicolor) = hicolor_dir() {
-        sync_icon_files(&hicolor, id, &name);
-    }
-    sync_launcher(&name, id == DEFAULT_ID);
+    let Some(hicolor) = hicolor_dir() else { return };
+    sync_icon_files(&hicolor, id, &name);
+    // The launcher names the file by absolute path rather than by icon
+    // name: the desktop then loads it directly, outside its icon-theme
+    // cache — which GNOME Shell only re-scans on its own schedule, and
+    // which kept showing a missing icon for a freshly written name.
+    let icon_ref = if id == DEFAULT_ID {
+        name.clone()
+    } else {
+        hicolor.join("512x512/apps").join(format!("{name}.png")).to_string_lossy().into_owned()
+    };
+    sync_launcher(&icon_ref, id == DEFAULT_ID);
     // Vireo's own windows (X11, panels that draw window icons).
     gtk::Window::set_default_icon_name(&name);
 }
@@ -268,7 +276,7 @@ fn touch(dir: &std::path::Path) {
 /// removed or regenerated.
 const LAUNCHER_MARK: &str = "X-Vireo-Icon-Launcher";
 
-/// Point the app's launcher at `name`. The desktop resolves an app's icon
+/// Point the app's launcher at `icon` (a name, or an absolute path). The desktop resolves an app's icon
 /// through its `.desktop` entry, and a per-user copy of that entry in
 /// `~/.local/share/applications` takes precedence over the installed one
 /// (the same mechanism menu editors use) — so the copy carries the chosen
@@ -276,7 +284,7 @@ const LAUNCHER_MARK: &str = "X-Vireo-Icon-Launcher";
 /// get a copy that hides itself once the app is gone (`TryExec`); a
 /// launcher the user's own install put there is edited in place. The
 /// default removes the copy.
-fn sync_launcher(name: &str, is_default: bool) {
+fn sync_launcher(icon: &str, is_default: bool) {
     let file = format!("{}.desktop", crate::APP_ID);
     let Some(user_dir) = host_data_home().map(|d| d.join("applications")) else { return };
     let user_path = user_dir.join(&file);
@@ -287,13 +295,13 @@ fn sync_launcher(name: &str, is_default: bool) {
     if in_flatpak() {
         let base = PathBuf::from("/app/share/applications").join(&file);
         let Some((exec, try_exec)) = flatpak_exec() else { return };
-        write_shadow(&base, &user_path, name, is_default, ours, Some(&exec), &try_exec, true);
+        write_shadow(&base, &user_path, icon, is_default, ours, Some(&exec), &try_exec, true);
         return;
     }
 
     if user_path.exists() && !ours {
         // A native install's own launcher (install.sh): just the icon line.
-        edit_icon_line(&user_path, name);
+        edit_icon_line(&user_path, icon);
         return;
     }
     let dirs = std::env::var("XDG_DATA_DIRS")
@@ -311,7 +319,7 @@ fn sync_launcher(name: &str, is_default: bool) {
             .ok()
             .and_then(|t| desktop_value(&t, "Exec").map(|e| e.split_whitespace().next().unwrap_or("").to_string()))
             .unwrap_or_default();
-        write_shadow(&base, &user_path, name, is_default, ours, None, &try_exec, false);
+        write_shadow(&base, &user_path, icon, is_default, ours, None, &try_exec, false);
         return;
     }
     // No installed launcher at all (running from a source tree): nothing to
