@@ -14,8 +14,8 @@
 //! gallery offers the switch). Fresh installs pick in the welcome wizard.
 //!
 //! The tray icon and the in-app uses draw the same choice, so it needs no
-//! restart; the window's own icon (X11 fallback, some panels) does, and the
-//! restart is offered — see [`restart`].
+//! restart; the window's own icon (X11 fallback, some panels) does, and a
+//! restart is offered — see [`launch_restart_helper`].
 
 use std::path::PathBuf;
 
@@ -122,59 +122,93 @@ pub fn set(id: &str) -> String {
     id
 }
 
-/// The user's icon directory — the host's, from inside the sandbox too (the
-/// manifest mounts `xdg-data/icons/hicolor` there, and this is what every
-/// desktop's icon lookup searches first).
-fn hicolor_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from).or_else(dirs::home_dir)?;
-    Some(home.join(".local/share/icons/hicolor"))
-}
-
-/// The override files, largest first: every size the install ships must be
-/// shadowed, or a desktop asking for a small icon still finds the shipped
-/// 256 the closer match.
-fn override_paths(hicolor: &std::path::Path) -> [(PathBuf, i32); 2] {
-    let name = format!("{}.png", crate::APP_ID);
-    [
-        (hicolor.join("512x512/apps").join(&name), 512),
-        (hicolor.join("256x256/apps").join(&name), 256),
-    ]
-}
-
-/// Write (or, for the default, remove) the override, and nudge the icon
-/// directory's timestamp so the desktop notices: icon lookups re-scan a
-/// theme when one of its directories changed, not when a file inside did.
-fn apply(id: &str) {
-    let Some(hicolor) = hicolor_dir() else { return };
-    let changed = if id == DEFAULT_ID {
-        remove_override(&hicolor)
+/// The icon name the launcher points at: the app ID for the default, and
+/// `<APP_ID>-<choice>` otherwise. A fresh name per choice is the whole
+/// trick — GNOME Shell caches app icons by name and size for the life of
+/// the session and never re-reads a file it has already shown, so swapping
+/// the art under the same name changes nothing until the next login.
+pub fn icon_name(id: &str) -> String {
+    if id == DEFAULT_ID {
+        crate::APP_ID.to_string()
     } else {
-        write_override(&hicolor, png_for(id))
-    };
-    if changed {
-        touch(&hicolor);
-        if let Some(parent) = hicolor.parent() {
-            touch(parent);
-        }
+        format!("{}-{id}", crate::APP_ID)
     }
 }
 
-fn remove_override(hicolor: &std::path::Path) -> bool {
+/// Whether this process runs inside a Flatpak sandbox.
+fn in_flatpak() -> bool {
+    std::path::Path::new("/.flatpak-info").exists()
+}
+
+/// The user's home — the host's, from inside the sandbox too.
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from).or_else(dirs::home_dir)
+}
+
+/// The user's share directory as the *desktop* sees it. Inside Flatpak
+/// XDG_DATA_HOME is the sandbox's private dir, so the host's default is
+/// used (that is where the manifest mounts `xdg-data/icons/hicolor` and
+/// `xdg-data/applications`).
+fn host_data_home() -> Option<PathBuf> {
+    if !in_flatpak() {
+        if let Some(d) = dirs::data_dir() {
+            return Some(d);
+        }
+    }
+    Some(home()?.join(".local/share"))
+}
+
+fn hicolor_dir() -> Option<PathBuf> {
+    Some(host_data_home()?.join("icons/hicolor"))
+}
+
+/// The icon sizes the install ships — every one is written under the
+/// chosen name, so whichever a desktop asks for resolves to the choice.
+const SIZES: [i32; 2] = [512, 256];
+
+/// Put a choice on the desktop: the art under its own name in the user's
+/// icon directory, and the launcher pointed at that name.
+fn apply(id: &str) {
+    let name = icon_name(id);
+    if let Some(hicolor) = hicolor_dir() {
+        sync_icon_files(&hicolor, id, &name);
+    }
+    sync_launcher(&name, id == DEFAULT_ID);
+    // Vireo's own windows (X11, panels that draw window icons).
+    gtk::Window::set_default_icon_name(&name);
+}
+
+/// Write the current choice's art (if it is not already there) and clear
+/// the art of earlier choices, then nudge the directories' timestamps so
+/// icon caches re-scan them.
+fn sync_icon_files(hicolor: &std::path::Path, id: &str, name: &str) {
+    let prefix = format!("{}-", crate::APP_ID);
+    let bare = format!("{}.png", crate::APP_ID);
+    // The bare-name override an earlier build wrote over the shipped icon
+    // is cleared too — but only when it is one of ours (judged by the 512,
+    // the unscaled art): a native install keeps its own copy of the
+    // shipped icon there.
+    let bare_is_ours = is_alt_art(&hicolor.join("512x512/apps").join(&bare));
     let mut changed = false;
-    for (path, _) in override_paths(hicolor) {
-        if path.exists() {
-            match std::fs::remove_file(&path) {
-                Ok(()) => changed = true,
-                Err(e) => tracing::warn!("could not remove {}: {e}", path.display()),
+    for size in SIZES {
+        let dir = hicolor.join(format!("{size}x{size}/apps"));
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let fname = entry.file_name().to_string_lossy().to_string();
+                let stale = (fname.starts_with(&prefix)
+                    && fname.ends_with(".png")
+                    && fname != format!("{name}.png"))
+                    || (fname == bare && bare_is_ours);
+                if stale && std::fs::remove_file(entry.path()).is_ok() {
+                    changed = true;
+                }
             }
         }
-    }
-    changed
-}
-
-fn write_override(hicolor: &std::path::Path, png: &[u8]) -> bool {
-    let mut changed = false;
-    for (path, size) in override_paths(hicolor) {
+        if id == DEFAULT_ID {
+            continue;
+        }
+        let path = dir.join(format!("{name}.png"));
+        let png = png_for(id);
         let bytes = if size == 512 {
             std::borrow::Cow::Borrowed(png)
         } else {
@@ -183,25 +217,33 @@ fn write_override(hicolor: &std::path::Path, png: &[u8]) -> bool {
                 None => continue,
             }
         };
-        // Only a real change touches the disk: this runs at every start.
         if std::fs::read(&path).map(|cur| cur == *bytes).unwrap_or(false) {
             continue;
         }
-        if let Some(dir) = path.parent() {
-            if let Err(e) = std::fs::create_dir_all(dir) {
-                tracing::warn!("could not create {}: {e}", dir.display());
-                continue;
-            }
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!("could not create {}: {e}", dir.display());
+            continue;
         }
         match std::fs::write(&path, &*bytes) {
             Ok(()) => changed = true,
             Err(e) => tracing::warn!("could not write {}: {e}", path.display()),
         }
     }
-    changed
+    if changed {
+        touch(hicolor);
+        if let Some(parent) = hicolor.parent() {
+            touch(parent);
+        }
+    }
 }
 
-/// The artwork re-encoded at `size` (the 256 the install also ships).
+/// Whether a file is one of the gallery's non-default icons, byte for byte.
+fn is_alt_art(path: &std::path::Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else { return false };
+    CATALOG.iter().any(|c| c.id != DEFAULT_ID && c.png == bytes.as_slice())
+}
+
+/// The artwork re-encoded at `size`.
 fn scaled_png(png: &[u8], size: i32) -> Option<Vec<u8>> {
     use gtk::gdk_pixbuf::{InterpType, PixbufLoader};
     use gtk::prelude::PixbufLoaderExt;
@@ -215,6 +257,172 @@ fn scaled_png(png: &[u8], size: i32) -> Option<Vec<u8>> {
 fn touch(dir: &std::path::Path) {
     if let Ok(f) = std::fs::File::open(dir) {
         let _ = f.set_modified(std::time::SystemTime::now());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The launcher
+// ---------------------------------------------------------------------------
+
+/// Marker key in a launcher Vireo wrote, so only its own files are ever
+/// removed or regenerated.
+const LAUNCHER_MARK: &str = "X-Vireo-Icon-Launcher";
+
+/// Point the app's launcher at `name`. The desktop resolves an app's icon
+/// through its `.desktop` entry, and a per-user copy of that entry in
+/// `~/.local/share/applications` takes precedence over the installed one
+/// (the same mechanism menu editors use) — so the copy carries the chosen
+/// icon name and everything else verbatim. Flatpak and packaged installs
+/// get a copy that hides itself once the app is gone (`TryExec`); a
+/// launcher the user's own install put there is edited in place. The
+/// default removes the copy.
+fn sync_launcher(name: &str, is_default: bool) {
+    let file = format!("{}.desktop", crate::APP_ID);
+    let Some(user_dir) = host_data_home().map(|d| d.join("applications")) else { return };
+    let user_path = user_dir.join(&file);
+    let ours = std::fs::read_to_string(&user_path)
+        .map(|t| t.contains(LAUNCHER_MARK))
+        .unwrap_or(false);
+
+    if in_flatpak() {
+        let base = PathBuf::from("/app/share/applications").join(&file);
+        let Some((exec, try_exec)) = flatpak_exec() else { return };
+        write_shadow(&base, &user_path, name, is_default, ours, Some(&exec), &try_exec, true);
+        return;
+    }
+
+    if user_path.exists() && !ours {
+        // A native install's own launcher (install.sh): just the icon line.
+        edit_icon_line(&user_path, name);
+        return;
+    }
+    let dirs = std::env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+    for dir in dirs.split(':') {
+        let base = PathBuf::from(dir).join("applications").join(&file);
+        if !base.is_file() {
+            continue;
+        }
+        // Hide the copy once the packaged binary is gone: the first word
+        // of the installed Exec, as the desktop resolves it.
+        let try_exec = std::fs::read_to_string(&base)
+            .ok()
+            .and_then(|t| desktop_value(&t, "Exec").map(|e| e.split_whitespace().next().unwrap_or("").to_string()))
+            .unwrap_or_default();
+        write_shadow(&base, &user_path, name, is_default, ours, None, &try_exec, false);
+        return;
+    }
+    // No installed launcher at all (running from a source tree): nothing to
+    // point anywhere.
+}
+
+/// The `Exec` line Flatpak exports for this app (from `/.flatpak-info`), and
+/// the exported `bin` wrapper that exists exactly as long as it is installed.
+fn flatpak_exec() -> Option<(String, String)> {
+    let info = std::fs::read_to_string("/.flatpak-info").ok()?;
+    let get = |key: &str| -> Option<String> {
+        info.lines()
+            .find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('=')))
+            .map(|v| v.trim().to_string())
+    };
+    let branch = get("branch")?;
+    let arch = get("arch")?;
+    let app_path = get("app-path")?;
+    // …/flatpak/app/<id>/<arch>/<branch>/<commit>/files → …/flatpak
+    let root = app_path
+        .split_once(&format!("/app/{}/", crate::APP_ID))
+        .map(|(root, _)| root.to_string())?;
+    let exec = format!(
+        "flatpak run --branch={branch} --arch={arch} --command=vireo --file-forwarding {} @@u %u @@",
+        crate::APP_ID
+    );
+    Some((exec, format!("{root}/exports/bin/{}", crate::APP_ID)))
+}
+
+/// One key's value from a desktop file's main group.
+fn desktop_value(text: &str, key: &str) -> Option<String> {
+    text.lines()
+        .find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('=')))
+        .map(|v| v.trim().to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_shadow(
+    base: &std::path::Path,
+    user_path: &std::path::Path,
+    name: &str,
+    is_default: bool,
+    ours: bool,
+    exec: Option<&str>,
+    try_exec: &str,
+    flatpak: bool,
+) {
+    if is_default {
+        if ours {
+            match std::fs::remove_file(user_path) {
+                Ok(()) => tracing::info!("removed {}", user_path.display()),
+                Err(e) => tracing::warn!("could not remove {}: {e}", user_path.display()),
+            }
+        }
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(base) else {
+        tracing::warn!("no launcher at {}", base.display());
+        return;
+    };
+    let mut out = String::new();
+    for line in text.lines() {
+        if line.starts_with("Icon=") {
+            out.push_str(&format!("Icon={name}\n"));
+        } else if line.starts_with("Exec=") && exec.is_some() {
+            out.push_str(&format!("Exec={}\n", exec.unwrap_or("")));
+        } else if line.starts_with("TryExec=") || line.starts_with("X-Flatpak=") || line.starts_with(LAUNCHER_MARK) {
+            // Re-added below.
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !try_exec.is_empty() {
+        out.push_str(&format!("TryExec={try_exec}\n"));
+    }
+    if flatpak {
+        out.push_str(&format!("X-Flatpak={}\n", crate::APP_ID));
+    }
+    out.push_str(&format!("{LAUNCHER_MARK}={name}\n"));
+    if std::fs::read_to_string(user_path).map(|cur| cur == out).unwrap_or(false) {
+        return;
+    }
+    if let Some(dir) = user_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    match std::fs::write(user_path, out) {
+        Ok(()) => tracing::info!("wrote {}", user_path.display()),
+        Err(e) => tracing::warn!("could not write {}: {e}", user_path.display()),
+    }
+}
+
+/// Replace the `Icon=` line of a launcher the user's own install owns.
+fn edit_icon_line(path: &std::path::Path, name: &str) {
+    let Ok(text) = std::fs::read_to_string(path) else { return };
+    let mut out = String::new();
+    let mut seen = false;
+    for line in text.lines() {
+        if line.starts_with("Icon=") {
+            out.push_str(&format!("Icon={name}\n"));
+            seen = true;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !seen || out == text {
+        return;
+    }
+    if let Err(e) = std::fs::write(path, out) {
+        tracing::warn!("could not update {}: {e}", path.display());
     }
 }
 
@@ -244,11 +452,6 @@ pub const RESTART_FLAG: &str = "--restart-helper";
 /// service (a new sandbox instance) and the running app exits under it.
 pub fn restart_service_name() -> String {
     format!("{}.Restart", crate::APP_ID)
-}
-
-/// Whether this process runs inside a Flatpak sandbox.
-fn in_flatpak() -> bool {
-    std::path::Path::new("/.flatpak-info").exists()
 }
 
 /// Start the helper that will bring the app back, and report whether it is

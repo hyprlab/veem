@@ -46,6 +46,9 @@ finish-args:
   # name in the user's icon directory, which every desktop searches before the
   # Flatpak export's — that is how the dock and app grid follow the choice.
   - --filesystem=xdg-data/icons/hicolor:create
+  # …and the app's launcher is re-pointed at that icon through a per-user
+  # copy of its .desktop entry (the desktop caches app icons by name).
+  - --filesystem=xdg-data/applications:create
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin

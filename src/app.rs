@@ -6747,9 +6747,8 @@ impl AppModel {
             Some(&parent),
             Some("Restart to finish switching icons?"),
             Some(
-                "The new icon is in place. The dock and app switcher pick it up on their \
-                 own on most desktops (a few hold on to the old one until you log out); \
-                 Vireo's own windows switch when it restarts.",
+                "The new icon is in place and the desktop is already using it. Vireo's \
+                 own windows keep the old one until it restarts.",
             ),
         );
         dialog.add_responses(&[("later", "Later"), ("restart", "Restart Now")]);
@@ -10967,6 +10966,12 @@ fn register_icons() {
         // Dev-only: lets the window/about app icon resolve when running from the
         // source tree (uninstalled). Silently ignored on installed systems.
         theme.add_search_path(concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons"));
+        // The user's icon directory, where a chosen app icon lives under
+        // its own name (app_icon.rs). Inside Flatpak XDG_DATA_HOME is the
+        // sandbox's, so GTK wouldn't look there on its own.
+        if let Some(home) = std::env::var_os("HOME") {
+            theme.add_search_path(std::path::Path::new(&home).join(".local/share/icons"));
+        }
     }
     gtk::Window::set_default_icon_name(crate::APP_ID);
 }
