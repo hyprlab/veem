@@ -340,6 +340,8 @@ pub struct AppModel {
     tray_mail: bool,
     /// The chosen app icon (an `app_icon::catalog` id); the tray draws it.
     app_icon: String,
+    /// A restart is on its way (Restart Now clicked, settle timer running).
+    restart_pending: bool,
     tray: Option<crate::tray::TrayHandle>,
     /// What the tray menu last listed (account, id, sender, subject; `None`
     /// for no section), so an unchanged list isn't re-sent over D-Bus on
@@ -699,9 +701,11 @@ pub enum AppMsg {
     SetTrayMail(bool),
     /// Preference: the app icon (Settings gallery or the wizard).
     SetAppIcon(String),
-    /// "Restart Now" from the app-icon heads-up: hand off to the restart
-    /// helper and quit.
+    /// "Restart Now" from the app-icon heads-up: quit into the restart
+    /// helper once the desktop has taken the new launcher in.
     RestartApp,
+    /// The settle time is up: hand off to the restart helper and quit.
+    RestartNow,
     /// Quit was chosen from the tray icon's menu.
     QuitFromTray,
     /// "View all unread" was chosen from the tray icon's menu: go to All
@@ -1822,6 +1826,7 @@ impl SimpleComponent for AppModel {
             tray_icon: config::load_tray_icon(),
             tray_mail: config::load_tray_mail(),
             app_icon: crate::app_icon::init_on_startup(),
+            restart_pending: false,
             tray: None,
             tray_mail_key: std::cell::RefCell::new(None),
             single_key: std::rc::Rc::new(std::cell::Cell::new(
@@ -4099,10 +4104,34 @@ impl SimpleComponent for AppModel {
                 }
             }
 
-            AppMsg::RestartApp => match crate::app_icon::launch_restart_helper() {
+            AppMsg::RestartApp => {
+                if self.restart_pending {
+                    return;
+                }
+                self.restart_pending = true;
+                // GNOME Shell only replaces a launcher's app object some
+                // seconds after the launcher changed; quitting before that
+                // brings the new window up under the old one, old icon and
+                // all. Wait it out with the window still up.
+                let wait = crate::app_icon::launcher_settle_remaining();
+                if wait.is_zero() {
+                    sender.input(AppMsg::RestartNow);
+                } else {
+                    self.notifications.emit(NotifyInput::Push {
+                        text: "Restarting in a moment…".into(),
+                        error: false,
+                        connectivity: false,
+                    });
+                    let s = sender.clone();
+                    gtk::glib::timeout_add_local_once(wait, move || s.input(AppMsg::RestartNow));
+                }
+            }
+
+            AppMsg::RestartNow => match crate::app_icon::launch_restart_helper() {
                 Ok(()) => relm4::main_application().activate_action("quit", None),
                 Err(e) => {
                     tracing::warn!("restart helper failed: {e}");
+                    self.restart_pending = false;
                     self.notifications.emit(NotifyInput::Push {
                         text: "Couldn't restart automatically — quit and reopen Vireo \
                                to finish switching the icon."
