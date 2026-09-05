@@ -122,17 +122,13 @@ pub fn set(id: &str) -> String {
     id
 }
 
-/// The icon name the launcher points at: the app ID for the default, and
-/// `<APP_ID>-<choice>` otherwise. A fresh name per choice is the whole
-/// trick — GNOME Shell caches app icons by name and size for the life of
-/// the session and never re-reads a file it has already shown, so swapping
-/// the art under the same name changes nothing until the next login.
+/// The icon name a choice is written under: `<APP_ID>-<choice>`, the
+/// default included. A fresh name per choice is deliberate — GNOME Shell
+/// caches app icons by name for the life of the session and never re-reads
+/// a file it has already shown, so swapping the art under one name shows
+/// nothing until the next login.
 pub fn icon_name(id: &str) -> String {
-    if id == DEFAULT_ID {
-        crate::APP_ID.to_string()
-    } else {
-        format!("{}-{id}", crate::APP_ID)
-    }
+    format!("{}-{id}", crate::APP_ID)
 }
 
 /// Whether this process runs inside a Flatpak sandbox.
@@ -167,29 +163,39 @@ fn hicolor_dir() -> Option<PathBuf> {
 const SIZES: [i32; 2] = [512, 256];
 
 /// Put a choice on the desktop: the art under its own name in the user's
-/// icon directory, and the launcher pointed at that name.
+/// icon directory, and the launcher pointed at that file.
+///
+/// The launcher names the file by absolute path, never by icon name. The
+/// desktop then loads it directly, outside its icon-theme cache — which
+/// GNOME Shell only re-scans on its own schedule: a freshly written name
+/// stays unknown for seconds, and a removed file keeps resolving to its
+/// old path (drawn as a blank) until the next re-scan. A changed path also
+/// counts as a changed launcher, so the dock rebuilds the icon at once.
 fn apply(id: &str) {
     let name = icon_name(id);
     let Some(hicolor) = hicolor_dir() else { return };
-    sync_icon_files(&hicolor, id, &name);
-    // The launcher names the file by absolute path rather than by icon
-    // name: the desktop then loads it directly, outside its icon-theme
-    // cache — which GNOME Shell only re-scans on its own schedule, and
-    // which kept showing a missing icon for a freshly written name.
-    let icon_ref = if id == DEFAULT_ID {
-        name.clone()
-    } else {
-        hicolor.join("512x512/apps").join(format!("{name}.png")).to_string_lossy().into_owned()
-    };
-    sync_launcher(&icon_ref, id == DEFAULT_ID);
+    let launcher = Launcher::find();
+    let is_default = id == DEFAULT_ID;
+    // The default needs no file of its own where the install's launcher
+    // can simply be restored (the copy is removed); a launcher the user's
+    // own install owns keeps pointing at a file, so its default is written
+    // like any other choice.
+    let own_file = !is_default || matches!(launcher, Launcher::Owned(_));
+    sync_icon_files(&hicolor, id, &name, own_file);
+    let path = hicolor.join("512x512/apps").join(format!("{name}.png"));
+    launcher.point_at(&path.to_string_lossy(), is_default && !own_file);
     // Vireo's own windows (X11, panels that draw window icons).
-    gtk::Window::set_default_icon_name(&name);
+    if own_file {
+        gtk::Window::set_default_icon_name(&name);
+    } else {
+        gtk::Window::set_default_icon_name(crate::APP_ID);
+    }
 }
 
 /// Write the current choice's art (if it is not already there) and clear
 /// the art of earlier choices, then nudge the directories' timestamps so
 /// icon caches re-scan them.
-fn sync_icon_files(hicolor: &std::path::Path, id: &str, name: &str) {
+fn sync_icon_files(hicolor: &std::path::Path, id: &str, name: &str, write: bool) {
     let prefix = format!("{}-", crate::APP_ID);
     let bare = format!("{}.png", crate::APP_ID);
     // The bare-name override an earlier build wrote over the shipped icon
@@ -212,7 +218,7 @@ fn sync_icon_files(hicolor: &std::path::Path, id: &str, name: &str) {
                 }
             }
         }
-        if id == DEFAULT_ID {
+        if !write {
             continue;
         }
         let path = dir.join(format!("{name}.png"));
@@ -276,54 +282,84 @@ fn touch(dir: &std::path::Path) {
 /// removed or regenerated.
 const LAUNCHER_MARK: &str = "X-Vireo-Icon-Launcher";
 
-/// Point the app's launcher at `icon` (a name, or an absolute path). The desktop resolves an app's icon
-/// through its `.desktop` entry, and a per-user copy of that entry in
-/// `~/.local/share/applications` takes precedence over the installed one
-/// (the same mechanism menu editors use) — so the copy carries the chosen
-/// icon name and everything else verbatim. Flatpak and packaged installs
-/// get a copy that hides itself once the app is gone (`TryExec`); a
-/// launcher the user's own install put there is edited in place. The
-/// default removes the copy.
-fn sync_launcher(icon: &str, is_default: bool) {
-    let file = format!("{}.desktop", crate::APP_ID);
-    let Some(user_dir) = host_data_home().map(|d| d.join("applications")) else { return };
-    let user_path = user_dir.join(&file);
-    let ours = std::fs::read_to_string(&user_path)
-        .map(|t| t.contains(LAUNCHER_MARK))
-        .unwrap_or(false);
+/// How the app's launcher can be pointed at an icon. The desktop resolves
+/// an app's icon through its `.desktop` entry, and a per-user copy of that
+/// entry in `~/.local/share/applications` takes precedence over the
+/// installed one — the mechanism menu editors use.
+enum Launcher {
+    /// Flatpak and packaged installs: a copy of the installed entry,
+    /// carrying the chosen icon and everything else verbatim, that hides
+    /// itself once the app is gone (`TryExec`).
+    Shadow {
+        base: PathBuf,
+        user_path: PathBuf,
+        /// Already one of ours.
+        ours: bool,
+        /// The `Exec` line Flatpak exports (the sandbox copy's is bare).
+        exec: Option<String>,
+        try_exec: String,
+        flatpak: bool,
+    },
+    /// A launcher the user's own install put there (install.sh, a source
+    /// tree): only its `Icon=` line is ever touched.
+    Owned(PathBuf),
+    /// No installed launcher at all.
+    None,
+}
 
-    if in_flatpak() {
-        let base = PathBuf::from("/app/share/applications").join(&file);
-        let Some((exec, try_exec)) = flatpak_exec() else { return };
-        write_shadow(&base, &user_path, icon, is_default, ours, Some(&exec), &try_exec, true);
-        return;
-    }
+impl Launcher {
+    fn find() -> Self {
+        let file = format!("{}.desktop", crate::APP_ID);
+        let Some(user_dir) = host_data_home().map(|d| d.join("applications")) else {
+            return Launcher::None;
+        };
+        let user_path = user_dir.join(&file);
+        let ours = std::fs::read_to_string(&user_path)
+            .map(|t| t.contains(LAUNCHER_MARK))
+            .unwrap_or(false);
 
-    if user_path.exists() && !ours {
-        // A native install's own launcher (install.sh): just the icon line.
-        edit_icon_line(&user_path, icon);
-        return;
-    }
-    let dirs = std::env::var("XDG_DATA_DIRS")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-    for dir in dirs.split(':') {
-        let base = PathBuf::from(dir).join("applications").join(&file);
-        if !base.is_file() {
-            continue;
+        if in_flatpak() {
+            let base = PathBuf::from("/app/share/applications").join(&file);
+            let Some((exec, try_exec)) = flatpak_exec() else { return Launcher::None };
+            return Launcher::Shadow { base, user_path, ours, exec: Some(exec), try_exec, flatpak: true };
         }
-        // Hide the copy once the packaged binary is gone: the first word
-        // of the installed Exec, as the desktop resolves it.
-        let try_exec = std::fs::read_to_string(&base)
+        if user_path.exists() && !ours {
+            return Launcher::Owned(user_path);
+        }
+        let dirs = std::env::var("XDG_DATA_DIRS")
             .ok()
-            .and_then(|t| desktop_value(&t, "Exec").map(|e| e.split_whitespace().next().unwrap_or("").to_string()))
-            .unwrap_or_default();
-        write_shadow(&base, &user_path, icon, is_default, ours, None, &try_exec, false);
-        return;
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+        for dir in dirs.split(':') {
+            let base = PathBuf::from(dir).join("applications").join(&file);
+            if !base.is_file() {
+                continue;
+            }
+            // Hide the copy once the packaged binary is gone: the first
+            // word of the installed Exec, as the desktop resolves it.
+            let try_exec = std::fs::read_to_string(&base)
+                .ok()
+                .and_then(|t| {
+                    desktop_value(&t, "Exec")
+                        .map(|e| e.split_whitespace().next().unwrap_or("").to_string())
+                })
+                .unwrap_or_default();
+            return Launcher::Shadow { base, user_path, ours, exec: None, try_exec, flatpak: false };
+        }
+        Launcher::None
     }
-    // No installed launcher at all (running from a source tree): nothing to
-    // point anywhere.
+
+    /// Point the launcher at `icon` (an absolute path); `restore` instead
+    /// puts the installed launcher back (the default, where a copy exists).
+    fn point_at(&self, icon: &str, restore: bool) {
+        match self {
+            Launcher::Shadow { base, user_path, ours, exec, try_exec, flatpak } => {
+                write_shadow(base, user_path, icon, restore, *ours, exec.as_deref(), try_exec, *flatpak)
+            }
+            Launcher::Owned(path) => edit_icon_line(path, icon),
+            Launcher::None => {}
+        }
+    }
 }
 
 /// The `Exec` line Flatpak exports for this app (from `/.flatpak-info`), and
@@ -360,14 +396,14 @@ fn desktop_value(text: &str, key: &str) -> Option<String> {
 fn write_shadow(
     base: &std::path::Path,
     user_path: &std::path::Path,
-    name: &str,
-    is_default: bool,
+    icon: &str,
+    restore: bool,
     ours: bool,
     exec: Option<&str>,
     try_exec: &str,
     flatpak: bool,
 ) {
-    if is_default {
+    if restore {
         if ours {
             match std::fs::remove_file(user_path) {
                 Ok(()) => tracing::info!("removed {}", user_path.display()),
@@ -383,10 +419,13 @@ fn write_shadow(
     let mut out = String::new();
     for line in text.lines() {
         if line.starts_with("Icon=") {
-            out.push_str(&format!("Icon={name}\n"));
+            out.push_str(&format!("Icon={icon}\n"));
         } else if line.starts_with("Exec=") && exec.is_some() {
             out.push_str(&format!("Exec={}\n", exec.unwrap_or("")));
-        } else if line.starts_with("TryExec=") || line.starts_with("X-Flatpak=") || line.starts_with(LAUNCHER_MARK) {
+        } else if line.starts_with("TryExec=")
+            || line.starts_with("X-Flatpak=")
+            || line.starts_with(LAUNCHER_MARK)
+        {
             // Re-added below.
         } else {
             out.push_str(line);
@@ -399,7 +438,7 @@ fn write_shadow(
     if flatpak {
         out.push_str(&format!("X-Flatpak={}\n", crate::APP_ID));
     }
-    out.push_str(&format!("{LAUNCHER_MARK}={name}\n"));
+    out.push_str(&format!("{LAUNCHER_MARK}=1\n"));
     if std::fs::read_to_string(user_path).map(|cur| cur == out).unwrap_or(false) {
         return;
     }
@@ -413,13 +452,13 @@ fn write_shadow(
 }
 
 /// Replace the `Icon=` line of a launcher the user's own install owns.
-fn edit_icon_line(path: &std::path::Path, name: &str) {
+fn edit_icon_line(path: &std::path::Path, icon: &str) {
     let Ok(text) = std::fs::read_to_string(path) else { return };
     let mut out = String::new();
     let mut seen = false;
     for line in text.lines() {
         if line.starts_with("Icon=") {
-            out.push_str(&format!("Icon={name}\n"));
+            out.push_str(&format!("Icon={icon}\n"));
             seen = true;
         } else {
             out.push_str(line);
