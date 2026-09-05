@@ -2599,7 +2599,6 @@ impl AccountsWindow {
             grid.set_valign(gtk::Align::Center);
             let mut place = |line: i32, text: &str, active: bool, tip: &str| -> gtk::Switch {
                 let label = gtk::Label::new(Some(text));
-                label.add_css_class("dim-label");
                 label.set_halign(gtk::Align::End);
                 label.set_valign(gtk::Align::Center);
                 let sw = gtk::Switch::new();
@@ -2631,9 +2630,9 @@ impl AccountsWindow {
                 s.input(AccountsInput::SetFilterUnified(i, sw.is_active()))
             });
             row.add_suffix(&grid);
-            // A dim pencil says "activate to edit"; the trash button removes.
+            // A pencil says "activate to edit" (full strength, like the trash
+            // button beside it); the trash button removes.
             let edit = gtk::Image::from_icon_name("co.hyprlab.Vireo-document-edit-symbolic");
-            edit.add_css_class("dim-label");
             edit.set_margin_start(6);
             row.add_suffix(&edit);
             let rm = gtk::Button::from_icon_name("co.hyprlab.Vireo-user-trash-symbolic");
