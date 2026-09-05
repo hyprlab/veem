@@ -57,7 +57,6 @@ const CATALOG: &[IconChoice] = &[
     IconChoice { id: DEFAULT_ID, label: i18n_noop("Default"), png: DEFAULT_PNG },
     alt!("envelope", "Envelope"),
     alt!("bird-blue", "Bird"),
-    alt!("bird-blue-at-symbol", "Bird, @"),
     alt!("yellow-blue", "Yellow & blue"),
     alt!("blue", "Blue"),
     alt!("blue-dark", "Dark blue"),
