@@ -1,4 +1,5 @@
 //! Core domain types shared across the UI and backend layers.
+use crate::i18n::{i18n, i18n_f};
 
 /// A configured mail account (one IMAP/SMTP identity).
 #[derive(Debug, Clone)]
@@ -144,13 +145,13 @@ impl SenderTrust {
 
     /// Heading for the details popover, and the badge's tooltip. Not drawn on
     /// screen: the toolbar badge is the icon alone, coloured by verdict.
-    pub fn label(self) -> &'static str {
-        match self {
+    pub fn label(self) -> String {
+        i18n(match self {
             SenderTrust::Pass => "Verified sender",
             SenderTrust::Unverified => "Sender not verified",
             SenderTrust::Suspicious => "Check this sender",
             SenderTrust::Fail => "Possible forgery",
-        }
+        })
     }
 
     /// CSS class for the badge's colour.
@@ -184,7 +185,7 @@ impl Default for SenderCheck {
     fn default() -> Self {
         SenderCheck {
             trust: SenderTrust::Unverified,
-            summary: "This message hasn't been checked.".into(),
+            summary: i18n("This message hasn't been checked."),
             findings: Vec::new(),
         }
     }
@@ -232,11 +233,11 @@ impl OutboxItem {
             s if s < 90 => "just now".to_string(),
             s if s < 3600 => format!("{} minutes ago", s / 60),
             s if s < 7200 => "an hour ago".to_string(),
-            s if s < 86400 => format!("{} hours ago", s / 3600),
-            s if s < 172_800 => "yesterday".to_string(),
-            s => format!("{} days ago", s / 86400),
+            s if s < 86400 => i18n_f("{n} hours ago", &[("n", &(s / 3600).to_string())]),
+            s if s < 172_800 => i18n("yesterday"),
+            s => i18n_f("{n} days ago", &[("n", &(s / 86400).to_string())]),
         };
-        format!("Waiting since {ago}")
+        i18n_f("Waiting since {ago}", &[("ago", &ago)])
     }
 
     /// The queued message as a list row. Everything the list needs is stored with

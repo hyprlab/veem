@@ -7,6 +7,7 @@
 
 use gtk::gio;
 use gtk::prelude::*;
+use crate::i18n::i18n;
 
 /// App action (bare name) that raises the main window. Used by error alerts.
 pub const PRESENT_ACTION: &str = "present-window";
@@ -33,7 +34,7 @@ fn compose_new_mail(
     if !show_content {
         return (
             if others == 0 {
-                "New message".to_string()
+                i18n("New message")
             } else {
                 format!("{} new messages", others + 1)
             },
@@ -42,7 +43,7 @@ fn compose_new_mail(
     }
     if others == 0 {
         (
-            if from.is_empty() { "New message".to_string() } else { from.to_string() },
+            if from.is_empty() { i18n("New message") } else { from.to_string() },
             subject.to_string(),
         )
     } else {
@@ -94,12 +95,12 @@ pub fn new_mail(
     // still where the buttons will look for it.
     if others == 0 && in_place {
         n.add_button_with_target_value(
-            "Mark as Read",
+            &i18n("Mark as Read"),
             &format!("app.{MARK_READ_ACTION}"),
             Some(&target),
         );
         n.add_button_with_target_value(
-            "Archive",
+            &i18n("Archive"),
             &format!("app.{ARCHIVE_ACTION}"),
             Some(&target),
         );

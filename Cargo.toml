@@ -64,6 +64,7 @@ zbus = "4"
 ammonia = "4.1.4"
 # Tray icon (StatusNotifierItem / AppIndicator) for desktops that have a tray
 ksni = { version = "0.3.6", default-features = false, features = ["tokio", "blocking"] }
+gettext-rs = { version = "0.8.0", features = ["gettext-system"] }
 
 [build-dependencies]
 # Compiles resources/veem.gresource.xml (the bundled symbolic icons) into a

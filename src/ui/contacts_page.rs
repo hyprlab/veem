@@ -13,6 +13,7 @@ use relm4::prelude::*;
 
 use crate::contacts::{ContactDetails, ContactEdit, Labeled};
 use crate::ui::context_menu::{show_context_menu, MenuEntry};
+use crate::i18n::{i18n, i18n_noop};
 
 /// How the contact list is ordered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,12 +116,12 @@ impl Component for ContactsPage {
                     add_css_class: "flat",
                     #[wrap(Some)]
                     set_title_widget = &gtk::Label {
-                        set_label: "Contacts",
+                        set_label: &i18n("Contacts"),
                         add_css_class: "pane-title",
                     },
                     pack_start = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-sidebar-show-symbolic",
-                        set_tooltip_text: Some("Toggle sidebar"),
+                        set_tooltip_text: Some(i18n("Toggle sidebar").as_str()),
                         add_css_class: "flat",
                         connect_clicked[sender] => move |_| {
                             let _ = sender.output(ContactsPageOutput::ToggleSidebar);
@@ -128,7 +129,7 @@ impl Component for ContactsPage {
                     },
                     pack_end = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
-                        set_tooltip_text: Some("Open GNOME Contacts"),
+                        set_tooltip_text: Some(i18n("Open GNOME Contacts").as_str()),
                         add_css_class: "flat",
                         connect_clicked => move |_| {
                             crate::ui::contacts_browser::launch_gnome_contacts();
@@ -136,7 +137,7 @@ impl Component for ContactsPage {
                     },
                     pack_end = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-list-add-symbolic",
-                        set_tooltip_text: Some("New contact"),
+                        set_tooltip_text: Some(i18n("New contact").as_str()),
                         add_css_class: "flat",
                         connect_clicked => ContactsPageInput::NewContact,
                     },
@@ -149,10 +150,10 @@ impl Component for ContactsPage {
                     set_title: if model.loading { "Loading Contacts…" } else { "No Contacts" },
                     #[watch]
                     set_description: Some(if model.loading {
-                        ""
+                        String::new()
                     } else {
-                        "Contacts you add in GNOME Contacts appear here."
-                    }),
+                        i18n("Contacts you add in GNOME Contacts appear here.")
+                    }.as_str()),
                 },
             },
 
@@ -205,7 +206,7 @@ impl Component for ContactsPage {
                         // as in the message list's header.
                         pack_start = &gtk::Button {
                             set_icon_name: "co.hyprlab.Vireo-sidebar-show-symbolic",
-                            set_tooltip_text: Some("Toggle sidebar"),
+                            set_tooltip_text: Some(i18n("Toggle sidebar").as_str()),
                             add_css_class: "flat",
                             connect_clicked[sender] => move |_| {
                                 let _ = sender.output(ContactsPageOutput::ToggleSidebar);
@@ -217,7 +218,7 @@ impl Component for ContactsPage {
                         #[name = "sort_btn"]
                         pack_end = &gtk::MenuButton {
                             set_icon_name: "co.hyprlab.Vireo-view-sort-descending-symbolic",
-                            set_tooltip_text: Some("Sort contacts"),
+                            set_tooltip_text: Some(i18n("Sort contacts").as_str()),
                             set_valign: gtk::Align::Center,
                             add_css_class: "flat",
                         },
@@ -228,7 +229,7 @@ impl Component for ContactsPage {
                         },
                         pack_end = &gtk::Button {
                             set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
-                            set_tooltip_text: Some("Open GNOME Contacts"),
+                            set_tooltip_text: Some(i18n("Open GNOME Contacts").as_str()),
                             add_css_class: "flat",
                             connect_clicked => move |_| {
                                 crate::ui::contacts_browser::launch_gnome_contacts();
@@ -236,7 +237,7 @@ impl Component for ContactsPage {
                         },
                         pack_end = &gtk::Button {
                             set_icon_name: "co.hyprlab.Vireo-list-add-symbolic",
-                            set_tooltip_text: Some("New contact"),
+                            set_tooltip_text: Some(i18n("New contact").as_str()),
                             add_css_class: "flat",
                             connect_clicked => ContactsPageInput::NewContact,
                         },
@@ -249,7 +250,7 @@ impl Component for ContactsPage {
 
                         #[name = "search"]
                         gtk::SearchEntry {
-                            set_placeholder_text: Some("Search contacts"),
+                            set_placeholder_text: Some(i18n("Search contacts").as_str()),
                             set_margin_top: 8,
                             set_margin_bottom: 8,
                             set_margin_start: 10,
@@ -293,13 +294,13 @@ impl Component for ContactsPage {
                         // Top-left of the card pane: edit the shown contact.
                         pack_start = &gtk::Button {
                             set_icon_name: "co.hyprlab.Vireo-document-edit-symbolic",
-                            set_tooltip_text: Some("Edit contact"),
+                            set_tooltip_text: Some(i18n("Edit contact").as_str()),
                             add_css_class: "flat",
                             connect_clicked => ContactsPageInput::Edit,
                         },
                         #[wrap(Some)]
                         set_title_widget = &gtk::Label {
-                            set_label: "Contacts",
+                            set_label: &i18n("Contacts"),
                             add_css_class: "pane-title",
                         },
                     },
@@ -361,11 +362,11 @@ impl Component for ContactsPage {
             vbox.set_margin_end(6);
             let mut first: Option<gtk::CheckButton> = None;
             for (label, sort) in [
-                ("First name", ContactSort::FirstName),
-                ("Last name", ContactSort::LastName),
-                ("Email", ContactSort::Email),
+                (i18n_noop("First name"), ContactSort::FirstName),
+                (i18n_noop("Last name"), ContactSort::LastName),
+                (i18n_noop("Email"), ContactSort::Email),
             ] {
-                let check = gtk::CheckButton::with_label(label);
+                let check = gtk::CheckButton::with_label(&i18n(label));
                 if let Some(f) = &first {
                     check.set_group(Some(f));
                 } else {
@@ -533,7 +534,7 @@ impl Component for ContactsPage {
                 let win = widgets.page_stack.root().and_downcast::<gtk::Window>();
                 let dialog = adw::MessageDialog::new(
                     win.as_ref(),
-                    Some("Delete Contact?"),
+                    Some(i18n("Delete Contact?").as_str()),
                     Some(&format!(
                         "{} is removed from your address book — and, for a synced \
                          book, from the server too.",
@@ -662,16 +663,16 @@ impl ContactsPage {
                     y,
                     vec![
                         vec![
-                            MenuEntry::new("Edit", move || {
+                            MenuEntry::new(i18n("Edit"), move || {
                                 let _ = se.send(ContactsPageInput::EditIndex(idx));
                             })
                             .icon("co.hyprlab.Vireo-document-edit-symbolic"),
-                            MenuEntry::new("Open in GNOME Contacts", move || {
+                            MenuEntry::new(i18n("Open in GNOME Contacts"), move || {
                                 let _ = sg.send(ContactsPageInput::OpenInGnome(idx));
                             })
                             .icon("co.hyprlab.Vireo-adw-external-link-symbolic"),
                         ],
-                        vec![MenuEntry::new("Delete…", move || {
+                        vec![MenuEntry::new(i18n("Delete…"), move || {
                             let _ = sd.send(ContactsPageInput::DeleteRequest(idx));
                         })
                         .icon("co.hyprlab.Vireo-user-trash-symbolic")],
@@ -719,7 +720,7 @@ impl ContactsPage {
             btn.add_css_class("flat");
             btn.add_css_class("circular");
             btn.set_halign(gtk::Align::Center);
-            btn.set_tooltip_text(Some("View photo"));
+            btn.set_tooltip_text(Some(i18n("View photo").as_str()));
             let s = sender.input_sender().clone();
             let name = c.name.clone();
             let data = photo.clone();
@@ -768,7 +769,7 @@ impl ContactsPage {
                 let row = labeled_row(e);
                 let compose = flat_button(
                     "co.hyprlab.Vireo-mail-message-new-symbolic",
-                    "New message",
+                    &i18n("New message"),
                 );
                 let s = sender.input_sender().clone();
                 let addr = e.value.clone();
@@ -862,22 +863,18 @@ impl ContactsPage {
 
         // ---- Cancel · title · Save bar (dialog-header layout) ----
         let bar = gtk::CenterBox::new();
-        let cancel = gtk::Button::with_label("Cancel");
+        let cancel = gtk::Button::with_label(&i18n("Cancel"));
         let s = sender.input_sender().clone();
         cancel.connect_clicked(move |_| {
             let _ = s.send(ContactsPageInput::CancelEdit);
         });
-        let save = gtk::Button::with_label("Save");
+        let save = gtk::Button::with_label(&i18n("Save"));
         save.add_css_class("suggested-action");
         let s = sender.input_sender().clone();
         save.connect_clicked(move |_| {
             let _ = s.send(ContactsPageInput::SaveEdit);
         });
-        let heading = gtk::Label::new(Some(if self.editing_target.is_some() {
-            "Edit Contact"
-        } else {
-            "New Contact"
-        }));
+        let heading = gtk::Label::new(Some(if self.editing_target.is_some() { i18n("Edit Contact") } else { i18n("New Contact") }.as_str()));
         heading.add_css_class("title-4");
         bar.set_start_widget(Some(&cancel));
         bar.set_center_widget(Some(&heading));
@@ -898,20 +895,20 @@ impl ContactsPage {
         // ---- repeating value groups ----
         let emails = editable_values(
             detail,
-            "Email",
-            "Add email",
+            &i18n("Email"),
+            &i18n("Add email"),
             &c.emails.iter().map(|l| (l.value.clone(), l.label.clone())).collect::<Vec<_>>(),
         );
         let phones = editable_values(
             detail,
-            "Phone",
-            "Add phone",
+            &i18n("Phone"),
+            &i18n("Add phone"),
             &c.phones.iter().map(|l| (l.value.clone(), l.label.clone())).collect::<Vec<_>>(),
         );
         let urls = editable_values(
             detail,
-            "Website",
-            "Add website",
+            &i18n("Website"),
+            &i18n("Add website"),
             &c.urls.iter().map(|u| (u.clone(), String::new())).collect::<Vec<_>>(),
         );
 
@@ -997,7 +994,7 @@ fn editable_values(
             entry.set_title(&if label.is_empty() { field.clone() } else { label.clone() });
             entry.set_text(value);
             let remove = gtk::Button::from_icon_name("co.hyprlab.Vireo-user-trash-symbolic");
-            remove.set_tooltip_text(Some("Remove"));
+            remove.set_tooltip_text(Some(i18n("Remove").as_str()));
             remove.set_valign(gtk::Align::Center);
             remove.add_css_class("flat");
             {

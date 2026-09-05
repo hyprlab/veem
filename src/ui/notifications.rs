@@ -12,6 +12,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
+use crate::i18n::{i18n, i18n_f};
 
 const TRANSIENT_SECS: u64 = 5;
 
@@ -182,7 +183,7 @@ impl SimpleComponent for NotificationCenter {
                         gtk::Button {
                             #[watch]
                             set_visible: model.panel_open && !model.ids.is_empty(),
-                            set_label: "Clear all",
+                            set_label: &i18n("Clear all"),
                             add_css_class: "flat",
                             connect_clicked => NotifyInput::ClearAll,
                         },
@@ -190,7 +191,7 @@ impl SimpleComponent for NotificationCenter {
                         gtk::Button {
                             #[watch]
                             set_icon_name: if model.panel_open { "co.hyprlab.Vireo-pan-up-symbolic" } else { "co.hyprlab.Vireo-pan-down-symbolic" },
-                            set_tooltip_text: Some("Collapse status bar"),
+                            set_tooltip_text: Some(i18n("Collapse status bar").as_str()),
                             add_css_class: "flat",
                             connect_clicked => NotifyInput::TogglePanel,
                         },
@@ -200,7 +201,7 @@ impl SimpleComponent for NotificationCenter {
                             #[watch]
                             set_visible: model.console_enabled,
                             set_icon_name: "co.hyprlab.Vireo-code-symbolic",
-                            set_tooltip_text: Some("Console"),
+                            set_tooltip_text: Some(i18n("Console").as_str()),
                             add_css_class: "flat",
                             connect_clicked => NotifyInput::ShowConsole,
                         },
@@ -628,7 +629,7 @@ impl NotificationCenter {
             if !self.status_text.is_empty() {
                 self.status_text.clone()
             } else {
-                format!("Status bar ({})", self.ids.len())
+                i18n_f("Status bar ({n})", &[("n", &self.ids.len().to_string())])
             }
         } else {
             self.transient_text.clone()

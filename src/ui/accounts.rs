@@ -12,6 +12,7 @@ use crate::config::{split_identity, AccountConfig, AliasConfig, OAuthSettings, P
 use crate::ui::rich_editor::{self, RichEditor};
 use crate::ui::preferences::{SenderRow, SenderRowOutput};
 use crate::worker::{self, ConnTest};
+use crate::i18n::{i18n, i18n_f, i18n_noop};
 
 const DEFAULT_COLOR: &str = "#3584e4";
 
@@ -76,25 +77,25 @@ impl Provider {
     }
 }
 
-const APP_PW: &str = "Requires an app-specific password (not your normal login password).";
+const APP_PW: &str = i18n_noop("Requires an app-specific password (not your normal login password).");
 
 /// The Provider dropdown, in display order. OAuth options first, then the major
 /// app-password IMAP providers, then the two manual escape hatches. IMAP uses
 /// SSL/TLS on 993; SMTP uses implicit TLS on 465 or STARTTLS on 587.
 pub(crate) const PROVIDERS: &[Provider] = &[
-    Provider { label: "Google (Gmail) — sign in", kind: ProviderKind::Google, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Sign in with your browser — no password needed." },
-    Provider { label: "Microsoft 365 / Outlook", kind: ProviderKind::Microsoft, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Sign in through GNOME Online Accounts." },
+    Provider { label: "Google (Gmail) — sign in", kind: ProviderKind::Google, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: i18n_noop("Sign in with your browser — no password needed.") },
+    Provider { label: "Microsoft 365 / Outlook", kind: ProviderKind::Microsoft, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: i18n_noop("Sign in through GNOME Online Accounts.") },
     Provider { label: "iCloud", kind: ProviderKind::Preset, imap_host: "imap.mail.me.com", imap_port: 993, smtp_host: "smtp.mail.me.com", smtp_port: 587, hint: APP_PW },
     Provider { label: "Yahoo Mail", kind: ProviderKind::Preset, imap_host: "imap.mail.yahoo.com", imap_port: 993, smtp_host: "smtp.mail.yahoo.com", smtp_port: 465, hint: APP_PW },
-    Provider { label: "Proton Mail (Bridge)", kind: ProviderKind::Preset, imap_host: "127.0.0.1", imap_port: 1143, smtp_host: "127.0.0.1", smtp_port: 1025, hint: "Requires Proton Mail Bridge running locally." },
+    Provider { label: "Proton Mail (Bridge)", kind: ProviderKind::Preset, imap_host: "127.0.0.1", imap_port: 1143, smtp_host: "127.0.0.1", smtp_port: 1025, hint: i18n_noop("Requires Proton Mail Bridge running locally.") },
     Provider { label: "Fastmail", kind: ProviderKind::Preset, imap_host: "imap.fastmail.com", imap_port: 993, smtp_host: "smtp.fastmail.com", smtp_port: 465, hint: APP_PW },
     Provider { label: "AOL Mail", kind: ProviderKind::Preset, imap_host: "imap.aol.com", imap_port: 993, smtp_host: "smtp.aol.com", smtp_port: 465, hint: APP_PW },
     Provider { label: "Zoho Mail", kind: ProviderKind::Preset, imap_host: "imap.zoho.com", imap_port: 993, smtp_host: "smtp.zoho.com", smtp_port: 465, hint: "" },
-    Provider { label: "GMX", kind: ProviderKind::Preset, imap_host: "imap.gmx.com", imap_port: 993, smtp_host: "mail.gmx.com", smtp_port: 587, hint: "Enable POP/IMAP access in GMX settings first." },
+    Provider { label: "GMX", kind: ProviderKind::Preset, imap_host: "imap.gmx.com", imap_port: 993, smtp_host: "mail.gmx.com", smtp_port: 587, hint: i18n_noop("Enable POP/IMAP access in GMX settings first.") },
     Provider { label: "Yandex Mail", kind: ProviderKind::Preset, imap_host: "imap.yandex.com", imap_port: 993, smtp_host: "smtp.yandex.com", smtp_port: 465, hint: APP_PW },
     Provider { label: "Mail.com", kind: ProviderKind::Preset, imap_host: "imap.mail.com", imap_port: 993, smtp_host: "smtp.mail.com", smtp_port: 587, hint: "" },
-    Provider { label: "Custom (OAuth)…", kind: ProviderKind::CustomOAuth, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Enter your provider's OAuth endpoints, then sign in." },
-    Provider { label: "Other (IMAP/POP3)…", kind: ProviderKind::Manual, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: "Enter your server details manually." },
+    Provider { label: "Custom (OAuth)…", kind: ProviderKind::CustomOAuth, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: i18n_noop("Enter your provider's OAuth endpoints, then sign in.") },
+    Provider { label: "Other (IMAP/POP3)…", kind: ProviderKind::Manual, imap_host: "", imap_port: 0, smtp_host: "", smtp_port: 0, hint: i18n_noop("Enter your server details manually.") },
 ];
 
 /// Dropdown index of the "Other (IMAP/POP3)…" manual entry (the default).
@@ -317,7 +318,7 @@ impl Component for AccountsWindow {
 
                 // ---- list page ----
                 add = &adw::NavigationPage {
-                    set_title: "Accounts",
+                    set_title: &i18n("Accounts"),
                     set_tag: Some("list"),
 
                     #[wrap(Some)]
@@ -328,9 +329,9 @@ impl Component for AccountsWindow {
                         #[wrap(Some)]
                         set_content = &adw::PreferencesPage {
                             add = &adw::PreferencesGroup {
-                                set_title: "Mail Accounts",
+                                set_title: &i18n("Mail Accounts"),
                                 set_description: Some(
-                                    "Drag to set the order they appear in the sidebar."
+                                    i18n("Drag to set the order they appear in the sidebar.").as_str()
                                 ),
 
                                 #[name = "accounts_list"]
@@ -345,10 +346,10 @@ impl Component for AccountsWindow {
 
                             #[name = "goa_group"]
                             add = &adw::PreferencesGroup {
-                                set_title: "GNOME Online Accounts",
+                                set_title: &i18n("GNOME Online Accounts"),
                                 set_description: Some(
-                                    "Mail accounts from GNOME Settings. Toggle one on to \
-                                     use it in Vireo."
+                                    i18n("Mail accounts from GNOME Settings. Toggle one on to \
+                                     use it in Vireo.").as_str()
                                 ),
                                 set_visible: false,
 
@@ -361,7 +362,7 @@ impl Component for AccountsWindow {
 
                             add = &adw::PreferencesGroup {
                                 gtk::Button {
-                                    set_label: "Add Account",
+                                    set_label: &i18n("Add Account"),
                                     add_css_class: "suggested-action",
                                     add_css_class: "pill",
                                     set_halign: gtk::Align::Center,
@@ -372,15 +373,15 @@ impl Component for AccountsWindow {
                             // Mail hygiene (moved from Settings): filters,
                             // the remote-content allow list, the blocklist.
                             add = &adw::PreferencesGroup {
-                                set_title: "Filters",
+                                set_title: &i18n("Filters"),
                                 set_description: Some(
-                                    "File incoming mail into folders automatically, by \
+                                    i18n("File incoming mail into folders automatically, by \
                                      sender, subject or recipients. Applied to each \
-                                     account's Inbox as Vireo syncs it."
+                                     account's Inbox as Vireo syncs it.").as_str()
                                 ),
                                 #[wrap(Some)]
                                 set_header_suffix = &gtk::Button {
-                                    set_label: "Add Filter…",
+                                    set_label: &i18n("Add Filter…"),
                                     set_valign: gtk::Align::Center,
                                     add_css_class: "flat",
                                     connect_clicked => AccountsInput::AddFilter,
@@ -394,15 +395,15 @@ impl Component for AccountsWindow {
                             },
 
                             add = &adw::PreferencesGroup {
-                                set_title: "Allowed Senders",
+                                set_title: &i18n("Allowed Senders"),
                                 set_description: Some(
-                                    "Messages from these senders load remote content \
-                                     automatically."
+                                    i18n("Messages from these senders load remote content \
+                                     automatically.").as_str()
                                 ),
 
                                 #[name = "add_sender_row"]
                                 adw::EntryRow {
-                                    set_title: "Email address",
+                                    set_title: &i18n("Email address"),
                                     set_input_purpose: gtk::InputPurpose::Email,
                                     set_show_apply_button: false,
                                     connect_entry_activated[sender] => move |row| {
@@ -412,7 +413,7 @@ impl Component for AccountsWindow {
 
                                     add_suffix = &gtk::Button {
                                         set_icon_name: "co.hyprlab.Vireo-list-add-symbolic",
-                                        set_tooltip_text: Some("Allow this sender"),
+                                        set_tooltip_text: Some(i18n("Allow this sender").as_str()),
                                         set_valign: gtk::Align::Center,
                                         add_css_class: "flat",
                                         connect_clicked[sender, add_sender_row] => move |_| {
@@ -433,17 +434,17 @@ impl Component for AccountsWindow {
                             },
 
                             add = &adw::PreferencesGroup {
-                                set_title: "Blacklist",
+                                set_title: &i18n("Blacklist"),
                                 set_description: Some(
-                                    "Incoming mail from these senders is deleted \
+                                    i18n("Incoming mail from these senders is deleted \
                                      automatically (moved to Trash). Enter an email \
                                      address, or a whole domain like \"example.com\" \
-                                     to block every sender there."
+                                     to block every sender there.").as_str()
                                 ),
 
                                 #[name = "add_blacklist_row"]
                                 adw::EntryRow {
-                                    set_title: "Address or domain",
+                                    set_title: &i18n("Address or domain"),
                                     set_show_apply_button: false,
                                     connect_entry_activated[sender] => move |row| {
                                         sender.input(AccountsInput::AddBlacklistText(row.text().to_string()));
@@ -452,7 +453,7 @@ impl Component for AccountsWindow {
 
                                     add_suffix = &gtk::Button {
                                         set_icon_name: "co.hyprlab.Vireo-list-add-symbolic",
-                                        set_tooltip_text: Some("Block this sender"),
+                                        set_tooltip_text: Some(i18n("Block this sender").as_str()),
                                         set_valign: gtk::Align::Center,
                                         add_css_class: "flat",
                                         connect_clicked[sender, add_blacklist_row] => move |_| {
@@ -477,7 +478,7 @@ impl Component for AccountsWindow {
 
                 // ---- editor page ----
                 add = &adw::NavigationPage {
-                    set_title: "Account",
+                    set_title: &i18n("Account"),
                     set_tag: Some("editor"),
 
                     #[wrap(Some)]
@@ -485,7 +486,7 @@ impl Component for AccountsWindow {
                         add_top_bar = &adw::HeaderBar {
                             set_show_end_title_buttons: false,
                             pack_end = &gtk::Button {
-                                set_label: "Save",
+                                set_label: &i18n("Save"),
                                 add_css_class: "suggested-action",
                                 connect_clicked => AccountsInput::Save,
                             },
@@ -504,13 +505,13 @@ impl Component for AccountsWindow {
                             #[name = "goa_banner"]
                             add = &adw::PreferencesGroup {
                                 set_visible: false,
-                                set_title: "GNOME Online Account",
+                                set_title: &i18n("GNOME Online Account"),
 
                                 #[name = "goa_enabled_row"]
                                 adw::SwitchRow {
-                                    set_title: "Show in Vireo",
-                                    set_subtitle: "Switching this off returns the account to the \
-                                                   import list — it stays in GNOME Online Accounts.",
+                                    set_title: &i18n("Show in Vireo"),
+                                    set_subtitle: &i18n("Switching this off returns the account to the \
+                                                   import list — it stays in GNOME Online Accounts."),
                                     connect_active_notify[sender] => move |row| {
                                         sender.input(AccountsInput::ToggleCurrentEnabled(row.is_active()));
                                     },
@@ -523,7 +524,7 @@ impl Component for AccountsWindow {
                                     set_margin_top: 12,
 
                                     gtk::Label {
-                                        set_label: "This account is managed by GNOME Online Accounts.\nIts address, servers and password are changed in Settings \u{2192} Online Accounts.",
+                                        set_label: &i18n("This account is managed by GNOME Online Accounts.\nIts address, servers and password are changed in Settings \u{2192} Online Accounts."),
                                         set_xalign: 0.0,
                                         set_halign: gtk::Align::Start,
                                         set_wrap: true,
@@ -531,7 +532,7 @@ impl Component for AccountsWindow {
                                     },
 
                                     gtk::Button {
-                                        set_label: "Open Online Accounts\u{2026}",
+                                        set_label: &i18n("Open Online Accounts\u{2026}"),
                                         set_halign: gtk::Align::Start,
                                         connect_clicked => AccountsInput::OpenOnlineAccounts,
                                     },
@@ -539,75 +540,75 @@ impl Component for AccountsWindow {
                             },
 
                             add = &adw::PreferencesGroup {
-                                set_title: "Mail Account",
+                                set_title: &i18n("Mail Account"),
 
                                 // Pick the provider first; the rest of the form
                                 // adapts (server fields vs. OAuth sign-in).
                                 #[name = "provider_row"]
                                 adw::ComboRow {
-                                    set_title: "Provider",
-                                    set_subtitle: "Choose your email provider.",
+                                    set_title: &i18n("Provider"),
+                                    set_subtitle: &i18n("Choose your email provider."),
                                     connect_selected_notify => AccountsInput::ProviderChanged,
                                 },
                                 #[name = "name_row"]
-                                adw::EntryRow { set_title: "Display Name" },
+                                adw::EntryRow { set_title: &i18n("Display Name") },
                                 #[name = "email_row"]
                                 adw::EntryRow {
-                                    set_title: "Email Address",
+                                    set_title: &i18n("Email Address"),
                                     set_input_purpose: gtk::InputPurpose::Email,
                                 },
                                 #[name = "protocol_row"]
                                 adw::ComboRow {
-                                    set_title: "Incoming Protocol",
+                                    set_title: &i18n("Incoming Protocol"),
                                 },
                                 #[name = "host_row"]
-                                adw::EntryRow { set_title: "Incoming Server" },
+                                adw::EntryRow { set_title: &i18n("Incoming Server") },
                                 #[name = "port_row"]
                                 adw::EntryRow {
-                                    set_title: "Port (IMAP 993 / POP3 995)",
+                                    set_title: &i18n("Port (IMAP 993 / POP3 995)"),
                                     set_input_purpose: gtk::InputPurpose::Digits,
                                 },
                                 #[name = "smtp_row"]
-                                adw::EntryRow { set_title: "SMTP Server (optional)" },
+                                adw::EntryRow { set_title: &i18n("SMTP Server (optional)") },
                                 #[name = "smtp_port_row"]
                                 adw::EntryRow {
-                                    set_title: "SMTP Port (default 587)",
+                                    set_title: &i18n("SMTP Port (default 587)"),
                                     set_input_purpose: gtk::InputPurpose::Digits,
                                 },
                                 #[name = "user_row"]
-                                adw::EntryRow { set_title: "Username" },
+                                adw::EntryRow { set_title: &i18n("Username") },
                                 #[name = "pass_row"]
-                                adw::PasswordEntryRow { set_title: "Password" },
+                                adw::PasswordEntryRow { set_title: &i18n("Password") },
 
                                 // ---- OAuth fields (shown when Authentication is an OAuth option) ----
                                 #[name = "oauth_client_id_row"]
                                 adw::EntryRow {
-                                    set_title: "OAuth Client ID",
+                                    set_title: &i18n("OAuth Client ID"),
                                     set_visible: false,
                                 },
                                 #[name = "oauth_secret_row"]
                                 adw::PasswordEntryRow {
-                                    set_title: "OAuth Client Secret (optional)",
+                                    set_title: &i18n("OAuth Client Secret (optional)"),
                                     set_visible: false,
                                 },
                                 #[name = "oauth_auth_url_row"]
                                 adw::EntryRow {
-                                    set_title: "Authorization URL",
+                                    set_title: &i18n("Authorization URL"),
                                     set_visible: false,
                                 },
                                 #[name = "oauth_token_url_row"]
                                 adw::EntryRow {
-                                    set_title: "Token URL",
+                                    set_title: &i18n("Token URL"),
                                     set_visible: false,
                                 },
                                 #[name = "oauth_scope_row"]
                                 adw::EntryRow {
-                                    set_title: "Scopes (space-separated)",
+                                    set_title: &i18n("Scopes (space-separated)"),
                                     set_visible: false,
                                 },
                                 #[name = "oauth_signin_btn"]
                                 gtk::Button {
-                                    set_label: "Sign In with Browser",
+                                    set_label: &i18n("Sign In with Browser"),
                                     set_halign: gtk::Align::Start,
                                     set_margin_top: 16,
                                     set_visible: false,
@@ -636,15 +637,15 @@ impl Component for AccountsWindow {
                                         set_wrap: true,
                                         set_xalign: 0.0,
                                         add_css_class: "dim-label",
-                                        set_label: "Google and Microsoft sign-in use GNOME Online \
+                                        set_label: &i18n("Google and Microsoft sign-in use GNOME Online \
                                             Accounts.\n\n\
                                             1. Open Online Accounts and sign in there.\n\
                                             2. Come back to Vireo and reopen this window — the \
                                             account then appears under “GNOME Online \
-                                            Accounts” at the top of this window. Enable it there.",
+                                            Accounts” at the top of this window. Enable it there."),
                                     },
                                     gtk::Button {
-                                        set_label: "Open Online Accounts…",
+                                        set_label: &i18n("Open Online Accounts…"),
                                         set_halign: gtk::Align::Start,
                                         add_css_class: "suggested-action",
                                         connect_clicked => AccountsInput::OpenOnlineAccounts,
@@ -653,14 +654,14 @@ impl Component for AccountsWindow {
 
                                 #[name = "smtp_separate_row"]
                                 adw::SwitchRow {
-                                    set_title: "Separate SMTP credentials",
-                                    set_subtitle: "Use a different username and password for \
-                                                   sending. Off = use the credentials above.",
+                                    set_title: &i18n("Separate SMTP credentials"),
+                                    set_subtitle: &i18n("Use a different username and password for \
+                                                   sending. Off = use the credentials above."),
                                 },
                                 #[name = "smtp_user_row"]
-                                adw::EntryRow { set_title: "SMTP Username" },
+                                adw::EntryRow { set_title: &i18n("SMTP Username") },
                                 #[name = "smtp_pass_row"]
-                                adw::PasswordEntryRow { set_title: "SMTP Password" },
+                                adw::PasswordEntryRow { set_title: &i18n("SMTP Password") },
 
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Vertical,
@@ -669,7 +670,7 @@ impl Component for AccountsWindow {
 
                                     #[name = "test_btn"]
                                     gtk::Button {
-                                        set_label: "Test Connection",
+                                        set_label: &i18n("Test Connection"),
                                         set_halign: gtk::Align::Start,
                                         connect_clicked => AccountsInput::TestConnection,
                                     },
@@ -684,19 +685,19 @@ impl Component for AccountsWindow {
                             },
 
                             add = &adw::PreferencesGroup {
-                                set_title: "Appearance",
+                                set_title: &i18n("Appearance"),
                                 set_description: Some(
-                                    "How this account is shown in the sidebar and \
-                                     the All Inboxes view."
+                                    i18n("How this account is shown in the sidebar and \
+                                     the All Inboxes view.").as_str()
                                 ),
 
                                 #[name = "label_row"]
                                 adw::EntryRow {
-                                    set_title: "Label (defaults to email address)",
+                                    set_title: &i18n("Label (defaults to email address)"),
                                 },
 
                                 adw::ActionRow {
-                                    set_title: "Circle color",
+                                    set_title: &i18n("Circle color"),
                                     #[name = "color_btn"]
                                     add_suffix = &gtk::ColorDialogButton {
                                         set_valign: gtk::Align::Center,
@@ -705,13 +706,13 @@ impl Component for AccountsWindow {
                                 },
 
                                 adw::ActionRow {
-                                    set_title: "Emoji",
-                                    set_subtitle: "Optional — shown instead of initials",
+                                    set_title: &i18n("Emoji"),
+                                    set_subtitle: &i18n("Optional — shown instead of initials"),
 
                                     #[name = "emoji_btn"]
                                     add_suffix = &gtk::MenuButton {
                                         set_valign: gtk::Align::Center,
-                                        set_label: "Add",
+                                        set_label: &i18n("Add"),
                                         #[wrap(Some)]
                                         set_popover = &gtk::EmojiChooser {
                                             connect_emoji_picked[sender] => move |_, text| {
@@ -721,8 +722,8 @@ impl Component for AccountsWindow {
                                     },
                                     add_suffix = &gtk::Button {
                                         set_valign: gtk::Align::Center,
-                                        set_label: "Use initials",
-                                        set_tooltip_text: Some("Show name initials instead of an emoji"),
+                                        set_label: &i18n("Use initials"),
+                                        set_tooltip_text: Some(i18n("Show name initials instead of an emoji").as_str()),
                                         connect_clicked => AccountsInput::ClearEmoji,
                                     },
                                 },
@@ -734,15 +735,15 @@ impl Component for AccountsWindow {
                             // SMTP, or — for a forwarded mailbox whose provider
                             // would rewrite the sender — through its own.
                             add = &adw::PreferencesGroup {
-                                set_title: "Send-as aliases",
+                                set_title: &i18n("Send-as aliases"),
                                 set_description: Some(
-                                    "Extra addresses this account can send as. An alias \
-                                     can use this account's SMTP server, or bring its own."
+                                    i18n("Extra addresses this account can send as. An alias \
+                                     can use this account's SMTP server, or bring its own.").as_str()
                                 ),
 
                                 #[wrap(Some)]
                                 set_header_suffix = &gtk::Button {
-                                    set_label: "Add Alias…",
+                                    set_label: &i18n("Add Alias…"),
                                     set_valign: gtk::Align::Center,
                                     add_css_class: "flat",
                                     connect_clicked => AccountsInput::AliasAdd,
@@ -762,12 +763,12 @@ impl Component for AccountsWindow {
                             // mishandle IDLE, and one bad account shouldn't
                             // cost the good ones their instant delivery.
                             add = &adw::PreferencesGroup {
-                                set_title: "Syncing",
+                                set_title: &i18n("Syncing"),
 
                                 #[name = "push_row"]
                                 adw::ComboRow {
-                                    set_title: "Instant new mail (IMAP push)",
-                                    set_subtitle: "Turn off for servers that stall on push connections.",
+                                    set_title: &i18n("Instant new mail (IMAP push)"),
+                                    set_subtitle: &i18n("Turn off for servers that stall on push connections."),
                                 },
                             },
 
@@ -775,27 +776,27 @@ impl Component for AccountsWindow {
                             // whose Sent/Trash/… aren't detected, pin each role
                             // to one of the account's real folders.
                             add = &adw::PreferencesGroup {
-                                set_title: "Special Folders",
+                                set_title: &i18n("Special Folders"),
                                 set_description: Some(
-                                    "Where sent, deleted and junk mail goes. Automatic                                      follows the server's own markings; pick a folder                                      when a role isn't detected or lands wrong."
+                                    i18n("Where sent, deleted and junk mail goes. Automatic                                      follows the server's own markings; pick a folder                                      when a role isn't detected or lands wrong.").as_str()
                                 ),
 
                                 #[name = "folder_sent_row"]
-                                adw::ComboRow { set_title: "Sent" },
+                                adw::ComboRow { set_title: &i18n("Sent") },
                                 #[name = "folder_drafts_row"]
-                                adw::ComboRow { set_title: "Drafts" },
+                                adw::ComboRow { set_title: &i18n("Drafts") },
                                 #[name = "folder_trash_row"]
-                                adw::ComboRow { set_title: "Trash" },
+                                adw::ComboRow { set_title: &i18n("Trash") },
                                 #[name = "folder_junk_row"]
-                                adw::ComboRow { set_title: "Junk" },
+                                adw::ComboRow { set_title: &i18n("Junk") },
                                 #[name = "folder_archive_row"]
-                                adw::ComboRow { set_title: "Archive" },
+                                adw::ComboRow { set_title: &i18n("Archive") },
                             },
 
                             add = &adw::PreferencesGroup {
-                                set_title: "Signature",
+                                set_title: &i18n("Signature"),
                                 set_description: Some(
-                                    "Appended to new messages sent from this account."
+                                    i18n("Appended to new messages sent from this account.").as_str()
                                 ),
 
                                 #[name = "sig_holder"]
@@ -812,7 +813,7 @@ impl Component for AccountsWindow {
                             #[name = "remove_group"]
                             add = &adw::PreferencesGroup {
                                 gtk::Button {
-                                    set_label: "Remove Account",
+                                    set_label: &i18n("Remove Account"),
                                     add_css_class: "destructive-action",
                                     set_halign: gtk::Align::Center,
                                     connect_clicked => AccountsInput::RemoveCurrent,
@@ -825,8 +826,8 @@ impl Component for AccountsWindow {
                                     set_xalign: 0.0,
                                     add_css_class: "dim-label",
                                     add_css_class: "caption",
-                                    set_label: "Your password is stored in the system keyring \
-                                                (secret-service), never in plain text on disk.",
+                                    set_label: &i18n("Your password is stored in the system keyring \
+                                                (secret-service), never in plain text on disk."),
                                 },
                             },
                         },
@@ -915,7 +916,7 @@ impl Component for AccountsWindow {
         // / Some(false), in that order).
         widgets
             .push_row
-            .set_model(Some(&gtk::StringList::new(&["Follow Settings", "On", "Off"])));
+            .set_model(Some(&gtk::StringList::new(&[i18n("Follow Settings").as_str(), i18n("On").as_str(), i18n("Off").as_str()])));
         widgets.push_row.set_list_factory(Some(&non_ellipsizing_factory()));
 
         // Show the SMTP credential fields only when the toggle is on.
@@ -973,7 +974,7 @@ impl Component for AccountsWindow {
                 self.apply_provider(widgets);
                 self.sig_editor.set_html("");
                 widgets.color_btn.set_rgba(&parse_color(DEFAULT_COLOR));
-                widgets.emoji_btn.set_label("Add");
+                widgets.emoji_btn.set_label(&i18n("Add"));
                 widgets.remove_group.set_visible(false);
                 // A prior GOA edit may have hidden the provider picker.
                 widgets.provider_row.set_visible(true);
@@ -1161,7 +1162,7 @@ impl Component for AccountsWindow {
 
             AccountsInput::ClearEmoji => {
                 self.emoji = None;
-                widgets.emoji_btn.set_label("Add");
+                widgets.emoji_btn.set_label(&i18n("Add"));
             }
 
             AccountsInput::TestConnection => {
@@ -1169,7 +1170,7 @@ impl Component for AccountsWindow {
                 widgets.test_btn.set_sensitive(false);
                 widgets.test_result.set_visible(true);
                 widgets.test_result.set_css_classes(&["dim-label"]);
-                widgets.test_result.set_label("Testing…");
+                widgets.test_result.set_label(&i18n("Testing…"));
                 sender.oneshot_command(async move {
                     let r = tokio::task::spawn_blocking(move || {
                         worker::test_connection_blocking(account)
@@ -1208,7 +1209,7 @@ impl Component for AccountsWindow {
                     widgets.oauth_status.set_css_classes(&["error"]);
                     widgets
                         .oauth_status
-                        .set_label("Enter a client ID (and endpoints for a custom provider) first");
+                        .set_label(&i18n("Enter a client ID (and endpoints for a custom provider) first"));
                     return;
                 }
                 widgets.oauth_signin_btn.set_sensitive(false);
@@ -1216,7 +1217,7 @@ impl Component for AccountsWindow {
                 widgets.oauth_status.set_css_classes(&["dim-label"]);
                 widgets
                     .oauth_status
-                    .set_label("Opening browser… complete sign-in there.");
+                    .set_label(&i18n("Opening browser… complete sign-in there."));
                 sender.oneshot_command(async move {
                     let r = tokio::task::spawn_blocking(move || {
                         crate::oauth::run_flow(&settings).map(|f| f.refresh_token)
@@ -1315,7 +1316,7 @@ impl Component for AccountsWindow {
                         widgets.oauth_status.set_css_classes(&["error"]);
                         widgets
                             .oauth_status
-                            .set_label("Enter a client ID and sign in before saving");
+                            .set_label(&i18n("Enter a client ID and sign in before saving"));
                     }
                     has_client && signed_in
                 } else {
@@ -1382,7 +1383,7 @@ impl Component for AccountsWindow {
                 // it currently sits in (the combined settings window).
                 let host = root.root().and_downcast::<gtk::Window>();
                 let dialog =
-                    adw::MessageDialog::new(host.as_ref(), Some("Remove Account?"), Some(&body));
+                    adw::MessageDialog::new(host.as_ref(), Some(i18n("Remove Account?").as_str()), Some(&body));
                 dialog.add_response("cancel", "Cancel");
                 dialog.add_response("remove", "Remove");
                 dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
@@ -1516,7 +1517,7 @@ impl Component for AccountsWindow {
                 d.test_btn.set_sensitive(false);
                 d.test_result.set_visible(true);
                 d.test_result.set_css_classes(&["dim-label"]);
-                d.test_result.set_label("Testing…");
+                d.test_result.set_label(&i18n("Testing…"));
                 sender.oneshot_command(async move {
                     let r = tokio::task::spawn_blocking(move || {
                         worker::test_alias_smtp_blocking(email, alias)
@@ -1655,11 +1656,11 @@ impl Component for AccountsWindow {
                     Ok(refresh) => {
                         self.pending_oauth_refresh = Some(refresh);
                         widgets.oauth_status.set_css_classes(&["success"]);
-                        widgets.oauth_status.set_label("✓ Signed in — save the account to finish");
+                        widgets.oauth_status.set_label(&i18n("✓ Signed in — save the account to finish"));
                     }
                     Err(e) => {
                         widgets.oauth_status.set_css_classes(&["error"]);
-                        widgets.oauth_status.set_label(&format!("Sign-in failed: {e}"));
+                        widgets.oauth_status.set_label(&i18n_f("Sign-in failed: {e}", &[("e", &(e).to_string())]));
                     }
                 }
             }
@@ -1670,11 +1671,11 @@ impl Component for AccountsWindow {
                 match result {
                     Ok(()) => {
                         d.test_result.set_css_classes(&["success"]);
-                        d.test_result.set_label("✓ SMTP: connected");
+                        d.test_result.set_label(&i18n("✓ SMTP: connected"));
                     }
                     Err(e) => {
                         d.test_result.set_css_classes(&["error"]);
-                        d.test_result.set_label(&format!("✗ SMTP: {e}"));
+                        d.test_result.set_label(&i18n_f("✗ SMTP: {e}", &[("e", &(e).to_string())]));
                     }
                 }
             }
@@ -1696,9 +1697,9 @@ impl AccountsWindow {
             row.set_activatable(true);
             row.set_title(&gtk::glib::markup_escape_text(&alias.identity));
             row.set_subtitle(&gtk::glib::markup_escape_text(&if alias.has_own_smtp() {
-                format!("Sends through {}", alias.smtp_host)
+                i18n_f("Sends through {host}", &[("host", &alias.smtp_host)])
             } else {
-                "Sends through this account".to_string()
+                i18n("Sends through this account")
             }));
 
             // A dim pencil says "activate to edit"; the trash button removes.
@@ -1709,7 +1710,7 @@ impl AccountsWindow {
             let remove = gtk::Button::from_icon_name("co.hyprlab.Vireo-user-trash-symbolic");
             remove.set_valign(gtk::Align::Center);
             remove.add_css_class("flat");
-            remove.set_tooltip_text(Some("Remove this alias"));
+            remove.set_tooltip_text(Some(i18n("Remove this alias").as_str()));
             let ri = sender.input_sender().clone();
             remove.connect_clicked(move |_| {
                 let _ = ri.send(AccountsInput::AliasRemove(i));
@@ -1744,8 +1745,8 @@ impl AccountsWindow {
         // Parent to whatever window the embedded panel currently sits in.
         window.set_transient_for(root.root().and_downcast::<gtk::Window>().as_ref());
 
-        let cancel = gtk::Button::with_label("Cancel");
-        let save = gtk::Button::with_label("Save");
+        let cancel = gtk::Button::with_label(&i18n("Cancel"));
+        let save = gtk::Button::with_label(&i18n("Save"));
         save.add_css_class("suggested-action");
         let header = adw::HeaderBar::builder()
             .show_start_title_buttons(false)
@@ -1760,17 +1761,17 @@ impl AccountsWindow {
             "The composer's From menu offers this address, and replies to \
              mail sent to it answer from it.",
         ));
-        let name_row = adw::EntryRow::builder().title("Display name (optional)").build();
+        let name_row = adw::EntryRow::builder().title(&i18n("Display name (optional)")).build();
         name_row.set_text(&name);
-        let addr_row = adw::EntryRow::builder().title("Email address").build();
+        let addr_row = adw::EntryRow::builder().title(&i18n("Email address")).build();
         addr_row.set_text(&addr);
         identity_group.add(&name_row);
         identity_group.add(&addr_row);
 
         let smtp_group = adw::PreferencesGroup::new();
-        smtp_group.set_title("Sending");
+        smtp_group.set_title(&i18n("Sending"));
         let smtp_switch = adw::SwitchRow::builder()
-            .title("Own SMTP server")
+            .title(&i18n("Own SMTP server"))
             .subtitle(
                 "Send through the alias's own mail provider, with its own \
                  sign-in — instead of this account's server. Needed when the \
@@ -1778,13 +1779,13 @@ impl AccountsWindow {
             )
             .build();
         smtp_switch.set_active(alias.has_own_smtp());
-        let host_row = adw::EntryRow::builder().title("SMTP server").build();
+        let host_row = adw::EntryRow::builder().title(&i18n("SMTP server")).build();
         host_row.set_text(&alias.smtp_host);
-        let port_row = adw::EntryRow::builder().title("SMTP port").build();
+        let port_row = adw::EntryRow::builder().title(&i18n("SMTP port")).build();
         port_row.set_text(&alias.smtp_port.to_string());
-        let user_row = adw::EntryRow::builder().title("SMTP username").build();
+        let user_row = adw::EntryRow::builder().title(&i18n("SMTP username")).build();
         user_row.set_text(&alias.smtp_username);
-        let pass_row = adw::PasswordEntryRow::builder().title("SMTP password").build();
+        let pass_row = adw::PasswordEntryRow::builder().title(&i18n("SMTP password")).build();
         pass_row.set_text(&alias.smtp_password);
         smtp_group.add(&smtp_switch);
         smtp_group.add(&host_row);
@@ -1792,7 +1793,7 @@ impl AccountsWindow {
         smtp_group.add(&user_row);
         smtp_group.add(&pass_row);
 
-        let test_btn = gtk::Button::with_label("Test SMTP");
+        let test_btn = gtk::Button::with_label(&i18n("Test SMTP"));
         test_btn.set_halign(gtk::Align::Start);
         let test_result = gtk::Label::new(None);
         test_result.set_visible(false);
@@ -1957,14 +1958,14 @@ impl AccountsWindow {
             // directly in Vireo?
             let from_goa = acc.goa_id.is_some();
             let badge =
-                gtk::Label::new(Some(if from_goa { "GNOME Online Account" } else { "Vireo" }));
+                gtk::Label::new(Some(if from_goa { i18n("GNOME Online Account") } else { i18n("Vireo") }.as_str()));
             badge.set_valign(gtk::Align::Center);
             badge.add_css_class("account-source-badge");
             if from_goa {
                 badge.add_css_class("goa");
-                badge.set_tooltip_text(Some("Imported from GNOME Online Accounts"));
+                badge.set_tooltip_text(Some(i18n("Imported from GNOME Online Accounts").as_str()));
             } else {
-                badge.set_tooltip_text(Some("Added directly in Vireo"));
+                badge.set_tooltip_text(Some(i18n("Added directly in Vireo").as_str()));
             }
             hbox.append(&badge);
 
@@ -1978,7 +1979,7 @@ impl AccountsWindow {
                 ));
                 toggle.set_sensitive(false);
             } else {
-                toggle.set_tooltip_text(Some("Enable this account"));
+                toggle.set_tooltip_text(Some(i18n("Enable this account").as_str()));
             }
             toggle.set_active(acc.enabled);
             let ti = sender.input_sender().clone();
@@ -2069,7 +2070,7 @@ impl AccountsWindow {
             let toggle = gtk::Switch::new();
             toggle.set_valign(gtk::Align::Center);
             toggle.set_active(false);
-            toggle.set_tooltip_text(Some("Use this account in Vireo"));
+            toggle.set_tooltip_text(Some(i18n("Use this account in Vireo").as_str()));
             let ti = sender.input_sender().clone();
             let tpos = pos;
             toggle.connect_state_set(move |_, state| {
@@ -2538,14 +2539,14 @@ mod tests {
 
 impl AccountsWindow {
     /// Human labels for the filter enums, shared by rows and the dialog.
-    fn field_label(f: crate::config::FilterField) -> &'static str {
+    fn field_label(f: crate::config::FilterField) -> String {
         use crate::config::FilterField::*;
-        match f {
+        i18n(match f {
             FromAddress => "From address",
             FromName => "From name",
             Subject => "Subject",
             Recipients => "To or Cc",
-        }
+        })
     }
     fn match_label(m: crate::config::FilterMatch) -> &'static str {
         use crate::config::FilterMatch::*;
@@ -2638,7 +2639,7 @@ impl AccountsWindow {
             let rm = gtk::Button::from_icon_name("co.hyprlab.Vireo-user-trash-symbolic");
             rm.add_css_class("flat");
             rm.set_valign(gtk::Align::Center);
-            rm.set_tooltip_text(Some("Remove filter"));
+            rm.set_tooltip_text(Some(i18n("Remove filter").as_str()));
             let s = sender.clone();
             rm.connect_clicked(move |_| s.input(AccountsInput::RemoveFilter(i)));
             row.add_suffix(&rm);
@@ -2672,33 +2673,33 @@ impl AccountsWindow {
         form.set_selection_mode(gtk::SelectionMode::None);
 
         let account_row = adw::ComboRow::new();
-        account_row.set_title("Account");
+        account_row.set_title(&i18n("Account"));
         let email_refs: Vec<&str> = emails.iter().map(|s| s.as_str()).collect();
         account_row.set_model(Some(&gtk::StringList::new(&email_refs)));
 
         let field_row = adw::ComboRow::new();
-        field_row.set_title("Where");
+        field_row.set_title(&i18n("Where"));
         field_row.set_model(Some(&gtk::StringList::new(&[
-            "From address",
-            "From name",
-            "Subject",
-            "To or Cc",
+            i18n("From address").as_str(),
+            i18n("From name").as_str(),
+            i18n("Subject").as_str(),
+            i18n("To or Cc").as_str(),
         ])));
 
         let match_row = adw::ComboRow::new();
-        match_row.set_title("Match");
+        match_row.set_title(&i18n("Match"));
         match_row.set_model(Some(&gtk::StringList::new(&[
-            "contains",
-            "is exactly",
-            "starts with",
-            "ends with",
+            i18n("contains").as_str(),
+            i18n("is exactly").as_str(),
+            i18n("starts with").as_str(),
+            i18n("ends with").as_str(),
         ])));
 
         let value_row = adw::EntryRow::new();
-        value_row.set_title("Text to match");
+        value_row.set_title(&i18n("Text to match"));
 
         let dest_row = adw::ComboRow::new();
-        dest_row.set_title("Move to");
+        dest_row.set_title(&i18n("Move to"));
         // The destination list follows the chosen account.
         let folders = std::rc::Rc::new(self.folders_by_email.clone());
         let emails_rc = std::rc::Rc::new(emails.clone());
@@ -2727,15 +2728,15 @@ impl AccountsWindow {
         // total stays true to what sits unread; a rule filing newsletters
         // can opt its folder out (#116).
         let count_row = adw::SwitchRow::new();
-        count_row.set_title("Count unread mail");
-        count_row.set_subtitle("Include the folder's unread mail in the unread count and the tray icon");
+        count_row.set_title(&i18n("Count unread mail"));
+        count_row.set_subtitle(&i18n("Include the folder's unread mail in the unread count and the tray icon"));
         count_row.set_active(true);
 
         // Listing the folder under All Inboxes is the rule's choice: off
         // unless asked, so the unified view's Filtered Folders section only
         // ever holds folders someone put there.
         let unified_row = adw::SwitchRow::new();
-        unified_row.set_title("Show under All Inboxes");
+        unified_row.set_title(&i18n("Show under All Inboxes"));
         unified_row.set_subtitle(
             "List the folder in the Filtered Folders section inside All Inboxes",
         );

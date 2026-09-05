@@ -13,6 +13,7 @@ use relm4::prelude::*;
 
 use crate::models::{is_image_name, GalleryItem};
 use crate::ui::context_menu::{show_context_menu, MenuEntry};
+use crate::i18n::i18n;
 
 /// Width of the table's trailing quick-actions column (three icon buttons);
 /// the header carries a spacer of the same width so the columns line up.
@@ -175,7 +176,7 @@ impl Component for AttachmentsGallery {
 
                     gtk::SearchEntry {
                         set_hexpand: true,
-                        set_placeholder_text: Some("Search by sender, subject, type, filename…"),
+                        set_placeholder_text: Some(i18n("Search by sender, subject, type, filename…").as_str()),
                         connect_search_changed[sender] => move |e| {
                             sender.input(GalleryInput::SetQuery(e.text().to_string()));
                         },
@@ -194,19 +195,19 @@ impl Component for AttachmentsGallery {
                         set_orientation: gtk::Orientation::Vertical,
                         set_spacing: 14,
                         gtk::Spinner { set_spinning: true, set_width_request: 36, set_height_request: 36 },
-                        gtk::Label { set_label: "Loading attachments…", add_css_class: "dim-label" },
+                        gtk::Label { set_label: &i18n("Loading attachments…"), add_css_class: "dim-label" },
                     },
 
                     add_named[Some("empty")] = &adw::StatusPage {
                         set_icon_name: Some("co.hyprlab.Vireo-mail-attachment-symbolic"),
-                        set_title: "No attachments",
-                        set_description: Some("Attachments from your inboxes will appear here."),
+                        set_title: &i18n("No attachments"),
+                        set_description: Some(i18n("Attachments from your inboxes will appear here.").as_str()),
                     },
 
                     add_named[Some("noresults")] = &adw::StatusPage {
                         set_icon_name: Some("co.hyprlab.Vireo-system-search-symbolic"),
-                        set_title: "No matching attachments",
-                        set_description: Some("Try a different search or clear the filter."),
+                        set_title: &i18n("No matching attachments"),
+                        set_description: Some(i18n("Try a different search or clear the filter.").as_str()),
                     },
 
                     add_named[Some("grid")] = &gtk::ScrolledWindow {
@@ -331,7 +332,7 @@ impl Component for AttachmentsGallery {
 
                         gtk::ToggleButton {
                             set_icon_name: "co.hyprlab.Vireo-view-grid-symbolic",
-                            set_tooltip_text: Some("Thumbnail grid"),
+                            set_tooltip_text: Some(i18n("Thumbnail grid").as_str()),
                             #[watch]
                             #[block_signal(grid_toggle)]
                             set_active: !model.view_table,
@@ -341,7 +342,7 @@ impl Component for AttachmentsGallery {
                         },
                         gtk::ToggleButton {
                             set_icon_name: "co.hyprlab.Vireo-view-list-bullet-symbolic",
-                            set_tooltip_text: Some("Table"),
+                            set_tooltip_text: Some(i18n("Table").as_str()),
                             #[watch]
                             #[block_signal(table_toggle)]
                             set_active: model.view_table,
@@ -352,16 +353,16 @@ impl Component for AttachmentsGallery {
                     },
 
                     pack_start = &gtk::DropDown {
-                        set_tooltip_text: Some("Show only this type"),
+                        set_tooltip_text: Some(i18n("Show only this type").as_str()),
                         #[wrap(Some)]
                         set_model = &gtk::StringList::new(&[
-                            "All types",
-                            "Images",
-                            "PDFs",
-                            "Documents",
-                            "Archives",
-                            "Audio & Video",
-                            "Other",
+                            i18n("All types").as_str(),
+                            i18n("Images").as_str(),
+                            i18n("PDFs").as_str(),
+                            i18n("Documents").as_str(),
+                            i18n("Archives").as_str(),
+                            i18n("Audio & Video").as_str(),
+                            i18n("Other").as_str(),
                         ]),
                         connect_selected_notify[sender] => move |d| {
                             sender.input(GalleryInput::SetTypeFilter(d.selected()));
@@ -370,20 +371,20 @@ impl Component for AttachmentsGallery {
 
                     #[name = "sort_dropdown"]
                     pack_start = &gtk::DropDown {
-                        set_tooltip_text: Some("Sort"),
+                        set_tooltip_text: Some(i18n("Sort").as_str()),
                         set_selected: model.sort.index(),
                         #[wrap(Some)]
                         set_model = &gtk::StringList::new(&[
-                            "Newest first",
-                            "Oldest first",
-                            "Name (A–Z)",
-                            "Name (Z–A)",
-                            "Sender (A–Z)",
-                            "Sender (Z–A)",
-                            "Largest first",
-                            "Smallest first",
-                            "Type (A–Z)",
-                            "Type (Z–A)",
+                            i18n("Newest first").as_str(),
+                            i18n("Oldest first").as_str(),
+                            i18n("Name (A–Z)").as_str(),
+                            i18n("Name (Z–A)").as_str(),
+                            i18n("Sender (A–Z)").as_str(),
+                            i18n("Sender (Z–A)").as_str(),
+                            i18n("Largest first").as_str(),
+                            i18n("Smallest first").as_str(),
+                            i18n("Type (A–Z)").as_str(),
+                            i18n("Type (Z–A)").as_str(),
                         ]),
                         connect_selected_notify[sender] => move |d| {
                             sender.input(GalleryInput::SetSort(d.selected()));
@@ -402,7 +403,7 @@ impl Component for AttachmentsGallery {
                         set_increments: (10.0, 40.0),
                         set_width_request: 140,
                         set_draw_value: false,
-                        set_tooltip_text: Some("Thumbnail size"),
+                        set_tooltip_text: Some(i18n("Thumbnail size").as_str()),
                         #[watch]
                         set_visible: !model.view_table,
                         connect_value_changed[sender] => move |s| {
@@ -433,7 +434,7 @@ impl Component for AttachmentsGallery {
                     #[wrap(Some)]
                     set_end_widget = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-window-close-symbolic",
-                        set_tooltip_text: Some("Close"),
+                        set_tooltip_text: Some(i18n("Close").as_str()),
                         add_css_class: "circular",
                         add_css_class: "flat",
                         connect_clicked => GalleryInput::ClosePreview,
@@ -448,7 +449,7 @@ impl Component for AttachmentsGallery {
 
                     gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-go-previous-symbolic",
-                        set_tooltip_text: Some("Previous"),
+                        set_tooltip_text: Some(i18n("Previous").as_str()),
                         set_valign: gtk::Align::Center,
                         add_css_class: "circular",
                         add_css_class: "osd",
@@ -515,7 +516,7 @@ impl Component for AttachmentsGallery {
 
                     gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-go-next-symbolic",
-                        set_tooltip_text: Some("Next"),
+                        set_tooltip_text: Some(i18n("Next").as_str()),
                         set_valign: gtk::Align::Center,
                         add_css_class: "circular",
                         add_css_class: "osd",
@@ -540,14 +541,14 @@ impl Component for AttachmentsGallery {
                     set_end_widget = &gtk::Box {
                         set_spacing: 8,
                         gtk::Button {
-                            set_label: "Open",
-                            set_tooltip_text: Some("Open in the default app"),
+                            set_label: &i18n("Open"),
+                            set_tooltip_text: Some(i18n("Open in the default app").as_str()),
                             #[watch]
                             set_sensitive: model.current().is_some_and(|i| i.data.is_some()),
                             connect_clicked => GalleryInput::OpenCurrent,
                         },
                         gtk::Button {
-                            set_label: "Go to Message",
+                            set_label: &i18n("Go to Message"),
                             add_css_class: "suggested-action",
                             connect_clicked => GalleryInput::GoToCurrent,
                         },
@@ -896,7 +897,7 @@ impl AttachmentsGallery {
         let Some(item) = self.item_at(index) else { return };
         let Some(data) = item.data.clone() else { return };
         let dialog = gtk::FileDialog::builder()
-            .title("Save Attachment")
+            .title(&i18n("Save Attachment"))
             .initial_name(&item.name)
             .modal(true)
             .build();
@@ -931,15 +932,15 @@ impl AttachmentsGallery {
         let has_data = item.data.is_some();
 
         let s = sender.clone();
-        let open = MenuEntry::new("Open", move || s.input(GalleryInput::OpenItem(index)))
+        let open = MenuEntry::new(i18n("Open"), move || s.input(GalleryInput::OpenItem(index)))
             .icon("co.hyprlab.Vireo-document-open-symbolic")
             .enabled(has_data);
         let s = sender.clone();
-        let download = MenuEntry::new("Download…", move || s.input(GalleryInput::DownloadItem(index)))
+        let download = MenuEntry::new(i18n("Download…"), move || s.input(GalleryInput::DownloadItem(index)))
             .icon("co.hyprlab.Vireo-folder-download-symbolic")
             .enabled(has_data);
         let s = sender.clone();
-        let goto = MenuEntry::new("Go to Message", move || s.input(GalleryInput::GoToItem(index)))
+        let goto = MenuEntry::new(i18n("Go to Message"), move || s.input(GalleryInput::GoToItem(index)))
             .icon("co.hyprlab.Vireo-mail-unread-symbolic");
         let sections = vec![vec![open, download, goto]];
 
@@ -1038,7 +1039,7 @@ fn build_cell(
         open.connect_clicked(move |_| s.input(GalleryInput::OpenItem(index)));
         actions.append(&open);
     }
-    let goto = action_btn("co.hyprlab.Vireo-mail-unread-symbolic", "Go to Message");
+    let goto = action_btn("co.hyprlab.Vireo-mail-unread-symbolic", &i18n("Go to Message"));
     let s = sender.clone();
     goto.connect_clicked(move |_| s.input(GalleryInput::GoToItem(index)));
     actions.append(&goto);
@@ -1299,7 +1300,7 @@ fn build_row(
         open.connect_clicked(move |_| s.input(GalleryInput::OpenItem(index)));
         actions.append(&open);
     }
-    let goto = act("co.hyprlab.Vireo-mail-unread-symbolic", "Go to Message");
+    let goto = act("co.hyprlab.Vireo-mail-unread-symbolic", &i18n("Go to Message"));
     let s = sender.clone();
     goto.connect_clicked(move |_| s.input(GalleryInput::GoToItem(index)));
     actions.append(&goto);
@@ -1692,7 +1693,7 @@ pub(crate) fn open_bytes(name: &str, data: &[u8], parent: Option<&gtk::Window>) 
 /// works, rather than leaving a click that does nothing.
 fn launch_failed_dialog(parent: Option<&gtk::Window>, error: &str) {
     let dialog = gtk::AlertDialog::builder()
-        .message("The file could not be opened")
+        .message(&i18n("The file could not be opened"))
         // No Flatseal toggle can help here: portal access is not a
         // permission, and the failure is inside the portal's own launcher.
         // Offer the steps that actually work.
@@ -1763,7 +1764,7 @@ fn portal_open_file(path: std::path::PathBuf, ask: bool, parent: Option<gtk::Win
     let id = conn.signal_subscribe(
         Some("org.freedesktop.portal.Desktop"),
         Some("org.freedesktop.portal.Request"),
-        Some("Response"),
+        Some(i18n("Response").as_str()),
         Some(&request_path),
         None,
         gio::DBusSignalFlags::NONE,

@@ -37,6 +37,7 @@ use crate::ui::attachments_gallery::{
     icon_color_class, icon_for, is_pdf_name, open_bytes, spawn_thumbnail_render, texture_from,
     thumbnail_texture, Thumbnail,
 };
+use crate::i18n::i18n;
 
 /// Whether an attachment can be shown in the drawer's lightbox: a decodable
 /// image, or a PDF (whose first page renders on demand).
@@ -254,7 +255,7 @@ impl SimpleComponent for AttachmentDrawer {
                         set_value: model.thumb as f64,
                         set_round_digits: 0,
                         set_draw_value: false,
-                        set_tooltip_text: Some("Thumbnail size"),
+                        set_tooltip_text: Some(i18n("Thumbnail size").as_str()),
                         set_valign: gtk::Align::Center,
                         #[watch]
                         set_visible: !model.collapsed && !model.list_view,
@@ -282,11 +283,7 @@ impl SimpleComponent for AttachmentDrawer {
                             "co.hyprlab.Vireo-view-sort-ascending-symbolic"
                         },
                         #[watch]
-                        set_tooltip_text: Some(if model.sort_desc {
-                            "Sorted Z to A — switch to A to Z"
-                        } else {
-                            "Sorted A to Z — switch to Z to A"
-                        }),
+                        set_tooltip_text: Some(if model.sort_desc { i18n("Sorted Z to A — switch to A to Z") } else { i18n("Sorted A to Z — switch to Z to A") }.as_str()),
                         connect_clicked[sender] => move |_| {
                             sender.input(AttachmentDrawerInput::ToggleSortOrder);
                         },
@@ -303,11 +300,7 @@ impl SimpleComponent for AttachmentDrawer {
                             "co.hyprlab.Vireo-view-list-bullet-symbolic"
                         },
                         #[watch]
-                        set_tooltip_text: Some(if model.list_view {
-                            "Show as thumbnails"
-                        } else {
-                            "Show as a list"
-                        }),
+                        set_tooltip_text: Some(if model.list_view { i18n("Show as thumbnails") } else { i18n("Show as a list") }.as_str()),
                         connect_clicked[sender] => move |_| {
                             sender.input(AttachmentDrawerInput::ToggleListView);
                         },
@@ -315,10 +308,10 @@ impl SimpleComponent for AttachmentDrawer {
                     // Rightmost by design: the header's one real action, with
                     // the view controls (slider, sort, list/grid) to its left.
                     gtk::Button {
-                        set_label: "Save All…",
+                        set_label: &i18n("Save All…"),
                         // A standing button, not a flat hover-reveal.
                         set_valign: gtk::Align::Center,
-                        set_tooltip_text: Some("Save every attachment to a folder"),
+                        set_tooltip_text: Some(i18n("Save every attachment to a folder").as_str()),
                         connect_clicked[sender] => move |_| {
                             sender.input(AttachmentDrawerInput::SaveAll);
                         },
@@ -889,7 +882,7 @@ impl AttachmentDrawer {
     fn save_attachment(&self, att: &Attachment) {
         let dialog = gtk::FileDialog::builder()
             .initial_name(&att.name)
-            .title("Save Attachment")
+            .title(&i18n("Save Attachment"))
             .build();
         let data = att.data.clone();
         dialog.save(self.window().as_ref(), gtk::gio::Cancellable::NONE, move |res| {
@@ -907,7 +900,7 @@ impl AttachmentDrawer {
             return;
         }
         let atts = self.items.clone();
-        let dialog = gtk::FileDialog::builder().title("Save All Attachments").build();
+        let dialog = gtk::FileDialog::builder().title(&i18n("Save All Attachments")).build();
         dialog.select_folder(self.window().as_ref(), gtk::gio::Cancellable::NONE, move |res| {
             if let Ok(folder) = res {
                 if let Some(dir) = folder.path() {
@@ -923,11 +916,11 @@ impl AttachmentDrawer {
     /// Right-click menu: Open / Download, matching the gallery's actions.
     fn show_context_menu(&self, index: usize, x: f64, y: f64, sender: &ComponentSender<Self>) {
         let s = sender.clone();
-        let open = MenuEntry::new("Open", move || s.input(AttachmentDrawerInput::Open(index)))
+        let open = MenuEntry::new(i18n("Open"), move || s.input(AttachmentDrawerInput::Open(index)))
             .icon("co.hyprlab.Vireo-document-open-symbolic");
         let s = sender.clone();
         let download =
-            MenuEntry::new("Download…", move || s.input(AttachmentDrawerInput::Download(index)))
+            MenuEntry::new(i18n("Download…"), move || s.input(AttachmentDrawerInput::Download(index)))
                 .icon("co.hyprlab.Vireo-folder-download-symbolic");
 
         // Anchor on the clicked cell itself so the click point (already

@@ -5,6 +5,7 @@
 use adw::prelude::*;
 
 use crate::contacts::Contact;
+use crate::i18n::i18n;
 
 /// Present the contacts browser as a modal of `parent`. `on_choose` runs with
 /// the chosen contact when a row is activated (the window then closes).
@@ -16,7 +17,7 @@ pub fn present(parent: &impl IsA<gtk::Window>, on_choose: impl Fn(Contact) + 'st
     let win = adw::Window::builder()
         .transient_for(parent)
         .modal(true)
-        .title("Contacts")
+        .title(&i18n("Contacts"))
         .default_width(420)
         .default_height(560)
         .build();
@@ -24,7 +25,7 @@ pub fn present(parent: &impl IsA<gtk::Window>, on_choose: impl Fn(Contact) + 'st
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     let open_btn = gtk::Button::from_icon_name("co.hyprlab.Vireo-x-office-address-book-symbolic");
-    open_btn.set_tooltip_text(Some("Open in GNOME Contacts"));
+    open_btn.set_tooltip_text(Some(i18n("Open in GNOME Contacts").as_str()));
     open_btn.connect_clicked(|_| launch_gnome_contacts());
     header.pack_end(&open_btn);
     toolbar.add_top_bar(&header);
@@ -36,7 +37,7 @@ pub fn present(parent: &impl IsA<gtk::Window>, on_choose: impl Fn(Contact) + 'st
     content.set_margin_end(12);
 
     let search = gtk::SearchEntry::new();
-    search.set_placeholder_text(Some("Search contacts"));
+    search.set_placeholder_text(Some(i18n("Search contacts").as_str()));
     content.append(&search);
 
     let scroller = gtk::ScrolledWindow::new();
@@ -46,8 +47,8 @@ pub fn present(parent: &impl IsA<gtk::Window>, on_choose: impl Fn(Contact) + 'st
     if contacts.is_empty() {
         let empty = adw::StatusPage::builder()
             .icon_name("co.hyprlab.Vireo-x-office-address-book-symbolic")
-            .title("No Contacts")
-            .description("Add contacts in GNOME Contacts to see them here.")
+            .title(&i18n("No Contacts"))
+            .description(&i18n("Add contacts in GNOME Contacts to see them here."))
             .build();
         scroller.set_child(Some(&empty));
     } else {
@@ -117,7 +118,7 @@ pub fn launch_gnome_contacts_for(uid: &str) {
     let uid: String = uid.chars().filter(|c| !c.is_whitespace() && *c != '\'').collect();
     if let Ok(app) = gtk::gio::AppInfo::create_from_commandline(
         format!("gnome-contacts -i '{uid}'"),
-        Some("Contacts"),
+        Some(i18n("Contacts").as_str()),
         gtk::gio::AppInfoCreateFlags::NONE,
     ) {
         let _ = app.launch(&[], gtk::gio::AppLaunchContext::NONE);
@@ -141,7 +142,7 @@ pub fn launch_gnome_contacts() {
     }
     if let Ok(app) = gtk::gio::AppInfo::create_from_commandline(
         "gnome-contacts",
-        Some("Contacts"),
+        Some(i18n("Contacts").as_str()),
         gtk::gio::AppInfoCreateFlags::NONE,
     ) {
         let _ = app.launch(&[], gtk::gio::AppLaunchContext::NONE);

@@ -22,3 +22,4 @@ cargo-sources.json
 
 # Local-build manifest (tools/local-manifest.sh output)
 co.hyprlab.Vireo.local.yml
+po/.build/

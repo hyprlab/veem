@@ -13,6 +13,7 @@
 
 use adw::prelude::*;
 use webkit6::prelude::WebViewExt;
+use crate::i18n::{i18n, i18n_f};
 
 /// Open the print dialog for a web view and print it.
 ///
@@ -22,7 +23,7 @@ use webkit6::prelude::WebViewExt;
 pub fn print_webview(webview: &webkit6::WebView, job_name: &str, parent: Option<gtk::Window>) {
     let print = webkit6::PrintOperation::new(webview);
     let dialog = gtk::PrintDialog::new();
-    dialog.set_title("Print Message");
+    dialog.set_title(&i18n("Print Message"));
 
     let settings = gtk::PrintSettings::new();
     // Names the job in the queue and seeds the filename when printing to a file,
@@ -128,7 +129,7 @@ fn save_as_pdf(
     };
 
     let chooser = gtk::FileDialog::new();
-    chooser.set_title("Save as PDF");
+    chooser.set_title(&i18n("Save as PDF"));
     chooser.set_initial_name(Some(&format!("{suggested_name}.pdf")));
 
     let webview = webview.clone();
@@ -160,7 +161,7 @@ fn save_as_pdf(
         print.connect_failed(move |_, error| {
             mark.set(true);
             tracing::warn!("saving the PDF failed: {error}");
-            failed_toasts.add_toast(adw::Toast::new(&format!("Could not save the PDF: {error}")));
+            failed_toasts.add_toast(adw::Toast::new(&i18n_f("Could not save the PDF: {error}", &[("error", &error.to_string())])));
         });
         let keep = std::cell::RefCell::new(Some(print.clone()));
         let done_toasts = toasts.clone();
@@ -181,7 +182,7 @@ pub fn open(parent: &adw::ApplicationWindow, html: &str, job_name: &str) {
     let win = adw::Window::builder()
         .transient_for(parent)
         .modal(false)
-        .title("Print Preview")
+        .title(&i18n("Print Preview"))
         .default_width(820)
         .default_height(900)
         .build();
@@ -196,7 +197,7 @@ pub fn open(parent: &adw::ApplicationWindow, html: &str, job_name: &str) {
 
     let header = adw::HeaderBar::new();
     let print_btn = gtk::Button::builder()
-        .label("Print…")
+        .label(&i18n("Print…"))
         .css_classes(["suggested-action"])
         .build();
     {
@@ -210,7 +211,7 @@ pub fn open(parent: &adw::ApplicationWindow, html: &str, job_name: &str) {
     }
     header.pack_end(&print_btn);
 
-    let save_btn = gtk::Button::builder().label("Save as PDF…").build();
+    let save_btn = gtk::Button::builder().label(&i18n("Save as PDF…")).build();
     {
         let webview = webview.clone();
         let job = job_name.to_string();

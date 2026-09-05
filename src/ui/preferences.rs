@@ -6,6 +6,7 @@ use adw::prelude::*;
 use relm4::prelude::*;
 
 use crate::config::{AppTheme, ClockStyle, DateStyle, MessageTheme, TrayIcon};
+use crate::i18n::{i18n, i18n_f, i18n_noop};
 
 /// Initial data for the settings window.
 #[derive(Debug)]
@@ -79,46 +80,46 @@ pub struct PrefInit {
 
 /// App-chrome appearance options, in combo order.
 const TRAY_ICONS: &[(&str, TrayIcon)] = &[
-    ("Vireo icon", TrayIcon::Vireo),
-    ("Envelope, white", TrayIcon::EnvelopeLight),
-    ("Envelope, black", TrayIcon::EnvelopeDark),
+    (i18n_noop("Vireo icon"), TrayIcon::Vireo),
+    (i18n_noop("Envelope, white"), TrayIcon::EnvelopeLight),
+    (i18n_noop("Envelope, black"), TrayIcon::EnvelopeDark),
 ];
 
 const APP_THEMES: &[(&str, AppTheme)] = &[
-    ("Follow system", AppTheme::System),
-    ("Light", AppTheme::Light),
-    ("Dark", AppTheme::Dark),
+    (i18n_noop("Follow system"), AppTheme::System),
+    (i18n_noop("Light"), AppTheme::Light),
+    (i18n_noop("Dark"), AppTheme::Dark),
 ];
 
 /// Message-content appearance options, in combo order.
 const MESSAGE_THEMES: &[(&str, MessageTheme)] = &[
-    ("Follow system", MessageTheme::System),
-    ("Light", MessageTheme::Light),
-    ("Dark", MessageTheme::Dark),
+    (i18n_noop("Follow system"), MessageTheme::System),
+    (i18n_noop("Light"), MessageTheme::Light),
+    (i18n_noop("Dark"), MessageTheme::Dark),
 ];
 
 /// Date arrangements, in combo order. The examples are what each writes.
 const DATE_STYLES: &[(&str, DateStyle)] = &[
-    ("Follow system", DateStyle::System),
-    ("Aug 23, 2026", DateStyle::MonthFirst),
-    ("23 Aug 2026", DateStyle::DayFirst),
-    ("2026 Aug 23", DateStyle::YearFirst),
+    (i18n_noop("Follow system"), DateStyle::System),
+    (i18n_noop("Aug 23, 2026"), DateStyle::MonthFirst),
+    (i18n_noop("23 Aug 2026"), DateStyle::DayFirst),
+    (i18n_noop("2026 Aug 23"), DateStyle::YearFirst),
 ];
 
 /// Clock options, in combo order.
 const CLOCK_STYLES: &[(&str, ClockStyle)] = &[
-    ("Follow system", ClockStyle::System),
-    ("12-hour (5:40 PM)", ClockStyle::Twelve),
-    ("24-hour (17:40)", ClockStyle::TwentyFour),
+    (i18n_noop("Follow system"), ClockStyle::System),
+    (i18n_noop("12-hour (5:40 PM)"), ClockStyle::Twelve),
+    (i18n_noop("24-hour (17:40)"), ClockStyle::TwentyFour),
 ];
 
 /// Selectable mail-check intervals (label, seconds). 0 = manual only.
 const FETCH_INTERVALS: &[(&str, u64)] = &[
-    ("Manually", 0),
-    ("Every minute", 60),
-    ("Every 5 minutes", 300),
-    ("Every 15 minutes", 900),
-    ("Every 30 minutes", 1800),
+    (i18n_noop("Manually"), 0),
+    (i18n_noop("Every minute"), 60),
+    (i18n_noop("Every 5 minutes"), 300),
+    (i18n_noop("Every 15 minutes"), 900),
+    (i18n_noop("Every 30 minutes"), 1800),
 ];
 
 // ---- Allowed-sender row -----------------------------------------------------
@@ -146,7 +147,7 @@ impl FactoryComponent for SenderRow {
             add_suffix = &gtk::Button {
                 set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
                 set_valign: gtk::Align::Center,
-                set_tooltip_text: Some("Remove"),
+                set_tooltip_text: Some(i18n("Remove").as_str()),
                 add_css_class: "flat",
                 connect_clicked[sender, addr = self.addr.clone()] => move |_| {
                     let _ = sender.output(SenderRowOutput::Remove(addr.clone()));
@@ -308,7 +309,7 @@ impl Component for Preferences {
             // Remembered vertical size (tall by default) — resizing sticks
             // across restarts via the save on close below.
             set_default_height: crate::config::load_prefs_height(),
-            set_title: Some("Settings"),
+            set_title: Some(i18n("Settings").as_str()),
 
             connect_close_request[sender] => move |w| {
                 crate::config::save_prefs_height(w.height());
@@ -337,16 +338,16 @@ impl Component for Preferences {
                 #[name = "panels_stack"]
                 set_content = &adw::ViewStack {
                     #[name = "accounts_slot"]
-                    add_titled[Some("accounts"), "Accounts"] = &adw::Bin {},
+                    add_titled[Some("accounts"), &i18n("Accounts")] = &adw::Bin {},
 
                     #[name = "prefs_page"]
-                    add_titled[Some("preferences"), "Settings"] = &adw::PreferencesPage {
+                    add_titled[Some("preferences"), &i18n("Settings")] = &adw::PreferencesPage {
                     add = &adw::PreferencesGroup {
-                        set_title: "General",
+                        set_title: &i18n("General"),
 
                         #[name = "fetch_row"]
                         adw::ComboRow {
-                            set_title: "Check for new mail",
+                            set_title: &i18n("Check for new mail"),
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeFetchInterval(row.selected()));
                             },
@@ -354,8 +355,8 @@ impl Component for Preferences {
 
                         #[name = "push_row"]
                         adw::SwitchRow {
-                            set_title: "Instant new mail (IMAP push)",
-                            set_subtitle: "Uses IMAP IDLE to receive messages the moment they arrive.",
+                            set_title: &i18n("Instant new mail (IMAP push)"),
+                            set_subtitle: &i18n("Uses IMAP IDLE to receive messages the moment they arrive."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::TogglePush(row.is_active()));
                             },
@@ -363,12 +364,12 @@ impl Component for Preferences {
                     },
 
                     add = &adw::PreferencesGroup {
-                        set_title: "Notifications",
+                        set_title: &i18n("Notifications"),
 
                         #[name = "notifications_row"]
                         adw::SwitchRow {
-                            set_title: "Desktop notifications",
-                            set_subtitle: "Show system notifications for new mail and error alerts when Vireo isn't focused.",
+                            set_title: &i18n("Desktop notifications"),
+                            set_subtitle: &i18n("Show system notifications for new mail and error alerts when Vireo isn't focused."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleNotifications(row.is_active()));
                             },
@@ -378,8 +379,8 @@ impl Component for Preferences {
                         adw::SwitchRow {
                             #[watch]
                             set_sensitive: model.notifications,
-                            set_title: "Show sender and subject",
-                            set_subtitle: "Name who wrote and what about in the notification. Turn this off to keep both off the lock screen.",
+                            set_title: &i18n("Show sender and subject"),
+                            set_subtitle: &i18n("Name who wrote and what about in the notification. Turn this off to keep both off the lock screen."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleNotificationContent(row.is_active()));
                             },
@@ -387,14 +388,14 @@ impl Component for Preferences {
                     },
 
                     add = &adw::PreferencesGroup {
-                        set_title: "Sidebar",
+                        set_title: &i18n("Sidebar"),
 
                         #[name = "show_unified_row"]
                         adw::SwitchRow {
-                            set_title: "All Inboxes",
-                            set_subtitle: "A unified inbox combining every account, at the top \
+                            set_title: &i18n("All Inboxes"),
+                            set_subtitle: &i18n("A unified inbox combining every account, at the top \
                                            of the sidebar. Only shown with more than one \
-                                           account.",
+                                           account."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleShowUnified(row.is_active()));
                             },
@@ -404,9 +405,9 @@ impl Component for Preferences {
                         adw::SwitchRow {
                             #[watch]
                             set_sensitive: model.show_unified,
-                            set_title: "All Inboxes unread count",
-                            set_subtitle: "Show the combined unread chip next to All Inboxes \
-                                           while its per-account list is folded up.",
+                            set_title: &i18n("All Inboxes unread count"),
+                            set_subtitle: &i18n("Show the combined unread chip next to All Inboxes \
+                                           while its per-account list is folded up."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleUnifiedChip(row.is_active()));
                             },
@@ -416,11 +417,11 @@ impl Component for Preferences {
                         adw::SwitchRow {
                             #[watch]
                             set_sensitive: model.show_unified,
-                            set_title: "Filtered folders under All Inboxes",
-                            set_subtitle: "List the folders your filter rules file into in a \
+                            set_title: &i18n("Filtered folders under All Inboxes"),
+                            set_subtitle: &i18n("List the folders your filter rules file into in a \
                                            collapsible section inside All Inboxes. Each rule \
                                            chooses whether its folder appears there; this \
-                                           switch hides the section altogether.",
+                                           switch hides the section altogether."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleUnifiedFiltered(row.is_active()));
                             },
@@ -428,9 +429,9 @@ impl Component for Preferences {
 
                         #[name = "chevron_side_row"]
                         adw::ComboRow {
-                            set_title: "Chevron placement",
-                            set_subtitle: "Which side of All Inboxes and the account rows \
-                                           their expand/collapse chevrons sit on.",
+                            set_title: &i18n("Chevron placement"),
+                            set_subtitle: &i18n("Which side of All Inboxes and the account rows \
+                                           their expand/collapse chevrons sit on."),
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeChevronSide(row.selected()));
                             },
@@ -438,9 +439,9 @@ impl Component for Preferences {
 
                         #[name = "show_attachments_row"]
                         adw::SwitchRow {
-                            set_title: "Attachments in the sidebar",
-                            set_subtitle: "A shortcut for browsing every account's attachments, \
-                                           pinned at the bottom of the sidebar.",
+                            set_title: &i18n("Attachments in the sidebar"),
+                            set_subtitle: &i18n("A shortcut for browsing every account's attachments, \
+                                           pinned at the bottom of the sidebar."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleAttachmentsRow(row.is_active()));
                             },
@@ -448,9 +449,9 @@ impl Component for Preferences {
 
                         #[name = "show_contacts_row"]
                         adw::SwitchRow {
-                            set_title: "Contacts in the sidebar",
-                            set_subtitle: "A shortcut that opens your contacts, pinned at the \
-                                           bottom of the sidebar.",
+                            set_title: &i18n("Contacts in the sidebar"),
+                            set_subtitle: &i18n("A shortcut that opens your contacts, pinned at the \
+                                           bottom of the sidebar."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleContactsRow(row.is_active()));
                             },
@@ -458,11 +459,11 @@ impl Component for Preferences {
 
                         #[name = "sidebar_hover_expand_row"]
                         adw::SwitchRow {
-                            set_title: "Expand the sidebar on hover",
-                            set_subtitle: "Whenever the sidebar is collapsed to its icon rail, \
+                            set_title: &i18n("Expand the sidebar on hover"),
+                            set_subtitle: &i18n("Whenever the sidebar is collapsed to its icon rail, \
                                            hovering it floats the full sidebar out over the \
                                            panes; it folds back a moment after the pointer \
-                                           leaves.",
+                                           leaves."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleSidebarHoverExpand(row.is_active()));
                             },
@@ -470,14 +471,14 @@ impl Component for Preferences {
                     },
 
                     add = &adw::PreferencesGroup {
-                        set_title: "Message List",
+                        set_title: &i18n("Message List"),
 
                         #[name = "avatars_row"]
                         adw::SwitchRow {
-                            set_title: "Sender avatars",
-                            set_subtitle: "The sender's avatar beside each message, in the list \
+                            set_title: &i18n("Sender avatars"),
+                            set_subtitle: &i18n("The sender's avatar beside each message, in the list \
                                            and above the message. Turning it off gives the \
-                                           sender and subject more room.",
+                                           sender and subject more room."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleAvatars(row.is_active()));
                             },
@@ -485,9 +486,9 @@ impl Component for Preferences {
 
                         #[name = "preview_lines_row"]
                         adw::ComboRow {
-                            set_title: "Preview lines",
-                            set_subtitle: "How much of each message to show under its subject. \
-                                           Off also stops previews being downloaded.",
+                            set_title: &i18n("Preview lines"),
+                            set_subtitle: &i18n("How much of each message to show under its subject. \
+                                           Off also stops previews being downloaded."),
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangePreviewLines(row.selected()));
                             },
@@ -495,11 +496,11 @@ impl Component for Preferences {
 
                         #[name = "list_palette_row"]
                         adw::SwitchRow {
-                            set_title: "Actions Palette in the message list",
-                            set_subtitle: "The \u{22ef} action row under each message summary. \
+                            set_title: &i18n("Actions Palette in the message list"),
+                            set_subtitle: &i18n("The \u{22ef} action row under each message summary. \
                                            Turning it off returns its space to the row; \
                                            messages are still acted on from their cards and \
-                                           the right-click menu.",
+                                           the right-click menu."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleListPalette(row.is_active()));
                             },
@@ -509,9 +510,9 @@ impl Component for Preferences {
                         adw::SwitchRow {
                             #[watch]
                             set_sensitive: model.list_palette,
-                            set_title: "Open the Actions Palette on hover",
-                            set_subtitle: "The message list's \u{22ef} palette slides open \
-                                           by itself while the pointer rests on a row.",
+                            set_title: &i18n("Open the Actions Palette on hover"),
+                            set_subtitle: &i18n("The message list's \u{22ef} palette slides open \
+                                           by itself while the pointer rests on a row."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleListPaletteHover(row.is_active()));
                             },
@@ -519,10 +520,10 @@ impl Component for Preferences {
 
                         #[name = "palette_collapse_row"]
                         adw::SpinRow {
-                            set_title: "Actions Palette timeout",
-                            set_subtitle: "Seconds an actions palette stays open after the \
+                            set_title: &i18n("Actions Palette timeout"),
+                            set_subtitle: &i18n("Seconds an actions palette stays open after the \
                                            cursor leaves it — the list's and the message \
-                                           cards' alike.",
+                                           cards' alike."),
                             connect_value_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangePaletteCollapse(row.value() as u64));
                             },
@@ -530,12 +531,12 @@ impl Component for Preferences {
                     },
 
                     add = &adw::PreferencesGroup {
-                        set_title: "Conversations",
+                        set_title: &i18n("Conversations"),
 
                         #[name = "threading_row"]
                         adw::SwitchRow {
-                            set_title: "Group messages by conversation",
-                            set_subtitle: "Collapse replies into a single threaded conversation.",
+                            set_title: &i18n("Group messages by conversation"),
+                            set_subtitle: &i18n("Collapse replies into a single threaded conversation."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleThreading(row.is_active()));
                             },
@@ -545,11 +546,11 @@ impl Component for Preferences {
                         adw::SwitchRow {
                             #[watch]
                             set_sensitive: model.threading,
-                            set_title: "Expandable conversations",
-                            set_subtitle: "Allow a conversation to expand/collapse its messages \
+                            set_title: &i18n("Expandable conversations"),
+                            set_subtitle: &i18n("Allow a conversation to expand/collapse its messages \
                                            in the list. When off, the row keeps its count chip \
                                            but the messages are displayed only as cards in the \
-                                           reading pane.",
+                                           reading pane."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleThreadExpansion(row.is_active()));
                             },
@@ -559,10 +560,10 @@ impl Component for Preferences {
                         adw::SwitchRow {
                             #[watch]
                             set_sensitive: model.threading && model.thread_expansion,
-                            set_title: "Expand conversations by default",
-                            set_subtitle: "Show every message of a conversation in the list. \
+                            set_title: &i18n("Expand conversations by default"),
+                            set_subtitle: &i18n("Show every message of a conversation in the list. \
                                            When off, conversations start collapsed to their \
-                                           newest message.",
+                                           newest message."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleThreadsExpanded(row.is_active()));
                             },
@@ -570,10 +571,10 @@ impl Component for Preferences {
 
                         #[name = "thread_newest_first_row"]
                         adw::SwitchRow {
-                            set_title: "Newest message first",
-                            set_subtitle: "Show a conversation's latest message at the top of \
+                            set_title: &i18n("Newest message first"),
+                            set_subtitle: &i18n("Show a conversation's latest message at the top of \
                                            the reading pane. Off reads oldest to newest, \
-                                           downward.",
+                                           downward."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleThreadNewestFirst(row.is_active()));
                             },
@@ -581,10 +582,10 @@ impl Component for Preferences {
 
                         #[name = "confirm_thread_delete_row"]
                         adw::SwitchRow {
-                            set_title: "Confirm conversation deletion",
-                            set_subtitle: "Warn before deleting when a whole conversation is \
+                            set_title: &i18n("Confirm conversation deletion"),
+                            set_subtitle: &i18n("Warn before deleting when a whole conversation is \
                                            selected, since every message in the thread goes \
-                                           with it.",
+                                           with it."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleConfirmThreadDelete(row.is_active()));
                             },
@@ -592,14 +593,14 @@ impl Component for Preferences {
                     },
 
                     add = &adw::PreferencesGroup {
-                        set_title: "Reading",
+                        set_title: &i18n("Reading"),
 
                         #[name = "read_mark_row"]
                         adw::ComboRow {
-                            set_title: "Mark as read",
-                            set_subtitle: "When an opened message counts as read. \
+                            set_title: &i18n("Mark as read"),
+                            set_subtitle: &i18n("When an opened message counts as read. \
                                            Conversations mark each message as it \
-                                           comes into view.",
+                                           comes into view."),
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeReadMark(row.selected()));
                             },
@@ -607,8 +608,8 @@ impl Component for Preferences {
 
                         #[name = "message_theme_row"]
                         adw::ComboRow {
-                            set_title: "Message appearance",
-                            set_subtitle: "Theme for email content only, not the app itself.",
+                            set_title: &i18n("Message appearance"),
+                            set_subtitle: &i18n("Theme for email content only, not the app itself."),
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeMessageTheme(row.selected()));
                             },
@@ -616,9 +617,9 @@ impl Component for Preferences {
 
                         #[name = "card_actions_row"]
                         adw::ComboRow {
-                            set_title: "Message card actions",
-                            set_subtitle: "How each message's action icons show in the \
-                                           reader, single or threaded.",
+                            set_title: &i18n("Message card actions"),
+                            set_subtitle: &i18n("How each message's action icons show in the \
+                                           reader, single or threaded."),
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeCardActionsMode(row.selected()));
                             },
@@ -626,10 +627,10 @@ impl Component for Preferences {
 
                         #[name = "single_message_card_row"]
                         adw::SwitchRow {
-                            set_title: "Single messages as cards",
-                            set_subtitle: "Show a lone message as an inset card with the same \
+                            set_title: &i18n("Single messages as cards"),
+                            set_subtitle: &i18n("Show a lone message as an inset card with the same \
                                            border as a conversation's messages. Off fills the \
-                                           pane edge to edge.",
+                                           pane edge to edge."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleSingleMessageCard(row.is_active()));
                             },
@@ -637,10 +638,10 @@ impl Component for Preferences {
 
                         #[name = "always_show_recipients_row"]
                         adw::SwitchRow {
-                            set_title: "Always show recipients",
-                            set_subtitle: "Show who each message went to under its sender, \
+                            set_title: &i18n("Always show recipients"),
+                            set_subtitle: &i18n("Show who each message went to under its sender, \
                                            without clicking the recipients chip. With one \
-                                           recipient the chip is dropped entirely.",
+                                           recipient the chip is dropped entirely."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleAlwaysShowRecipients(row.is_active()));
                             },
@@ -648,14 +649,14 @@ impl Component for Preferences {
                     },
 
                     add = &adw::PreferencesGroup {
-                        set_title: "Composing",
+                        set_title: &i18n("Composing"),
 
                         #[name = "compose_inline_row"]
                         adw::SwitchRow {
-                            set_title: "Compose in the main window",
-                            set_subtitle: "New message slides down over the reading pane, \
+                            set_title: &i18n("Compose in the main window"),
+                            set_subtitle: &i18n("New message slides down over the reading pane, \
                                            like a reply — pop it out to a window from its \
-                                           header. Off = open a separate window directly.",
+                                           header. Off = open a separate window directly."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleComposeInline(row.is_active()));
                             },
@@ -663,11 +664,11 @@ impl Component for Preferences {
 
                         #[name = "paste_plain_row"]
                         adw::SwitchRow {
-                            set_title: "Paste as plain text",
-                            set_subtitle: "Pasting into a message strips the \
+                            set_title: &i18n("Paste as plain text"),
+                            set_subtitle: &i18n("Pasting into a message strips the \
                                            clipboard's formatting. Off, a paste \
                                            keeps its formatting. Right-clicking \
-                                           the editor always offers both.",
+                                           the editor always offers both."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::TogglePastePlain(row.is_active()));
                             },
@@ -676,7 +677,7 @@ impl Component for Preferences {
 
                     #[name = "spelling_group"]
                     add = &adw::PreferencesGroup {
-                        set_title: "Spelling",
+                        set_title: &i18n("Spelling"),
                         // The description is filled in at init with the
                         // dictionaries the app can actually see — checking a
                         // language without one silently checks nothing, so
@@ -684,10 +685,10 @@ impl Component for Preferences {
 
                         #[name = "spellcheck_row"]
                         adw::SwitchRow {
-                            set_title: "Check spelling as you type",
-                            set_subtitle: "Misspelled words in the message body \
+                            set_title: &i18n("Check spelling as you type"),
+                            set_subtitle: &i18n("Misspelled words in the message body \
                                            are underlined; right-click a word \
-                                           for corrections.",
+                                           for corrections."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleSpellcheck(row.is_active()));
                             },
@@ -695,8 +696,8 @@ impl Component for Preferences {
 
                         #[name = "spell_lang_row"]
                         adw::ComboRow {
-                            set_title: "Language",
-                            set_subtitle: "Dictionaries the app can see",
+                            set_title: &i18n("Language"),
+                            set_subtitle: &i18n("Dictionaries the app can see"),
                         },
 
                         // Words the user taught the checker ("Learn Spelling"
@@ -704,22 +705,22 @@ impl Component for Preferences {
                         // and maintained imperatively in init.
                         #[name = "spell_words_row"]
                         adw::ExpanderRow {
-                            set_title: "Added words",
-                            set_subtitle: "Words the spell checker was taught. \
+                            set_title: &i18n("Added words"),
+                            set_subtitle: &i18n("Words the spell checker was taught. \
                                            The message body applies changes \
-                                           after a restart.",
+                                           after a restart."),
                         },
                     },
 
                     add = &adw::PreferencesGroup {
                         // Rendered as Pango markup — a bare "&" breaks it.
-                        set_title: "System &amp; Appearance",
+                        set_title: &i18n("System &amp; Appearance"),
 
                         #[name = "app_theme_row"]
                         adw::ComboRow {
-                            set_title: "Style",
-                            set_subtitle: "The app itself. Message content has its own \
-                                           setting under Reading.",
+                            set_title: &i18n("Style"),
+                            set_subtitle: &i18n("The app itself. Message content has its own \
+                                           setting under Reading."),
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeAppTheme(row.selected()));
                             },
@@ -729,16 +730,16 @@ impl Component for Preferences {
                         // (a grid of textures the view! macro can't declare).
                         #[name = "app_icon_row"]
                         adw::PreferencesRow {
-                            set_title: "App icon",
+                            set_title: &i18n("App icon"),
                             set_activatable: false,
                             set_focusable: false,
                         },
 
                         #[name = "settings_open_row"]
                         adw::ComboRow {
-                            set_title: "This window opens to",
-                            set_subtitle: "The view shown first when Settings \
-                                           is opened from the menu.",
+                            set_title: &i18n("This window opens to"),
+                            set_subtitle: &i18n("The view shown first when Settings \
+                                           is opened from the menu."),
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeSettingsOpen(row.selected()));
                             },
@@ -746,10 +747,10 @@ impl Component for Preferences {
 
                         #[name = "background_row"]
                         adw::SwitchRow {
-                            set_title: "Keep running in the background",
-                            set_subtitle: "Closing the window hides it instead of quitting, so new \
+                            set_title: &i18n("Keep running in the background"),
+                            set_subtitle: &i18n("Closing the window hides it instead of quitting, so new \
                                            mail still arrives. Vireo then appears under Background \
-                                           Apps in the system menu, where it can be quit.",
+                                           Apps in the system menu, where it can be quit."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleRunInBackground(row.is_active()));
                             },
@@ -757,9 +758,9 @@ impl Component for Preferences {
 
                         #[name = "autostart_row"]
                         adw::SwitchRow {
-                            set_title: "Start at login",
-                            set_subtitle: "Start checking for mail when you log in. Vireo starts \
-                                           without a window and waits in the system menu.",
+                            set_title: &i18n("Start at login"),
+                            set_subtitle: &i18n("Start checking for mail when you log in. Vireo starts \
+                                           without a window and waits in the system menu."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleAutostart(row.is_active()));
                             },
@@ -767,11 +768,11 @@ impl Component for Preferences {
 
                         #[name = "tray_row"]
                         adw::SwitchRow {
-                            set_title: "Show a tray icon",
-                            set_subtitle: "An icon in the system tray, with a red dot while any \
+                            set_title: &i18n("Show a tray icon"),
+                            set_subtitle: &i18n("An icon in the system tray, with a red dot while any \
                                            inbox has unread mail. Click it to open Vireo. GNOME \
                                            needs the AppIndicator extension; other desktops show \
-                                           it as they are.",
+                                           it as they are."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleTray(row.is_active()));
                             },
@@ -779,9 +780,9 @@ impl Component for Preferences {
 
                         #[name = "tray_icon_row"]
                         adw::ComboRow {
-                            set_title: "Tray icon",
-                            set_subtitle: "The Vireo icon, or a plain envelope in white or black \
-                                           to match the panel.",
+                            set_title: &i18n("Tray icon"),
+                            set_subtitle: &i18n("The Vireo icon, or a plain envelope in white or black \
+                                           to match the panel."),
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeTrayIcon(row.selected()));
                             },
@@ -789,9 +790,9 @@ impl Component for Preferences {
 
                         #[name = "tray_mail_row"]
                         adw::SwitchRow {
-                            set_title: "Unread mail in the tray menu",
-                            set_subtitle: "List the newest unread inbox messages in the icon's \
-                                           menu; click one to open it.",
+                            set_title: &i18n("Unread mail in the tray menu"),
+                            set_subtitle: &i18n("List the newest unread inbox messages in the icon's \
+                                           menu; click one to open it."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleTrayMail(row.is_active()));
                             },
@@ -799,9 +800,9 @@ impl Component for Preferences {
 
                         #[name = "single_key_row"]
                         adw::SwitchRow {
-                            set_title: "Single-key shortcuts",
-                            set_subtitle: "Act on mail with one key and no modifier — j/k to move, \
-                                           r to reply, a to archive. Press Ctrl+? for the full list.",
+                            set_title: &i18n("Single-key shortcuts"),
+                            set_subtitle: &i18n("Act on mail with one key and no modifier — j/k to move, \
+                                           r to reply, a to archive. Press Ctrl+? for the full list."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleSingleKey(row.is_active()));
                             },
@@ -809,9 +810,9 @@ impl Component for Preferences {
 
                         #[name = "console_mode_row"]
                         adw::SwitchRow {
-                            set_title: "Console mode",
-                            set_subtitle: "A verbose live console in the status bar showing \
-                                           everything Vireo is doing under the hood.",
+                            set_title: &i18n("Console mode"),
+                            set_subtitle: &i18n("A verbose live console in the status bar showing \
+                                           everything Vireo is doing under the hood."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleConsoleMode(row.is_active()));
                             },
@@ -819,14 +820,14 @@ impl Component for Preferences {
                     },
 
                     add = &adw::PreferencesGroup {
-                        set_title: "Backup",
+                        set_title: &i18n("Backup"),
                         set_description: Some(
-                            "Accounts and preferences as one file. Passwords stay in the \
-                             system keyring and are never exported."
+                            i18n("Accounts and preferences as one file. Passwords stay in the \
+                             system keyring and are never exported.").as_str()
                         ),
 
                         adw::ActionRow {
-                            set_title: "Export settings",
+                            set_title: &i18n("Export settings"),
                             set_activatable: true,
                             connect_activated => PrefInput::ExportSettings,
                             add_suffix = &gtk::Image {
@@ -835,11 +836,11 @@ impl Component for Preferences {
                         },
 
                         adw::ActionRow {
-                            set_title: "Import settings",
-                            set_subtitle: "Replaces the current accounts and preferences in \
+                            set_title: &i18n("Import settings"),
+                            set_subtitle: &i18n("Replaces the current accounts and preferences in \
                                            place. Don't remove accounts first: removal also \
                                            deletes their keyring passwords, which no backup \
-                                           carries.",
+                                           carries."),
                             set_activatable: true,
                             connect_activated => PrefInput::ImportSettings,
                             add_suffix = &gtk::Image {
@@ -849,16 +850,16 @@ impl Component for Preferences {
                     },
 
                     add = &adw::PreferencesGroup {
-                        set_title: "Date and Time",
+                        set_title: &i18n("Date and Time"),
                         set_description: Some(
-                            "By default dates follow the system's own arrangement — its \
+                            i18n("By default dates follow the system's own arrangement — its \
                              field order, month names and clock. Choose a format here to \
-                             use it whatever the system is set to."
+                             use it whatever the system is set to.").as_str()
                         ),
 
                         #[name = "date_style_row"]
                         adw::ComboRow {
-                            set_title: "Date format",
+                            set_title: &i18n("Date format"),
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeDateStyle(row.selected()));
                             },
@@ -866,7 +867,7 @@ impl Component for Preferences {
 
                         #[name = "clock_style_row"]
                         adw::ComboRow {
-                            set_title: "Clock",
+                            set_title: &i18n("Clock"),
                             connect_selected_notify[sender] => move |row| {
                                 sender.input(PrefInput::ChangeClockStyle(row.selected()));
                             },
@@ -874,21 +875,21 @@ impl Component for Preferences {
                     },
 
                     add = &adw::PreferencesGroup {
-                        set_title: "Privacy",
+                        set_title: &i18n("Privacy"),
                         set_description: Some(
-                            "Vireo collects no telemetry and sends no analytics. Remote \
+                            i18n("Vireo collects no telemetry and sends no analytics. Remote \
                              content (images, trackers) is blocked by default. Allow it per \
                              message, trust a sender to always load it, or turn on \"Always \
-                             load remote content\" below."
+                             load remote content\" below.").as_str()
                         ),
 
                         #[name = "auto_remote_content_row"]
                         adw::SwitchRow {
-                            set_title: "Always load remote content",
-                            set_subtitle: "Show images and other remote content in every new \
+                            set_title: &i18n("Always load remote content"),
+                            set_subtitle: &i18n("Show images and other remote content in every new \
                                            message without asking. Off by default, since \
                                            remote content can be used to track when and where \
-                                           you read a message.",
+                                           you read a message."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleAutoRemoteContent(row.is_active()));
                             },
@@ -896,10 +897,10 @@ impl Component for Preferences {
 
                         #[name = "show_remote_banner_row"]
                         adw::SwitchRow {
-                            set_title: "Warn when remote content is blocked",
-                            set_subtitle: "Shows the banner offering to load it. Turning this \
+                            set_title: &i18n("Warn when remote content is blocked"),
+                            set_subtitle: &i18n("Shows the banner offering to load it. Turning this \
                                            off only hides the notice — remote content is still \
-                                           blocked just the same.",
+                                           blocked just the same."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleShowRemoteBanner(row.is_active()));
                             },
@@ -907,9 +908,9 @@ impl Component for Preferences {
 
                         #[name = "gravatar_row"]
                         adw::SwitchRow {
-                            set_title: "Use Gravatar when a contact has no photo",
-                            set_subtitle: "Local GNOME Contacts photos are always preferred. \
-                                           Gravatar sends a hash of the sender's email.",
+                            set_title: &i18n("Use Gravatar when a contact has no photo"),
+                            set_subtitle: &i18n("Local GNOME Contacts photos are always preferred. \
+                                           Gravatar sends a hash of the sender's email."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleGravatar(row.is_active()));
                             },
@@ -917,11 +918,11 @@ impl Component for Preferences {
 
                         #[name = "sender_logos_row"]
                         adw::SwitchRow {
-                            set_title: "Show sender logos",
-                            set_subtitle: "Fills the sender's avatar with the brand's own site \
+                            set_title: &i18n("Show sender logos"),
+                            set_subtitle: &i18n("Fills the sender's avatar with the brand's own site \
                                            icon, fetched from the sender's domain. That domain \
                                            learns your IP address, which is what blocking \
-                                           remote content otherwise avoids.",
+                                           remote content otherwise avoids."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleSenderLogos(row.is_active()));
                             },
@@ -1000,7 +1001,8 @@ impl Component for Preferences {
         widgets.sender_logos_row.set_active(init.sender_logos);
 
         // Mail-check interval combo.
-        let labels: Vec<&str> = FETCH_INTERVALS.iter().map(|(l, _)| *l).collect();
+        let labels_owned: Vec<String> = FETCH_INTERVALS.iter().map(|(l, _)| i18n(l)).collect();
+        let labels: Vec<&str> = labels_owned.iter().map(String::as_str).collect();
         widgets.fetch_row.set_model(Some(&gtk::StringList::new(&labels)));
         let selected = FETCH_INTERVALS
             .iter()
@@ -1015,7 +1017,7 @@ impl Component for Preferences {
         widgets.show_unified_row.set_active(init.show_unified);
         widgets.unified_chip_row.set_active(init.unified_chip);
         widgets.unified_filtered_row.set_active(init.unified_filtered);
-        widgets.chevron_side_row.set_model(Some(&gtk::StringList::new(&["Left", "Right"])));
+        widgets.chevron_side_row.set_model(Some(&gtk::StringList::new(&[i18n("Left").as_str(), i18n("Right").as_str()])));
         widgets.chevron_side_row.set_selected(if init.chevrons_left { 0 } else { 1 });
         widgets.sidebar_hover_expand_row.set_active(init.sidebar_hover_expand);
         let preview_labels = ["Off", "1 line", "2 lines", "3 lines"];
@@ -1043,11 +1045,11 @@ impl Component for Preferences {
             body.set_margin_bottom(8);
             body.set_margin_start(12);
             body.set_margin_end(12);
-            let title = gtk::Label::new(Some("App icon"));
+            let title = gtk::Label::new(Some(i18n("App icon").as_str()));
             title.set_halign(gtk::Align::Start);
             title.set_xalign(0.0);
             let subtitle = gtk::Label::new(Some(
-                "Shown in the dock, app grid and switcher, and by the tray icon.",
+                i18n("Shown in the dock, app grid and switcher, and by the tray icon.").as_str(),
             ));
             subtitle.add_css_class("dim-label");
             subtitle.add_css_class("caption");
@@ -1068,7 +1070,8 @@ impl Component for Preferences {
         }
 
         widgets.tray_row.set_active(init.tray);
-        let tray_icon_labels: Vec<&str> = TRAY_ICONS.iter().map(|(l, _)| *l).collect();
+        let tray_icon_labels_owned: Vec<String> = TRAY_ICONS.iter().map(|(l, _)| i18n(l)).collect();
+        let tray_icon_labels: Vec<&str> = tray_icon_labels_owned.iter().map(String::as_str).collect();
         widgets
             .tray_icon_row
             .set_model(Some(&gtk::StringList::new(&tray_icon_labels)));
@@ -1093,9 +1096,9 @@ impl Component for Preferences {
         widgets.single_key_row.set_active(init.single_key_shortcuts);
         widgets.console_mode_row.set_active(init.console_mode);
         widgets.read_mark_row.set_model(Some(&gtk::StringList::new(&[
-            "When displayed",
-            "After two seconds",
-            "Manually",
+            i18n("When displayed").as_str(),
+            i18n("After two seconds").as_str(),
+            i18n("Manually").as_str(),
         ])));
         no_truncate(&widgets.read_mark_row);
         widgets.read_mark_row.set_selected(match init.read_mark {
@@ -1111,9 +1114,9 @@ impl Component for Preferences {
         widgets.thread_expansion_row.set_active(init.thread_expansion);
         widgets.confirm_thread_delete_row.set_active(init.confirm_thread_delete);
         widgets.card_actions_row.set_model(Some(&gtk::StringList::new(&[
-            "Hidden behind a toggle",
-            "Shown while hovering",
-            "Always visible",
+            i18n("Hidden behind a toggle").as_str(),
+            i18n("Shown while hovering").as_str(),
+            i18n("Always visible").as_str(),
         ])));
         widgets.card_actions_row.set_selected(if init.card_actions_hover {
             0
@@ -1134,11 +1137,11 @@ impl Component for Preferences {
         {
             let dicts = crate::ui::rich_editor::installed_dictionaries();
             let list = gtk::StringList::new(&[]);
-            list.append(&format!(
-                "System language — {}",
-                crate::spell::language_display_name(
+            list.append(&i18n_f(
+                "System language — {language}",
+                &[("language", &crate::spell::language_display_name(
                     &crate::ui::rich_editor::resolved_spell_language()
-                )
+                ))]
             ));
             for d in &dicts {
                 list.append(&crate::spell::language_display_name(d));
@@ -1171,7 +1174,7 @@ impl Component for Preferences {
             // The learned-words list manages itself entirely in widget-land:
             // the rows call the spell module directly and rebuild in place.
             let exp = widgets.spell_words_row.clone();
-            let add = adw::EntryRow::builder().title("Add a word").build();
+            let add = adw::EntryRow::builder().title(&i18n("Add a word")).build();
             add.set_show_apply_button(true);
             {
                 let exp = exp.clone();
@@ -1186,7 +1189,8 @@ impl Component for Preferences {
         }
 
         // Date and clock combos.
-        let date_labels: Vec<&str> = DATE_STYLES.iter().map(|(l, _)| *l).collect();
+        let date_labels_owned: Vec<String> = DATE_STYLES.iter().map(|(l, _)| i18n(l)).collect();
+        let date_labels: Vec<&str> = date_labels_owned.iter().map(String::as_str).collect();
         widgets
             .date_style_row
             .set_model(Some(&gtk::StringList::new(&date_labels)));
@@ -1196,7 +1200,8 @@ impl Component for Preferences {
                 .position(|(_, s)| *s == init.date_style)
                 .unwrap_or(0) as u32,
         );
-        let clock_labels: Vec<&str> = CLOCK_STYLES.iter().map(|(l, _)| *l).collect();
+        let clock_labels_owned: Vec<String> = CLOCK_STYLES.iter().map(|(l, _)| i18n(l)).collect();
+        let clock_labels: Vec<&str> = clock_labels_owned.iter().map(String::as_str).collect();
         widgets
             .clock_style_row
             .set_model(Some(&gtk::StringList::new(&clock_labels)));
@@ -1208,7 +1213,8 @@ impl Component for Preferences {
         );
 
         // Message-content appearance combo.
-        let app_theme_labels: Vec<&str> = APP_THEMES.iter().map(|(l, _)| *l).collect();
+        let app_theme_labels_owned: Vec<String> = APP_THEMES.iter().map(|(l, _)| i18n(l)).collect();
+        let app_theme_labels: Vec<&str> = app_theme_labels_owned.iter().map(String::as_str).collect();
         widgets
             .app_theme_row
             .set_model(Some(&gtk::StringList::new(&app_theme_labels)));
@@ -1218,7 +1224,8 @@ impl Component for Preferences {
             .unwrap_or(0);
         widgets.app_theme_row.set_selected(app_theme_sel as u32);
 
-        let theme_labels: Vec<&str> = MESSAGE_THEMES.iter().map(|(l, _)| *l).collect();
+        let theme_labels_owned: Vec<String> = MESSAGE_THEMES.iter().map(|(l, _)| i18n(l)).collect();
+        let theme_labels: Vec<&str> = theme_labels_owned.iter().map(String::as_str).collect();
         widgets
             .message_theme_row
             .set_model(Some(&gtk::StringList::new(&theme_labels)));
@@ -1490,7 +1497,7 @@ fn rebuild_personal_words(exp: &adw::ExpanderRow) {
         let del = gtk::Button::from_icon_name("co.hyprlab.Vireo-user-trash-symbolic");
         del.add_css_class("flat");
         del.set_valign(gtk::Align::Center);
-        del.set_tooltip_text(Some("Forget this word"));
+        del.set_tooltip_text(Some(i18n("Forget this word").as_str()));
         {
             let word = w.clone();
             let exp = exp.clone();

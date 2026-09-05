@@ -1,0 +1,2239 @@
+# Translation template for Vireo.
+# This file is distributed under the same license as the Vireo package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: vireo\n"
+"Report-Msgid-Bugs-To: https://github.com/hyprlab/vireo/issues\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Main Menu"
+msgstr ""
+
+msgid "Expand sidebar"
+msgstr ""
+
+msgid "Collapse sidebar"
+msgstr ""
+
+msgid "Search messages (Ctrl+F)"
+msgstr ""
+
+msgid "Show only unread"
+msgstr ""
+
+msgid "Show only starred"
+msgstr ""
+
+msgid "Sort messages"
+msgstr ""
+
+msgid "Edit this message"
+msgstr ""
+
+msgid "Try to send this message now"
+msgstr ""
+
+msgid "Send all"
+msgstr ""
+
+msgid "Reply"
+msgstr ""
+
+msgid "Reply All"
+msgstr ""
+
+msgid "Forward"
+msgstr ""
+
+msgid "Mark as Read"
+msgstr ""
+
+msgid "Mark as Unread"
+msgstr ""
+
+msgid "Flag"
+msgstr ""
+
+msgid "Find in message (Ctrl+F)"
+msgstr ""
+
+msgid "Print Preview (Ctrl+Shift+P)"
+msgstr ""
+
+msgid "Mark as Spam"
+msgstr ""
+
+msgid "Archive"
+msgstr ""
+
+msgid "Downloading attachments…"
+msgstr ""
+
+msgid "Close"
+msgstr ""
+
+msgid "Previous"
+msgstr ""
+
+msgid "Next"
+msgstr ""
+
+msgid "Open"
+msgstr ""
+
+msgid "Download…"
+msgstr ""
+
+msgid "Accounts & Settings"
+msgstr ""
+
+msgid "Print Preview…"
+msgstr ""
+
+msgid "Print Message…"
+msgstr ""
+
+msgid "Quit"
+msgstr ""
+
+msgid "Actions"
+msgstr ""
+
+msgid "Refresh or long-press for Status Bar"
+msgstr ""
+
+msgid "Attachments"
+msgstr ""
+
+msgid "Toggle sidebar"
+msgstr ""
+
+msgid "Date (Newest first)"
+msgstr ""
+
+msgid "Date (Oldest first)"
+msgstr ""
+
+msgid "Sender (A–Z)"
+msgstr ""
+
+msgid "Subject (A–Z)"
+msgstr ""
+
+msgid "Unread first"
+msgstr ""
+
+msgid "Flagged first"
+msgstr ""
+
+msgid "Added to Contacts"
+msgstr ""
+
+msgid "Added email to {name}"
+msgstr ""
+
+msgid "Already in Contacts ({name})"
+msgstr ""
+
+msgid "Could not add contact: {e}"
+msgstr ""
+
+msgid "Save Attachment"
+msgstr ""
+
+msgid ""
+"Couldn't restart automatically — quit and reopen Vireo to finish switching "
+"the icon."
+msgstr ""
+
+msgid "Open a message first, then print it."
+msgstr ""
+
+msgid "Nothing to undo"
+msgstr ""
+
+msgid "Undoing move…"
+msgstr ""
+
+msgid "No Drafts folder available for this account"
+msgstr ""
+
+msgid "Could not save account: {e}"
+msgstr ""
+
+msgid "Enable Console mode in Settings → System & Appearance"
+msgstr ""
+
+msgid "Export Settings"
+msgstr ""
+
+msgid "Settings exported to {display}"
+msgstr ""
+
+msgid "Export failed: {e}"
+msgstr ""
+
+msgid "Import Settings"
+msgstr ""
+
+msgid "Settings Imported"
+msgstr ""
+
+msgid "Import failed: {e}"
+msgstr ""
+
+msgid "Could not import account: {e}"
+msgstr ""
+
+msgid "No address book available"
+msgstr ""
+
+msgid "Could not update contact: {e}"
+msgstr ""
+
+msgid "Reveal Status Bar"
+msgstr ""
+
+msgid "Console"
+msgstr ""
+
+msgid "Keyboard Shortcuts"
+msgstr ""
+
+msgid ""
+"Single-key shortcuts are switched off. Turn them on in Settings → System & "
+"Appearance."
+msgstr ""
+
+msgid "Restarting Vireo"
+msgstr ""
+
+msgid "Applying your new app icon. Vireo will close and reopen in a moment."
+msgstr ""
+
+msgid "Restart to finish switching icons?"
+msgstr ""
+
+msgid ""
+"The dock and Vireo's own windows keep the old icon until Vireo restarts."
+msgstr ""
+
+msgid "Later"
+msgstr ""
+
+msgid "Restart Now"
+msgstr ""
+
+msgid "Edit"
+msgstr ""
+
+msgid "Send Now"
+msgstr ""
+
+msgid "Send All"
+msgstr ""
+
+msgid "View Source"
+msgstr ""
+
+msgid "Delete"
+msgstr ""
+
+msgid "Remove Flag"
+msgstr ""
+
+msgid "Print Preview"
+msgstr ""
+
+msgid "Message Source"
+msgstr ""
+
+msgid "Delete {n} messages"
+msgstr ""
+
+msgid "New Message"
+msgstr ""
+
+msgid "Delete this conversation?"
+msgstr ""
+
+msgid "Delete this message permanently?"
+msgid_plural "Delete {n} messages permanently?"
+msgstr[0] ""
+msgstr[1] ""
+
+msgid ""
+"It is already in Trash, so it will be erased from the server. This can’t be "
+"undone."
+msgstr ""
+
+msgid ""
+"They are already in Trash, so they will be erased from the server. This "
+"can’t be undone."
+msgstr ""
+
+msgid "No {v1} folder available"
+msgstr ""
+
+msgid "One message stayed put — mail can't be moved between accounts"
+msgstr ""
+
+msgid "{foreign} messages stayed put — mail can't be moved between accounts"
+msgstr ""
+
+msgid "Vireo couldn’t save your password"
+msgstr ""
+
+msgid "Keyring setup on Linux Mint"
+msgstr ""
+
+msgid "Got it"
+msgstr ""
+
+msgid "New Folder"
+msgstr ""
+
+msgid "Create a new folder for this account."
+msgstr ""
+
+msgid "Folder name"
+msgstr ""
+
+msgid "Sub-folders keep their place under the new name."
+msgstr ""
+
+msgid "A folder named {new_name} is already there."
+msgstr ""
+
+msgid "Its messages are moved to Trash and the folder is removed."
+msgstr ""
+
+msgid "No Junk folder available for this account"
+msgstr ""
+
+msgid "No address book available to add contacts"
+msgstr ""
+
+msgid "Add to Contacts"
+msgstr ""
+
+msgid "Name"
+msgstr ""
+
+msgid "Email"
+msgstr ""
+
+msgid "Address book"
+msgstr ""
+
+msgid "Remove Account?"
+msgstr ""
+
+#. One-sentence description, directly under the version chip.
+msgid "A clean, fast, GNOME-native email client."
+msgstr ""
+
+msgid ""
+"This is a beta build for trying upcoming changes early. Expect bugs and "
+"instability — please report anything broken on GitHub. It shares your "
+"accounts and mail with the stable Vireo install."
+msgstr ""
+
+msgid "Release Notes"
+msgstr ""
+
+msgid "Changelog"
+msgstr ""
+
+msgid "Full version history"
+msgstr ""
+
+msgid "Keyring Setup Help"
+msgstr ""
+
+msgid "Make account passwords persist on Linux Mint"
+msgstr ""
+
+#. Project links. Each row shows its URL as a hover tooltip.
+msgid "Project"
+msgstr ""
+
+msgid "Website"
+msgstr ""
+
+msgid "Contact — hyprlab@proton.me"
+msgstr ""
+
+msgid "Discord — Join the community"
+msgstr ""
+
+msgid "Source Code"
+msgstr ""
+
+msgid "License (GNU AGPL v3)"
+msgstr ""
+
+msgid "Buy Me a Coffee"
+msgstr ""
+
+#. Contributors — people outside Hyprlab whose patches are in the app.
+msgid "Special thanks to these contributors"
+msgstr ""
+
+#. Footer.
+msgid "© 2026 Hyprlab"
+msgstr ""
+
+msgid "No {v1} folder available for some messages"
+msgstr ""
+
+msgid "Move around"
+msgstr ""
+
+msgid "Next message"
+msgstr ""
+
+msgid "Previous message"
+msgstr ""
+
+msgid "Open the selected message"
+msgstr ""
+
+msgid "Back to the message list"
+msgstr ""
+
+msgid "Next message in the conversation"
+msgstr ""
+
+msgid "Previous message in the conversation"
+msgstr ""
+
+msgid "Search"
+msgstr ""
+
+msgid "Act on a message"
+msgstr ""
+
+msgid "Reply to all"
+msgstr ""
+
+msgid "Mark as spam"
+msgstr ""
+
+msgid "Star or unstar"
+msgstr ""
+
+msgid "Mark read or unread"
+msgstr ""
+
+msgid "Select this row (for a bulk action)"
+msgstr ""
+
+msgid "Everything else"
+msgstr ""
+
+msgid "Compose"
+msgstr ""
+
+msgid "Back out of a reply and return to the list"
+msgstr ""
+
+msgid "Undo the last move or delete"
+msgstr ""
+
+msgid "Print the message you are reading"
+msgstr ""
+
+msgid "Preview it as a PDF first"
+msgstr ""
+
+msgid "Reveal the status bar (also: long-press Refresh)"
+msgstr ""
+
+msgid "Console mode (when enabled in Settings)"
+msgstr ""
+
+msgid "Close the window (background sync keeps running)"
+msgstr ""
+
+msgid "Quit Vireo entirely"
+msgstr ""
+
+msgid "This list"
+msgstr ""
+
+msgid "Save All Attachments"
+msgstr ""
+
+msgid "Default"
+msgstr ""
+
+msgid ""
+"Vireo checks for new mail and shows notifications while its window is closed."
+msgstr ""
+
+msgid "Checking for new mail"
+msgstr ""
+
+msgid "{n} unread message"
+msgid_plural "{n} unread messages"
+msgstr[0] ""
+msgstr[1] ""
+
+msgid "On This Computer"
+msgstr ""
+
+msgid "CardDAV Address Book"
+msgstr ""
+
+msgid "This message hasn't been checked."
+msgstr ""
+
+msgid "{n} hours ago"
+msgstr ""
+
+msgid "yesterday"
+msgstr ""
+
+msgid "{n} days ago"
+msgstr ""
+
+msgid "Waiting since {ago}"
+msgstr ""
+
+msgid "New message"
+msgstr ""
+
+msgid "No unread mail"
+msgstr ""
+
+msgid "View all {n} unread…"
+msgstr ""
+
+msgid "Accounts"
+msgstr ""
+
+msgid "Settings"
+msgstr ""
+
+msgid "Requires an app-specific password (not your normal login password)."
+msgstr ""
+
+msgid "Sign in with your browser — no password needed."
+msgstr ""
+
+msgid "Sign in through GNOME Online Accounts."
+msgstr ""
+
+msgid "Requires Proton Mail Bridge running locally."
+msgstr ""
+
+msgid "Enable POP/IMAP access in GMX settings first."
+msgstr ""
+
+msgid "Enter your provider's OAuth endpoints, then sign in."
+msgstr ""
+
+msgid "Enter your server details manually."
+msgstr ""
+
+msgid "Mail Accounts"
+msgstr ""
+
+msgid "Drag to set the order they appear in the sidebar."
+msgstr ""
+
+msgid "GNOME Online Accounts"
+msgstr ""
+
+msgid "Mail accounts from GNOME Settings. Toggle one on to use it in Vireo."
+msgstr ""
+
+msgid "Add Account"
+msgstr ""
+
+msgid "Filters"
+msgstr ""
+
+msgid ""
+"File incoming mail into folders automatically, by sender, subject or "
+"recipients. Applied to each account's Inbox as Vireo syncs it."
+msgstr ""
+
+msgid "Add Filter…"
+msgstr ""
+
+msgid "Allowed Senders"
+msgstr ""
+
+msgid "Messages from these senders load remote content automatically."
+msgstr ""
+
+msgid "Email address"
+msgstr ""
+
+msgid "Allow this sender"
+msgstr ""
+
+msgid "Blacklist"
+msgstr ""
+
+msgid ""
+"Incoming mail from these senders is deleted automatically (moved to Trash). "
+"Enter an email address, or a whole domain like \"example.com\" to block "
+"every sender there."
+msgstr ""
+
+msgid "Address or domain"
+msgstr ""
+
+msgid "Block this sender"
+msgstr ""
+
+msgid "Account"
+msgstr ""
+
+msgid "Save"
+msgstr ""
+
+msgid "GNOME Online Account"
+msgstr ""
+
+msgid "Show in Vireo"
+msgstr ""
+
+msgid ""
+"Switching this off returns the account to the import list — it stays in "
+"GNOME Online Accounts."
+msgstr ""
+
+msgid ""
+"This account is managed by GNOME Online Accounts.\n"
+"Its address, servers and password are changed in Settings → Online Accounts."
+msgstr ""
+
+msgid "Open Online Accounts…"
+msgstr ""
+
+msgid "Mail Account"
+msgstr ""
+
+msgid "Provider"
+msgstr ""
+
+msgid "Choose your email provider."
+msgstr ""
+
+msgid "Display Name"
+msgstr ""
+
+msgid "Email Address"
+msgstr ""
+
+msgid "Incoming Protocol"
+msgstr ""
+
+msgid "Incoming Server"
+msgstr ""
+
+msgid "Port (IMAP 993 / POP3 995)"
+msgstr ""
+
+msgid "SMTP Server (optional)"
+msgstr ""
+
+msgid "SMTP Port (default 587)"
+msgstr ""
+
+msgid "Username"
+msgstr ""
+
+msgid "Password"
+msgstr ""
+
+msgid "OAuth Client ID"
+msgstr ""
+
+msgid "OAuth Client Secret (optional)"
+msgstr ""
+
+msgid "Authorization URL"
+msgstr ""
+
+msgid "Token URL"
+msgstr ""
+
+msgid "Scopes (space-separated)"
+msgstr ""
+
+msgid "Sign In with Browser"
+msgstr ""
+
+msgid ""
+"Google and Microsoft sign-in use GNOME Online Accounts.\n"
+"\n"
+"1. Open Online Accounts and sign in there.\n"
+"2. Come back to Vireo and reopen this window — the account then appears "
+"under “GNOME Online Accounts” at the top of this window. Enable it there."
+msgstr ""
+
+msgid "Separate SMTP credentials"
+msgstr ""
+
+msgid ""
+"Use a different username and password for sending. Off = use the credentials "
+"above."
+msgstr ""
+
+msgid "SMTP Username"
+msgstr ""
+
+msgid "SMTP Password"
+msgstr ""
+
+msgid "Test Connection"
+msgstr ""
+
+msgid "Appearance"
+msgstr ""
+
+msgid "How this account is shown in the sidebar and the All Inboxes view."
+msgstr ""
+
+msgid "Label (defaults to email address)"
+msgstr ""
+
+msgid "Circle color"
+msgstr ""
+
+msgid "Emoji"
+msgstr ""
+
+msgid "Optional — shown instead of initials"
+msgstr ""
+
+msgid "Add"
+msgstr ""
+
+msgid "Use initials"
+msgstr ""
+
+msgid "Show name initials instead of an emoji"
+msgstr ""
+
+msgid "Send-as aliases"
+msgstr ""
+
+msgid ""
+"Extra addresses this account can send as. An alias can use this account's "
+"SMTP server, or bring its own."
+msgstr ""
+
+msgid "Add Alias…"
+msgstr ""
+
+msgid "Syncing"
+msgstr ""
+
+msgid "Instant new mail (IMAP push)"
+msgstr ""
+
+msgid "Turn off for servers that stall on push connections."
+msgstr ""
+
+msgid "Special Folders"
+msgstr ""
+
+msgid ""
+"Where sent, deleted and junk mail goes. "
+"Automatic                                      follows the server's own "
+"markings; pick a folder                                      when a role "
+"isn't detected or lands wrong."
+msgstr ""
+
+msgid "Sent"
+msgstr ""
+
+msgid "Drafts"
+msgstr ""
+
+msgid "Trash"
+msgstr ""
+
+msgid "Junk"
+msgstr ""
+
+msgid "Signature"
+msgstr ""
+
+msgid "Appended to new messages sent from this account."
+msgstr ""
+
+msgid "Remove Account"
+msgstr ""
+
+msgid ""
+"Your password is stored in the system keyring (secret-service), never in "
+"plain text on disk."
+msgstr ""
+
+msgid "Follow Settings"
+msgstr ""
+
+msgid "On"
+msgstr ""
+
+msgid "Off"
+msgstr ""
+
+msgid "Testing…"
+msgstr ""
+
+msgid "Enter a client ID (and endpoints for a custom provider) first"
+msgstr ""
+
+msgid "Opening browser… complete sign-in there."
+msgstr ""
+
+msgid "Enter a client ID and sign in before saving"
+msgstr ""
+
+msgid "✓ Signed in — save the account to finish"
+msgstr ""
+
+msgid "Sign-in failed: {e}"
+msgstr ""
+
+msgid "✓ SMTP: connected"
+msgstr ""
+
+msgid "✗ SMTP: {e}"
+msgstr ""
+
+msgid "Sends through {host}"
+msgstr ""
+
+msgid "Sends through this account"
+msgstr ""
+
+msgid "Remove this alias"
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Display name (optional)"
+msgstr ""
+
+msgid "Sending"
+msgstr ""
+
+msgid "Own SMTP server"
+msgstr ""
+
+msgid "SMTP server"
+msgstr ""
+
+msgid "SMTP port"
+msgstr ""
+
+msgid "SMTP username"
+msgstr ""
+
+msgid "SMTP password"
+msgstr ""
+
+msgid "Test SMTP"
+msgstr ""
+
+msgid "Vireo"
+msgstr ""
+
+msgid "Imported from GNOME Online Accounts"
+msgstr ""
+
+msgid "Added directly in Vireo"
+msgstr ""
+
+msgid "Enable this account"
+msgstr ""
+
+msgid "Use this account in Vireo"
+msgstr ""
+
+msgid "Remove filter"
+msgstr ""
+
+msgid "Where"
+msgstr ""
+
+msgid "From address"
+msgstr ""
+
+msgid "From name"
+msgstr ""
+
+msgid "Subject"
+msgstr ""
+
+msgid "To or Cc"
+msgstr ""
+
+msgid "Match"
+msgstr ""
+
+msgid "contains"
+msgstr ""
+
+msgid "is exactly"
+msgstr ""
+
+msgid "starts with"
+msgstr ""
+
+msgid "ends with"
+msgstr ""
+
+msgid "Text to match"
+msgstr ""
+
+msgid "Move to"
+msgstr ""
+
+msgid "Count unread mail"
+msgstr ""
+
+msgid "Include the folder's unread mail in the unread count and the tray icon"
+msgstr ""
+
+msgid "Show under All Inboxes"
+msgstr ""
+
+msgid "Thumbnail size"
+msgstr ""
+
+msgid "Sorted Z to A — switch to A to Z"
+msgstr ""
+
+msgid "Sorted A to Z — switch to Z to A"
+msgstr ""
+
+msgid "Show as thumbnails"
+msgstr ""
+
+msgid "Show as a list"
+msgstr ""
+
+msgid "Save All…"
+msgstr ""
+
+msgid "Save every attachment to a folder"
+msgstr ""
+
+msgid "Search by sender, subject, type, filename…"
+msgstr ""
+
+msgid "Loading attachments…"
+msgstr ""
+
+msgid "No attachments"
+msgstr ""
+
+msgid "Attachments from your inboxes will appear here."
+msgstr ""
+
+msgid "No matching attachments"
+msgstr ""
+
+msgid "Try a different search or clear the filter."
+msgstr ""
+
+msgid "Thumbnail grid"
+msgstr ""
+
+msgid "Table"
+msgstr ""
+
+msgid "Show only this type"
+msgstr ""
+
+msgid "All types"
+msgstr ""
+
+msgid "Images"
+msgstr ""
+
+msgid "PDFs"
+msgstr ""
+
+msgid "Documents"
+msgstr ""
+
+msgid "Archives"
+msgstr ""
+
+msgid "Audio & Video"
+msgstr ""
+
+msgid "Other"
+msgstr ""
+
+msgid "Sort"
+msgstr ""
+
+msgid "Newest first"
+msgstr ""
+
+msgid "Oldest first"
+msgstr ""
+
+msgid "Name (A–Z)"
+msgstr ""
+
+msgid "Name (Z–A)"
+msgstr ""
+
+msgid "Sender (Z–A)"
+msgstr ""
+
+msgid "Largest first"
+msgstr ""
+
+msgid "Smallest first"
+msgstr ""
+
+msgid "Type (A–Z)"
+msgstr ""
+
+msgid "Type (Z–A)"
+msgstr ""
+
+msgid "Open in the default app"
+msgstr ""
+
+msgid "Go to Message"
+msgstr ""
+
+msgid "The file could not be opened"
+msgstr ""
+
+msgid "Response"
+msgstr ""
+
+msgid "Collapse into reader"
+msgstr ""
+
+msgid "Open in window"
+msgstr ""
+
+msgid "Save Draft"
+msgstr ""
+
+msgid "Save to Drafts"
+msgstr ""
+
+msgid "Send"
+msgstr ""
+
+msgid "Attach files"
+msgstr ""
+
+msgid "Open Contacts"
+msgstr ""
+
+msgid "From"
+msgstr ""
+
+msgid "To"
+msgstr ""
+
+msgid "Cc"
+msgstr ""
+
+msgid "Bcc"
+msgstr ""
+
+msgid "Reply-To"
+msgstr ""
+
+msgid "More"
+msgstr ""
+
+msgid "Show Cc, Bcc and Reply-To"
+msgstr ""
+
+msgid "Attach Files"
+msgstr ""
+
+msgid "Contacts"
+msgstr ""
+
+msgid "Open in GNOME Contacts"
+msgstr ""
+
+msgid "Search contacts"
+msgstr ""
+
+msgid "No Contacts"
+msgstr ""
+
+msgid "Add contacts in GNOME Contacts to see them here."
+msgstr ""
+
+msgid "Open GNOME Contacts"
+msgstr ""
+
+msgid "New contact"
+msgstr ""
+
+msgid "Contacts you add in GNOME Contacts appear here."
+msgstr ""
+
+msgid "Sort contacts"
+msgstr ""
+
+msgid "Edit contact"
+msgstr ""
+
+msgid "First name"
+msgstr ""
+
+msgid "Last name"
+msgstr ""
+
+msgid "Delete Contact?"
+msgstr ""
+
+msgid "Delete…"
+msgstr ""
+
+msgid "View photo"
+msgstr ""
+
+msgid "Edit Contact"
+msgstr ""
+
+msgid "New Contact"
+msgstr ""
+
+msgid "Add email"
+msgstr ""
+
+msgid "Phone"
+msgstr ""
+
+msgid "Add phone"
+msgstr ""
+
+msgid "Add website"
+msgstr ""
+
+msgid "Remove"
+msgstr ""
+
+msgid "Mark as read"
+msgstr ""
+
+msgid "Mark as unread"
+msgstr ""
+
+msgid "Remove star"
+msgstr ""
+
+msgid "Star"
+msgstr ""
+
+msgid "Add sender to Contacts"
+msgstr ""
+
+msgid "Show conversation"
+msgstr ""
+
+msgid "Choose which folders to search"
+msgstr ""
+
+msgid "All folders"
+msgstr ""
+
+msgid "This folder"
+msgstr ""
+
+msgid "Clear selection"
+msgstr ""
+
+msgid "Loading more…"
+msgstr ""
+
+msgid "No Messages"
+msgstr ""
+
+msgid "There's nothing here right now."
+msgstr ""
+
+msgid "Remove Star"
+msgstr ""
+
+msgid "Add Sender to Contacts"
+msgstr ""
+
+msgid "A pass proves the address wasn't forged — not that the message is safe."
+msgstr ""
+
+msgid "No message selected"
+msgstr ""
+
+msgid "Choose a message from the list to read it here."
+msgstr ""
+
+msgid "Remote content (images, trackers) is blocked to protect your privacy."
+msgstr ""
+
+msgid "Load"
+msgstr ""
+
+msgid "Always allow sender"
+msgstr ""
+
+msgid "Find in message"
+msgstr ""
+
+msgid "No matches"
+msgstr ""
+
+msgid "{cur} of {total}"
+msgstr ""
+
+msgid "Previous match"
+msgstr ""
+
+msgid "Next match"
+msgstr ""
+
+msgid "Close find"
+msgstr ""
+
+#. Dimming comes from the cover's own foreground, which
+#. is picked for the message theme — `dim-label` would
+#. fade it against the app's instead.
+msgid "Loading…"
+msgstr ""
+
+#. Same order as the reader toolbar and the list's
+#. Actions Palette, View Source closing the line.
+msgid "Reply to this message"
+msgstr ""
+
+msgid "Reply to everyone on this message"
+msgstr ""
+
+msgid "Forward this message"
+msgstr ""
+
+msgid "Mark as read or unread"
+msgstr ""
+
+msgid "Flag this message"
+msgstr ""
+
+msgid "Archive this message"
+msgstr ""
+
+msgid "Delete this message"
+msgstr ""
+
+msgid "View source"
+msgstr ""
+
+msgid "Hide recipients"
+msgstr ""
+
+msgid "Show recipients"
+msgstr ""
+
+msgid "Save Image"
+msgstr ""
+
+msgid "Load attachments from server"
+msgstr ""
+
+msgid "Clear all"
+msgstr ""
+
+msgid "Collapse status bar"
+msgstr ""
+
+msgid "Status bar ({n})"
+msgstr ""
+
+msgid "Vireo icon"
+msgstr ""
+
+msgid "Envelope, white"
+msgstr ""
+
+msgid "Envelope, black"
+msgstr ""
+
+msgid "Follow system"
+msgstr ""
+
+msgid "Light"
+msgstr ""
+
+msgid "Dark"
+msgstr ""
+
+msgid "Aug 23, 2026"
+msgstr ""
+
+msgid "23 Aug 2026"
+msgstr ""
+
+msgid "2026 Aug 23"
+msgstr ""
+
+msgid "12-hour (5:40 PM)"
+msgstr ""
+
+msgid "24-hour (17:40)"
+msgstr ""
+
+msgid "Manually"
+msgstr ""
+
+msgid "Every minute"
+msgstr ""
+
+msgid "Every 5 minutes"
+msgstr ""
+
+msgid "Every 15 minutes"
+msgstr ""
+
+msgid "Every 30 minutes"
+msgstr ""
+
+msgid "General"
+msgstr ""
+
+msgid "Check for new mail"
+msgstr ""
+
+msgid "Uses IMAP IDLE to receive messages the moment they arrive."
+msgstr ""
+
+msgid "Notifications"
+msgstr ""
+
+msgid "Desktop notifications"
+msgstr ""
+
+msgid ""
+"Show system notifications for new mail and error alerts when Vireo isn't "
+"focused."
+msgstr ""
+
+msgid "Show sender and subject"
+msgstr ""
+
+msgid ""
+"Name who wrote and what about in the notification. Turn this off to keep "
+"both off the lock screen."
+msgstr ""
+
+msgid "Sidebar"
+msgstr ""
+
+msgid "All Inboxes"
+msgstr ""
+
+msgid ""
+"A unified inbox combining every account, at the top of the sidebar. Only "
+"shown with more than one account."
+msgstr ""
+
+msgid "All Inboxes unread count"
+msgstr ""
+
+msgid ""
+"Show the combined unread chip next to All Inboxes while its per-account list "
+"is folded up."
+msgstr ""
+
+msgid "Filtered folders under All Inboxes"
+msgstr ""
+
+msgid ""
+"List the folders your filter rules file into in a collapsible section inside "
+"All Inboxes. Each rule chooses whether its folder appears there; this switch "
+"hides the section altogether."
+msgstr ""
+
+msgid "Chevron placement"
+msgstr ""
+
+msgid ""
+"Which side of All Inboxes and the account rows their expand/collapse "
+"chevrons sit on."
+msgstr ""
+
+msgid "Attachments in the sidebar"
+msgstr ""
+
+msgid ""
+"A shortcut for browsing every account's attachments, pinned at the bottom of "
+"the sidebar."
+msgstr ""
+
+msgid "Contacts in the sidebar"
+msgstr ""
+
+msgid ""
+"A shortcut that opens your contacts, pinned at the bottom of the sidebar."
+msgstr ""
+
+msgid "Expand the sidebar on hover"
+msgstr ""
+
+msgid ""
+"Whenever the sidebar is collapsed to its icon rail, hovering it floats the "
+"full sidebar out over the panes; it folds back a moment after the pointer "
+"leaves."
+msgstr ""
+
+msgid "Message List"
+msgstr ""
+
+msgid "Sender avatars"
+msgstr ""
+
+msgid ""
+"The sender's avatar beside each message, in the list and above the message. "
+"Turning it off gives the sender and subject more room."
+msgstr ""
+
+msgid "Preview lines"
+msgstr ""
+
+msgid ""
+"How much of each message to show under its subject. Off also stops previews "
+"being downloaded."
+msgstr ""
+
+msgid "Actions Palette in the message list"
+msgstr ""
+
+msgid ""
+"The ⋯ action row under each message summary. Turning it off returns its "
+"space to the row; messages are still acted on from their cards and the right-"
+"click menu."
+msgstr ""
+
+msgid "Open the Actions Palette on hover"
+msgstr ""
+
+msgid ""
+"The message list's ⋯ palette slides open by itself while the pointer rests "
+"on a row."
+msgstr ""
+
+msgid "Actions Palette timeout"
+msgstr ""
+
+msgid ""
+"Seconds an actions palette stays open after the cursor leaves it — the "
+"list's and the message cards' alike."
+msgstr ""
+
+msgid "Conversations"
+msgstr ""
+
+msgid "Group messages by conversation"
+msgstr ""
+
+msgid "Collapse replies into a single threaded conversation."
+msgstr ""
+
+msgid "Expandable conversations"
+msgstr ""
+
+msgid ""
+"Allow a conversation to expand/collapse its messages in the list. When off, "
+"the row keeps its count chip but the messages are displayed only as cards in "
+"the reading pane."
+msgstr ""
+
+msgid "Expand conversations by default"
+msgstr ""
+
+msgid ""
+"Show every message of a conversation in the list. When off, conversations "
+"start collapsed to their newest message."
+msgstr ""
+
+msgid "Newest message first"
+msgstr ""
+
+msgid ""
+"Show a conversation's latest message at the top of the reading pane. Off "
+"reads oldest to newest, downward."
+msgstr ""
+
+msgid "Confirm conversation deletion"
+msgstr ""
+
+msgid ""
+"Warn before deleting when a whole conversation is selected, since every "
+"message in the thread goes with it."
+msgstr ""
+
+msgid "Reading"
+msgstr ""
+
+msgid ""
+"When an opened message counts as read. Conversations mark each message as it "
+"comes into view."
+msgstr ""
+
+msgid "Message appearance"
+msgstr ""
+
+msgid "Theme for email content only, not the app itself."
+msgstr ""
+
+msgid "Message card actions"
+msgstr ""
+
+msgid "How each message's action icons show in the reader, single or threaded."
+msgstr ""
+
+msgid "Single messages as cards"
+msgstr ""
+
+msgid ""
+"Show a lone message as an inset card with the same border as a "
+"conversation's messages. Off fills the pane edge to edge."
+msgstr ""
+
+msgid "Always show recipients"
+msgstr ""
+
+msgid ""
+"Show who each message went to under its sender, without clicking the "
+"recipients chip. With one recipient the chip is dropped entirely."
+msgstr ""
+
+msgid "Composing"
+msgstr ""
+
+msgid "Compose in the main window"
+msgstr ""
+
+msgid ""
+"New message slides down over the reading pane, like a reply — pop it out to "
+"a window from its header. Off = open a separate window directly."
+msgstr ""
+
+msgid "Paste as plain text"
+msgstr ""
+
+msgid ""
+"Pasting into a message strips the clipboard's formatting. Off, a paste keeps "
+"its formatting. Right-clicking the editor always offers both."
+msgstr ""
+
+msgid "Spelling"
+msgstr ""
+
+msgid "Check spelling as you type"
+msgstr ""
+
+msgid ""
+"Misspelled words in the message body are underlined; right-click a word for "
+"corrections."
+msgstr ""
+
+msgid "Language"
+msgstr ""
+
+msgid "Dictionaries the app can see"
+msgstr ""
+
+msgid "Added words"
+msgstr ""
+
+msgid ""
+"Words the spell checker was taught. The message body applies changes after a "
+"restart."
+msgstr ""
+
+#. Rendered as Pango markup — a bare "&" breaks it.
+msgid "System &amp; Appearance"
+msgstr ""
+
+msgid "Style"
+msgstr ""
+
+msgid "The app itself. Message content has its own setting under Reading."
+msgstr ""
+
+msgid "App icon"
+msgstr ""
+
+msgid "This window opens to"
+msgstr ""
+
+msgid "The view shown first when Settings is opened from the menu."
+msgstr ""
+
+msgid "Keep running in the background"
+msgstr ""
+
+msgid ""
+"Closing the window hides it instead of quitting, so new mail still arrives. "
+"Vireo then appears under Background Apps in the system menu, where it can be "
+"quit."
+msgstr ""
+
+msgid "Start at login"
+msgstr ""
+
+msgid ""
+"Start checking for mail when you log in. Vireo starts without a window and "
+"waits in the system menu."
+msgstr ""
+
+msgid "Show a tray icon"
+msgstr ""
+
+msgid ""
+"An icon in the system tray, with a red dot while any inbox has unread mail. "
+"Click it to open Vireo. GNOME needs the AppIndicator extension; other "
+"desktops show it as they are."
+msgstr ""
+
+msgid "Tray icon"
+msgstr ""
+
+msgid ""
+"The Vireo icon, or a plain envelope in white or black to match the panel."
+msgstr ""
+
+msgid "Unread mail in the tray menu"
+msgstr ""
+
+msgid ""
+"List the newest unread inbox messages in the icon's menu; click one to open "
+"it."
+msgstr ""
+
+msgid "Single-key shortcuts"
+msgstr ""
+
+msgid ""
+"Act on mail with one key and no modifier — j/k to move, r to reply, a to "
+"archive. Press Ctrl+? for the full list."
+msgstr ""
+
+msgid "Console mode"
+msgstr ""
+
+msgid ""
+"A verbose live console in the status bar showing everything Vireo is doing "
+"under the hood."
+msgstr ""
+
+msgid "Backup"
+msgstr ""
+
+msgid ""
+"Accounts and preferences as one file. Passwords stay in the system keyring "
+"and are never exported."
+msgstr ""
+
+msgid "Export settings"
+msgstr ""
+
+msgid "Import settings"
+msgstr ""
+
+msgid ""
+"Replaces the current accounts and preferences in place. Don't remove "
+"accounts first: removal also deletes their keyring passwords, which no "
+"backup carries."
+msgstr ""
+
+msgid "Date and Time"
+msgstr ""
+
+msgid ""
+"By default dates follow the system's own arrangement — its field order, "
+"month names and clock. Choose a format here to use it whatever the system is "
+"set to."
+msgstr ""
+
+msgid "Date format"
+msgstr ""
+
+msgid "Clock"
+msgstr ""
+
+msgid "Privacy"
+msgstr ""
+
+msgid ""
+"Vireo collects no telemetry and sends no analytics. Remote content (images, "
+"trackers) is blocked by default. Allow it per message, trust a sender to "
+"always load it, or turn on \"Always load remote content\" below."
+msgstr ""
+
+msgid "Always load remote content"
+msgstr ""
+
+msgid ""
+"Show images and other remote content in every new message without asking. "
+"Off by default, since remote content can be used to track when and where you "
+"read a message."
+msgstr ""
+
+msgid "Warn when remote content is blocked"
+msgstr ""
+
+msgid ""
+"Shows the banner offering to load it. Turning this off only hides the notice "
+"— remote content is still blocked just the same."
+msgstr ""
+
+msgid "Use Gravatar when a contact has no photo"
+msgstr ""
+
+msgid ""
+"Local GNOME Contacts photos are always preferred. Gravatar sends a hash of "
+"the sender's email."
+msgstr ""
+
+msgid "Show sender logos"
+msgstr ""
+
+msgid ""
+"Fills the sender's avatar with the brand's own site icon, fetched from the "
+"sender's domain. That domain learns your IP address, which is what blocking "
+"remote content otherwise avoids."
+msgstr ""
+
+msgid "Left"
+msgstr ""
+
+msgid "Right"
+msgstr ""
+
+msgid "Shown in the dock, app grid and switcher, and by the tray icon."
+msgstr ""
+
+msgid "When displayed"
+msgstr ""
+
+msgid "After two seconds"
+msgstr ""
+
+msgid "Hidden behind a toggle"
+msgstr ""
+
+msgid "Shown while hovering"
+msgstr ""
+
+msgid "Always visible"
+msgstr ""
+
+msgid "System language — {language}"
+msgstr ""
+
+msgid "Add a word"
+msgstr ""
+
+msgid "Forget this word"
+msgstr ""
+
+msgid "Print Message"
+msgstr ""
+
+msgid "Save as PDF"
+msgstr ""
+
+msgid "Could not save the PDF: {error}"
+msgstr ""
+
+msgid "Print…"
+msgstr ""
+
+msgid "Save as PDF…"
+msgstr ""
+
+msgid "Send as Attachment Instead"
+msgstr ""
+
+msgid "Paste with Formatting"
+msgstr ""
+
+msgid "Paste as Plain Text"
+msgstr ""
+
+msgid "Bold"
+msgstr ""
+
+msgid "Italic"
+msgstr ""
+
+msgid "Underline"
+msgstr ""
+
+msgid "Strikethrough"
+msgstr ""
+
+msgid "Bulleted list"
+msgstr ""
+
+msgid "Numbered list"
+msgstr ""
+
+#. Adwaita has no blockquote glyph; the indent icon reads as "quote".
+msgid "Quote"
+msgstr ""
+
+#. `LINK` is a sentinel command (handled specially); the icon is real.
+msgid "Insert link"
+msgstr ""
+
+msgid "Clear formatting"
+msgstr ""
+
+msgid "Insert Link"
+msgstr ""
+
+msgid "Add account"
+msgstr ""
+
+msgid "Add first account"
+msgstr ""
+
+msgid "No accounts yet"
+msgstr ""
+
+msgid "Show each inbox"
+msgstr ""
+
+msgid "Mark All as Read"
+msgstr ""
+
+msgid "Refresh"
+msgstr ""
+
+msgid "Account Settings…"
+msgstr ""
+
+msgid "Outbox"
+msgstr ""
+
+msgid "Mark Inbox as Read"
+msgstr ""
+
+msgid "New Folder…"
+msgstr ""
+
+msgid "Remove Account…"
+msgstr ""
+
+msgid "Show or hide sub-folders"
+msgstr ""
+
+msgid "Folders"
+msgstr ""
+
+msgid "Folders ({len})"
+msgstr ""
+
+msgid "Add Folder"
+msgstr ""
+
+msgid "Filtered Folders"
+msgstr ""
+
+msgid "Rename Folder…"
+msgstr ""
+
+msgid "Delete Folder…"
+msgstr ""
+
+msgid "Welcome to Vireo"
+msgstr ""
+
+msgid ""
+"A clean, fast home for your mail.\n"
+"Let's set things up — it takes about a minute."
+msgstr ""
+
+msgid "Get Started"
+msgstr ""
+
+msgid "Add your email account"
+msgstr ""
+
+msgid "Found in GNOME Online Accounts"
+msgstr ""
+
+msgid "Your name"
+msgstr ""
+
+msgid "Server details"
+msgstr ""
+
+msgid "Filled in for known providers"
+msgstr ""
+
+msgid "IMAP server"
+msgstr ""
+
+msgid "IMAP port"
+msgstr ""
+
+msgid "Test & Add"
+msgstr ""
+
+msgid ""
+"Google and Microsoft accounts sign in through GNOME Settings → Online "
+"Accounts, then appear above."
+msgstr ""
+
+msgid "Scan Again"
+msgstr ""
+
+msgid "Privacy, your way"
+msgstr ""
+
+msgid ""
+"Vireo sends no telemetry, ever. These control what leaves your machine while "
+"you read."
+msgstr ""
+
+msgid "Block remote images"
+msgstr ""
+
+msgid "Stops senders tracking when and where you open mail"
+msgstr ""
+
+msgid "Fetch Gravatar portraits"
+msgstr ""
+
+msgid "Asks gravatar.com about each sender's address"
+msgstr ""
+
+msgid "Fetch sender logos"
+msgstr ""
+
+msgid "Looks up company icons for the message list"
+msgstr ""
+
+msgid "Show message content in notifications"
+msgstr ""
+
+msgid "Off keeps senders and subjects off the lock screen"
+msgstr ""
+
+msgid "Make it yours"
+msgstr ""
+
+msgid "A few popular choices — everything can be changed later in Settings."
+msgstr ""
+
+msgid "Message text shown under each subject"
+msgstr ""
+
+msgid "None"
+msgstr ""
+
+msgid "1 line"
+msgstr ""
+
+msgid "2 lines"
+msgstr ""
+
+msgid "Colourful initials beside each message"
+msgstr ""
+
+msgid "Conversation view"
+msgstr ""
+
+msgid "Group messages into threads"
+msgstr ""
+
+#. The app icon: the whole set as one sideways-scrolling row on its
+#. own card, the default ringed.
+msgid "Pick your app icon"
+msgstr ""
+
+msgid "You're all set"
+msgstr ""
+
+msgid ""
+"Enjoy! If you encounter an issue or have a feature request,\n"
+"please open an issue on our <a href=\"{url}\">Github</a>."
+msgstr ""
+
+msgid "Start Reading"
+msgstr ""
+
+#. Fixed footer: Continue lives with the dots so it never scrolls
+#. away with a tall page. Hidden on the hero and final pages, which
+#. carry their own calls to action.
+msgid "Continue"
+msgstr ""
+
+msgid "Enter your email address and password first."
+msgstr ""
+
+msgid "Checking the connection…"
+msgstr ""
+
+msgid "✓ {email} — added"
+msgstr ""
+
+msgid "✓ {email} — connected and added"
+msgstr ""
+
+msgid "{email} — mail server: {e}"
+msgstr ""
+
+msgid "{email} — sending (SMTP): {e}"
+msgstr ""
+
+msgid "Your mail provider confirmed this really came from {from}."
+msgstr ""
+
+msgid ""
+"This message failed the checks that prove it came from {from}. Treat it as a "
+"forgery."
+msgstr ""
+
+msgid "This message carries a valid signature from {from}."
+msgstr ""
+
+msgid ""
+"This message couldn't be confirmed as coming from {from}, and the checks "
+"that ran on it failed."
+msgstr ""
+
+msgid "Your mail provider didn't report any sender checks for this message."
+msgstr ""
+
+msgid "Nothing here proves this came from {from} — or that it didn't."
+msgstr ""
+
+msgid "{name}: passed"
+msgstr ""
+
+msgid "{name}: FAILED"
+msgstr ""
+
+msgid "{name}: inconclusive"
+msgstr ""
+
+msgid "DMARC (is the From: address genuine)"
+msgstr ""
+
+msgid "DKIM (signature)"
+msgstr ""
+
+msgid "SPF (sending server)"
+msgstr ""
+
+msgid "Signed by: {d}"
+msgstr ""
+
+msgid "Checked by: {who}"
+msgstr ""
+
+msgid "From: {from}"
+msgstr ""
+
+msgid "Replies would go to {reply}, not {from}"
+msgstr ""
+
+msgid "Bounces would go to {rp}"
+msgstr ""
+
+msgid "The sender's name says \"{claimed}\" but the address is {from}"
+msgstr ""
+
+msgid "runtime error: {e}"
+msgstr ""
+
+msgid "Syncing…"
+msgstr ""
+
+msgid "Could not load {path}: {e}"
+msgstr ""
+
+msgid "Could not load message: {e}"
+msgstr ""
+
+msgid "Could not load conversation: {e}"
+msgstr ""
+
+msgid "Could not load source: {e}"
+msgstr ""
+
+msgid "Could not load attachments: {e}"
+msgstr ""
+
+msgid "Could not update message: {e}"
+msgstr ""
+
+msgid "Could not flag message: {e}"
+msgstr ""
+
+msgid "Could not mark folder read: {e}"
+msgstr ""
+
+msgid "Could not mark as spam: {e}"
+msgstr ""
+
+msgid "Could not move message: {e}"
+msgstr ""
+
+msgid "Could not move {len} messages: {e}"
+msgstr ""
+
+msgid "Undo failed: {e}"
+msgstr ""
+
+msgid "Undo: the messages are no longer where that move put them."
+msgstr ""
+
+msgid "Move undone — message restored"
+msgid_plural "Move undone — {n} messages restored"
+msgstr[0] ""
+msgstr[1] ""
+
+msgid "Could not delete permanently: {e}"
+msgstr ""
+
+msgid "Could not create folder: {e}"
+msgstr ""
+
+msgid "Could not move folder: {e}"
+msgstr ""
+
+msgid "Could not delete folder: {e}"
+msgstr ""
+
+msgid "Sending…"
+msgstr ""
+
+msgid "Message sent, but saving to Sent failed: {e}"
+msgstr ""
+
+msgid ""
+"Send failed: {e}. The message is in the Outbox and will be sent when the "
+"connection is back."
+msgstr ""
+
+msgid "Send failed: {e}"
+msgstr ""
+
+msgid "Saving draft…"
+msgstr ""
+
+msgid "Could not save draft: {e}"
+msgstr ""
+
+msgid "Connecting to {host}…"
+msgstr ""
+
+msgid "Could not list folders: {e}"
+msgstr ""
+
+msgid "Connection failed: {e}"
+msgstr ""
+
+msgid "Downloading attachments… {n} remaining"
+msgid_plural "Downloading attachments… {n} remaining"
+msgstr[0] ""
+msgstr[1] ""
+
+msgid "Still could not send “{subject}”: {e}"
+msgstr ""
+
+msgid "Could not fetch mail: {e}"
+msgstr ""
+
+msgid "Could not delete message: {e}"
+msgstr ""
+
+msgid "POP3 accounts don't support folders"
+msgstr ""
+
+msgid "Could not move messages: {e}"
+msgstr ""
+
+msgid "Could not rename folder: unknown folder"
+msgstr ""
+
+msgid "Could not rename folder: {e}"
+msgstr ""
+
+msgid "Could not delete folder: unknown folder"
+msgstr ""
+
+msgid "Email Client"
+msgstr ""
+
+msgid "A clean, fast GNOME-native email client"
+msgstr ""
+
+msgid "Email;Mail;IMAP;"
+msgstr ""
+
+msgid "Private, GNOME-native email client"
+msgstr ""
+
+msgid ""
+"Vireo is a desktop email client for Wayland that feels at home in GNOME. It "
+"talks IMAP and SMTP directly, keeps your mail and credentials on your "
+"machine, and blocks trackers by default — no telemetry, no analytics."
+msgstr ""
+
+msgid "Features:"
+msgstr ""
+
+msgid "Multiple IMAP and POP3 accounts, with a unified All Inboxes view"
+msgstr ""
+
+msgid ""
+"Google, Microsoft and custom OAuth 2.0 sign-in, plus GNOME Online Accounts "
+"import"
+msgstr ""
+
+msgid "Whole-mailbox sync and search with infinite scroll"
+msgstr ""
+
+msgid "Deletions and moves made on other devices sync back automatically"
+msgstr ""
+
+msgid "Conversation threading, compose, reply, forward, and editable drafts"
+msgstr ""
+
+msgid "Remote content blocked by default; per-message light or dark reading"
+msgstr ""
+
+msgid "Passwords and OAuth tokens kept in the system keyring"
+msgstr ""
+
+msgid "The unified inbox in light mode"
+msgstr ""
+
+msgid "Hyprlab"
+msgstr ""

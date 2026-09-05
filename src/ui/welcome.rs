@@ -14,6 +14,7 @@ use relm4::prelude::*;
 use crate::config::AccountConfig;
 use crate::ui::accounts::{Provider, PROVIDERS};
 use crate::worker::{self, ConnTest};
+use crate::i18n::{i18n, i18n_f};
 
 /// Wordmark art, embedded so the wizard needs nothing on disk.
 const WORDMARK_SVG: &[u8] = include_bytes!("../../data/welcome/wordmark-blue.svg");
@@ -266,7 +267,7 @@ impl Component for Welcome {
         let win = adw::Window::new();
         win.set_default_size(600, 700);
         win.add_css_class("welcome-window");
-        win.set_title(Some("Welcome to Vireo"));
+        win.set_title(Some(i18n("Welcome to Vireo").as_str()));
         win
     }
 
@@ -322,9 +323,9 @@ impl Component for Welcome {
         // ---- Page 1: hero (tagline + start; the wordmark floats above) ----
         let hero = gtk::Box::new(gtk::Orientation::Vertical, 18);
         hero.set_halign(gtk::Align::Center);
-        let tag = tagline("A clean, fast home for your mail.\nLet's set things up — it takes about a minute.");
+        let tag = tagline(&i18n("A clean, fast home for your mail.\nLet's set things up — it takes about a minute."));
         tag.set_margin_top(16);
-        let start = pill("Get Started");
+        let start = pill(&i18n("Get Started"));
         start.set_margin_top(10);
         {
             let s = sender.clone();
@@ -344,11 +345,11 @@ impl Component for Welcome {
 
         // ---- Page 2: account ----
         let acct = gtk::Box::new(gtk::Orientation::Vertical, 14);
-        acct.append(&title("Add your email account"));
+        acct.append(&title(&i18n("Add your email account")));
 
         // One-click imports from GNOME Online Accounts.
         let goa_card_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        let goa_hdr = gtk::Label::new(Some("Found in GNOME Online Accounts"));
+        let goa_hdr = gtk::Label::new(Some(i18n("Found in GNOME Online Accounts").as_str()));
         goa_hdr.add_css_class("welcome-section");
         goa_hdr.set_halign(gtk::Align::Start);
         let goa_list = card();
@@ -360,7 +361,7 @@ impl Component for Welcome {
         // Manual form.
         let form = card();
         let provider_row = adw::ComboRow::new();
-        provider_row.set_title("Provider");
+        provider_row.set_title(&i18n("Provider"));
         let labels: Vec<&str> = wizard_providers().iter().map(|p| p.wizard_label()).collect();
         provider_row.set_model(Some(&gtk::StringList::new(&labels)));
         // Default to the manual entry (last in the filtered list).
@@ -370,28 +371,28 @@ impl Component for Welcome {
             provider_row.connect_selected_notify(move |_| s.input(WelcomeInput::ProviderChanged));
         }
         let name_row = adw::EntryRow::new();
-        name_row.set_title("Your name");
+        name_row.set_title(&i18n("Your name"));
         let email_row = adw::EntryRow::new();
-        email_row.set_title("Email address");
+        email_row.set_title(&i18n("Email address"));
         let pass_row = adw::PasswordEntryRow::new();
-        pass_row.set_title("Password");
+        pass_row.set_title(&i18n("Password"));
         let server_exp = adw::ExpanderRow::new();
-        server_exp.set_title("Server details");
-        server_exp.set_subtitle("Filled in for known providers");
+        server_exp.set_title(&i18n("Server details"));
+        server_exp.set_subtitle(&i18n("Filled in for known providers"));
         // The default provider is the generic "Other (IMAP/POP3)" entry,
         // whose whole point is filling these in — start them open. Picking a
         // known provider collapses them (ProviderChanged), picking the
         // generic one re-opens them.
         server_exp.set_expanded(true);
         let host_row = adw::EntryRow::new();
-        host_row.set_title("IMAP server");
+        host_row.set_title(&i18n("IMAP server"));
         let port_row = adw::EntryRow::new();
-        port_row.set_title("IMAP port");
+        port_row.set_title(&i18n("IMAP port"));
         port_row.set_text("993");
         let smtp_row = adw::EntryRow::new();
-        smtp_row.set_title("SMTP server");
+        smtp_row.set_title(&i18n("SMTP server"));
         let smtp_port_row = adw::EntryRow::new();
-        smtp_port_row.set_title("SMTP port");
+        smtp_port_row.set_title(&i18n("SMTP port"));
         smtp_port_row.set_text("587");
         server_exp.add_row(&host_row);
         server_exp.add_row(&port_row);
@@ -411,7 +412,7 @@ impl Component for Welcome {
         hint_lbl.set_visible(false);
         acct.append(&hint_lbl);
 
-        let add_btn = pill("Test & Add");
+        let add_btn = pill(&i18n("Test & Add"));
         add_btn.set_margin_top(4);
         {
             let s = sender.clone();
@@ -432,9 +433,9 @@ impl Component for Welcome {
         status_box.append(&status_lbl);
         acct.append(&status_box);
 
-        let goa_note = tagline("Google and Microsoft accounts sign in through GNOME Settings → Online Accounts, then appear above.");
+        let goa_note = tagline(&i18n("Google and Microsoft accounts sign in through GNOME Settings → Online Accounts, then appear above."));
         goa_note.add_css_class("welcome-hint");
-        let rescan = gtk::Button::with_label("Scan Again");
+        let rescan = gtk::Button::with_label(&i18n("Scan Again"));
         rescan.add_css_class("flat");
         rescan.add_css_class("welcome-link");
         rescan.set_halign(gtk::Align::Center);
@@ -452,24 +453,24 @@ impl Component for Welcome {
 
         // ---- Page 3: privacy ----
         let priv_pg = gtk::Box::new(gtk::Orientation::Vertical, 14);
-        priv_pg.append(&title("Privacy, your way"));
-        priv_pg.append(&tagline("Vireo sends no telemetry, ever. These control what leaves your machine while you read."));
+        priv_pg.append(&title(&i18n("Privacy, your way")));
+        priv_pg.append(&tagline(&i18n("Vireo sends no telemetry, ever. These control what leaves your machine while you read.")));
         let priv_card = card();
         let sw_remote = adw::SwitchRow::new();
-        sw_remote.set_title("Block remote images");
-        sw_remote.set_subtitle("Stops senders tracking when and where you open mail");
+        sw_remote.set_title(&i18n("Block remote images"));
+        sw_remote.set_subtitle(&i18n("Stops senders tracking when and where you open mail"));
         sw_remote.set_active(!crate::config::load_auto_remote_content());
         let sw_gravatar = adw::SwitchRow::new();
-        sw_gravatar.set_title("Fetch Gravatar portraits");
-        sw_gravatar.set_subtitle("Asks gravatar.com about each sender's address");
+        sw_gravatar.set_title(&i18n("Fetch Gravatar portraits"));
+        sw_gravatar.set_subtitle(&i18n("Asks gravatar.com about each sender's address"));
         sw_gravatar.set_active(crate::config::load_gravatar());
         let sw_logos = adw::SwitchRow::new();
-        sw_logos.set_title("Fetch sender logos");
-        sw_logos.set_subtitle("Looks up company icons for the message list");
+        sw_logos.set_title(&i18n("Fetch sender logos"));
+        sw_logos.set_subtitle(&i18n("Looks up company icons for the message list"));
         sw_logos.set_active(crate::config::load_sender_logos());
         let sw_notif = adw::SwitchRow::new();
-        sw_notif.set_title("Show message content in notifications");
-        sw_notif.set_subtitle("Off keeps senders and subjects off the lock screen");
+        sw_notif.set_title(&i18n("Show message content in notifications"));
+        sw_notif.set_subtitle(&i18n("Off keeps senders and subjects off the lock screen"));
         sw_notif.set_active(crate::config::load_notification_content());
         priv_card.append(&sw_remote);
         priv_card.append(&sw_gravatar);
@@ -480,21 +481,21 @@ impl Component for Welcome {
 
         // ---- Page 4: personalize ----
         let pers = gtk::Box::new(gtk::Orientation::Vertical, 14);
-        pers.append(&title("Make it yours"));
-        pers.append(&tagline("A few popular choices — everything can be changed later in Settings."));
+        pers.append(&title(&i18n("Make it yours")));
+        pers.append(&tagline(&i18n("A few popular choices — everything can be changed later in Settings.")));
         let pers_card = card();
         let preview_row = adw::ComboRow::new();
-        preview_row.set_title("Preview lines");
-        preview_row.set_subtitle("Message text shown under each subject");
-        preview_row.set_model(Some(&gtk::StringList::new(&["None", "1 line", "2 lines"])));
+        preview_row.set_title(&i18n("Preview lines"));
+        preview_row.set_subtitle(&i18n("Message text shown under each subject"));
+        preview_row.set_model(Some(&gtk::StringList::new(&[i18n("None").as_str(), i18n("1 line").as_str(), i18n("2 lines").as_str()])));
         preview_row.set_selected(crate::config::load_preview_lines().min(2));
         let sw_avatars = adw::SwitchRow::new();
-        sw_avatars.set_title("Sender avatars");
-        sw_avatars.set_subtitle("Colourful initials beside each message");
+        sw_avatars.set_title(&i18n("Sender avatars"));
+        sw_avatars.set_subtitle(&i18n("Colourful initials beside each message"));
         sw_avatars.set_active(crate::config::load_avatars());
         let sw_threading = adw::SwitchRow::new();
-        sw_threading.set_title("Conversation view");
-        sw_threading.set_subtitle("Group messages into threads");
+        sw_threading.set_title(&i18n("Conversation view"));
+        sw_threading.set_subtitle(&i18n("Group messages into threads"));
         sw_threading.set_active(crate::config::load_threading());
         pers_card.append(&preview_row);
         pers_card.append(&sw_avatars);
@@ -503,7 +504,7 @@ impl Component for Welcome {
 
         // The app icon: the whole set as one sideways-scrolling row on its
         // own card, the default ringed.
-        let icon_hdr = gtk::Label::new(Some("Pick your app icon"));
+        let icon_hdr = gtk::Label::new(Some(i18n("Pick your app icon").as_str()));
         icon_hdr.add_css_class("welcome-section");
         icon_hdr.set_halign(gtk::Align::Start);
         icon_hdr.set_margin_top(6);
@@ -537,16 +538,15 @@ impl Component for Welcome {
         check.set_pixel_size(72);
         check.add_css_class("welcome-check");
         done.append(&check);
-        done.append(&title("You're all set"));
+        done.append(&title(&i18n("You're all set")));
         let done_sub = tagline("");
         done_sub.set_use_markup(true);
-        done_sub.set_markup(concat!(
-            "Enjoy! If you encounter an issue or have a feature request,\n",
-            "please open an issue on our ",
-            "<a href=\"https://github.com/hyprlab/vireo\">Github</a>.",
+        done_sub.set_markup(&i18n_f(
+            "Enjoy! If you encounter an issue or have a feature request,\nplease open an issue on our <a href=\"{url}\">Github</a>.",
+            &[("url", "https://github.com/hyprlab/vireo")],
         ));
         done.append(&done_sub);
-        let finish_btn = pill("Start Reading");
+        let finish_btn = pill(&i18n("Start Reading"));
         finish_btn.set_margin_top(8);
         {
             let s = sender.clone();
@@ -575,7 +575,7 @@ impl Component for Welcome {
         // Fixed footer: Continue lives with the dots so it never scrolls
         // away with a tall page. Hidden on the hero and final pages, which
         // carry their own calls to action.
-        let footer_next = pill("Continue");
+        let footer_next = pill(&i18n("Continue"));
         footer_next.set_visible(false);
         footer_next.set_margin_top(16);
         footer_next.set_margin_bottom(8);
@@ -732,7 +732,7 @@ impl Component for Welcome {
                     widgets.status_lbl.set_css_classes(&["welcome-hint", "error"]);
                     widgets
                         .status_lbl
-                        .set_text("Enter your email address and password first.");
+                        .set_text(&i18n("Enter your email address and password first."));
                     return;
                 }
                 let account = AccountConfig {
@@ -751,7 +751,7 @@ impl Component for Welcome {
                 widgets.test_spinner.set_visible(true);
                 widgets.test_spinner.start();
                 widgets.status_lbl.set_css_classes(&["welcome-hint"]);
-                widgets.status_lbl.set_text("Checking the connection…");
+                widgets.status_lbl.set_text(&i18n("Checking the connection…"));
                 sender.oneshot_command(async move {
                     let test = {
                         let account = account.clone();
@@ -778,7 +778,7 @@ impl Component for Welcome {
                     widgets.status_lbl.set_css_classes(&["welcome-hint", "success"]);
                     widgets
                         .status_lbl
-                        .set_text(&format!("✓ {} — added", account.email));
+                        .set_text(&i18n_f("✓ {email} — added", &[("email", &(account.email).to_string())]));
                     let _ = sender.output(WelcomeOutput::ImportGoa(Box::new(account)));
                     rebuild_goa_rows(&widgets.goa_list, &self.goa, &sender);
                     widgets.goa_card.set_visible(!self.goa.is_empty());
@@ -830,7 +830,7 @@ impl Component for Welcome {
                     (Ok(_), Ok(_)) => {
                         self.added.push(account.email.clone());
                         widgets.status_lbl.set_css_classes(&["welcome-hint", "success"]);
-                        widgets.status_lbl.set_text(&format!("✓ {email} — connected and added"));
+                        widgets.status_lbl.set_text(&i18n_f("✓ {email} — connected and added", &[("email", &(email).to_string())]));
                         widgets.pass_row.set_text("");
                         widgets.email_row.set_text("");
                         let _ = sender.output(WelcomeOutput::AddAccount(account));
@@ -838,11 +838,11 @@ impl Component for Welcome {
                     }
                     (Err(e), _) => {
                         widgets.status_lbl.set_css_classes(&["welcome-hint", "error"]);
-                        widgets.status_lbl.set_text(&format!("{email} — mail server: {e}"));
+                        widgets.status_lbl.set_text(&i18n_f("{email} — mail server: {e}", &[("email", &(email).to_string()), ("e", &(e).to_string())]));
                     }
                     (_, Err(e)) => {
                         widgets.status_lbl.set_css_classes(&["welcome-hint", "error"]);
-                        widgets.status_lbl.set_text(&format!("{email} — sending (SMTP): {e}"));
+                        widgets.status_lbl.set_text(&i18n_f("{email} — sending (SMTP): {e}", &[("email", &(email).to_string()), ("e", &(e).to_string())]));
                     }
                 }
             }
@@ -852,7 +852,7 @@ impl Component for Welcome {
 
 impl Welcome {
     fn show_added(&self, widgets: &WelcomeWidgets) {
-        widgets.finish_btn.set_label("Start Reading");
+        widgets.finish_btn.set_label(&i18n("Start Reading"));
     }
 }
 
@@ -868,7 +868,7 @@ fn rebuild_goa_rows(
         let row = adw::ActionRow::new();
         row.set_title(&g.email);
         row.set_subtitle(&g.provider);
-        let btn = gtk::Button::with_label("Add");
+        let btn = gtk::Button::with_label(&i18n("Add"));
         btn.add_css_class("suggested-action");
         btn.set_valign(gtk::Align::Center);
         let s = sender.clone();

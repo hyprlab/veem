@@ -4,7 +4,7 @@
 %global debug_package %{nil}
 
 Name:           vireo
-Version:        1.20.2
+Version:        1.21.0
 Release:        1%{?dist}
 Summary:        A clean, fast GNOME-native email client
 License:        AGPL-3.0-or-later
@@ -34,8 +34,13 @@ for size in 256x256 512x512; do
     install -Dm644 icons/$size/%{appid}.png \
         %{buildroot}%{_datadir}/icons/hicolor/$size/apps/%{appid}.png
 done
+if [ -d locale ]; then
+    mkdir -p %{buildroot}%{_datadir}
+    cp -r locale %{buildroot}%{_datadir}/locale
+fi
+%find_lang %{name} || touch %{name}.lang
 
-%files
+%files -f %{name}.lang
 %license LICENSE
 %{_bindir}/vireo
 %{_datadir}/applications/%{appid}.desktop

@@ -11,6 +11,7 @@ use relm4::prelude::*;
 use webkit6::prelude::{PolicyDecisionExt, WebViewExt};
 
 use crate::models::Message;
+use crate::i18n::{i18n, i18n_f};
 
 pub struct MessageView {
     /// Render a lone message as an inset card, same as a conversation's
@@ -172,7 +173,7 @@ impl MessageView {
         let rect = (rect.0 * ratio, rect.1 * ratio, rect.2 * ratio, rect.3 * ratio);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
         content.add_css_class("sender-detail");
-        let heading = gtk::Label::new(Some(check.trust.label()));
+        let heading = gtk::Label::new(Some(&check.trust.label()));
         heading.set_halign(gtk::Align::Start);
         heading.add_css_class("heading");
         content.append(&heading);
@@ -193,7 +194,7 @@ impl MessageView {
             content.append(&findings);
         }
         let footnote = gtk::Label::new(Some(
-            "A pass proves the address wasn't forged — not that the message is safe.",
+            i18n("A pass proves the address wasn't forged — not that the message is safe.").as_str(),
         ));
         footnote.set_halign(gtk::Align::Start);
         footnote.set_wrap(true);
@@ -406,8 +407,8 @@ impl Component for MessageView {
 
             add_named[Some("empty")] = &adw::StatusPage {
                 set_icon_name: Some("co.hyprlab.Vireo-mail-read-symbolic"),
-                set_title: "No message selected",
-                set_description: Some("Choose a message from the list to read it here."),
+                set_title: &i18n("No message selected"),
+                set_description: Some(i18n("Choose a message from the list to read it here.").as_str()),
             },
 
             add_named[Some("message")] = &gtk::Box {
@@ -450,7 +451,7 @@ impl Component for MessageView {
 
                         gtk::Image { set_icon_name: Some("co.hyprlab.Vireo-security-high-symbolic") },
                         gtk::Label {
-                            set_label: "Remote content (images, trackers) is blocked to protect your privacy.",
+                            set_label: &i18n("Remote content (images, trackers) is blocked to protect your privacy."),
                             set_hexpand: true,
                             set_halign: gtk::Align::Start,
                             set_wrap: true,
@@ -462,12 +463,12 @@ impl Component for MessageView {
                             set_xalign: 0.0,
                         },
                         gtk::Button {
-                            set_label: "Load",
+                            set_label: &i18n("Load"),
                             set_valign: gtk::Align::Center,
                             connect_clicked => MessageViewInput::LoadRemoteOnce,
                         },
                         gtk::Button {
-                            set_label: "Always allow sender",
+                            set_label: &i18n("Always allow sender"),
                             set_valign: gtk::Align::Center,
                             #[watch]
                             set_tooltip_text: model.current.as_ref().map(|m| m.from_addr.as_str()),
@@ -490,7 +491,7 @@ impl Component for MessageView {
                         #[name = "find_entry"]
                         gtk::SearchEntry {
                             set_hexpand: true,
-                            set_placeholder_text: Some("Find in message"),
+                            set_placeholder_text: Some(i18n("Find in message").as_str()),
                             connect_search_changed[sender] => move |entry| {
                                 sender.input(MessageViewInput::FindChanged(entry.text().to_string()));
                             },
@@ -517,27 +518,27 @@ impl Component for MessageView {
                             add_css_class: "dim-label",
                             #[watch]
                             set_label: &match model.find_matches {
-                                Some((_, 0)) => "No matches".to_string(),
-                                Some((cur, total)) => format!("{cur} of {total}"),
+                                Some((_, 0)) => i18n("No matches"),
+                                Some((cur, total)) => i18n_f("{cur} of {total}", &[("cur", &cur.to_string()), ("total", &total.to_string())]),
                                 None => String::new(),
                             },
                         },
 
                         gtk::Button {
                             set_icon_name: "co.hyprlab.Vireo-pan-up-symbolic",
-                            set_tooltip_text: Some("Previous match"),
+                            set_tooltip_text: Some(i18n("Previous match").as_str()),
                             add_css_class: "flat",
                             connect_clicked => MessageViewInput::FindPrev,
                         },
                         gtk::Button {
                             set_icon_name: "co.hyprlab.Vireo-pan-down-symbolic",
-                            set_tooltip_text: Some("Next match"),
+                            set_tooltip_text: Some(i18n("Next match").as_str()),
                             add_css_class: "flat",
                             connect_clicked => MessageViewInput::FindNext,
                         },
                         gtk::Button {
                             set_icon_name: "co.hyprlab.Vireo-window-close-symbolic",
-                            set_tooltip_text: Some("Close find"),
+                            set_tooltip_text: Some(i18n("Close find").as_str()),
                             add_css_class: "flat",
                             connect_clicked => MessageViewInput::CloseFind,
                         },
@@ -610,7 +611,7 @@ impl Component for MessageView {
                             // Dimming comes from the cover's own foreground, which
                             // is picked for the message theme — `dim-label` would
                             // fade it against the app's instead.
-                            set_label: "Loading…",
+                            set_label: &i18n("Loading…"),
                         },
                     },
                 },
@@ -1657,20 +1658,21 @@ impl MessageView {
                             "<span class=\"vireo-acts\">{}{}{}{}{}{}{}{}{}{}</span>",
                             // Same order as the reader toolbar and the list's
                             // Actions Palette, View Source closing the line.
-                            card_action_button(key, "reply", "mail-reply-sender-symbolic", "Reply to this message"),
-                            card_action_button(key, "replyall", "mail-reply-all-symbolic", "Reply to everyone on this message"),
-                            card_action_button(key, "forward", "mail-forward-symbolic", "Forward this message"),
+                            card_action_button(key, "reply", "mail-reply-sender-symbolic", &i18n("Reply to this message")),
+                            card_action_button(key, "replyall", "mail-reply-all-symbolic", &i18n("Reply to everyone on this message")),
+                            card_action_button(key, "forward", "mail-forward-symbolic", &i18n("Forward this message")),
                             // Action-showing icon (read envelope = "mark as
                             // read"), like the menus and toolbar. Both icons
                             // are baked in; the section's `unread` class picks
                             // one, so marking read/unread flips in place.
                             format!(
                                 "<button type=\"button\" class=\"vireo-act\" data-act=\"toggleread\" \
-                                 data-key=\"{aid}:{id}\" title=\"Mark as read or unread\">\
+                                 data-key=\"{aid}:{id}\" title=\"{title}\">\
                                  <span class=\"tr-when-unread\">{read_svg}</span>\
                                  <span class=\"tr-when-read\">{unread_svg}</span></button>",
                                 aid = key.0,
                                 id = key.1,
+                                title = gtk::glib::markup_escape_text(&i18n("Mark as read or unread")),
                                 read_svg = inline_icon_svg("mail-read-symbolic"),
                                 unread_svg = inline_icon_svg("mail-unread-symbolic"),
                             ),
@@ -1679,17 +1681,18 @@ impl MessageView {
                             // click too).
                             format!(
                                 "<button type=\"button\" class=\"vireo-act{on}\" data-act=\"star\" \
-                                 data-key=\"{aid}:{id}\" title=\"Flag this message\">{svg}</button>",
+                                 data-key=\"{aid}:{id}\" title=\"{title}\">{svg}</button>",
                                 on = if m.starred { " on" } else { "" },
+                                title = gtk::glib::markup_escape_text(&i18n("Flag this message")),
                                 aid = key.0,
                                 id = key.1,
                                 svg = inline_icon_svg("non-starred-symbolic"),
                             ),
-                            card_action_button(key, "archive", "mail-archive-symbolic", "Archive this message"),
-                            card_action_button(key, "delete", "user-trash-symbolic", "Delete this message"),
-                            card_action_button(key, "spam", "mail-mark-junk-symbolic", "Mark as Spam"),
-                            card_action_button(key, "contact", "contact-new-symbolic", "Add sender to Contacts"),
-                            card_action_button(key, "viewsource", "code-symbolic", "View source"),
+                            card_action_button(key, "archive", "mail-archive-symbolic", &i18n("Archive this message")),
+                            card_action_button(key, "delete", "user-trash-symbolic", &i18n("Delete this message")),
+                            card_action_button(key, "spam", "mail-mark-junk-symbolic", &i18n("Mark as Spam")),
+                            card_action_button(key, "contact", "contact-new-symbolic", &i18n("Add sender to Contacts")),
+                            card_action_button(key, "viewsource", "code-symbolic", &i18n("View source")),
                         )
                     } else {
                         String::new()
@@ -1771,9 +1774,9 @@ impl MessageView {
                             s = if n == 1 { "" } else { "s" },
                             open = if always_show_recipients { " open" } else { "" },
                             title = if always_show_recipients {
-                                "Hide recipients"
+                                i18n("Hide recipients")
                             } else {
-                                "Show recipients"
+                                i18n("Show recipients")
                             },
                         ),
                     },
@@ -2302,7 +2305,7 @@ fn new_webview() -> webkit6::WebView {
         action.connect_activate(move |_, _| {
             let dialog = gtk::FileDialog::builder()
                 .initial_name(default_image_name(&mime))
-                .title("Save Image")
+                .title(&i18n("Save Image"))
                 .build();
             let data = data.clone();
             dialog.save(window.as_ref(), gtk::gio::Cancellable::NONE, move |res| {

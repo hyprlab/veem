@@ -36,8 +36,16 @@ build_rpm() {
     mkdir -p "$stage/icons/256x256" "$stage/icons/512x512"
     cp "$ROOT/target/release/vireo"              "$stage/vireo"
     cp "$ROOT/LICENSE"                          "$stage/LICENSE"
-    cp "$ROOT/data/$APP_ID.desktop"             "$stage/$APP_ID.desktop"
-    cp "$ROOT/data/$APP_ID.metainfo.xml"        "$stage/$APP_ID.metainfo.xml"
+    # Launcher and metainfo with their translated fields merged in, and a
+    # message catalogue per po/<lang>.po (see po/README.md).
+    msgfmt --desktop --template="$ROOT/data/$APP_ID.desktop" -d "$ROOT/po" -o "$stage/$APP_ID.desktop"
+    msgfmt --xml --template="$ROOT/data/$APP_ID.metainfo.xml" -d "$ROOT/po" -o "$stage/$APP_ID.metainfo.xml"
+    for po in "$ROOT"/po/*.po; do
+        [ -e "$po" ] || continue
+        lang=$(basename "$po" .po)
+        mkdir -p "$stage/locale/$lang/LC_MESSAGES"
+        msgfmt -o "$stage/locale/$lang/LC_MESSAGES/vireo.mo" "$po"
+    done
     for size in 256x256 512x512; do
         cp "$ROOT/data/icons/hicolor/$size/apps/$APP_ID.png" "$stage/icons/$size/$APP_ID.png"
     done
