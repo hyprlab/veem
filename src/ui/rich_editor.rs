@@ -220,6 +220,31 @@ impl RichEditor {
                     0,
                 );
                 menu.insert(&webkit6::ContextMenuItem::new_separator(), 1);
+                // Sizes lead the menu: the fractions are of the writing
+                // width, which is the width the recipient reads at, so
+                // "Large" means the full column rather than some pixel count
+                // that means nothing on the other end. Dragging the corner
+                // handles does the same thing by hand.
+                let mut at = 0;
+                for (label, kind) in [
+                    ("Small", "small"),
+                    ("Medium", "medium"),
+                    ("Large", "large"),
+                    ("Original Size", "original"),
+                ] {
+                    let action =
+                        gtk::gio::SimpleAction::new(&format!("vireo-img-{kind}"), None);
+                    let v = view.clone();
+                    action.connect_activate(move |_, _| {
+                        exec(&v, &format!("window.__vireoSetImageSize('{kind}')"));
+                    });
+                    menu.insert(
+                        &webkit6::ContextMenuItem::from_gaction(&action, label, None),
+                        at,
+                    );
+                    at += 1;
+                }
+                menu.insert(&webkit6::ContextMenuItem::new_separator(), at);
             }
             let items = menu.items();
             let Some(pos) = items
@@ -341,7 +366,7 @@ impl RichEditor {
     /// Read the current body HTML asynchronously.
     pub fn extract_html(&self, cb: impl FnOnce(String) + 'static) {
         self.webview.evaluate_javascript(
-            "document.body.innerHTML",
+            "window.__vireoBodyHtml()",
             None,
             None,
             gtk::gio::Cancellable::NONE,
@@ -352,7 +377,7 @@ impl RichEditor {
     /// Read the current body HTML and a plain-text rendering asynchronously.
     pub fn extract(&self, cb: impl FnOnce(String, String) + 'static) {
         self.webview.evaluate_javascript(
-            "document.body.innerHTML + '\\u0000' + document.body.innerText",
+            "window.__vireoBodyHtml() + '\\u0000' + document.body.innerText",
             None,
             None,
             gtk::gio::Cancellable::NONE,
@@ -855,13 +880,114 @@ const PASTE_SCRIPT: &str = r#"<script>
       spellRange = null;
     }
   });
+  /* Resizing a picture. The frame and its corner handles are ordinary
+     elements in this contenteditable document — there is nowhere else to
+     put them — so they are marked `data-vireo-ui` and stripped from
+     everything the document hands back (see `__vireoBodyHtml`). They are
+     also contenteditable=false, so the caret cannot wander into them. */
+  var rsBox = null, rsImg = null;
+  function rsRemove(){ if(rsBox){ rsBox.remove(); rsBox = null; rsImg = null; } }
+  function rsPlace(){
+    if(!rsBox || !rsImg) return;
+    if(!rsImg.isConnected){ rsRemove(); return; }
+    var r = rsImg.getBoundingClientRect();
+    rsBox.style.left = (r.left + scrollX) + 'px';
+    rsBox.style.top = (r.top + scrollY) + 'px';
+    rsBox.style.width = r.width + 'px';
+    rsBox.style.height = r.height + 'px';
+  }
+  /* A width in CSS *and* in the attribute: mail clients that ignore styles
+     still honour width, and the height is left to follow so the aspect can
+     never be lost. */
+  function rsApply(img, w){
+    img.style.width = w + 'px';
+    img.style.height = 'auto';
+    img.setAttribute('width', String(w));
+    img.removeAttribute('height');
+  }
+  function rsDown(e){
+    if(!rsImg) return;
+    e.preventDefault(); e.stopPropagation();
+    var handle = e.currentTarget, img = rsImg;
+    var west = handle.dataset.corner[1] === 'w';
+    var startX = e.clientX, startW = img.getBoundingClientRect().width;
+    var maxW = document.body.clientWidth;
+    function move(ev){
+      var dx = ev.clientX - startX;
+      var w = Math.round(west ? startW - dx : startW + dx);
+      rsApply(img, Math.max(24, Math.min(w, maxW)));
+      rsPlace();
+    }
+    function up(ev){
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      try{ handle.releasePointerCapture(ev.pointerId); }catch(_){}
+    }
+    try{ handle.setPointerCapture(e.pointerId); }catch(_){}
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+  }
+  function rsShow(img){
+    rsRemove();
+    rsImg = img;
+    rsBox = document.createElement('div');
+    rsBox.setAttribute('data-vireo-ui', 'resize');
+    rsBox.setAttribute('contenteditable', 'false');
+    rsBox.style.cssText = 'position:absolute;pointer-events:none;z-index:9;'
+      + 'outline:1px solid #3584e4;';
+    ['nw','ne','sw','se'].forEach(function(c){
+      var h = document.createElement('div');
+      h.dataset.corner = c;
+      h.style.cssText = 'position:absolute;width:11px;height:11px;'
+        + 'background:#3584e4;border:2px solid Canvas;border-radius:50%;'
+        + 'pointer-events:auto;cursor:'
+        + ((c === 'nw' || c === 'se') ? 'nwse-resize' : 'nesw-resize') + ';';
+      h.style[c[0] === 'n' ? 'top' : 'bottom'] = '-6px';
+      h.style[c[1] === 'w' ? 'left' : 'right'] = '-6px';
+      h.addEventListener('pointerdown', rsDown);
+      rsBox.appendChild(h);
+    });
+    document.body.appendChild(rsBox);
+    rsPlace();
+  }
+  /* The context menu's size entries. `original` drops the explicit width so
+     the picture falls back to its natural size, still held to the writing
+     width by the stylesheet. */
+  window.__vireoSetImageSize = function(kind){
+    var img = window.__vireoCtxImg || rsImg;
+    if(!img) return;
+    if(kind === 'original'){
+      img.style.width = ''; img.style.height = '';
+      img.removeAttribute('width'); img.removeAttribute('height');
+    } else {
+      var full = document.body.clientWidth;
+      var f = kind === 'small' ? 0.25 : (kind === 'medium' ? 0.5 : 1);
+      rsApply(img, Math.max(24, Math.round(full * f)));
+    }
+    if(img === rsImg) rsPlace(); else rsShow(img);
+  };
+  /* What the host reads instead of body.innerHTML: the same content with
+     this script's own furniture taken out. */
+  window.__vireoBodyHtml = function(){
+    var c = document.body.cloneNode(true);
+    Array.prototype.forEach.call(c.querySelectorAll('[data-vireo-ui]'),
+      function(n){ n.remove(); });
+    return c.innerHTML;
+  };
+  addEventListener('scroll', rsPlace, true);
+  addEventListener('resize', rsPlace);
+  document.addEventListener('input', rsPlace);
   /* Clicking an image selects it whole, so it can be deleted, cut, or
-     copied like any other selection. */
+     copied like any other selection, and raises its resize frame. */
   document.addEventListener('click', function(e){
     var t = e.target;
+    if(rsBox && rsBox.contains(t)) return;   // a handle, not the document
     if(t && t.tagName === 'IMG'){
       var r = document.createRange(); r.selectNode(t);
       var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      rsShow(t);
+    } else {
+      rsRemove();
     }
   });
   /* A right-click on an image selects it (like a left click) and remembers
