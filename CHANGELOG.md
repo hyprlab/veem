@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.20.3-beta.1 — 2026-09-04
+
+The beta channel catches up with stable 1.20.2: the same code, no
+beta-only changes. Everything since 1.20.2-beta.1 is in the 1.20.2
+section below (editable filters).
+
+## 1.20.2 — 2026-09-04
+
+Filter rules can be edited, and their rows get more room.
+
+- **Edit Filter.** Each rule row in Settings → Accounts → Filters is now
+  activatable, marked with a pencil beside its trash button as the alias
+  rows are. Activating it opens the filter dialog as "Edit Filter" with
+  every field prefilled — account, where, match, text, destination
+  folder, and the two switches — and Save replaces the rule in place,
+  keeping its position. Adding is unchanged.
+- **Roomier rule rows.** The rows gain padding around their two-line
+  title and the stacked switches, which sat against the row edges; the
+  pencil and the switch labels take the full foreground colour, like
+  the trash button and the title beside them.
+- **Demo.** The demo's Accounts panel now gets folder choices for its
+  stand-in accounts, so its filter dialog has destinations. Dev:
+  `VIREO_SHOWCASE_EDIT_FILTER=<index>` opens that rule's editor for a
+  capture, and Settings captures target the newest window so a dialog
+  over Settings is what gets shot.
+
 ## 1.20.2-beta.1 — 2026-09-04
 
 The beta channel catches up with stable 1.20.1: the same code, no

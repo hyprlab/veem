@@ -219,6 +219,10 @@ pub enum AccountsInput {
     RemoveBlacklistRow(String),
     AddFilter,
     RemoveFilter(usize),
+    /// Open the filter dialog on an existing rule.
+    EditFilter(usize),
+    /// The dialog saved changes to the rule at this index.
+    FilterEdited(usize, crate::config::FilterRule),
     /// The rule's "count unread" switch was flipped (#116).
     SetFilterCounted(usize, bool),
     /// Toggle whether a rule's folder is listed under All Inboxes.
@@ -1564,7 +1568,22 @@ impl Component for AccountsWindow {
                 }
             }
             AccountsInput::AddFilter => {
-                self.open_filter_dialog(&sender);
+                self.open_filter_dialog(&sender, None);
+            }
+            AccountsInput::EditFilter(i) => {
+                if let Some(rule) = self.filter_rules.get(i).cloned() {
+                    self.open_filter_dialog(&sender, Some((i, rule)));
+                }
+            }
+            AccountsInput::FilterEdited(i, rule) => {
+                if let Some(slot) = self.filter_rules.get_mut(i) {
+                    if *slot != rule {
+                        *slot = rule;
+                        self.rebuild_filter_rows(&sender);
+                        let _ = sender
+                            .output(AccountsOutput::SetFilters(self.filter_rules.clone()));
+                    }
+                }
             }
             AccountsInput::RemoveFilter(i) => {
                 if i < self.filter_rules.len() {
@@ -2547,6 +2566,14 @@ impl AccountsWindow {
         list.set_visible(!self.filter_rules.is_empty());
         for (i, r) in self.filter_rules.iter().enumerate() {
             let row = adw::ActionRow::new();
+            // Roomier than a stock row: the stacked switches and the two-line
+            // title were pressed against the row edges.
+            row.add_css_class("filter-rule-row");
+            // Activating the row opens it in the filter dialog for editing,
+            // as the alias rows do.
+            row.set_activatable(true);
+            let s = sender.clone();
+            row.connect_activated(move |_| s.input(AccountsInput::EditFilter(i)));
             row.set_title(&format!(
                 "{} {} \u{201c}{}\u{201d}",
                 Self::field_label(r.field),
@@ -2572,7 +2599,6 @@ impl AccountsWindow {
             grid.set_valign(gtk::Align::Center);
             let mut place = |line: i32, text: &str, active: bool, tip: &str| -> gtk::Switch {
                 let label = gtk::Label::new(Some(text));
-                label.add_css_class("dim-label");
                 label.set_halign(gtk::Align::End);
                 label.set_valign(gtk::Align::Center);
                 let sw = gtk::Switch::new();
@@ -2604,6 +2630,11 @@ impl AccountsWindow {
                 s.input(AccountsInput::SetFilterUnified(i, sw.is_active()))
             });
             row.add_suffix(&grid);
+            // A pencil says "activate to edit" (full strength, like the trash
+            // button beside it); the trash button removes.
+            let edit = gtk::Image::from_icon_name("co.hyprlab.Vireo-document-edit-symbolic");
+            edit.set_margin_start(6);
+            row.add_suffix(&edit);
             let rm = gtk::Button::from_icon_name("co.hyprlab.Vireo-user-trash-symbolic");
             rm.add_css_class("flat");
             rm.set_valign(gtk::Align::Center);
@@ -2615,18 +2646,24 @@ impl AccountsWindow {
         }
     }
 
-    /// The Add Filter dialog: account, field, match, value, destination.
-    fn open_filter_dialog(&self, sender: &ComponentSender<Self>) {
+    /// The filter dialog: account, field, match, value, destination, and
+    /// the two per-rule switches. With `edit`, it opens on that existing
+    /// rule (prefilled, "Save") and replaces it in place; otherwise it adds.
+    fn open_filter_dialog(
+        &self,
+        sender: &ComponentSender<Self>,
+        edit: Option<(usize, crate::config::FilterRule)>,
+    ) {
         use crate::config::{FilterField, FilterMatch, FilterRule};
         let emails: Vec<String> = self.accounts.iter().map(|a| a.email.clone()).collect();
         if emails.is_empty() {
             return;
         }
         let parent = relm4::main_application().active_window();
-        let dialog =
-            adw::MessageDialog::new(parent.as_ref(), Some("Add Filter"), None);
+        let (title, verb) = if edit.is_some() { ("Edit Filter", "Save") } else { ("Add Filter", "Add Filter") };
+        let dialog = adw::MessageDialog::new(parent.as_ref(), Some(title), None);
         dialog.add_response("cancel", "Cancel");
-        dialog.add_response("add", "Add Filter");
+        dialog.add_response("add", verb);
         dialog.set_response_appearance("add", adw::ResponseAppearance::Suggested);
         dialog.set_default_response(Some("add"));
 
@@ -2704,6 +2741,36 @@ impl AccountsWindow {
         );
         unified_row.set_active(false);
 
+        // Editing: every field starts from the rule as it stands.
+        let edit_index = edit.as_ref().map(|(i, _)| *i);
+        if let Some((_, rule)) = &edit {
+            if let Some(idx) = emails
+                .iter()
+                .position(|e| e.eq_ignore_ascii_case(&rule.account_email))
+            {
+                account_row.set_selected(idx as u32);
+                fill_dest(idx);
+            }
+            field_row.set_selected(match rule.field {
+                FilterField::FromAddress => 0,
+                FilterField::FromName => 1,
+                FilterField::Subject => 2,
+                FilterField::Recipients => 3,
+            });
+            match_row.set_selected(match rule.matcher {
+                FilterMatch::Contains => 0,
+                FilterMatch::Equals => 1,
+                FilterMatch::StartsWith => 2,
+                FilterMatch::EndsWith => 3,
+            });
+            value_row.set_text(&rule.value);
+            if let Some(idx) = dest_paths.borrow().iter().position(|p| *p == rule.dest_path) {
+                dest_row.set_selected(idx as u32);
+            }
+            count_row.set_active(rule.count_unread);
+            unified_row.set_active(rule.show_in_unified);
+        }
+
         form.append(&account_row);
         form.append(&field_row);
         form.append(&match_row);
@@ -2745,7 +2812,10 @@ impl AccountsWindow {
                 count_unread: count_row.is_active(),
                 show_in_unified: unified_row.is_active(),
             };
-            s.input(AccountsInput::FilterAdded(rule));
+            s.input(match edit_index {
+                Some(i) => AccountsInput::FilterEdited(i, rule),
+                None => AccountsInput::FilterAdded(rule),
+            });
         });
         dialog.present();
     }

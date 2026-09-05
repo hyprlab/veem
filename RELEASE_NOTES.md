@@ -2,6 +2,16 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.20.3-beta.1
+
+The beta channel catches up with stable 1.20.2: everything in the next section. No beta-only changes.
+
+## What's new in 1.20.2
+
+**Edit a filter.** Click a rule in Settings → Accounts → Filters (each row now carries a pencil beside its trash button) to open it in the filter dialog with everything filled in: account, field, match, text, destination folder, and both switches. Save replaces the rule in place. Adding a filter works as before.
+
+**More room in the rule rows.** The rows have padding around the title and the stacked switches, and the pencil and switch labels match the colour of the rest of the row.
+
 ## What's new in 1.20.2-beta.1
 
 The beta channel catches up with stable 1.20.1: everything in the next section. No beta-only changes.

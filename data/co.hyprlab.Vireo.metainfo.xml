@@ -56,6 +56,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.20.2" date="2026-09-04">
+
+      <description><p>Filter rules can be edited in place from Settings → Accounts → Filters, and the rule rows have more room.</p></description>
+
+    </release>
     <release version="1.20.1" date="2026-09-04">
 
       <description><p>Filter-rule folders can be listed in a Filtered Folders section inside All Inboxes, switched on per rule beside Count unread mail, with a global switch under Settings → Sidebar.</p></description>
