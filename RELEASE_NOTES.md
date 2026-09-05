@@ -2,6 +2,10 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.21.2-beta.1
+
+**Translatable.** Vireo's interface can now be translated. The app follows your desktop's language automatically once a translation for it exists. None ships yet: this beta carries the plumbing and the template. If you would like to translate Vireo into your language, `po/README.md` in the repository explains how; it takes no programming.
+
 ## What's new in 1.21.1-beta.1
 
 The beta channel catches up with stable 1.21.0: everything in the next section. No beta-only changes.

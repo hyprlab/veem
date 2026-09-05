@@ -128,13 +128,18 @@ modules:
       - cargo --offline fetch --manifest-path Cargo.toml --verbose
       - cargo --offline build --release --features beta --verbose
       - install -Dm755 target/release/vireo /app/bin/vireo
-      - install -Dm644 data/co.hyprlab.Vireo.Beta.desktop /app/share/applications/co.hyprlab.Vireo.Beta.desktop
+      # Translations: each po/<lang>.po becomes a message catalogue under
+      # /app/share/locale (which Flatpak splits into the .Locale extension),
+      # and the launcher and metainfo get their translated fields merged in
+      # (see po/README.md).
+      - for po in po/*.po; do [ -e "$po" ] || continue; lang=$(basename "$po" .po); install -d /app/share/locale/$lang/LC_MESSAGES; msgfmt -o /app/share/locale/$lang/LC_MESSAGES/vireo.mo "$po"; done
+      - install -d /app/share/applications && msgfmt --desktop --template=data/co.hyprlab.Vireo.Beta.desktop -d po -o /app/share/applications/co.hyprlab.Vireo.Beta.desktop
       - install -Dm644 data/icons/hicolor/256x256/apps/co.hyprlab.Vireo.Beta.png /app/share/icons/hicolor/256x256/apps/co.hyprlab.Vireo.Beta.png
       - install -Dm644 data/icons/hicolor/512x512/apps/co.hyprlab.Vireo.Beta.png /app/share/icons/hicolor/512x512/apps/co.hyprlab.Vireo.Beta.png
       # The restart helper's D-Bus service (Settings → App icon → Restart Now):
       # exported by Flatpak, so the bus can start a fresh sandbox instance.
       - install -Dm644 data/co.hyprlab.Vireo.Beta.Restart.service /app/share/dbus-1/services/co.hyprlab.Vireo.Beta.Restart.service
-      - install -Dm644 data/co.hyprlab.Vireo.Beta.metainfo.xml /app/share/metainfo/co.hyprlab.Vireo.Beta.metainfo.xml
+      - install -d /app/share/metainfo && msgfmt --xml --template=data/co.hyprlab.Vireo.Beta.metainfo.xml -d po -o /app/share/metainfo/co.hyprlab.Vireo.Beta.metainfo.xml
     sources:
       - type: git
         url: https://github.com/hyprlab/vireo.git

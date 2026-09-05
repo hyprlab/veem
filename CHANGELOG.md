@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.21.2-beta.1 — 2026-09-05
+
+The interface can be translated.
+
+- **Translations through gettext.** Every user-facing string now goes
+  through the helpers in `src/i18n.rs` — `i18n()`, `ni18n()` for
+  plurals, `i18n_f()`/`ni18n_f()` with named `{placeholders}`,
+  `i18n_noop()` for tables of literals translated where shown — and the
+  text domain is bound at startup to the first directory holding a
+  catalogue (an override in `VIREO_LOCALEDIR`, the source tree's own
+  `po/.build`, the install prefix, then the system prefixes). The app
+  follows the desktop's language; nothing to set.
+- **Translator workflow.** `po/vireo.pot` is the template, regenerated
+  by `tools/update-pot.sh` from the source (`xtr`) plus the launcher and
+  metainfo (`xgettext`; the release history is left out). Translators
+  work on `po/<lang>.po` only — see `po/README.md`. The Flatpak build,
+  the RPM and `install.sh` compile `po/*.po` into `share/locale` and
+  merge the translated launcher and metainfo fields (`msgfmt --desktop`,
+  `msgfmt --xml`, driven by `po/LINGUAS`). No translation ships yet:
+  this beta carries the plumbing and the template.
+- **Tests.** The tray's tests are fixed for the app-icon change.
+
 ## 1.21.1-beta.1 — 2026-09-05
 
 The beta channel catches up with stable 1.21.0: the same code, no
