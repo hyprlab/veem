@@ -19,6 +19,8 @@ pub fn strip(selected: &str, tile: i32, on_pick: Rc<dyn Fn(&str)>) -> gtk::Scrol
     let row = build(selected, tile, n.max(1), on_pick);
     row.set_halign(gtk::Align::Start);
     row.set_hexpand(false);
+    // Room under the row for the scrollbar, so it never sits on the labels.
+    row.set_margin_bottom(8);
     let sw = gtk::ScrolledWindow::new();
     sw.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
     sw.set_propagate_natural_height(true);
@@ -70,6 +72,11 @@ fn build(selected: &str, tile: i32, per_line: u32, on_pick: Rc<dyn Fn(&str)>) ->
         label.set_wrap(true);
         label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         label.set_lines(2);
+        // Reserve both lines up front: a sideways-scrolling row measures
+        // its height before the labels have a width to wrap in, and a
+        // second line that appears later is cut off.
+        label.set_size_request(-1, 32);
+        label.set_valign(gtk::Align::Start);
         label.set_max_width_chars(11);
         label.set_justify(gtk::Justification::Center);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
