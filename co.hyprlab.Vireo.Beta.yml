@@ -50,6 +50,10 @@ finish-args:
   - --filesystem=~/.var/app/co.hyprlab.Vireo:create
   # Read the old Veem app's data so first-run migration matches stable's.
   - --filesystem=~/.var/app/com.getveem.Veem:ro
+  # The chosen app icon (Settings → App icon) is written over the app's icon
+  # name in the user's icon directory, which every desktop searches before the
+  # Flatpak export's — that is how the dock and app grid follow the choice.
+  - --filesystem=xdg-data/icons/hicolor:create
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
@@ -124,6 +128,9 @@ modules:
       - install -Dm644 data/co.hyprlab.Vireo.Beta.desktop /app/share/applications/co.hyprlab.Vireo.Beta.desktop
       - install -Dm644 data/icons/hicolor/256x256/apps/co.hyprlab.Vireo.Beta.png /app/share/icons/hicolor/256x256/apps/co.hyprlab.Vireo.Beta.png
       - install -Dm644 data/icons/hicolor/512x512/apps/co.hyprlab.Vireo.Beta.png /app/share/icons/hicolor/512x512/apps/co.hyprlab.Vireo.Beta.png
+      # The restart helper's D-Bus service (Settings → App icon → Restart Now):
+      # exported by Flatpak, so the bus can start a fresh sandbox instance.
+      - install -Dm644 data/co.hyprlab.Vireo.Beta.Restart.service /app/share/dbus-1/services/co.hyprlab.Vireo.Beta.Restart.service
       - install -Dm644 data/co.hyprlab.Vireo.Beta.metainfo.xml /app/share/metainfo/co.hyprlab.Vireo.Beta.metainfo.xml
     sources:
       - type: git
