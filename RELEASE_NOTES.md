@@ -2,6 +2,12 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.20.2
+
+**Edit a filter.** Click a rule in Settings → Accounts → Filters (each row now carries a pencil beside its trash button) to open it in the filter dialog with everything filled in: account, field, match, text, destination folder, and both switches. Save replaces the rule in place. Adding a filter works as before.
+
+**More room in the rule rows.** The rows have padding around the title and the stacked switches, and the pencil and switch labels match the colour of the rest of the row.
+
 ## What's new in 1.20.1
 
 **Filtered folders under All Inboxes.** Each filter rule now has a "Show under All Inboxes" switch, next to "Count unread mail" in Settings → Accounts → Filters and in the Add Filter dialog. It is off by default. Folders of rules you switch on appear in a collapsible "Filtered Folders" section inside All Inboxes, below the per-account inbox rows, each marked with a folder-and-funnel icon in its account's colour and carrying its own unread count. Click one to open the folder; right-click for Mark as Read and Refresh. Folded up, the heading shows the section's combined unread count. The section folds away with All Inboxes and has its own toggle in the icon-only sidebar.
