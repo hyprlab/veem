@@ -7,6 +7,7 @@ use relm4::prelude::*;
 
 use crate::models::Message;
 use crate::ui::context_menu::{show_context_menu, show_context_menu_with_header, MenuEntry};
+use crate::i18n::i18n;
 
 /// Max rows rendered at once. GtkListBox isn't virtualized, so the full folder
 /// index is kept in memory for search but only this many rows are built.
@@ -438,7 +439,7 @@ impl FactoryComponent for MessageRow {
                         // the .revealed class fades it in via a CSS transition.
                         #[watch]
                         set_css_classes: &self.chevron_classes(),
-                        set_tooltip_text: Some("Actions"),
+                        set_tooltip_text: Some(i18n("Actions").as_str()),
                         set_valign: gtk::Align::Center,
                         connect_clicked[sender] => move |_| sender.input(MessageRowInput::TogglePalette),
                     },
@@ -484,19 +485,19 @@ impl FactoryComponent for MessageRow {
                             // closing the line.
                             gtk::Button {
                                 set_icon_name: "co.hyprlab.Vireo-mail-reply-sender-symbolic",
-                                set_tooltip_text: Some("Reply"),
+                                set_tooltip_text: Some(i18n("Reply").as_str()),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Reply)),
                             },
                             gtk::Button {
                                 set_icon_name: "co.hyprlab.Vireo-mail-reply-all-symbolic",
-                                set_tooltip_text: Some("Reply All"),
+                                set_tooltip_text: Some(i18n("Reply All").as_str()),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ReplyAll)),
                             },
                             gtk::Button {
                                 set_icon_name: "co.hyprlab.Vireo-mail-forward-symbolic",
-                                set_tooltip_text: Some("Forward"),
+                                set_tooltip_text: Some(i18n("Forward").as_str()),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Forward)),
                             },
@@ -506,7 +507,7 @@ impl FactoryComponent for MessageRow {
                                 #[watch]
                                 set_icon_name: if self.msg.unread { "co.hyprlab.Vireo-mail-read-symbolic" } else { "co.hyprlab.Vireo-mail-unread-symbolic" },
                                 #[watch]
-                                set_tooltip_text: Some(if self.msg.unread { "Mark as read" } else { "Mark as unread" }),
+                                set_tooltip_text: Some(if self.msg.unread { i18n("Mark as read") } else { i18n("Mark as unread") }.as_str()),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleRead)),
                             },
@@ -515,36 +516,36 @@ impl FactoryComponent for MessageRow {
                                 #[watch]
                                 set_css_classes: if self.msg.starred || self.thread_starred { &["flat", "star-active"] } else { &["flat"] },
                                 #[watch]
-                                set_tooltip_text: Some(if self.msg.starred || self.thread_starred { "Remove star" } else { "Star" }),
+                                set_tooltip_text: Some(if self.msg.starred || self.thread_starred { i18n("Remove star") } else { i18n("Star") }.as_str()),
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ToggleStar)),
                             },
                             gtk::Button {
                                 set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
-                                set_tooltip_text: Some("Archive"),
+                                set_tooltip_text: Some(i18n("Archive").as_str()),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Archive)),
                             },
                             gtk::Button {
                                 set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
-                                set_tooltip_text: Some("Delete"),
+                                set_tooltip_text: Some(i18n("Delete").as_str()),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Delete)),
                             },
                             gtk::Button {
                                 set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
-                                set_tooltip_text: Some("Mark as spam"),
+                                set_tooltip_text: Some(i18n("Mark as spam").as_str()),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::Spam)),
                             },
                             gtk::Button {
                                 set_icon_name: "co.hyprlab.Vireo-contact-new-symbolic",
-                                set_tooltip_text: Some("Add sender to Contacts"),
+                                set_tooltip_text: Some(i18n("Add sender to Contacts").as_str()),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::AddContact)),
                             },
                             gtk::Button {
                                 set_icon_name: "co.hyprlab.Vireo-code-symbolic",
-                                set_tooltip_text: Some("View Source"),
+                                set_tooltip_text: Some(i18n("View Source").as_str()),
                                 add_css_class: "flat",
                                 connect_clicked[sender] => move |_| sender.input(MessageRowInput::Action(RowAction::ViewSource)),
                             },
@@ -641,7 +642,7 @@ impl FactoryComponent for MessageRow {
                     // and the expand/collapse caret merged into one grey pill.
                     gtk::Button {
                         set_visible: self.thread_count > 1,
-                        set_tooltip_text: Some("Show conversation"),
+                        set_tooltip_text: Some(i18n("Show conversation").as_str()),
                         add_css_class: "flat",
                         add_css_class: "thread-chip",
                         set_valign: gtk::Align::Center,
@@ -1673,7 +1674,7 @@ impl SimpleComponent for MessageList {
                         // Its own default minimum is wider than the rows need.
                         set_width_chars: 3,
                         #[watch]
-                        set_placeholder_text: Some(model.search_placeholder()),
+                        set_placeholder_text: Some(model.search_placeholder().as_str()),
                         connect_search_changed[sender] => move |entry| {
                             sender.input(MessageListInput::Search(entry.text().to_string()));
                         },
@@ -1699,8 +1700,8 @@ impl SimpleComponent for MessageList {
                     #[name = "scope_dropdown"]
                     gtk::DropDown {
                         set_valign: gtk::Align::Center,
-                        set_tooltip_text: Some("Choose which folders to search"),
-                        set_model: Some(&gtk::StringList::new(&["All folders", "This folder"])),
+                        set_tooltip_text: Some(i18n("Choose which folders to search").as_str()),
+                        set_model: Some(&gtk::StringList::new(&[i18n("All folders").as_str(), i18n("This folder").as_str()])),
                         set_selected: 0,
                         connect_selected_notify[sender] => move |dd| {
                             let scope = if dd.selected() == 0 {
@@ -1747,37 +1748,37 @@ impl SimpleComponent for MessageList {
                     },
                     gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-mail-read-symbolic",
-                        set_tooltip_text: Some("Mark as Read"),
+                        set_tooltip_text: Some(i18n("Mark as Read").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::MarkRead),
                     },
                     gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-mail-unread-symbolic",
-                        set_tooltip_text: Some("Mark as Unread"),
+                        set_tooltip_text: Some(i18n("Mark as Unread").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::MarkUnread),
                     },
                     gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-starred-symbolic",
-                        set_tooltip_text: Some("Flag"),
+                        set_tooltip_text: Some(i18n("Flag").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::Flag),
                     },
                     gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
-                        set_tooltip_text: Some("Archive"),
+                        set_tooltip_text: Some(i18n("Archive").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::Archive),
                     },
                     gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
-                        set_tooltip_text: Some("Mark as Spam"),
+                        set_tooltip_text: Some(i18n("Mark as Spam").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::Spam),
                     },
                     gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
-                        set_tooltip_text: Some("Delete"),
+                        set_tooltip_text: Some(i18n("Delete").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::Bulk(BulkAction::Delete),
                     },
@@ -1786,7 +1787,7 @@ impl SimpleComponent for MessageList {
                     },
                     gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-edit-clear-symbolic",
-                        set_tooltip_text: Some("Clear selection"),
+                        set_tooltip_text: Some(i18n("Clear selection").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageListInput::ClearSelection,
                     },
@@ -1857,7 +1858,7 @@ impl SimpleComponent for MessageList {
                             set_height_request: 18,
                         },
                         gtk::Label {
-                            set_label: "Loading more…",
+                            set_label: &i18n("Loading more…"),
                             add_css_class: "dim-label",
                         },
                     },
@@ -1867,8 +1868,8 @@ impl SimpleComponent for MessageList {
                     // "No message selected", so the two placeholders match.
                     adw::StatusPage {
                         set_icon_name: Some("co.hyprlab.Vireo-mail-inbox-symbolic"),
-                        set_title: "No Messages",
-                        set_description: Some("There's nothing here right now."),
+                        set_title: &i18n("No Messages"),
+                        set_description: Some(i18n("There's nothing here right now.").as_str()),
                         set_vexpand: true,
                         #[watch]
                         set_visible: model.is_empty_state(),
@@ -2901,9 +2902,9 @@ impl MessageList {
                 "co.hyprlab.Vireo-starred-symbolic"
             })
         } else if msg.starred {
-            item(RowAction::ToggleStar, "Remove Star", "co.hyprlab.Vireo-non-starred-symbolic")
+            item(RowAction::ToggleStar, &i18n("Remove Star"), "co.hyprlab.Vireo-non-starred-symbolic")
         } else {
-            item(RowAction::ToggleStar, "Star", "co.hyprlab.Vireo-starred-symbolic")
+            item(RowAction::ToggleStar, &i18n("Star"), "co.hyprlab.Vireo-starred-symbolic")
         }];
 
         // A conversation row acts on the whole thread: its read entry marks
@@ -2939,33 +2940,33 @@ impl MessageList {
             );
         } else if msg.unread {
             flag_section
-                .push(item(RowAction::ToggleRead, "Mark as Read", "co.hyprlab.Vireo-mail-read-symbolic"));
+                .push(item(RowAction::ToggleRead, &i18n("Mark as Read"), "co.hyprlab.Vireo-mail-read-symbolic"));
         } else {
             flag_section.push(item(
                 RowAction::ToggleRead,
-                "Mark as Unread",
+                &i18n("Mark as Unread"),
                 "co.hyprlab.Vireo-mail-unread-symbolic",
             ));
         }
 
         let sections = vec![
             vec![
-                item(RowAction::Reply, "Reply", "co.hyprlab.Vireo-mail-reply-sender-symbolic"),
-                item(RowAction::ReplyAll, "Reply All", "co.hyprlab.Vireo-mail-reply-all-symbolic"),
-                item(RowAction::Forward, "Forward", "co.hyprlab.Vireo-mail-forward-symbolic"),
+                item(RowAction::Reply, &i18n("Reply"), "co.hyprlab.Vireo-mail-reply-sender-symbolic"),
+                item(RowAction::ReplyAll, &i18n("Reply All"), "co.hyprlab.Vireo-mail-reply-all-symbolic"),
+                item(RowAction::Forward, &i18n("Forward"), "co.hyprlab.Vireo-mail-forward-symbolic"),
             ],
             flag_section,
             vec![
-                item(RowAction::Spam, "Mark as Spam", "co.hyprlab.Vireo-mail-mark-junk-symbolic"),
-                item(RowAction::Archive, "Archive", "co.hyprlab.Vireo-mail-archive-symbolic"),
-                item(RowAction::Delete, "Delete", "co.hyprlab.Vireo-user-trash-symbolic"),
+                item(RowAction::Spam, &i18n("Mark as Spam"), "co.hyprlab.Vireo-mail-mark-junk-symbolic"),
+                item(RowAction::Archive, &i18n("Archive"), "co.hyprlab.Vireo-mail-archive-symbolic"),
+                item(RowAction::Delete, &i18n("Delete"), "co.hyprlab.Vireo-user-trash-symbolic"),
             ],
             vec![item(
                 RowAction::AddContact,
-                "Add Sender to Contacts",
+                &i18n("Add Sender to Contacts"),
                 "co.hyprlab.Vireo-contact-new-symbolic",
             )],
-            vec![item(RowAction::ViewSource, "View Source", "co.hyprlab.Vireo-code-symbolic")],
+            vec![item(RowAction::ViewSource, &i18n("View Source"), "co.hyprlab.Vireo-code-symbolic")],
         ];
 
         show_context_menu(self.rows.widget(), x, y, sections);
@@ -2980,14 +2981,14 @@ impl MessageList {
 
         let sections = vec![
             vec![
-                item(BulkAction::MarkRead, "Mark as Read", "co.hyprlab.Vireo-mail-read-symbolic"),
-                item(BulkAction::MarkUnread, "Mark as Unread", "co.hyprlab.Vireo-mail-unread-symbolic"),
-                item(BulkAction::Flag, "Flag", "co.hyprlab.Vireo-starred-symbolic"),
+                item(BulkAction::MarkRead, &i18n("Mark as Read"), "co.hyprlab.Vireo-mail-read-symbolic"),
+                item(BulkAction::MarkUnread, &i18n("Mark as Unread"), "co.hyprlab.Vireo-mail-unread-symbolic"),
+                item(BulkAction::Flag, &i18n("Flag"), "co.hyprlab.Vireo-starred-symbolic"),
             ],
             vec![
-                item(BulkAction::Spam, "Mark as Spam", "co.hyprlab.Vireo-mail-mark-junk-symbolic"),
-                item(BulkAction::Archive, "Archive", "co.hyprlab.Vireo-mail-archive-symbolic"),
-                item(BulkAction::Delete, "Delete", "co.hyprlab.Vireo-user-trash-symbolic"),
+                item(BulkAction::Spam, &i18n("Mark as Spam"), "co.hyprlab.Vireo-mail-mark-junk-symbolic"),
+                item(BulkAction::Archive, &i18n("Archive"), "co.hyprlab.Vireo-mail-archive-symbolic"),
+                item(BulkAction::Delete, &i18n("Delete"), "co.hyprlab.Vireo-user-trash-symbolic"),
             ],
         ];
 
@@ -3275,11 +3276,11 @@ impl MessageList {
         }
     }
 
-    fn search_placeholder(&self) -> &'static str {
-        match self.scope {
+    fn search_placeholder(&self) -> String {
+        i18n(match self.scope {
             SearchScope::AllFolders => "Search all folders",
             SearchScope::ThisFolder => "Search this folder",
-        }
+        })
     }
 
     /// Drop any active search: clear the query and the entry text so a folder

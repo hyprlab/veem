@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
+use crate::i18n::i18n;
 
 /// A name + email pair from the address book.
 #[derive(Debug, Clone)]
@@ -1035,13 +1036,13 @@ fn book_display_name(book_data: &str, sources: &HashMap<String, String>) -> Stri
     }
     let account = identity.or(top_display);
     match (backend.as_deref(), account) {
-        (Some("local"), _) | (None, None) => "On This Computer".to_string(),
+        (Some("local"), _) | (None, None) => i18n("On This Computer"),
         (Some("google"), Some(a)) => format!("Google — {a}"),
         (Some("google"), None) => "Google".to_string(),
         (Some("microsoft365"), Some(a)) => format!("Microsoft 365 — {a}"),
         (Some("microsoft365"), None) => "Microsoft 365".to_string(),
         (_, Some(a)) => format!("CardDAV — {a}"),
-        (_, None) => "CardDAV Address Book".to_string(),
+        (_, None) => i18n("CardDAV Address Book"),
     }
 }
 

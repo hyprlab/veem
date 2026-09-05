@@ -7,6 +7,7 @@ use crate::contacts::Suggestion;
 use crate::models::DraftOrigin;
 use crate::ui::rich_editor::{self, RichEditor};
 use crate::worker::OutgoingMessage;
+use crate::i18n::i18n;
 
 /// Which recipient field a suggestion is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,10 +45,10 @@ fn size_for_host(
 fn set_toggle_icon(btn: &gtk::Button, windowed: bool) {
     if windowed {
         btn.set_icon_name("co.hyprlab.Vireo-view-restore-symbolic");
-        btn.set_tooltip_text(Some("Collapse into reader"));
+        btn.set_tooltip_text(Some(i18n("Collapse into reader").as_str()));
     } else {
         btn.set_icon_name("co.hyprlab.Vireo-view-fullscreen-symbolic");
-        btn.set_tooltip_text(Some("Open in window"));
+        btn.set_tooltip_text(Some(i18n("Open in window").as_str()));
     }
 }
 
@@ -229,34 +230,34 @@ impl Component for Compose {
                     },
 
                     pack_start = &gtk::Button {
-                        set_label: "Cancel",
+                        set_label: &i18n("Cancel"),
                         connect_clicked => ComposeInput::Cancel,
                     },
                     pack_start = &gtk::Button {
-                        set_label: "Save Draft",
-                        set_tooltip_text: Some("Save to Drafts"),
+                        set_label: &i18n("Save Draft"),
+                        set_tooltip_text: Some(i18n("Save to Drafts").as_str()),
                         connect_clicked => ComposeInput::SaveDraft,
                     },
                     pack_end = &gtk::Button {
-                        set_label: "Send",
+                        set_label: &i18n("Send"),
                         add_css_class: "suggested-action",
                         connect_clicked => ComposeInput::Send,
                     },
                     pack_end = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-mail-attachment-symbolic",
-                        set_tooltip_text: Some("Attach files"),
+                        set_tooltip_text: Some(i18n("Attach files").as_str()),
                         connect_clicked => ComposeInput::AttachFiles,
                     },
                     pack_end = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-x-office-address-book-symbolic",
-                        set_tooltip_text: Some("Open Contacts"),
+                        set_tooltip_text: Some(i18n("Open Contacts").as_str()),
                         connect_clicked => ComposeInput::OpenContacts,
                     },
                     // Promote inline reply → window, or collapse window → inline.
                     // Icon/visibility set in `init` and on SetWindowed.
                     #[name = "toggle_btn"]
                     pack_end = &gtk::Button {
-                        set_tooltip_text: Some("Open in window"),
+                        set_tooltip_text: Some(i18n("Open in window").as_str()),
                         connect_clicked => ComposeInput::ToggleWindowed,
                     },
                 },
@@ -280,32 +281,32 @@ impl Component for Compose {
 
                         #[name = "from_row"]
                         adw::ComboRow {
-                            set_title: "From",
+                            set_title: &i18n("From"),
                             connect_selected_notify => ComposeInput::AccountChanged,
                         },
                         #[name = "to_row"]
                         adw::EntryRow {
-                            set_title: "To",
+                            set_title: &i18n("To"),
                             set_input_purpose: gtk::InputPurpose::Email,
                         },
                         #[name = "cc_row"]
                         adw::EntryRow {
-                            set_title: "Cc",
+                            set_title: &i18n("Cc"),
                             set_input_purpose: gtk::InputPurpose::Email,
                         },
                         #[name = "bcc_row"]
                         adw::EntryRow {
-                            set_title: "Bcc",
+                            set_title: &i18n("Bcc"),
                             set_input_purpose: gtk::InputPurpose::Email,
                         },
                         #[name = "reply_to_row"]
                         adw::EntryRow {
-                            set_title: "Reply-To",
+                            set_title: &i18n("Reply-To"),
                             set_input_purpose: gtk::InputPurpose::Email,
                         },
                         #[name = "subject_row"]
                         adw::EntryRow {
-                            set_title: "Subject",
+                            set_title: &i18n("Subject"),
                         },
                     },
 
@@ -424,10 +425,10 @@ impl Component for Compose {
         // return when the composer pops out to a window.
         widgets.fields_list.set_visible(!model.compact);
         {
-            let more = gtk::Button::with_label("More");
+            let more = gtk::Button::with_label(&i18n("More"));
             more.add_css_class("flat");
             more.set_valign(gtk::Align::Center);
-            more.set_tooltip_text(Some("Show Cc, Bcc and Reply-To"));
+            more.set_tooltip_text(Some(i18n("Show Cc, Bcc and Reply-To").as_str()));
             let cc = widgets.cc_row.clone();
             let bcc = widgets.bcc_row.clone();
             let reply_to = widgets.reply_to_row.clone();
@@ -680,7 +681,7 @@ impl Component for Compose {
 
             ComposeInput::AttachFiles => {
                 let dialog = gtk::FileDialog::new();
-                dialog.set_title("Attach Files");
+                dialog.set_title(&i18n("Attach Files"));
                 let parent = root.root().and_downcast::<gtk::Window>();
                 let s = sender.input_sender().clone();
                 dialog.open_multiple(

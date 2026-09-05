@@ -11,6 +11,7 @@ use relm4::prelude::*;
 use crate::models::{Attachment, Message};
 use crate::ui::message_list::RowAction;
 use crate::ui::message_view::{MessageView, MessageViewInput, MessageViewOutput};
+use crate::i18n::i18n;
 
 /// Everything needed to open a popout reader for one message.
 #[derive(Debug)]
@@ -146,30 +147,30 @@ impl Component for MessageWindow {
                     },
                     pack_start = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-mail-reply-sender-symbolic",
-                        set_tooltip_text: Some("Reply"),
+                        set_tooltip_text: Some(i18n("Reply").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::Reply,
                     },
                     pack_start = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-mail-reply-all-symbolic",
-                        set_tooltip_text: Some("Reply All"),
+                        set_tooltip_text: Some(i18n("Reply All").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::ReplyAll,
                     },
                     pack_start = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-mail-forward-symbolic",
-                        set_tooltip_text: Some("Forward"),
+                        set_tooltip_text: Some(i18n("Forward").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::Forward,
                     },
                     pack_start = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-contact-new-symbolic",
-                        set_tooltip_text: Some("Add sender to Contacts"),
+                        set_tooltip_text: Some(i18n("Add sender to Contacts").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::AddToContacts,
                     },
                     pack_start = &gtk::Button {
-                        set_tooltip_text: Some("Flag"),
+                        set_tooltip_text: Some(i18n("Flag").as_str()),
                         set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
                         #[watch]
                         set_css_classes: if model.msg.starred {
@@ -181,31 +182,31 @@ impl Component for MessageWindow {
                     },
                     pack_end = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-user-trash-symbolic",
-                        set_tooltip_text: Some("Delete"),
+                        set_tooltip_text: Some(i18n("Delete").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::Delete,
                     },
                     pack_end = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-code-symbolic",
-                        set_tooltip_text: Some("View Source"),
+                        set_tooltip_text: Some(i18n("View Source").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::ViewSource,
                     },
                     pack_end = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
-                        set_tooltip_text: Some("Mark as Spam"),
+                        set_tooltip_text: Some(i18n("Mark as Spam").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::Spam,
                     },
                     pack_end = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
-                        set_tooltip_text: Some("Archive"),
+                        set_tooltip_text: Some(i18n("Archive").as_str()),
                         add_css_class: "flat",
                         connect_clicked => MessageWindowInput::Archive,
                     },
                     pack_end = &gtk::Spinner {
                         set_valign: gtk::Align::Center,
-                        set_tooltip_text: Some("Downloading attachments…"),
+                        set_tooltip_text: Some(i18n("Downloading attachments…").as_str()),
                         #[watch]
                         set_spinning: model.attachments_loading,
                         #[watch]
@@ -213,7 +214,7 @@ impl Component for MessageWindow {
                     },
                     pack_end = &gtk::Button {
                         set_icon_name: "co.hyprlab.Vireo-folder-download-symbolic",
-                        set_tooltip_text: Some("Load attachments from server"),
+                        set_tooltip_text: Some(i18n("Load attachments from server").as_str()),
                         add_css_class: "flat",
                         add_css_class: "attach-present",
                         #[watch]
@@ -222,7 +223,7 @@ impl Component for MessageWindow {
                     },
                     pack_end = &gtk::MenuButton {
                         set_icon_name: "co.hyprlab.Vireo-mail-attachment-symbolic",
-                        set_tooltip_text: Some("Attachments"),
+                        set_tooltip_text: Some(i18n("Attachments").as_str()),
                         add_css_class: "flat",
                         add_css_class: "attach-present",
                         #[watch]
@@ -480,7 +481,7 @@ impl MessageWindow {
             info.append(&size);
             row.append(&info);
 
-            let open = gtk::Button::with_label("Open");
+            let open = gtk::Button::with_label(&i18n("Open"));
             open.add_css_class("flat");
             open.set_valign(gtk::Align::Center);
             let s = sender.input_sender().clone();
@@ -493,7 +494,7 @@ impl MessageWindow {
         if !self.attachments.is_empty() {
             self.attach_list
                 .append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-            let save = gtk::Button::with_label("Save All…");
+            let save = gtk::Button::with_label(&i18n("Save All…"));
             save.add_css_class("flat");
             let s = sender.input_sender().clone();
             save.connect_clicked(move |_| {

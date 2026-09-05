@@ -26,6 +26,7 @@ use crate::backend::{MailBackend, MockBackend};
 use crate::cache::Cache;
 use crate::config::AccountConfig;
 use crate::models::{Account, Folder, FolderKind, Message};
+use crate::i18n::{i18n, i18n_f, ni18n_f};
 
 /// Number of most-recent messages to fetch attachment info (BODYSTRUCTURE) for;
 /// older messages get an envelope-only index row and resolve attachments on open.
@@ -391,7 +392,7 @@ pub fn spawn(
                 Ok(rt) => rt,
                 Err(e) => {
                     emit(WorkerEvent::Error {
-                        text: format!("runtime error: {e}"),
+                        text: i18n_f("runtime error: {e}", &[("e", &(e).to_string())]),
                         connectivity: false,
                     });
                     return;
@@ -1085,7 +1086,7 @@ async fn run_imap(
             MailRequest::LoadMessages { folder_id, path }
             | MailRequest::SyncFolder { folder_id, path } => {
                 if !background {
-                    emit(WorkerEvent::Status("Syncing…".into()));
+                    emit(WorkerEvent::Status(i18n("Syncing…")));
                 }
                 // Fast first page (or a recent-window refresh over the cached
                 // index); the background backfill indexes the rest of the folder.
@@ -1161,7 +1162,7 @@ async fn run_imap(
                     }
                     Err(e) => {
                         emit(WorkerEvent::Error {
-                            text: format!("Could not load {path}: {e}"),
+                            text: i18n_f("Could not load {path}: {e}", &[("path", &(path).to_string()), ("e", &(e).to_string())]),
                             connectivity: true,
                         });
                     }
@@ -1190,7 +1191,7 @@ async fn run_imap(
                 }
                 Err(e) => {
                     emit(WorkerEvent::Error {
-                        text: format!("Could not load message: {e}"),
+                        text: i18n_f("Could not load message: {e}", &[("e", &(e).to_string())]),
                         connectivity: true,
                     });
                 }
@@ -1247,7 +1248,7 @@ async fn run_imap(
                         }
                         Err(e) => {
                             emit(WorkerEvent::Error {
-                                text: format!("Could not load conversation: {e}"),
+                                text: i18n_f("Could not load conversation: {e}", &[("e", &(e).to_string())]),
                                 connectivity: true,
                             });
                         }
@@ -1266,7 +1267,7 @@ async fn run_imap(
                 Ok(text) => emit(WorkerEvent::Source { text }),
                 Err(e) => {
                     emit(WorkerEvent::Error {
-                        text: format!("Could not load source: {e}"),
+                        text: i18n_f("Could not load source: {e}", &[("e", &(e).to_string())]),
                         connectivity: true,
                     });
                 }
@@ -1288,7 +1289,7 @@ async fn run_imap(
                 }
                 Err(e) => {
                     emit(WorkerEvent::Error {
-                        text: format!("Could not load attachments: {e}"),
+                        text: i18n_f("Could not load attachments: {e}", &[("e", &(e).to_string())]),
                         connectivity: true,
                     });
                 }
@@ -1298,7 +1299,7 @@ async fn run_imap(
                 let sess = session.as_mut().unwrap();
                 if let Err(e) = store_flag(sess, &path, uid, "\\Seen", seen).await {
                     emit(WorkerEvent::Error {
-                        text: format!("Could not update message: {e}"),
+                        text: i18n_f("Could not update message: {e}", &[("e", &(e).to_string())]),
                         connectivity: false,
                     });
                     lost = true;
@@ -1315,7 +1316,7 @@ async fn run_imap(
                 let sess = session.as_mut().unwrap();
                 if let Err(e) = store_flag(sess, &path, uid, "\\Flagged", flagged).await {
                     emit(WorkerEvent::Error {
-                        text: format!("Could not flag message: {e}"),
+                        text: i18n_f("Could not flag message: {e}", &[("e", &(e).to_string())]),
                         connectivity: false,
                     });
                     lost = true;
@@ -1335,7 +1336,7 @@ async fn run_imap(
                     }
                     Err(e) => {
                         emit(WorkerEvent::Error {
-                            text: format!("Could not mark folder read: {e}"),
+                            text: i18n_f("Could not mark folder read: {e}", &[("e", &(e).to_string())]),
                             connectivity: false,
                         });
                         lost = true;
@@ -1371,7 +1372,7 @@ async fn run_imap(
                     }
                     Err(e) => {
                         emit(WorkerEvent::Error {
-                            text: format!("Could not mark as spam: {e}"),
+                            text: i18n_f("Could not mark as spam: {e}", &[("e", &(e).to_string())]),
                             connectivity: false,
                         });
                         lost = true;
@@ -1392,7 +1393,7 @@ async fn run_imap(
                     }
                     Err(e) => {
                         emit(WorkerEvent::Error {
-                            text: format!("Could not move message: {e}"),
+                            text: i18n_f("Could not move message: {e}", &[("e", &(e).to_string())]),
                             connectivity: false,
                         });
                         lost = true;
@@ -1415,7 +1416,7 @@ async fn run_imap(
                     }
                     Err(e) => {
                         emit(WorkerEvent::Error {
-                            text: format!("Could not move {} messages: {e}", uids.len()),
+                            text: i18n_f("Could not move {len} messages: {e}", &[("len", &(uids.len()).to_string()), ("e", &(e).to_string())]),
                             connectivity: false,
                         });
                         lost = true;
@@ -1490,13 +1491,12 @@ async fn run_imap(
                 }
                 if let Some(e) = failed {
                     emit(WorkerEvent::Error {
-                        text: format!("Undo failed: {e}"),
+                        text: i18n_f("Undo failed: {e}", &[("e", &(e).to_string())]),
                         connectivity: false,
                     });
                 } else if uids.is_empty() {
                     emit(WorkerEvent::Error {
-                        text: "Undo: the messages are no longer where that move put them."
-                            .to_string(),
+                        text: i18n("Undo: the messages are no longer where that move put them."),
                         connectivity: false,
                     });
                 } else {
@@ -1518,9 +1518,9 @@ async fn run_imap(
                             message_ids: message_ids.clone(),
                         });
                     }
-                    emit(WorkerEvent::Notice(match uids.len() {
-                        1 => "Move undone — message restored".to_string(),
-                        n => format!("Move undone — {n} messages restored"),
+                    emit(WorkerEvent::Notice({
+                        let n = uids.len() as u32;
+                        ni18n_f("Move undone — message restored", "Move undone — {n} messages restored", n, &[("n", &n.to_string())])
                     }));
                 }
                 // Always signal completion — the app spins the refresh
@@ -1540,7 +1540,7 @@ async fn run_imap(
                     }
                     Err(e) => {
                         emit(WorkerEvent::Error {
-                            text: format!("Could not delete permanently: {e}"),
+                            text: i18n_f("Could not delete permanently: {e}", &[("e", &(e).to_string())]),
                             connectivity: false,
                         });
                         lost = true;
@@ -1556,7 +1556,7 @@ async fn run_imap(
                     Ok(()) => refresh_folders(account_id, sess, cache.as_ref(), &emit).await,
                     Err(e) => {
                         emit(WorkerEvent::Error {
-                            text: format!("Could not create folder: {e}"),
+                            text: i18n_f("Could not create folder: {e}", &[("e", &(e).to_string())]),
                             connectivity: false,
                         });
                         lost = true;
@@ -1570,7 +1570,7 @@ async fn run_imap(
                     Ok(()) => refresh_folders(account_id, sess, cache.as_ref(), &emit).await,
                     Err(e) => {
                         emit(WorkerEvent::Error {
-                            text: format!("Could not move folder: {e}"),
+                            text: i18n_f("Could not move folder: {e}", &[("e", &(e).to_string())]),
                             connectivity: false,
                         });
                         lost = true;
@@ -1584,7 +1584,7 @@ async fn run_imap(
                     Ok(()) => refresh_folders(account_id, sess, cache.as_ref(), &emit).await,
                     Err(e) => {
                         emit(WorkerEvent::Error {
-                            text: format!("Could not delete folder: {e}"),
+                            text: i18n_f("Could not delete folder: {e}", &[("e", &(e).to_string())]),
                             connectivity: false,
                         });
                         lost = true;
@@ -1593,7 +1593,7 @@ async fn run_imap(
             }
 
             MailRequest::Send { message, sent_path } => {
-                emit(WorkerEvent::Status("Sending…".into()));
+                emit(WorkerEvent::Status(i18n("Sending…")));
                 match send_smtp(&account, &message).await {
                     Ok(raw) => {
                         emit(WorkerEvent::Status(String::new()));
@@ -1604,7 +1604,7 @@ async fn run_imap(
                             let sess = session.as_mut().unwrap();
                             if let Err(e) = append_to_sent(sess, &path, &raw).await {
                                 emit(WorkerEvent::Error {
-                                    text: format!("Message sent, but saving to Sent failed: {e}"),
+                                    text: i18n_f("Message sent, but saving to Sent failed: {e}", &[("e", &(e).to_string())]),
                                     connectivity: false,
                                 });
                             }
@@ -1665,9 +1665,9 @@ async fn run_imap(
                         }
                         emit(WorkerEvent::Error {
                             text: if queued {
-                                format!("Send failed: {e}. The message is in the Outbox and will be sent when the connection is back.")
+                                i18n_f("Send failed: {e}. The message is in the Outbox and will be sent when the connection is back.", &[("e", &e.to_string())])
                             } else {
-                                format!("Send failed: {e}")
+                                i18n_f("Send failed: {e}", &[("e", &e.to_string())])
                             },
                             connectivity: false,
                         });
@@ -1699,7 +1699,7 @@ async fn run_imap(
             }
 
             MailRequest::SaveDraft { message, folder_id, path } => {
-                emit(WorkerEvent::Status("Saving draft…".into()));
+                emit(WorkerEvent::Status(i18n("Saving draft…")));
                 match build_email(&account, &message) {
                     Ok(email) => {
                         let raw = email.formatted();
@@ -1755,7 +1755,7 @@ async fn run_imap(
                             Err(e) => {
                                 emit(WorkerEvent::Status(String::new()));
                                 emit(WorkerEvent::Error {
-                                    text: format!("Could not save draft: {e}"),
+                                    text: i18n_f("Could not save draft: {e}", &[("e", &(e).to_string())]),
                                     connectivity: false,
                                 });
                                 lost = true;
@@ -1765,7 +1765,7 @@ async fn run_imap(
                     Err(e) => {
                         emit(WorkerEvent::Status(String::new()));
                         emit(WorkerEvent::Error {
-                            text: format!("Could not save draft: {e}"),
+                            text: i18n_f("Could not save draft: {e}", &[("e", &(e).to_string())]),
                             connectivity: false,
                         });
                     }
@@ -1795,7 +1795,7 @@ async fn connect_and_list(
     cache: Option<&Cache>,
     emit: &impl Fn(WorkerEvent),
 ) -> Option<ImapSession> {
-    emit(WorkerEvent::Status(format!("Connecting to {}…", account.imap_host)));
+    emit(WorkerEvent::Status(i18n_f("Connecting to {host}…", &[("host", &account.imap_host)])));
 
     let result = match connect(account).await {
         Ok(mut session) => {
@@ -1822,7 +1822,7 @@ async fn connect_and_list(
                     }
                 }
                 Err(e) => emit(WorkerEvent::Error {
-                    text: format!("Could not list folders: {e}"),
+                    text: i18n_f("Could not list folders: {e}", &[("e", &(e).to_string())]),
                     connectivity: true,
                 }),
             }
@@ -1830,7 +1830,7 @@ async fn connect_and_list(
         }
         Err(e) => {
             emit(WorkerEvent::Error {
-                text: format!("Connection failed: {e}"),
+                text: i18n_f("Connection failed: {e}", &[("e", &(e).to_string())]),
                 connectivity: true,
             });
             None
@@ -2673,10 +2673,8 @@ fn splice_encoded_words(value: &[u8]) -> Vec<u8> {
 fn prefetch_status(remaining: usize) -> String {
     if remaining == 0 {
         String::new()
-    } else if remaining == 1 {
-        "Downloading attachments… 1 remaining".to_string()
     } else {
-        format!("Downloading attachments… {remaining} remaining")
+        ni18n_f("Downloading attachments… {n} remaining", "Downloading attachments… {n} remaining", remaining as u32, &[("n", &remaining.to_string())])
     }
 }
 
@@ -2784,7 +2782,7 @@ async fn flush_outbox(
     }
 
     if loud {
-        emit(WorkerEvent::Status("Sending…".into()));
+        emit(WorkerEvent::Status(i18n("Sending…")));
     }
     let mut sent_any = false;
     let mut sent = 0usize;
@@ -2813,7 +2811,7 @@ async fn flush_outbox(
                 cache.record_outbox_failure(item.id, &e.to_string());
                 if loud {
                     emit(WorkerEvent::Error {
-                        text: format!("Still could not send \u{201c}{}\u{201d}: {e}", item.subject),
+                        text: i18n_f("Still could not send “{subject}”: {e}", &[("subject", &item.subject.to_string()), ("e", &e.to_string())]),
                         connectivity: false,
                     });
                 }
@@ -5635,7 +5633,7 @@ async fn run_pop3(
                         emit(WorkerEvent::Messages { folder_id, messages: cached });
                     }
                 }
-                emit(WorkerEvent::Status("Syncing…".into()));
+                emit(WorkerEvent::Status(i18n("Syncing…")));
                 match pop3_sync(account_id, &account, inbox_id, cache.as_ref()).await {
                     Ok(messages) => {
                         let unread = messages.iter().filter(|m| m.unread).count() as u32;
@@ -5646,7 +5644,7 @@ async fn run_pop3(
                         emit(WorkerEvent::BackfillDone { folder_id });
                     }
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Could not fetch mail: {e}"),
+                        text: i18n_f("Could not fetch mail: {e}", &[("e", &(e).to_string())]),
                         connectivity: true,
                     }),
                 }
@@ -5667,7 +5665,7 @@ async fn run_pop3(
                         emit(WorkerEvent::Body { message_id, path: INBOX.to_string(), body });
                     }
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Could not load message: {e}"),
+                        text: i18n_f("Could not load message: {e}", &[("e", &(e).to_string())]),
                         connectivity: true,
                     }),
                 }
@@ -5692,7 +5690,7 @@ async fn run_pop3(
                             emit(WorkerEvent::Body { message_id, path: INBOX.to_string(), body });
                         }
                         Err(e) => emit(WorkerEvent::Error {
-                            text: format!("Could not load message: {e}"),
+                            text: i18n_f("Could not load message: {e}", &[("e", &(e).to_string())]),
                             connectivity: true,
                         }),
                     }
@@ -5705,7 +5703,7 @@ async fn run_pop3(
                         text: String::from_utf8_lossy(&raw).into_owned(),
                     }),
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Could not load source: {e}"),
+                        text: i18n_f("Could not load source: {e}", &[("e", &(e).to_string())]),
                         connectivity: true,
                     }),
                 }
@@ -5732,7 +5730,7 @@ async fn run_pop3(
                         emit(WorkerEvent::Attachments { message_id, items });
                     }
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Could not load attachments: {e}"),
+                        text: i18n_f("Could not load attachments: {e}", &[("e", &(e).to_string())]),
                         connectivity: true,
                     }),
                 }
@@ -5766,7 +5764,7 @@ async fn run_pop3(
                         }
                     }
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Could not delete message: {e}"),
+                        text: i18n_f("Could not delete message: {e}", &[("e", &(e).to_string())]),
                         connectivity: false,
                     }),
                 }
@@ -5789,7 +5787,7 @@ async fn run_pop3(
             | MailRequest::DeleteFolder { .. }
             | MailRequest::SaveDraft { .. } => {
                 emit(WorkerEvent::Error {
-                    text: "POP3 accounts don't support folders".into(),
+                    text: i18n("POP3 accounts don't support folders"),
                     connectivity: false,
                 });
             }
@@ -5821,9 +5819,9 @@ async fn run_pop3(
                     }
                     emit(WorkerEvent::Error {
                         text: if queued {
-                            format!("Send failed: {e}. The message is in the Outbox and will be sent when the connection is back.")
+                            i18n_f("Send failed: {e}. The message is in the Outbox and will be sent when the connection is back.", &[("e", &e.to_string())])
                         } else {
-                            format!("Send failed: {e}")
+                            i18n_f("Send failed: {e}", &[("e", &e.to_string())])
                         },
                         connectivity: false,
                     });
@@ -7017,7 +7015,7 @@ async fn run_graph(
                         emit(WorkerEvent::Messages { folder_id, messages: cached });
                     }
                 }
-                emit(WorkerEvent::Status("Syncing…".into()));
+                emit(WorkerEvent::Status(i18n("Syncing…")));
                 let Some(token) = graph_token(&account, &emit).await else {
                     emit(WorkerEvent::Status(String::new()));
                     continue;
@@ -7039,7 +7037,7 @@ async fn run_graph(
                         emit(WorkerEvent::BackfillDone { folder_id });
                     }
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Could not fetch mail: {e}"),
+                        text: i18n_f("Could not fetch mail: {e}", &[("e", &(e).to_string())]),
                         connectivity: true,
                     }),
                 }
@@ -7061,7 +7059,7 @@ async fn run_graph(
                         emit(WorkerEvent::Body { message_id, path, body });
                     }
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Could not load message: {e}"),
+                        text: i18n_f("Could not load message: {e}", &[("e", &(e).to_string())]),
                         connectivity: true,
                     }),
                 }
@@ -7084,7 +7082,7 @@ async fn run_graph(
                             emit(WorkerEvent::Body { message_id, path: path.clone(), body });
                         }
                         Err(e) => emit(WorkerEvent::Error {
-                            text: format!("Could not load message: {e}"),
+                            text: i18n_f("Could not load message: {e}", &[("e", &(e).to_string())]),
                             connectivity: true,
                         }),
                     }
@@ -7097,7 +7095,7 @@ async fn run_graph(
                         text: String::from_utf8_lossy(&raw).into_owned(),
                     }),
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Could not load source: {e}"),
+                        text: i18n_f("Could not load source: {e}", &[("e", &(e).to_string())]),
                         connectivity: true,
                     }),
                 }
@@ -7124,7 +7122,7 @@ async fn run_graph(
                         emit(WorkerEvent::Attachments { message_id, items });
                     }
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Could not load attachments: {e}"),
+                        text: i18n_f("Could not load attachments: {e}", &[("e", &(e).to_string())]),
                         connectivity: true,
                     }),
                 }
@@ -7197,7 +7195,7 @@ async fn run_graph(
                         .await
                 {
                     emit(WorkerEvent::Error {
-                        text: format!("Could not move message: {e}"),
+                        text: i18n_f("Could not move message: {e}", &[("e", &(e).to_string())]),
                         connectivity: false,
                     });
                 }
@@ -7209,7 +7207,7 @@ async fn run_graph(
                         .await
                 {
                     emit(WorkerEvent::Error {
-                        text: format!("Could not mark as spam: {e}"),
+                        text: i18n_f("Could not mark as spam: {e}", &[("e", &(e).to_string())]),
                         connectivity: false,
                     });
                 }
@@ -7221,7 +7219,7 @@ async fn run_graph(
                         .await
                 {
                     emit(WorkerEvent::Error {
-                        text: format!("Could not move messages: {e}"),
+                        text: i18n_f("Could not move messages: {e}", &[("e", &(e).to_string())]),
                         connectivity: false,
                     });
                 }
@@ -7256,8 +7254,7 @@ async fn run_graph(
                     .await
                 {
                     Ok(0) => emit(WorkerEvent::Error {
-                        text: "Undo: the messages are no longer where that move put them."
-                            .to_string(),
+                        text: i18n("Undo: the messages are no longer where that move put them."),
                         connectivity: false,
                     }),
                     Ok(n) => {
@@ -7284,13 +7281,13 @@ async fn run_graph(
                                 });
                             }
                         }
-                        emit(WorkerEvent::Notice(match n {
-                            1 => "Move undone — 1 message restored".to_string(),
-                            n => format!("Move undone — {n} messages restored"),
+                        emit(WorkerEvent::Notice({
+                            let n = n as u32;
+                            ni18n_f("Move undone — message restored", "Move undone — {n} messages restored", n, &[("n", &n.to_string())])
                         }));
                     }
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Undo failed: {e}"),
+                        text: i18n_f("Undo failed: {e}", &[("e", &(e).to_string())]),
                         connectivity: false,
                     }),
                 }
@@ -7321,7 +7318,7 @@ async fn run_graph(
                             .await;
                     }
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Could not create folder: {e}"),
+                        text: i18n_f("Could not create folder: {e}", &[("e", &(e).to_string())]),
                         connectivity: false,
                     }),
                 }
@@ -7331,7 +7328,7 @@ async fn run_graph(
                 let Some(token) = graph_token(&account, &emit).await else { continue };
                 let Some((_, gid)) = state.folders.get(&old_path).cloned() else {
                     emit(WorkerEvent::Error {
-                        text: "Could not rename folder: unknown folder".into(),
+                        text: i18n("Could not rename folder: unknown folder"),
                         connectivity: false,
                     });
                     continue;
@@ -7352,7 +7349,7 @@ async fn run_graph(
                             .await;
                     }
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Could not rename folder: {e}"),
+                        text: i18n_f("Could not rename folder: {e}", &[("e", &(e).to_string())]),
                         connectivity: false,
                     }),
                 }
@@ -7364,7 +7361,7 @@ async fn run_graph(
                 let Some(token) = graph_token(&account, &emit).await else { continue };
                 let Some((_, gid)) = state.folders.get(&path).cloned() else {
                     emit(WorkerEvent::Error {
-                        text: "Could not delete folder: unknown folder".into(),
+                        text: i18n("Could not delete folder: unknown folder"),
                         connectivity: false,
                     });
                     continue;
@@ -7380,14 +7377,14 @@ async fn run_graph(
                             .await;
                     }
                     Err(e) => emit(WorkerEvent::Error {
-                        text: format!("Could not delete folder: {e}"),
+                        text: i18n_f("Could not delete folder: {e}", &[("e", &(e).to_string())]),
                         connectivity: false,
                     }),
                 }
             }
 
             MailRequest::SaveDraft { message, folder_id, path } => {
-                emit(WorkerEvent::Status("Saving draft…".into()));
+                emit(WorkerEvent::Status(i18n("Saving draft…")));
                 let saved = match build_email(&account, &message) {
                     Ok(email) => {
                         let raw = email.formatted();
@@ -7438,7 +7435,7 @@ async fn run_graph(
                                     }
                                     Err(e) => {
                                         emit(WorkerEvent::Error {
-                                            text: format!("Could not save draft: {e}"),
+                                            text: i18n_f("Could not save draft: {e}", &[("e", &(e).to_string())]),
                                             connectivity: false,
                                         });
                                         false
@@ -7450,7 +7447,7 @@ async fn run_graph(
                     }
                     Err(e) => {
                         emit(WorkerEvent::Error {
-                            text: format!("Could not save draft: {e}"),
+                            text: i18n_f("Could not save draft: {e}", &[("e", &(e).to_string())]),
                             connectivity: false,
                         });
                         false
@@ -7464,7 +7461,7 @@ async fn run_graph(
 
             // `sent_path` is unused: Graph's sendMail files the Sent copy itself.
             MailRequest::Send { message, sent_path: _ } => {
-                emit(WorkerEvent::Status("Sending…".into()));
+                emit(WorkerEvent::Status(i18n("Sending…")));
                 match graph_send_message(&account, &message, &emit).await {
                     Ok(()) => {
                         emit(WorkerEvent::Status(String::new()));
@@ -7526,9 +7523,9 @@ async fn run_graph(
                         }
                         emit(WorkerEvent::Error {
                             text: if queued {
-                                format!("Send failed: {e}. The message is in the Outbox and will be sent when the connection is back.")
+                                i18n_f("Send failed: {e}. The message is in the Outbox and will be sent when the connection is back.", &[("e", &e.to_string())])
                             } else {
-                                format!("Send failed: {e}")
+                                i18n_f("Send failed: {e}", &[("e", &e.to_string())])
                             },
                             connectivity: false,
                         });
@@ -7678,7 +7675,7 @@ async fn refresh_graph_folders(
             emit(WorkerEvent::Folders(folders));
         }
         Err(e) => emit(WorkerEvent::Error {
-            text: format!("Could not list folders: {e}"),
+            text: i18n_f("Could not list folders: {e}", &[("e", &(e).to_string())]),
             connectivity: true,
         }),
     }
@@ -7904,7 +7901,7 @@ async fn graph_flush_outbox(
     if items.is_empty() {
         return;
     }
-    emit(WorkerEvent::Status("Sending…".into()));
+    emit(WorkerEvent::Status(i18n("Sending…")));
     let Some(token) = graph_token(account, emit).await else {
         emit(WorkerEvent::Status(String::new()));
         return;
@@ -7925,7 +7922,7 @@ async fn graph_flush_outbox(
             Err(e) => {
                 cache.record_outbox_failure(item.id, &e);
                 emit(WorkerEvent::Error {
-                    text: format!("Still could not send \u{201c}{}\u{201d}: {e}", item.subject),
+                    text: i18n_f("Still could not send “{subject}”: {e}", &[("subject", &item.subject.to_string()), ("e", &e.to_string())]),
                     connectivity: false,
                 });
                 break;

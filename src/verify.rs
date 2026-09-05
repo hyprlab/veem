@@ -25,6 +25,7 @@
 //! mismatches are reported alongside the authentication verdict.
 
 use crate::models::{SenderCheck, SenderTrust};
+use crate::i18n::{i18n, i18n_f};
 
 /// One authentication method's outcome, as reported by the receiving server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,15 +253,15 @@ fn judge(ev: &Evidence) -> SenderCheck {
     let (mut trust, summary) = match (dmarc, dkim, spf) {
         (AuthResult::Pass, _, _) => (
             SenderTrust::Pass,
-            format!("Your mail provider confirmed this really came from {from}."),
+            i18n_f("Your mail provider confirmed this really came from {from}.", &[("from", &from.to_string())]),
         ),
         (AuthResult::Fail, _, _) => (
             SenderTrust::Fail,
-            format!("This message failed the checks that prove it came from {from}. Treat it as a forgery."),
+            i18n_f("This message failed the checks that prove it came from {from}. Treat it as a forgery.", &[("from", &from.to_string())]),
         ),
         _ if dkim_aligned => (
             SenderTrust::Pass,
-            format!("This message carries a valid signature from {from}."),
+            i18n_f("This message carries a valid signature from {from}.", &[("from", &from.to_string())]),
         ),
         // Without a DMARC verdict, one method failing while another passes is
         // routine: mail relayed through a bulk sender or a mailing list breaks
@@ -271,36 +272,34 @@ fn judge(ev: &Evidence) -> SenderCheck {
         // the badge, which is worse than not having one.
         _ if failed_and_nothing_passed(dkim, spf) => (
             SenderTrust::Suspicious,
-            format!(
-                "This message couldn't be confirmed as coming from {from}, and the checks that ran on it failed."
-            ),
+            i18n_f("This message couldn't be confirmed as coming from {from}, and the checks that ran on it failed.", &[("from", &from.to_string())]),
         ),
         _ if !ev.checked => (
             SenderTrust::Unverified,
-            "Your mail provider didn't report any sender checks for this message.".to_string(),
+            i18n("Your mail provider didn't report any sender checks for this message."),
         ),
         _ => (
             SenderTrust::Unverified,
-            format!("Nothing here proves this came from {from} — or that it didn't."),
+            i18n_f("Nothing here proves this came from {from} — or that it didn't.", &[("from", &from.to_string())]),
         ),
     };
 
     let describe = |name: &str, r: AuthResult| match r {
-        AuthResult::Pass => Some(format!("{name}: passed")),
-        AuthResult::Fail => Some(format!("{name}: FAILED")),
-        AuthResult::Other => Some(format!("{name}: inconclusive")),
+        AuthResult::Pass => Some(i18n_f("{name}: passed", &[("name", name)])),
+        AuthResult::Fail => Some(i18n_f("{name}: FAILED", &[("name", name)])),
+        AuthResult::Other => Some(i18n_f("{name}: inconclusive", &[("name", name)])),
         AuthResult::Missing => None,
     };
-    findings.extend(describe("DMARC (is the From: address genuine)", dmarc));
-    findings.extend(describe("DKIM (signature)", dkim));
-    findings.extend(describe("SPF (sending server)", spf));
+    findings.extend(describe(&i18n("DMARC (is the From: address genuine)"), dmarc));
+    findings.extend(describe(&i18n("DKIM (signature)"), dkim));
+    findings.extend(describe(&i18n("SPF (sending server)"), spf));
     if let Some(d) = &ev.dkim_domain {
-        findings.push(format!("Signed by: {d}"));
+        findings.push(i18n_f("Signed by: {d}", &[("d", d)]));
     }
     if let Some((_, who)) = ev.authorities.first() {
-        findings.push(format!("Checked by: {who}"));
+        findings.push(i18n_f("Checked by: {who}", &[("who", who)]));
     }
-    findings.push(format!("From: {from}"));
+    findings.push(i18n_f("From: {from}", &[("from", &from.to_string())]));
 
     // --- Addressing --------------------------------------------------------
     // These never rescue a failure, but they can pull a technically-authenticated
@@ -309,7 +308,7 @@ fn judge(ev: &Evidence) -> SenderCheck {
     let mut downgraded_by_addressing = false;
     if let Some(reply) = &ev.reply_to_domain {
         if !same_site(reply, &ev.from_domain) {
-            findings.push(format!("Replies would go to {reply}, not {from}"));
+            findings.push(i18n_f("Replies would go to {reply}, not {from}", &[("reply", reply), ("from", &from.to_string())]));
             if trust == SenderTrust::Pass {
                 trust = SenderTrust::Suspicious;
                 downgraded_by_addressing = true;
@@ -318,13 +317,14 @@ fn judge(ev: &Evidence) -> SenderCheck {
     }
     if let Some(rp) = &ev.return_path_domain {
         if !same_site(rp, &ev.from_domain) {
-            findings.push(format!("Bounces would go to {rp}"));
+            findings.push(i18n_f("Bounces would go to {rp}", &[("rp", rp)]));
         }
     }
     if let Some(claimed) = domain_in_display_name(&ev.from_name) {
         if !same_site(&claimed, &ev.from_domain) {
-            findings.push(format!(
-                "The sender's name says \"{claimed}\" but the address is {from}"
+            findings.push(i18n_f(
+                "The sender's name says \"{claimed}\" but the address is {from}",
+                &[("claimed", &claimed), ("from", &from.to_string())],
             ));
             if trust == SenderTrust::Pass {
                 trust = SenderTrust::Suspicious;

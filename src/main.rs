@@ -12,6 +12,7 @@ mod console_log;
 mod contacts;
 mod datefmt;
 mod goa;
+mod i18n;
 mod logo;
 mod models;
 mod mutf7;
@@ -51,6 +52,10 @@ pub const HIDDEN_FLAG: &str = "--hidden";
 pub static HIDDEN_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn main() {
+    // Translations first: the text domain must be bound before any string
+    // is shown, and the locale set before GTK sets its own.
+    i18n::init();
+
     // Two log sinks: stderr honours RUST_LOG as before, and the console-mode
     // ring buffer (console_log.rs) always runs verbose so the status bar's
     // console has everything under the hood to show.

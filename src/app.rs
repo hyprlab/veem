@@ -82,6 +82,7 @@ use crate::ui::sidebar::{
     CtxAction, SectionData, Sidebar, SidebarInit, SidebarInput, SidebarOutput, UnifiedFolderRef,
 };
 use crate::worker::{self, MailRequest, OutgoingMessage, WorkerEvent};
+use crate::i18n::{i18n, i18n_f, i18n_noop, ni18n_f};
 
 /// The currently selected mailbox.
 #[derive(Clone)]
@@ -935,7 +936,7 @@ impl SimpleComponent for AppModel {
                             #[name = "sidebar_menu"]
                             pack_end = &gtk::MenuButton {
                                 set_icon_name: "co.hyprlab.Vireo-open-menu-symbolic",
-                                set_tooltip_text: Some("Main Menu"),
+                                set_tooltip_text: Some(i18n("Main Menu").as_str()),
                                 add_css_class: "flat",
                                 set_menu_model: Some(&model.menu),
                             },
@@ -1039,11 +1040,7 @@ impl SimpleComponent for AppModel {
                                 pack_start = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-sidebar-show-symbolic",
                                     #[watch]
-                                    set_tooltip_text: Some(if model.rail_active {
-                                        "Expand sidebar"
-                                    } else {
-                                        "Collapse sidebar"
-                                    }),
+                                    set_tooltip_text: Some(if model.rail_active { i18n("Expand sidebar") } else { i18n("Collapse sidebar") }.as_str()),
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleSidebar),
                                 },
@@ -1051,7 +1048,7 @@ impl SimpleComponent for AppModel {
                                 // Ctrl+F and / open it too.
                                 pack_start = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-system-search-symbolic",
-                                    set_tooltip_text: Some("Search messages (Ctrl+F)"),
+                                    set_tooltip_text: Some(i18n("Search messages (Ctrl+F)").as_str()),
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |_| {
                                         sender.input(AppMsg::OpenListSearch);
@@ -1065,7 +1062,7 @@ impl SimpleComponent for AppModel {
                                 // Session state, like Mail.app's filter bar.
                                 pack_end = &gtk::ToggleButton {
                                     set_icon_name: "co.hyprlab.Vireo-mail-unread-symbolic",
-                                    set_tooltip_text: Some("Show only unread"),
+                                    set_tooltip_text: Some(i18n("Show only unread").as_str()),
                                     set_valign: gtk::Align::Center,
                                     add_css_class: "flat",
                                     connect_toggled[sender] => move |btn| {
@@ -1074,7 +1071,7 @@ impl SimpleComponent for AppModel {
                                 },
                                 pack_end = &gtk::ToggleButton {
                                     set_icon_name: "co.hyprlab.Vireo-starred-symbolic",
-                                    set_tooltip_text: Some("Show only starred"),
+                                    set_tooltip_text: Some(i18n("Show only starred").as_str()),
                                     set_valign: gtk::Align::Center,
                                     add_css_class: "flat",
                                     connect_toggled[sender] => move |btn| {
@@ -1085,7 +1082,7 @@ impl SimpleComponent for AppModel {
                                 #[name = "list_sort_btn"]
                                 pack_end = &gtk::MenuButton {
                                     set_icon_name: "co.hyprlab.Vireo-view-sort-descending-symbolic",
-                                    set_tooltip_text: Some("Sort messages"),
+                                    set_tooltip_text: Some(i18n("Sort messages").as_str()),
                                     set_valign: gtk::Align::Center,
                                     add_css_class: "flat",
                                 },
@@ -1135,7 +1132,7 @@ impl SimpleComponent for AppModel {
                                 // whether to edit, send or bin it.
                                 pack_start = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-document-edit-symbolic",
-                                    set_tooltip_text: Some("Edit this message"),
+                                    set_tooltip_text: Some(i18n("Edit this message").as_str()),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: model.showing_outbox && !model.reader_actions_collapsed
@@ -1146,7 +1143,7 @@ impl SimpleComponent for AppModel {
                                 },
                                 pack_start = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-mail-send-symbolic",
-                                    set_tooltip_text: Some("Try to send this message now"),
+                                    set_tooltip_text: Some(i18n("Try to send this message now").as_str()),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: model.showing_outbox && !model.reader_actions_collapsed
@@ -1156,7 +1153,7 @@ impl SimpleComponent for AppModel {
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::SendCurrentOutbox),
                                 },
                                 pack_start = &gtk::Button {
-                                    set_label: "Send all",
+                                    set_label: &i18n("Send all"),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: model.showing_outbox && !model.reader_actions_collapsed
@@ -1165,7 +1162,7 @@ impl SimpleComponent for AppModel {
                                 },
                                 pack_start = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-mail-reply-sender-symbolic",
-                                    set_tooltip_text: Some("Reply"),
+                                    set_tooltip_text: Some(i18n("Reply").as_str()),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed
@@ -1180,7 +1177,7 @@ impl SimpleComponent for AppModel {
                                 },
                                 pack_start = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-mail-reply-all-symbolic",
-                                    set_tooltip_text: Some("Reply All"),
+                                    set_tooltip_text: Some(i18n("Reply All").as_str()),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed
@@ -1191,7 +1188,7 @@ impl SimpleComponent for AppModel {
                                 },
                                 pack_start = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-mail-forward-symbolic",
-                                    set_tooltip_text: Some("Forward"),
+                                    set_tooltip_text: Some(i18n("Forward").as_str()),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed
@@ -1214,17 +1211,13 @@ impl SimpleComponent for AppModel {
                                         "co.hyprlab.Vireo-mail-unread-symbolic"
                                     },
                                     #[watch]
-                                    set_tooltip_text: Some(if model.reply_target().is_some_and(|m| m.unread) {
-                                        "Mark as Read"
-                                    } else {
-                                        "Mark as Unread"
-                                    }),
+                                    set_tooltip_text: Some(if model.reply_target().is_some_and(|m| m.unread) { i18n("Mark as Read") } else { i18n("Mark as Unread") }.as_str()),
                                     #[watch]
                                     set_sensitive: model.reply_target().is_some(),
                                     connect_clicked[sender] => move |_| sender.input(AppMsg::ToggleReadCurrent),
                                 },
                                 pack_start = &gtk::Button {
-                                    set_tooltip_text: Some("Flag"),
+                                    set_tooltip_text: Some(i18n("Flag").as_str()),
                                     // One glyph in both states, like every other
                                     // icon; the flagged state carries colour only.
                                     set_icon_name: "co.hyprlab.Vireo-non-starred-symbolic",
@@ -1244,7 +1237,7 @@ impl SimpleComponent for AppModel {
                                 // In-message find (#103), right of the star.
                                 pack_start = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-system-search-symbolic",
-                                    set_tooltip_text: Some("Find in message (Ctrl+F)"),
+                                    set_tooltip_text: Some(i18n("Find in message (Ctrl+F)").as_str()),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox
@@ -1264,7 +1257,7 @@ impl SimpleComponent for AppModel {
                                 // seal lives in the message header now — #88.)
                                                                 pack_end = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-printer-symbolic",
-                                    set_tooltip_text: Some("Print Preview (Ctrl+Shift+P)"),
+                                    set_tooltip_text: Some(i18n("Print Preview (Ctrl+Shift+P)").as_str()),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed
@@ -1278,7 +1271,7 @@ impl SimpleComponent for AppModel {
                                 },
                                 pack_end = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-mail-mark-junk-symbolic",
-                                    set_tooltip_text: Some("Mark as Spam"),
+                                    set_tooltip_text: Some(i18n("Mark as Spam").as_str()),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed
@@ -1302,7 +1295,7 @@ impl SimpleComponent for AppModel {
                                 },
                                 pack_end = &gtk::Button {
                                     set_icon_name: "co.hyprlab.Vireo-mail-archive-symbolic",
-                                    set_tooltip_text: Some("Archive"),
+                                    set_tooltip_text: Some(i18n("Archive").as_str()),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: !model.showing_outbox && !model.reader_actions_collapsed
@@ -1313,7 +1306,7 @@ impl SimpleComponent for AppModel {
                                 },
                                 pack_end = &gtk::Spinner {
                                     set_valign: gtk::Align::Center,
-                                    set_tooltip_text: Some("Downloading attachments…"),
+                                    set_tooltip_text: Some(i18n("Downloading attachments…").as_str()),
                                     #[watch]
                                     set_spinning: model.attachments_loading,
                                     #[watch]
@@ -1367,7 +1360,7 @@ impl SimpleComponent for AppModel {
                         #[wrap(Some)]
                         set_end_widget = &gtk::Button {
                             set_icon_name: "co.hyprlab.Vireo-window-close-symbolic",
-                            set_tooltip_text: Some("Close"),
+                            set_tooltip_text: Some(i18n("Close").as_str()),
                             add_css_class: "circular",
                             add_css_class: "flat",
                             connect_clicked => AppMsg::LightboxClose,
@@ -1381,7 +1374,7 @@ impl SimpleComponent for AppModel {
 
                         gtk::Button {
                             set_icon_name: "co.hyprlab.Vireo-go-previous-symbolic",
-                            set_tooltip_text: Some("Previous"),
+                            set_tooltip_text: Some(i18n("Previous").as_str()),
                             set_valign: gtk::Align::Center,
                             add_css_class: "circular",
                             add_css_class: "osd",
@@ -1432,7 +1425,7 @@ impl SimpleComponent for AppModel {
 
                         gtk::Button {
                             set_icon_name: "co.hyprlab.Vireo-go-next-symbolic",
-                            set_tooltip_text: Some("Next"),
+                            set_tooltip_text: Some(i18n("Next").as_str()),
                             set_valign: gtk::Align::Center,
                             add_css_class: "circular",
                             add_css_class: "osd",
@@ -1457,13 +1450,13 @@ impl SimpleComponent for AppModel {
                             set_spacing: 6,
                             gtk::Button {
                                 set_icon_name: "co.hyprlab.Vireo-document-open-symbolic",
-                                set_tooltip_text: Some("Open"),
+                                set_tooltip_text: Some(i18n("Open").as_str()),
                                 add_css_class: "flat",
                                 connect_clicked => AppMsg::LightboxOpenCurrent,
                             },
                             gtk::Button {
                                 set_icon_name: "co.hyprlab.Vireo-folder-download-symbolic",
-                                set_tooltip_text: Some("Download…"),
+                                set_tooltip_text: Some(i18n("Download…").as_str()),
                                 add_css_class: "flat",
                                 connect_clicked => AppMsg::LightboxDownloadCurrent,
                             },
@@ -1672,19 +1665,19 @@ impl SimpleComponent for AppModel {
         let help_menu = gtk::gio::Menu::new();
         {
             let settings = gtk::gio::Menu::new();
-            settings.append(Some("Accounts & Settings"), Some("win.accounts"));
+            settings.append(Some(i18n("Accounts & Settings").as_str()), Some("win.accounts"));
             menu.append_section(None, &settings);
 
             let printing = gtk::gio::Menu::new();
-            printing.append(Some("Print Preview…"), Some("win.print-preview"));
-            printing.append(Some("Print Message…"), Some("win.print"));
+            printing.append(Some(i18n("Print Preview…").as_str()), Some("win.print-preview"));
+            printing.append(Some(i18n("Print Message…").as_str()), Some("win.print"));
             menu.append_section(None, &printing);
 
             menu.append_section(None, &help_menu);
 
             // Last, where a Quit item belongs.
             let quit = gtk::gio::Menu::new();
-            quit.append(Some("Quit"), Some("app.quit"));
+            quit.append(Some(i18n("Quit").as_str()), Some("app.quit"));
             menu.append_section(None, &quit);
         }
 
@@ -1747,7 +1740,7 @@ impl SimpleComponent for AppModel {
                 let b = gtk::Button::from_icon_name(
                     "co.hyprlab.Vireo-view-more-horizontal-symbolic",
                 );
-                b.set_tooltip_text(Some("Actions"));
+                b.set_tooltip_text(Some(i18n("Actions").as_str()));
                 b.add_css_class("flat");
                 b.set_visible(false);
                 b
@@ -1775,7 +1768,7 @@ impl SimpleComponent for AppModel {
             sidebar_header: None,
             sidebar_refresh: {
                 let b = gtk::Button::new();
-                b.set_tooltip_text(Some("Refresh or long-press for Status Bar"));
+                b.set_tooltip_text(Some(i18n("Refresh or long-press for Status Bar").as_str()));
                 b.add_css_class("flat");
                 b.set_valign(gtk::Align::Center);
                 b
@@ -2099,14 +2092,14 @@ impl SimpleComponent for AppModel {
             let gallery_tv = adw::ToolbarView::new();
             let gallery_hb = adw::HeaderBar::new();
             gallery_hb.add_css_class("flat");
-            let title = gtk::Label::new(Some("Attachments"));
+            let title = gtk::Label::new(Some(i18n("Attachments").as_str()));
             title.add_css_class("pane-title");
             gallery_hb.set_title_widget(Some(&title));
             // Leftmost, same spot as the message list header's: the sidebar
             // collapse/expand toggle.
             let sidebar_btn =
                 gtk::Button::from_icon_name("co.hyprlab.Vireo-sidebar-show-symbolic");
-            sidebar_btn.set_tooltip_text(Some("Toggle sidebar"));
+            sidebar_btn.set_tooltip_text(Some(i18n("Toggle sidebar").as_str()));
             sidebar_btn.add_css_class("flat");
             let s = sender.input_sender().clone();
             sidebar_btn.connect_clicked(move |_| {
@@ -2720,14 +2713,14 @@ impl SimpleComponent for AppModel {
 
             let menu = gtk::gio::Menu::new();
             for (label, key) in [
-                ("Date (Newest first)", "date_newest"),
-                ("Date (Oldest first)", "date_oldest"),
-                ("Sender (A–Z)", "sender"),
-                ("Subject (A–Z)", "subject"),
-                ("Unread first", "unread"),
-                ("Flagged first", "flagged"),
+                (i18n_noop("Date (Newest first)"), "date_newest"),
+                (i18n_noop("Date (Oldest first)"), "date_oldest"),
+                (i18n_noop("Sender (A–Z)"), "sender"),
+                (i18n_noop("Subject (A–Z)"), "subject"),
+                (i18n_noop("Unread first"), "unread"),
+                (i18n_noop("Flagged first"), "flagged"),
             ] {
-                menu.append(Some(label), Some(&format!("sortmenu.order::{key}")));
+                menu.append(Some(&i18n(label)), Some(&format!("sortmenu.order::{key}")));
             }
             widgets.list_sort_btn.set_menu_model(Some(&menu));
         }
@@ -3815,12 +3808,12 @@ impl SimpleComponent for AppModel {
             AppMsg::ContactAdded(result) => {
                 use crate::contacts::AddOutcome;
                 let (text, error) = match result {
-                    Ok(AddOutcome::Created) => ("Added to Contacts".to_string(), false),
-                    Ok(AddOutcome::Merged(name)) => (format!("Added email to {name}"), false),
+                    Ok(AddOutcome::Created) => (i18n("Added to Contacts"), false),
+                    Ok(AddOutcome::Merged(name)) => (i18n_f("Added email to {name}", &[("name", &name)]), false),
                     Ok(AddOutcome::AlreadyPresent(name)) => {
-                        (format!("Already in Contacts ({name})"), false)
+                        (i18n_f("Already in Contacts ({name})", &[("name", &name)]), false)
                     }
-                    Err(e) => (format!("Could not add contact: {e}"), true),
+                    Err(e) => (i18n_f("Could not add contact: {e}", &[("e", &e.to_string())]), true),
                 };
                 self.notifications.emit(NotifyInput::Push { text, error, connectivity: false });
             }
@@ -3996,7 +3989,7 @@ impl SimpleComponent for AppModel {
                 if let Some(att) = self.lightbox_items.get(self.lightbox_pos).cloned() {
                     let dialog = gtk::FileDialog::builder()
                         .initial_name(&att.name)
-                        .title("Save Attachment")
+                        .title(&i18n("Save Attachment"))
                         .build();
                     dialog.save(Some(&self.window), gtk::gio::Cancellable::NONE, move |res| {
                         if let Ok(file) = res {
@@ -4133,9 +4126,8 @@ impl SimpleComponent for AppModel {
                     tracing::warn!("restart helper failed: {e}");
                     self.restart_pending = false;
                     self.notifications.emit(NotifyInput::Push {
-                        text: "Couldn't restart automatically — quit and reopen Vireo \
-                               to finish switching the icon."
-                            .into(),
+                        text: i18n("Couldn't restart automatically — quit and reopen Vireo \
+                               to finish switching the icon."),
                         error: true,
                         connectivity: false,
                     });
@@ -4197,7 +4189,7 @@ impl SimpleComponent for AppModel {
                 tracing::info!(preview, open = self.current.is_some(), "print requested");
                 if self.current.is_none() {
                     self.notifications.emit(NotifyInput::Push {
-                        text: "Open a message first, then print it.".to_string(),
+                        text: i18n("Open a message first, then print it."),
                         error: false,
                         connectivity: false,
                     });
@@ -4409,7 +4401,7 @@ impl SimpleComponent for AppModel {
             AppMsg::Undo => {
                 let Some(e) = self.undo_stack.pop() else {
                     self.notifications.emit(NotifyInput::Push {
-                        text: "Nothing to undo".to_string(),
+                        text: i18n("Nothing to undo"),
                         error: false,
                         connectivity: false,
                     });
@@ -4427,7 +4419,7 @@ impl SimpleComponent for AppModel {
                 self.bulk_pending += 1;
                 self.update_busy_indicator();
                 self.notifications
-                    .emit(NotifyInput::SetStatus("Undoing move…".to_string()));
+                    .emit(NotifyInput::SetStatus(i18n("Undoing move…")));
             }
 
             AppMsg::SetComposeInline(on) => {
@@ -4576,7 +4568,7 @@ impl SimpleComponent for AppModel {
                     });
                 let Some((folder_id, path)) = drafts else {
                     self.notifications.emit(NotifyInput::Push {
-                        text: "No Drafts folder available for this account".to_string(),
+                        text: i18n("No Drafts folder available for this account"),
                         error: true,
                         connectivity: false,
                     });
@@ -4695,7 +4687,7 @@ impl SimpleComponent for AppModel {
                         self.reconnect_all(&sender);
                     }
                     Err(e) => self.notifications.emit(NotifyInput::Push {
-                        text: format!("Could not save account: {e}"),
+                        text: i18n_f("Could not save account: {e}", &[("e", &(e).to_string())]),
                         error: true,
                         connectivity: false,
                     }),
@@ -4710,7 +4702,7 @@ impl SimpleComponent for AppModel {
                         slot.enabled = enabled;
                         if let Err(e) = config::save(&self.config) {
                             self.notifications.emit(NotifyInput::Push {
-                                text: format!("Could not save account: {e}"),
+                                text: i18n_f("Could not save account: {e}", &[("e", &(e).to_string())]),
                                 error: true,
                                 connectivity: false,
                             });
@@ -4731,7 +4723,7 @@ impl SimpleComponent for AppModel {
                     self.notifications.emit(NotifyInput::ShowConsole);
                 } else {
                     self.notifications.emit(NotifyInput::Push {
-                        text: "Enable Console mode in Settings → System & Appearance".into(),
+                        text: i18n("Enable Console mode in Settings → System & Appearance"),
                         error: false,
                         connectivity: false,
                     });
@@ -4804,7 +4796,7 @@ impl SimpleComponent for AppModel {
 
             AppMsg::ExportSettings => {
                 let dialog = gtk::FileDialog::builder()
-                    .title("Export Settings")
+                    .title(&i18n("Export Settings"))
                     .initial_name("vireo-settings.toml")
                     .build();
                 let win = self.window.clone();
@@ -4816,12 +4808,12 @@ impl SimpleComponent for AppModel {
                         .and_then(|t| std::fs::write(&path, t).map_err(|e| e.to_string()));
                     let _ = notif.send(match outcome {
                         Ok(()) => NotifyInput::Push {
-                            text: format!("Settings exported to {}", path.display()),
+                            text: i18n_f("Settings exported to {display}", &[("display", &(path.display()).to_string())]),
                             error: false,
                             connectivity: false,
                         },
                         Err(e) => NotifyInput::Push {
-                            text: format!("Export failed: {e}"),
+                            text: i18n_f("Export failed: {e}", &[("e", &(e).to_string())]),
                             error: true,
                             connectivity: false,
                         },
@@ -4830,7 +4822,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ImportSettings => {
-                let dialog = gtk::FileDialog::builder().title("Import Settings").build();
+                let dialog = gtk::FileDialog::builder().title(&i18n("Import Settings")).build();
                 let win = self.window.clone();
                 let s = sender.clone();
                 dialog.open(Some(&win), gtk::gio::Cancellable::NONE, move |res| {
@@ -4861,7 +4853,7 @@ impl SimpleComponent for AppModel {
                             .unwrap_or_else(|| self.window.clone().upcast());
                         let alert = adw::MessageDialog::new(
                             Some(&parent),
-                            Some("Settings Imported"),
+                            Some(i18n("Settings Imported").as_str()),
                             Some(&format!(
                                 "{n} account(s) and all preferences were imported. \
                                  Restart Vireo to apply them. Account passwords are \
@@ -4893,7 +4885,7 @@ impl SimpleComponent for AppModel {
                     }
                     Err(e) => {
                         self.notifications.emit(NotifyInput::Push {
-                            text: format!("Import failed: {e}"),
+                            text: i18n_f("Import failed: {e}", &[("e", &(e).to_string())]),
                             error: true,
                             connectivity: false,
                         });
@@ -4955,7 +4947,7 @@ impl SimpleComponent for AppModel {
                 match config::save(&self.config) {
                     Ok(()) => self.reconnect_all(&sender),
                     Err(e) => self.notifications.emit(NotifyInput::Push {
-                        text: format!("Could not import account: {e}"),
+                        text: i18n_f("Could not import account: {e}", &[("e", &(e).to_string())]),
                         error: true,
                         connectivity: false,
                     }),
@@ -5765,7 +5757,7 @@ impl SimpleComponent for AppModel {
                 std::thread::spawn(move || {
                     let result = match crate::contacts::writable_books().first() {
                         Some(book) => crate::contacts::create_contact(&book.uid, &vcard),
-                        None => Err("No address book available".to_string()),
+                        None => Err(i18n("No address book available")),
                     };
                     s.input(AppMsg::ContactWriteDone(result.err()));
                 });
@@ -5782,7 +5774,7 @@ impl SimpleComponent for AppModel {
             AppMsg::ContactWriteDone(err) => {
                 if let Some(e) = err {
                     self.notifications.emit(NotifyInput::Push {
-                        text: format!("Could not update contact: {e}"),
+                        text: i18n_f("Could not update contact: {e}", &[("e", &(e).to_string())]),
                         error: true,
                         connectivity: false,
                     });
@@ -5832,11 +5824,11 @@ impl AppModel {
     /// only while Console mode is enabled in Settings.
     fn rebuild_help_menu(&self) {
         self.help_menu.remove_all();
-        self.help_menu.append(Some("Reveal Status Bar"), Some("win.status-bar"));
+        self.help_menu.append(Some(i18n("Reveal Status Bar").as_str()), Some("win.status-bar"));
         if self.console_mode {
-            self.help_menu.append(Some("Console"), Some("win.console"));
+            self.help_menu.append(Some(i18n("Console").as_str()), Some("win.console"));
         }
-        self.help_menu.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
+        self.help_menu.append(Some(i18n("Keyboard Shortcuts").as_str()), Some("win.shortcuts"));
         self.help_menu
             .append(Some(format!("About {}", crate::APP_NAME).as_str()), Some("win.about"));
     }
@@ -5969,7 +5961,7 @@ impl AppModel {
         let win = adw::Window::builder()
             .transient_for(&self.window)
             .modal(true)
-            .title("Keyboard Shortcuts")
+            .title(&i18n("Keyboard Shortcuts"))
             .default_width(420)
             .default_height(560)
             .build();
@@ -5982,7 +5974,7 @@ impl AppModel {
 
         if !self.single_key.get() {
             let off = gtk::Label::new(Some(
-                "Single-key shortcuts are switched off. Turn them on in Settings → System & Appearance.",
+                i18n("Single-key shortcuts are switched off. Turn them on in Settings → System & Appearance.").as_str(),
             ));
             off.add_css_class("dim-label");
             off.set_wrap(true);
@@ -6779,8 +6771,8 @@ impl AppModel {
     fn show_restarting_dialog(&self) {
         let dialog = adw::MessageDialog::new(
             Some(&self.icon_dialog_parent()),
-            Some("Restarting Vireo"),
-            Some("Applying your new app icon. Vireo will close and reopen in a moment."),
+            Some(i18n("Restarting Vireo").as_str()),
+            Some(i18n("Applying your new app icon. Vireo will close and reopen in a moment.").as_str()),
         );
         let spinner = gtk::Spinner::new();
         spinner.set_size_request(32, 32);
@@ -6802,10 +6794,10 @@ impl AppModel {
     fn offer_restart_for_icon(&self, sender: &ComponentSender<Self>) {
         let dialog = adw::MessageDialog::new(
             Some(&self.icon_dialog_parent()),
-            Some("Restart to finish switching icons?"),
-            Some("The dock and Vireo's own windows keep the old icon until Vireo restarts."),
+            Some(i18n("Restart to finish switching icons?").as_str()),
+            Some(i18n("The dock and Vireo's own windows keep the old icon until Vireo restarts.").as_str()),
         );
-        dialog.add_responses(&[("later", "Later"), ("restart", "Restart Now")]);
+        dialog.add_responses(&[("later", i18n("Later").as_str()), ("restart", i18n("Restart Now").as_str())]);
         dialog.set_response_appearance("restart", adw::ResponseAppearance::Suggested);
         dialog.set_default_response(Some("later"));
         dialog.set_close_response("later");
@@ -7139,13 +7131,13 @@ impl AppModel {
         let sections = if self.showing_outbox {
             vec![
                 vec![
-                    entry!("Edit", "document-edit", AppMsg::EditCurrentOutbox, has_current),
-                    entry!("Send Now", "mail-send", AppMsg::SendCurrentOutbox, has_current),
-                    entry!("Send All", "mail-send", AppMsg::RetryAllOutbox, true),
+                    entry!(i18n("Edit"), "document-edit", AppMsg::EditCurrentOutbox, has_current),
+                    entry!(i18n("Send Now"), "mail-send", AppMsg::SendCurrentOutbox, has_current),
+                    entry!(i18n("Send All"), "mail-send", AppMsg::RetryAllOutbox, true),
                 ],
                 vec![
-                    entry!("View Source", "code", AppMsg::ViewSource, has_current),
-                    entry!("Delete", "user-trash", AppMsg::Delete, has_current),
+                    entry!(i18n("View Source"), "code", AppMsg::ViewSource, has_current),
+                    entry!(i18n("Delete"), "user-trash", AppMsg::Delete, has_current),
                 ],
             ]
         } else {
@@ -7158,29 +7150,29 @@ impl AppModel {
             let target_unread = target.as_ref().is_some_and(|m| m.unread);
             vec![
                 vec![
-                    entry!("Reply", "mail-reply-sender", AppMsg::Reply, acts),
-                    entry!("Reply All", "mail-reply-all", AppMsg::ReplyAll, acts),
-                    entry!("Forward", "mail-forward", AppMsg::Forward, acts),
+                    entry!(i18n("Reply"), "mail-reply-sender", AppMsg::Reply, acts),
+                    entry!(i18n("Reply All"), "mail-reply-all", AppMsg::ReplyAll, acts),
+                    entry!(i18n("Forward"), "mail-forward", AppMsg::Forward, acts),
                 ],
                 vec![
                     if target_unread {
-                        entry!("Mark as Read", "mail-read", AppMsg::ToggleReadCurrent, acts)
+                        entry!(i18n("Mark as Read"), "mail-read", AppMsg::ToggleReadCurrent, acts)
                     } else {
-                        entry!("Mark as Unread", "mail-unread", AppMsg::ToggleReadCurrent, acts)
+                        entry!(i18n("Mark as Unread"), "mail-unread", AppMsg::ToggleReadCurrent, acts)
                     },
                     if starred {
-                        entry!("Remove Flag", "non-starred", AppMsg::ToggleStar, acts)
+                        entry!(i18n("Remove Flag"), "non-starred", AppMsg::ToggleStar, acts)
                     } else {
-                        entry!("Flag", "starred", AppMsg::ToggleStar, acts)
+                        entry!(i18n("Flag"), "starred", AppMsg::ToggleStar, acts)
                     },
                 ],
                 // View Source is deliberately absent: it lives in the message
                 // list's context menu only (the Outbox variant above keeps it —
                 // queued rows have no such menu).
-                vec![entry!("Print Preview", "printer", AppMsg::PrintPreview, has_current)],
+                vec![entry!(i18n("Print Preview"), "printer", AppMsg::PrintPreview, has_current)],
                 vec![
-                    entry!("Mark as Spam", "mail-mark-junk", AppMsg::MarkSpam, acts),
-                    entry!("Archive", "mail-archive", AppMsg::Archive, acts),
+                    entry!(i18n("Mark as Spam"), "mail-mark-junk", AppMsg::MarkSpam, acts),
+                    entry!(i18n("Archive"), "mail-archive", AppMsg::Archive, acts),
                     entry!(
                         "Delete",
                         "user-trash",
@@ -7273,7 +7265,7 @@ impl AppModel {
 
         let window = adw::Window::builder()
             .transient_for(&self.window)
-            .title("Message Source")
+            .title(&i18n("Message Source"))
             .default_width(720)
             .default_height(620)
             .content(&toolbar)
@@ -7624,8 +7616,8 @@ impl AppModel {
     /// whole multi-selection rather than just the open message.
     fn delete_tooltip(&self) -> String {
         match self.list_selection.len() {
-            n if n > 1 => format!("Delete {n} messages"),
-            _ => "Delete".to_string(),
+            n if n > 1 => i18n_f("Delete {n} messages", &[("n", &n.to_string())]),
+            _ => i18n("Delete"),
         }
     }
 
@@ -7895,7 +7887,7 @@ impl AppModel {
             .modal(false)
             .default_width(660)
             .default_height(760)
-            .title("New Message")
+            .title(&i18n("New Message"))
             .transient_for(&self.window)
             .build();
         win.set_content(Some(content));
@@ -8401,7 +8393,7 @@ impl AppModel {
     /// be turned off in Preferences (`confirm_thread_delete`).
     fn confirm_delete_thread(&self, messages: Vec<Message>, sender: &ComponentSender<Self>) {
         let n = messages.len();
-        let heading = "Delete this conversation?".to_string();
+        let heading = i18n("Delete this conversation?");
         let body = format!(
             "All {n} messages in this conversation will be deleted. \
              You can turn this warning off in Preferences."
@@ -8427,18 +8419,14 @@ impl AppModel {
 
     fn confirm_purge(&self, messages: Vec<Message>, sender: &ComponentSender<Self>) {
         let n = messages.len();
-        let heading = if n == 1 {
-            "Delete this message permanently?".to_string()
-        } else {
-            format!("Delete {n} messages permanently?")
-        };
+        let heading = ni18n_f("Delete this message permanently?", "Delete {n} messages permanently?", n as u32, &[("n", &n.to_string())]);
         let body = if n == 1 {
-            "It is already in Trash, so it will be erased from the server. This can’t be undone."
+            i18n("It is already in Trash, so it will be erased from the server. This can’t be undone.")
         } else {
-            "They are already in Trash, so they will be erased from the server. \
-             This can’t be undone."
+            i18n("They are already in Trash, so they will be erased from the server. \
+             This can’t be undone.")
         };
-        let dialog = adw::MessageDialog::new(Some(&self.window), Some(&heading), Some(body));
+        let dialog = adw::MessageDialog::new(Some(&self.window), Some(&heading), Some(&body));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("delete", "Delete");
         dialog.set_default_response(Some("cancel"));
@@ -8486,7 +8474,7 @@ impl AppModel {
     fn move_to(&mut self, m: Message, kind: FolderKind) {
         let Some(dest) = self.folder_path_for(m.account_id, kind) else {
             self.notifications.emit(NotifyInput::Push {
-                text: format!("No {} folder available", kind_label(kind)),
+                text: i18n_f("No {v1} folder available", &[("v1", &(kind_label(kind)).to_string())]),
                 error: true,
                 connectivity: false,
             });
@@ -8552,9 +8540,9 @@ impl AppModel {
         if foreign > 0 {
             self.notifications.emit(NotifyInput::Push {
                 text: if foreign == 1 {
-                    "One message stayed put — mail can't be moved between accounts".to_string()
+                    i18n("One message stayed put — mail can't be moved between accounts")
                 } else {
-                    format!("{foreign} messages stayed put — mail can't be moved between accounts")
+                    i18n_f("{foreign} messages stayed put — mail can't be moved between accounts", &[("foreign", &foreign.to_string())])
                 },
                 error: true,
                 connectivity: false,
@@ -8796,9 +8784,9 @@ impl AppModel {
         let mint = crate::platform::is_mint_cinnamon();
 
         let heading = if problem {
-            "Vireo couldn’t save your password"
+            i18n("Vireo couldn’t save your password")
         } else {
-            "Keyring setup on Linux Mint"
+            i18n("Keyring setup on Linux Mint")
         };
 
         let mut body = String::new();
@@ -8849,8 +8837,8 @@ impl AppModel {
             );
         }
 
-        let dialog = adw::MessageDialog::new(Some(&self.window), Some(heading), Some(&body));
-        dialog.add_response("ok", "Got it");
+        let dialog = adw::MessageDialog::new(Some(&self.window), Some(&heading), Some(&body));
+        dialog.add_response("ok", &i18n("Got it"));
         dialog.set_default_response(Some("ok"));
         // The proactive tip is a one-time thing: mark it seen once dismissed (by
         // any means) so it never nags again. A real save failure always shows.
@@ -8864,15 +8852,15 @@ impl AppModel {
     fn prompt_new_folder(&self, account_id: u32, sender: &ComponentSender<Self>) {
         let dialog = adw::MessageDialog::new(
             Some(&self.window),
-            Some("New Folder"),
-            Some("Create a new folder for this account."),
+            Some(i18n("New Folder").as_str()),
+            Some(i18n("Create a new folder for this account.").as_str()),
         );
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("ok", "Create");
         dialog.set_default_response(Some("ok"));
         dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
         let entry = gtk::Entry::new();
-        entry.set_placeholder_text(Some("Folder name"));
+        entry.set_placeholder_text(Some(i18n("Folder name").as_str()));
         entry.set_activates_default(true);
         dialog.set_extra_child(Some(&entry));
         let s = sender.clone();
@@ -8898,7 +8886,7 @@ impl AppModel {
         let dialog = adw::MessageDialog::new(
             Some(&self.window),
             Some(&format!("Rename {name:?}")),
-            Some("Sub-folders keep their place under the new name."),
+            Some(i18n("Sub-folders keep their place under the new name.").as_str()),
         );
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("ok", "Rename");
@@ -8946,7 +8934,7 @@ impl AppModel {
             .is_some_and(|fs| fs.iter().any(|f| f.path == new_path))
         {
             self.notifications.emit(NotifyInput::Push {
-                text: format!("A folder named {new_name:?} is already there."),
+                text: i18n_f("A folder named {new_name} is already there.", &[("new_name", &format!("{new_name:?}"))]),
                 error: true,
                 connectivity: false,
             });
@@ -8966,7 +8954,7 @@ impl AppModel {
         let dialog = adw::MessageDialog::new(
             Some(&self.window),
             Some(&format!("Delete “{name}”?")),
-            Some("Its messages are moved to Trash and the folder is removed."),
+            Some(i18n("Its messages are moved to Trash and the folder is removed.").as_str()),
         );
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("delete", "Delete");
@@ -8997,7 +8985,7 @@ impl AppModel {
             .or_else(|| self.default_folder_path(m.account_id, FolderKind::Junk));
         let Some(dest) = dest else {
             self.notifications.emit(NotifyInput::Push {
-                text: "No Junk folder available for this account".to_string(),
+                text: i18n("No Junk folder available for this account"),
                 error: true,
                 connectivity: false,
             });
@@ -9118,7 +9106,7 @@ impl AppModel {
         let books = crate::contacts::writable_books();
         if books.is_empty() || email.trim().is_empty() {
             self.notifications.emit(NotifyInput::Push {
-                text: "No address book available to add contacts".to_string(),
+                text: i18n("No address book available to add contacts"),
                 error: true,
                 connectivity: false,
             });
@@ -9127,7 +9115,7 @@ impl AppModel {
 
         let dialog = adw::MessageDialog::new(
             Some(&self.window),
-            Some("Add to Contacts"),
+            Some(i18n("Add to Contacts").as_str()),
             None,
         );
         dialog.add_response("cancel", "Cancel");
@@ -9140,13 +9128,13 @@ impl AppModel {
         form.add_css_class("boxed-list");
         form.set_selection_mode(gtk::SelectionMode::None);
         let name_row = adw::EntryRow::new();
-        name_row.set_title("Name");
+        name_row.set_title(&i18n("Name"));
         name_row.set_text(name);
         let email_row = adw::EntryRow::new();
-        email_row.set_title("Email");
+        email_row.set_title(&i18n("Email"));
         email_row.set_text(email);
         let book_row = adw::ComboRow::new();
-        book_row.set_title("Address book");
+        book_row.set_title(&i18n("Address book"));
         let labels: Vec<&str> = books.iter().map(|b| b.name.as_str()).collect();
         book_row.set_model(Some(&gtk::StringList::new(&labels)));
         form.append(&name_row);
@@ -9410,7 +9398,7 @@ impl AppModel {
         let label = self.account_label(account_id);
         let dialog = adw::MessageDialog::new(
             Some(&self.window),
-            Some("Remove Account?"),
+            Some(i18n("Remove Account?").as_str()),
             Some(&format!(
                 "Remove {label} from Vireo? Its saved password is deleted. \
                  Mail on the server is not affected."
@@ -9482,7 +9470,7 @@ impl AppModel {
         page.append(&version);
 
         // One-sentence description, directly under the version chip.
-        let desc = gtk::Label::new(Some("A clean, fast, GNOME-native email client."));
+        let desc = gtk::Label::new(Some(i18n("A clean, fast, GNOME-native email client.").as_str()));
         desc.set_wrap(true);
         desc.set_justify(gtk::Justification::Center);
         desc.add_css_class("dim-label");
@@ -9491,10 +9479,10 @@ impl AppModel {
 
         if cfg!(feature = "beta") {
             let warn = gtk::Label::new(Some(
-                "This is a beta build for trying upcoming changes early. \
+                i18n("This is a beta build for trying upcoming changes early. \
                  Expect bugs and instability — please report anything broken \
                  on GitHub. It shares your accounts and mail with the stable \
-                 Vireo install.",
+                 Vireo install.").as_str(),
             ));
             warn.set_wrap(true);
             warn.set_justify(gtk::Justification::Center);
@@ -9512,7 +9500,7 @@ impl AppModel {
         info.set_margin_top(20);
 
         let notes_row = adw::ActionRow::builder()
-            .title("Release Notes")
+            .title(&i18n("Release Notes"))
             .subtitle(format!("What's new in {}", crate::VERSION))
             .activatable(true)
             .build();
@@ -9524,8 +9512,8 @@ impl AppModel {
         info.append(&notes_row);
 
         let changelog_row = adw::ActionRow::builder()
-            .title("Changelog")
-            .subtitle("Full version history")
+            .title(&i18n("Changelog"))
+            .subtitle(&i18n("Full version history"))
             .activatable(true)
             .build();
         changelog_row.add_suffix(&gtk::Image::from_icon_name("co.hyprlab.Vireo-go-next-symbolic"));
@@ -9539,8 +9527,8 @@ impl AppModel {
         // where that tip applies, so Mint users who dismissed it can find it again.
         if crate::platform::is_mint_cinnamon() {
             let keyring_row = adw::ActionRow::builder()
-                .title("Keyring Setup Help")
-                .subtitle("Make account passwords persist on Linux Mint")
+                .title(&i18n("Keyring Setup Help"))
+                .subtitle(&i18n("Make account passwords persist on Linux Mint"))
                 .activatable(true)
                 .build();
             keyring_row.add_suffix(&gtk::Image::from_icon_name("co.hyprlab.Vireo-go-next-symbolic"));
@@ -9554,7 +9542,7 @@ impl AppModel {
         page.append(&info);
 
         // Project links. Each row shows its URL as a hover tooltip.
-        let links_title = gtk::Label::new(Some("Project"));
+        let links_title = gtk::Label::new(Some(i18n("Project").as_str()));
         links_title.add_css_class("heading");
         links_title.set_halign(gtk::Align::Start);
         links_title.set_margin_top(20);
@@ -9572,19 +9560,19 @@ impl AppModel {
             row.connect_activated(move |_| crate::oauth::open_uri(&u));
             row
         };
-        links.append(&mk_row("Website", "https://vireo.hyprlab.co"));
+        links.append(&mk_row(&i18n("Website"), "https://vireo.hyprlab.co"));
         links.append(&mk_row(
             "Github — Submit bug report or feature request",
             "https://github.com/hyprlab/vireo/issues",
         ));
-        links.append(&mk_row("Contact — hyprlab@proton.me", "mailto:hyprlab@proton.me"));
-        links.append(&mk_row("Discord — Join the community", "https://discord.gg/YfEJ4b6PFW"));
-        links.append(&mk_row("Source Code", "https://github.com/hyprlab/vireo"));
-        links.append(&mk_row("License (GNU AGPL v3)", "https://www.gnu.org/licenses/agpl-3.0.html"));
+        links.append(&mk_row(&i18n("Contact — hyprlab@proton.me"), "mailto:hyprlab@proton.me"));
+        links.append(&mk_row(&i18n("Discord — Join the community"), "https://discord.gg/YfEJ4b6PFW"));
+        links.append(&mk_row(&i18n("Source Code"), "https://github.com/hyprlab/vireo"));
+        links.append(&mk_row(&i18n("License (GNU AGPL v3)"), "https://www.gnu.org/licenses/agpl-3.0.html"));
 
         // Buy Me a Coffee — with a coffee-cup glyph as its leading icon.
         let coffee = adw::ActionRow::builder()
-            .title("Buy Me a Coffee")
+            .title(&i18n("Buy Me a Coffee"))
             .activatable(true)
             .build();
         coffee.set_tooltip_text(Some("https://buymeacoffee.com/hyprlab"));
@@ -9597,7 +9585,7 @@ impl AppModel {
         page.append(&links);
 
         // Contributors — people outside Hyprlab whose patches are in the app.
-        let thanks_title = gtk::Label::new(Some("Special thanks to these contributors"));
+        let thanks_title = gtk::Label::new(Some(i18n("Special thanks to these contributors").as_str()));
         thanks_title.add_css_class("heading");
         thanks_title.set_halign(gtk::Align::Start);
         thanks_title.set_margin_top(20);
@@ -9622,7 +9610,7 @@ impl AppModel {
         page.append(&thanks);
 
         // Footer.
-        let footer = gtk::Label::new(Some("© 2026 Hyprlab"));
+        let footer = gtk::Label::new(Some(i18n("© 2026 Hyprlab").as_str()));
         footer.add_css_class("dim-label");
         footer.add_css_class("caption");
         footer.set_wrap(true);
@@ -9819,7 +9807,7 @@ impl AppModel {
         }
         if missing_dest {
             self.notifications.emit(NotifyInput::Push {
-                text: format!("No {} folder available for some messages", kind_label(kind)),
+                text: i18n_f("No {v1} folder available for some messages", &[("v1", &(kind_label(kind)).to_string())]),
                 error: true,
                 connectivity: false,
             });
@@ -10490,44 +10478,44 @@ fn shortcut_for(key: gtk::gdk::Key, shift: bool) -> Option<Shortcut> {
 /// Every shortcut with its key and description, for the reference window.
 const SHORTCUT_HELP: &[(&str, &[(&str, &str)])] = &[
     (
-        "Move around",
+        i18n_noop("Move around"),
         &[
-            ("j  or  ↓", "Next message"),
-            ("k  or  ↑", "Previous message"),
-            ("l  or  →", "Open the selected message"),
-            ("h  or  ←  or  u", "Back to the message list"),
-            ("w", "Next message in the conversation"),
-            ("b", "Previous message in the conversation"),
-            ("/", "Search"),
+            ("j  or  ↓", i18n_noop("Next message")),
+            ("k  or  ↑", i18n_noop("Previous message")),
+            ("l  or  →", i18n_noop("Open the selected message")),
+            ("h  or  ←  or  u", i18n_noop("Back to the message list")),
+            ("w", i18n_noop("Next message in the conversation")),
+            ("b", i18n_noop("Previous message in the conversation")),
+            ("/", i18n_noop("Search")),
         ],
     ),
     (
-        "Act on a message",
+        i18n_noop("Act on a message"),
         &[
-            ("r", "Reply"),
-            ("R", "Reply to all"),
-            ("f", "Forward"),
-            ("a", "Archive"),
-            ("d", "Delete"),
-            ("!", "Mark as spam"),
-            ("s", "Star or unstar"),
-            ("m", "Mark read or unread"),
-            ("x", "Select this row (for a bulk action)"),
+            ("r", i18n_noop("Reply")),
+            ("R", i18n_noop("Reply to all")),
+            ("f", i18n_noop("Forward")),
+            ("a", i18n_noop("Archive")),
+            ("d", i18n_noop("Delete")),
+            ("!", i18n_noop("Mark as spam")),
+            ("s", i18n_noop("Star or unstar")),
+            ("m", i18n_noop("Mark read or unread")),
+            ("x", i18n_noop("Select this row (for a bulk action)")),
         ],
     ),
     (
-        "Everything else",
+        i18n_noop("Everything else"),
         &[
-            ("c", "Compose"),
-            ("Esc", "Back out of a reply and return to the list"),
-            ("Ctrl+Z", "Undo the last move or delete"),
-            ("Ctrl+P", "Print the message you are reading"),
-            ("Ctrl+Shift+P", "Preview it as a PDF first"),
-            ("Ctrl+Shift+S", "Reveal the status bar (also: long-press Refresh)"),
-            ("Ctrl+Shift+C", "Console mode (when enabled in Settings)"),
-            ("Ctrl+W", "Close the window (background sync keeps running)"),
-            ("Ctrl+Q", "Quit Vireo entirely"),
-            ("?", "This list"),
+            ("c", i18n_noop("Compose")),
+            ("Esc", i18n_noop("Back out of a reply and return to the list")),
+            ("Ctrl+Z", i18n_noop("Undo the last move or delete")),
+            ("Ctrl+P", i18n_noop("Print the message you are reading")),
+            ("Ctrl+Shift+P", i18n_noop("Preview it as a PDF first")),
+            ("Ctrl+Shift+S", i18n_noop("Reveal the status bar (also: long-press Refresh)")),
+            ("Ctrl+Shift+C", i18n_noop("Console mode (when enabled in Settings)")),
+            ("Ctrl+W", i18n_noop("Close the window (background sync keeps running)")),
+            ("Ctrl+Q", i18n_noop("Quit Vireo entirely")),
+            ("?", i18n_noop("This list")),
         ],
     ),
 ];
@@ -10981,7 +10969,7 @@ fn set_sidebar_header_peek(
 /// Ask for a folder and write every attachment into it.
 fn save_all_attachments(atts: Vec<Attachment>, parent: Option<adw::ApplicationWindow>) {
     let dialog = gtk::FileDialog::new();
-    dialog.set_title("Save All Attachments");
+    dialog.set_title(&i18n("Save All Attachments"));
     dialog.select_folder(parent.as_ref(), gtk::gio::Cancellable::NONE, move |res| {
         if let Ok(folder) = res {
             if let Some(dir) = folder.path() {
@@ -11353,12 +11341,12 @@ fn strip_block(html: &str, tag: &str) -> String {
     out
 }
 
-fn kind_label(kind: FolderKind) -> &'static str {
-    match kind {
+fn kind_label(kind: FolderKind) -> String {
+    i18n(match kind {
         FolderKind::Archive => "archive",
         FolderKind::Trash => "trash",
         _ => "destination",
-    }
+    })
 }
 
 /// Every Message-ID that identifies a conversation: the messages' own ids plus

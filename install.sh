@@ -27,8 +27,17 @@ done
 # install here — they render identically regardless of the host icon theme.)
 
 echo "==> Installing desktop entry"
-install -Dm644 "$ROOT/data/$APP_ID.desktop" \
-    "$PREFIX/share/applications/$APP_ID.desktop"
+install -d "$PREFIX/share/applications"
+msgfmt --desktop --template="$ROOT/data/$APP_ID.desktop" -d "$ROOT/po" \
+    -o "$PREFIX/share/applications/$APP_ID.desktop"
+
+echo "==> Installing translations"
+for po in "$ROOT"/po/*.po; do
+    [ -e "$po" ] || continue
+    lang=$(basename "$po" .po)
+    install -d "$PREFIX/share/locale/$lang/LC_MESSAGES"
+    msgfmt -o "$PREFIX/share/locale/$lang/LC_MESSAGES/vireo.mo" "$po"
+done
 
 echo "==> Updating caches"
 gtk-update-icon-cache -f -t "$PREFIX/share/icons/hicolor" 2>/dev/null || true

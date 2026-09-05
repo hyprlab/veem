@@ -5,6 +5,7 @@
 use std::rc::Rc;
 
 use gtk::prelude::*;
+use crate::i18n::i18n;
 
 /// Build the gallery as a fixed six-wide grid (three even rows) with
 /// `selected` ringed; `on_pick` runs for every change the user makes (not
@@ -112,7 +113,7 @@ fn build(selected: &str, tile: i32, per_line: u32, on_pick: Rc<dyn Fn(&str)>) ->
         pic.set_can_shrink(true);
         pic.set_content_fit(gtk::ContentFit::Contain);
         cell.append(&pic);
-        let label = gtk::Label::new(Some(choice.label));
+        let label = gtk::Label::new(Some(&i18n(choice.label)));
         label.add_css_class("icon-gallery-label");
         // Two-word names ("Yellow & blue") wrap onto a second line where
         // the cell is narrow (the wizard's card) rather than ellipsizing.
@@ -128,7 +129,7 @@ fn build(selected: &str, tile: i32, per_line: u32, on_pick: Rc<dyn Fn(&str)>) ->
         label.set_justify(gtk::Justification::Center);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         cell.append(&label);
-        cell.set_tooltip_text(Some(choice.label));
+        cell.set_tooltip_text(Some(&i18n(choice.label)));
 
         let child = gtk::FlowBoxChild::new();
         child.set_child(Some(&cell));

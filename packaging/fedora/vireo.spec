@@ -34,8 +34,13 @@ for size in 256x256 512x512; do
     install -Dm644 icons/$size/%{appid}.png \
         %{buildroot}%{_datadir}/icons/hicolor/$size/apps/%{appid}.png
 done
+if [ -d locale ]; then
+    mkdir -p %{buildroot}%{_datadir}
+    cp -r locale %{buildroot}%{_datadir}/locale
+fi
+%find_lang %{name} || touch %{name}.lang
 
-%files
+%files -f %{name}.lang
 %license LICENSE
 %{_bindir}/vireo
 %{_datadir}/applications/%{appid}.desktop

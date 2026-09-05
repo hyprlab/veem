@@ -19,6 +19,8 @@
 
 use std::path::PathBuf;
 
+use crate::i18n::i18n_noop;
+
 /// One gallery entry: the id stored in settings, its label, and the art.
 pub struct IconChoice {
     pub id: &'static str,
@@ -42,7 +44,7 @@ macro_rules! alt {
     ($id:literal, $label:literal) => {
         IconChoice {
             id: $id,
-            label: $label,
+            label: i18n_noop($label),
             png: include_bytes!(concat!("../data/icons/alt/", $id, ".png")),
         }
     };
@@ -52,7 +54,7 @@ macro_rules! alt {
 /// and the envelope last. The beta's ribboned icon is its "Default" and is
 /// never offered as a colour of its own.
 const CATALOG: &[IconChoice] = &[
-    IconChoice { id: DEFAULT_ID, label: "Default", png: DEFAULT_PNG },
+    IconChoice { id: DEFAULT_ID, label: i18n_noop("Default"), png: DEFAULT_PNG },
     alt!("yellow-blue", "Yellow & blue"),
     alt!("blue", "Blue"),
     alt!("blue-dark", "Dark blue"),

@@ -4,6 +4,7 @@
 
 use adw::prelude::*;
 use webkit6::prelude::WebViewExt;
+use crate::i18n::{i18n, i18n_noop};
 
 /// A rich-text editor widget. Add `widget` to a container; read the content back
 /// with [`RichEditor::extract_html`] (asynchronous, since it queries the WebView).
@@ -214,7 +215,7 @@ impl RichEditor {
                 menu.insert(
                     &webkit6::ContextMenuItem::from_gaction(
                         &action,
-                        "Send as Attachment Instead",
+                        &i18n("Send as Attachment Instead"),
                         None,
                     ),
                     0,
@@ -237,12 +238,12 @@ impl RichEditor {
                 menu.remove(item);
             }
             let mut at = pos as i32;
-            for (label, rich) in [("Paste with Formatting", true), ("Paste as Plain Text", false)] {
+            for (label, rich) in [(i18n("Paste with Formatting"), true), (i18n("Paste as Plain Text"), false)] {
                 let action =
                     gtk::gio::SimpleAction::new(if rich { "vireo-paste-rich" } else { "vireo-paste-plain" }, None);
                 let v = view.clone();
                 action.connect_activate(move |_, _| paste_into(&v, rich));
-                menu.insert(&webkit6::ContextMenuItem::from_gaction(&action, label, None), at);
+                menu.insert(&webkit6::ContextMenuItem::from_gaction(&action, &label, None), at);
                 at += 1;
             }
             false
@@ -471,19 +472,19 @@ fn build_toolbar(webview: &webkit6::WebView) -> gtk::Box {
 
     // (icon, tooltip, execCommand snippet)
     let commands: &[(&str, &str, &str)] = &[
-        ("co.hyprlab.Vireo-format-text-bold-symbolic", "Bold", "document.execCommand('bold')"),
-        ("co.hyprlab.Vireo-format-text-italic-symbolic", "Italic", "document.execCommand('italic')"),
-        ("co.hyprlab.Vireo-format-text-underline-symbolic", "Underline", "document.execCommand('underline')"),
-        ("co.hyprlab.Vireo-format-text-strikethrough-symbolic", "Strikethrough", "document.execCommand('strikeThrough')"),
+        ("co.hyprlab.Vireo-format-text-bold-symbolic", i18n_noop("Bold"), "document.execCommand('bold')"),
+        ("co.hyprlab.Vireo-format-text-italic-symbolic", i18n_noop("Italic"), "document.execCommand('italic')"),
+        ("co.hyprlab.Vireo-format-text-underline-symbolic", i18n_noop("Underline"), "document.execCommand('underline')"),
+        ("co.hyprlab.Vireo-format-text-strikethrough-symbolic", i18n_noop("Strikethrough"), "document.execCommand('strikeThrough')"),
         ("SEP", "", ""),
-        ("co.hyprlab.Vireo-view-list-bullet-symbolic", "Bulleted list", "document.execCommand('insertUnorderedList')"),
-        ("co.hyprlab.Vireo-view-list-ordered-symbolic", "Numbered list", "document.execCommand('insertOrderedList')"),
+        ("co.hyprlab.Vireo-view-list-bullet-symbolic", i18n_noop("Bulleted list"), "document.execCommand('insertUnorderedList')"),
+        ("co.hyprlab.Vireo-view-list-ordered-symbolic", i18n_noop("Numbered list"), "document.execCommand('insertOrderedList')"),
         // Adwaita has no blockquote glyph; the indent icon reads as "quote".
-        ("co.hyprlab.Vireo-format-indent-more-symbolic", "Quote", "document.execCommand('formatBlock',false,'blockquote')"),
+        ("co.hyprlab.Vireo-format-indent-more-symbolic", i18n_noop("Quote"), "document.execCommand('formatBlock',false,'blockquote')"),
         // `LINK` is a sentinel command (handled specially); the icon is real.
-        ("co.hyprlab.Vireo-insert-link-symbolic", "Insert link", "LINK"),
+        ("co.hyprlab.Vireo-insert-link-symbolic", i18n_noop("Insert link"), "LINK"),
         ("SEP", "", ""),
-        ("co.hyprlab.Vireo-edit-clear-symbolic", "Clear formatting", "document.execCommand('removeFormat')"),
+        ("co.hyprlab.Vireo-edit-clear-symbolic", i18n_noop("Clear formatting"), "document.execCommand('removeFormat')"),
     ];
 
     for (icon, tip, cmd) in commands {
@@ -512,7 +513,7 @@ fn build_toolbar(webview: &webkit6::WebView) -> gtk::Box {
 /// Prompt for a URL and turn the current selection into a link.
 fn prompt_link(webview: &webkit6::WebView, anchor: &gtk::Button) {
     let parent = anchor.root().and_downcast::<gtk::Window>();
-    let dialog = adw::MessageDialog::new(parent.as_ref(), Some("Insert Link"), None);
+    let dialog = adw::MessageDialog::new(parent.as_ref(), Some(i18n("Insert Link").as_str()), None);
     dialog.add_response("cancel", "Cancel");
     dialog.add_response("ok", "Insert");
     dialog.set_default_response(Some("ok"));

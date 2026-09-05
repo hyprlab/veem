@@ -15,6 +15,7 @@ use relm4::prelude::*;
 
 use crate::models::{Account, Folder, FolderKind};
 use crate::ui::context_menu::{show_context_menu, MenuEntry};
+use crate::i18n::{i18n, i18n_f, i18n_noop};
 
 /// A per-account inbox shown in the expandable "All Inboxes" sub-list.
 #[derive(Clone)]
@@ -630,11 +631,7 @@ impl Component for Sidebar {
                     label.set_visible(show_chip);
                 }
                 if let Some(ch) = &self.unified_chevron {
-                    ch.set_icon_name(Some(if self.unified_expanded {
-                        "co.hyprlab.Vireo-pan-down-symbolic"
-                    } else {
-                        "co.hyprlab.Vireo-pan-end-symbolic"
-                    }));
+                    ch.set_icon_name(Some(if self.unified_expanded { "co.hyprlab.Vireo-pan-down-symbolic" } else { "co.hyprlab.Vireo-pan-end-symbolic" }));
                 }
             }
 
@@ -671,11 +668,7 @@ impl Component for Sidebar {
                     );
                 }
                 if let Some(ch) = &self.unified_folders_chevron {
-                    ch.set_icon_name(Some(if self.unified_folders_expanded {
-                        "co.hyprlab.Vireo-pan-down-symbolic"
-                    } else {
-                        "co.hyprlab.Vireo-pan-end-symbolic"
-                    }));
+                    ch.set_icon_name(Some(if self.unified_folders_expanded { "co.hyprlab.Vireo-pan-down-symbolic" } else { "co.hyprlab.Vireo-pan-end-symbolic" }));
                 }
             }
 
@@ -863,11 +856,7 @@ impl Component for Sidebar {
                     let expanded = !rev.reveals_child();
                     rev.set_reveal_child(expanded);
                     if let Some(ch) = self.chevrons.get(&id) {
-                        ch.set_icon_name(Some(if expanded {
-                            "co.hyprlab.Vireo-pan-down-symbolic"
-                        } else {
-                            "co.hyprlab.Vireo-pan-end-symbolic"
-                        }));
+                        ch.set_icon_name(Some(if expanded { "co.hyprlab.Vireo-pan-down-symbolic" } else { "co.hyprlab.Vireo-pan-end-symbolic" }));
                     }
                     if let Some(s) = self.sections.iter_mut().find(|s| s.account.id == id) {
                         s.collapsed = !expanded;
@@ -894,11 +883,7 @@ impl Component for Sidebar {
                     let expanded = !rev.reveals_child();
                     rev.set_reveal_child(expanded);
                     if let Some(ch) = self.custom_chevrons.get(&id) {
-                        ch.set_icon_name(Some(if expanded {
-                            "co.hyprlab.Vireo-pan-down-symbolic"
-                        } else {
-                            "co.hyprlab.Vireo-pan-end-symbolic"
-                        }));
+                        ch.set_icon_name(Some(if expanded { "co.hyprlab.Vireo-pan-down-symbolic" } else { "co.hyprlab.Vireo-pan-end-symbolic" }));
                     }
                     if let Some(s) = self.sections.iter_mut().find(|s| s.account.id == id) {
                         s.custom_expanded = expanded;
@@ -1152,20 +1137,20 @@ impl Sidebar {
             });
             if self.collapsed {
                 add.set_icon_name("co.hyprlab.Vireo-list-add-symbolic");
-                add.set_tooltip_text(Some("Add account"));
+                add.set_tooltip_text(Some(i18n("Add account").as_str()));
                 add.set_margin_top(12);
                 container.append(&add);
             } else {
                 let label_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
                 label_box.append(&gtk::Image::from_icon_name("co.hyprlab.Vireo-list-add-symbolic"));
-                label_box.append(&gtk::Label::new(Some("Add first account")));
+                label_box.append(&gtk::Label::new(Some(i18n("Add first account").as_str())));
                 add.set_child(Some(&label_box));
                 let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
                 empty.set_valign(gtk::Align::Start);
                 empty.set_margin_top(36);
                 empty.set_margin_start(16);
                 empty.set_margin_end(16);
-                let hint = gtk::Label::new(Some("No accounts yet"));
+                let hint = gtk::Label::new(Some(i18n("No accounts yet").as_str()));
                 hint.add_css_class("dim-label");
                 empty.append(&hint);
                 empty.append(&add);
@@ -1195,7 +1180,7 @@ impl Sidebar {
             if self.collapsed {
                 // Refresh, showing a spinner while any account syncs.
                 let refresh = gtk::Button::new();
-                refresh.set_tooltip_text(Some("Refresh or long-press for Status Bar"));
+                refresh.set_tooltip_text(Some(i18n("Refresh or long-press for Status Bar").as_str()));
                 refresh.add_css_class("flat");
                 refresh.set_valign(gtk::Align::Center);
                 refresh.set_halign(gtk::Align::Center);
@@ -1242,7 +1227,7 @@ impl Sidebar {
                 img.add_css_class("folder-icon");
                 pin_icon_size(&img);
                 hbox.set_halign(gtk::Align::Center);
-                row.set_tooltip_text(Some("New Message"));
+                row.set_tooltip_text(Some(i18n("New Message").as_str()));
                 hbox.append(&img);
             } else {
                 hbox.set_halign(gtk::Align::Center);
@@ -1251,7 +1236,7 @@ impl Sidebar {
                     gtk::Image::from_icon_name("co.hyprlab.Vireo-mail-message-new-symbolic");
                 icon.add_css_class("folder-icon");
                 hbox.append(&icon);
-                let label = gtk::Label::new(Some("New Message"));
+                let label = gtk::Label::new(Some(i18n("New Message").as_str()));
                 label.add_css_class("account-name");
                 // The pill must be able to shrink with the sidebar (down to its
                 // 180px minimum) — otherwise the whole column's minimum width
@@ -1322,7 +1307,7 @@ impl Sidebar {
                 chev_btn.add_css_class("flat");
                 chev_btn.add_css_class("chevron-btn");
                 chev_btn.set_valign(gtk::Align::Center);
-                chev_btn.set_tooltip_text(Some("Show each inbox"));
+                chev_btn.set_tooltip_text(Some(i18n("Show each inbox").as_str()));
                 let cs = sender.input_sender().clone();
                 chev_btn.connect_clicked(move |_| {
                     let _ = cs.send(SidebarInput::ToggleUnifiedExpand);
@@ -1337,7 +1322,7 @@ impl Sidebar {
                     img.set_margin_start(ROW_LEFT_INSET + 9);
                 }
                 hbox.append(&img);
-                let label = gtk::Label::new(Some("All Inboxes"));
+                let label = gtk::Label::new(Some(i18n("All Inboxes").as_str()));
                 label.set_halign(gtk::Align::Start);
                 label.set_hexpand(true);
                 label.add_css_class("account-name");
@@ -1405,8 +1390,8 @@ impl Sidebar {
                     x,
                     y,
                     vec![
-                        ("Mark All as Read", CtxAction::MarkAllInboxesRead),
-                        ("Refresh", CtxAction::RefreshAllInboxes),
+                        (i18n_noop("Mark All as Read"), CtxAction::MarkAllInboxesRead),
+                        (i18n_noop("Refresh"), CtxAction::RefreshAllInboxes),
                     ],
                     &cs,
                 );
@@ -1424,7 +1409,7 @@ impl Sidebar {
                     toggle.add_css_class("flat");
                     toggle.add_css_class("chevron-btn");
                     toggle.set_halign(gtk::Align::Center);
-                    toggle.set_tooltip_text(Some("Show each inbox"));
+                    toggle.set_tooltip_text(Some(i18n("Show each inbox").as_str()));
                     let chevron = gtk::Image::from_icon_name(if self.unified_expanded {
                         "co.hyprlab.Vireo-pan-down-symbolic"
                     } else {
@@ -1489,15 +1474,15 @@ impl Sidebar {
                             x,
                             y,
                             vec![
-                                ("Mark as Read", CtxAction::MarkFolderRead {
+                                (i18n_noop("Mark as Read"), CtxAction::MarkFolderRead {
                                     account_id: r.account_id,
                                     folder_id: r.folder_id,
                                 }),
-                                ("Refresh", CtxAction::RefreshFolder {
+                                (i18n_noop("Refresh"), CtxAction::RefreshFolder {
                                     account_id: r.account_id,
                                     folder_id: r.folder_id,
                                 }),
-                                ("Account Settings…", CtxAction::OpenAccountSettings(r.account_id)),
+                                (i18n_noop("Account Settings…"), CtxAction::OpenAccountSettings(r.account_id)),
                             ],
                             &cs,
                         );
@@ -1555,14 +1540,14 @@ impl Sidebar {
                 pin_icon_size(&img);
                 if self.collapsed {
                     hbox.set_halign(gtk::Align::Center);
-                    row.set_tooltip_text(Some("Contacts"));
+                    row.set_tooltip_text(Some(i18n("Contacts").as_str()));
                     hbox.append(&img);
                 } else {
                     if self.chevrons_left {
                         img.set_margin_start(ROW_LEFT_INSET);
                     }
                     hbox.append(&img);
-                    let label = gtk::Label::new(Some("Contacts"));
+                    let label = gtk::Label::new(Some(i18n("Contacts").as_str()));
                     label.set_hexpand(true);
                     label.set_halign(gtk::Align::Start);
                     label.add_css_class("account-name");
@@ -1580,7 +1565,7 @@ impl Sidebar {
                         &widget,
                         x,
                         y,
-                        vec![vec![MenuEntry::new("Open GNOME Contacts", move || {
+                        vec![vec![MenuEntry::new(i18n("Open GNOME Contacts"), move || {
                             let _ = s2.output(SidebarOutput::OpenGnomeContacts);
                         })
                         .icon("co.hyprlab.Vireo-adw-external-link-symbolic")]],
@@ -1602,14 +1587,14 @@ impl Sidebar {
                 pin_icon_size(&img);
                 if self.collapsed {
                     hbox.set_halign(gtk::Align::Center);
-                    row.set_tooltip_text(Some("Attachments"));
+                    row.set_tooltip_text(Some(i18n("Attachments").as_str()));
                     hbox.append(&img);
                 } else {
                     if self.chevrons_left {
                         img.set_margin_start(ROW_LEFT_INSET);
                     }
                     hbox.append(&img);
-                    let label = gtk::Label::new(Some("Attachments"));
+                    let label = gtk::Label::new(Some(i18n("Attachments").as_str()));
                     label.set_hexpand(true);
                     label.set_halign(gtk::Align::Start);
                     label.add_css_class("account-name");
@@ -1663,7 +1648,7 @@ impl Sidebar {
                     img.set_margin_start(ROW_LEFT_INSET);
                 }
                 hbox.append(&img);
-                let label = gtk::Label::new(Some("Outbox"));
+                let label = gtk::Label::new(Some(i18n("Outbox").as_str()));
                 label.set_hexpand(true);
                 label.set_halign(gtk::Align::Start);
                 label.add_css_class("account-name");
@@ -1812,18 +1797,18 @@ impl Sidebar {
             click.connect_pressed(move |_, _, x, y| {
                 let mut items: Vec<(&str, CtxAction)> = Vec::new();
                 if let Some(fid) = inbox_id {
-                    items.push(("Mark Inbox as Read", CtxAction::MarkFolderRead {
+                    items.push((i18n_noop("Mark Inbox as Read"), CtxAction::MarkFolderRead {
                         account_id: id,
                         folder_id: fid,
                     }));
-                    items.push(("Refresh", CtxAction::RefreshFolder {
+                    items.push((i18n_noop("Refresh"), CtxAction::RefreshFolder {
                         account_id: id,
                         folder_id: fid,
                     }));
                 }
-                items.push(("New Folder…", CtxAction::NewFolder(id)));
-                items.push(("Account Settings…", CtxAction::OpenAccountSettings(id)));
-                items.push(("Remove Account…", CtxAction::RemoveAccount(id)));
+                items.push((i18n_noop("New Folder…"), CtxAction::NewFolder(id)));
+                items.push((i18n_noop("Account Settings…"), CtxAction::OpenAccountSettings(id)));
+                items.push((i18n_noop("Remove Account…"), CtxAction::RemoveAccount(id)));
                 show_sidebar_menu(&header_w, x, y, items, &cs);
             });
             header.add_controller(click);
@@ -1948,7 +1933,7 @@ impl Sidebar {
                         btn.add_css_class("flat");
                         btn.add_css_class("tree-expander");
                         btn.set_valign(gtk::Align::Center);
-                        btn.set_tooltip_text(Some("Show or hide sub-folders"));
+                        btn.set_tooltip_text(Some(i18n("Show or hide sub-folders").as_str()));
                         let st = sender.input_sender().clone();
                         let path = folder.path.clone();
                         btn.connect_clicked(move |_| {
@@ -2050,7 +2035,7 @@ impl Sidebar {
                 if self.collapsed {
                     hb.set_halign(gtk::Align::Center);
                     hb.append(&gtk::Image::from_icon_name("co.hyprlab.Vireo-folder-symbolic"));
-                    folders_toggle.set_tooltip_text(Some("Folders"));
+                    folders_toggle.set_tooltip_text(Some(i18n("Folders").as_str()));
                 } else {
                     if self.chevrons_left {
                         // A chevron glyph's ink sits further into its canvas
@@ -2060,7 +2045,7 @@ impl Sidebar {
                         custom_chevron.set_margin_start(2);
                     }
                     hb.append(&custom_chevron);
-                    let lbl = gtk::Label::new(Some(&format!("Folders ({})", custom.len())));
+                    let lbl = gtk::Label::new(Some(&i18n_f("Folders ({len})", &[("len", &(custom.len()).to_string())])));
                     lbl.set_halign(gtk::Align::Start);
                     lbl.set_hexpand(true);
                     hb.append(&lbl);
@@ -2086,12 +2071,12 @@ impl Sidebar {
             add_box.append(&add_img);
             if self.collapsed {
                 add_box.set_halign(gtk::Align::Center);
-                add_btn.set_tooltip_text(Some("Add Folder"));
+                add_btn.set_tooltip_text(Some(i18n("Add Folder").as_str()));
             } else {
                 if self.chevrons_left {
                     add_img.set_margin_start(4);
                 }
-                let lbl = gtk::Label::new(Some("Add Folder"));
+                let lbl = gtk::Label::new(Some(i18n("Add Folder").as_str()));
                 lbl.set_halign(gtk::Align::Start);
                 lbl.set_hexpand(true);
                 add_box.append(&lbl);
@@ -2235,7 +2220,7 @@ impl Sidebar {
                 chevron.set_margin_start(2);
             }
             hb.append(&chevron);
-            let lbl = gtk::Label::new(Some("Filtered Folders"));
+            let lbl = gtk::Label::new(Some(i18n("Filtered Folders").as_str()));
             lbl.add_css_class("account-name");
             lbl.set_halign(gtk::Align::Start);
             lbl.set_hexpand(true);
@@ -2324,11 +2309,11 @@ impl Sidebar {
                     x,
                     y,
                     vec![
-                        ("Mark as Read", CtxAction::MarkFolderRead {
+                        (i18n_noop("Mark as Read"), CtxAction::MarkFolderRead {
                             account_id: r.account_id,
                             folder_id: r.folder.id,
                         }),
-                        ("Refresh", CtxAction::RefreshFolder {
+                        (i18n_noop("Refresh"), CtxAction::RefreshFolder {
                             account_id: r.account_id,
                             folder_id: r.folder.id,
                         }),
@@ -2591,17 +2576,17 @@ fn attach_folder_context_menu(
             .and_then(|row| folders.get(row.index() as usize))
         {
             let mut items = vec![
-                ("Mark as Read", CtxAction::MarkFolderRead { account_id: id, folder_id: f.id }),
-                ("Refresh", CtxAction::RefreshFolder { account_id: id, folder_id: f.id }),
+                (i18n_noop("Mark as Read"), CtxAction::MarkFolderRead { account_id: id, folder_id: f.id }),
+                (i18n_noop("Refresh"), CtxAction::RefreshFolder { account_id: id, folder_id: f.id }),
             ];
             // Only user-created folders can be renamed or deleted.
             if f.kind == FolderKind::Custom {
-                items.push(("Rename Folder…", CtxAction::RenameFolder {
+                items.push((i18n_noop("Rename Folder…"), CtxAction::RenameFolder {
                     account_id: id,
                     name: f.name.clone(),
                     path: f.path.clone(),
                 }));
-                items.push(("Delete Folder…", CtxAction::DeleteFolder {
+                items.push((i18n_noop("Delete Folder…"), CtxAction::DeleteFolder {
                     account_id: id,
                     name: f.name.clone(),
                     path: f.path.clone(),

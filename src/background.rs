@@ -18,6 +18,7 @@
 //! decision to make, not ours.
 
 use zbus::zvariant::Value;
+use crate::i18n::{i18n, ni18n_f};
 
 const PORTAL_DEST: &str = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
@@ -32,8 +33,8 @@ const IFACE_BACKGROUND: &str = "org.freedesktop.portal.Background";
 /// and blocking a settings toggle on a dialog the user may leave sitting there
 /// would be worse than proceeding.
 pub fn request(autostart: bool) {
-    let reason = "Vireo checks for new mail and shows notifications while its window is closed.";
-    if let Err(e) = call_request(reason, autostart) {
+    let reason = i18n("Vireo checks for new mail and shows notifications while its window is closed.");
+    if let Err(e) = call_request(&reason, autostart) {
         tracing::debug!("background portal request skipped: {e}");
     }
 }
@@ -92,9 +93,8 @@ pub fn set_status(message: &str) {
 /// The status line: what Vireo is doing for you while it has no window.
 pub fn status_text(unread: u32) -> String {
     match unread {
-        0 => "Checking for new mail".to_string(),
-        1 => "1 unread message".to_string(),
-        n => format!("{n} unread messages"),
+        0 => i18n("Checking for new mail"),
+        n => ni18n_f("{n} unread message", "{n} unread messages", n, &[("n", &n.to_string())]),
     }
 }
 

@@ -29,6 +29,7 @@ use ksni::{Category, Icon, Status, ToolTip, Tray};
 
 use crate::app::AppMsg;
 use crate::config::TrayIcon;
+use crate::i18n::{i18n, i18n_f};
 
 /// One unread message as the tray menu shows it (issue #116): a card-like
 /// row with the sender's picture, which opens it in the reader. A DBusMenu
@@ -190,7 +191,7 @@ impl Tray for VireoTray {
             if mail.items.is_empty() {
                 items.push(
                     StandardItem {
-                        label: "No unread mail".to_string(),
+                        label: i18n("No unread mail"),
                         enabled: false,
                         ..Default::default()
                     }
@@ -201,7 +202,7 @@ impl Tray for VireoTray {
             if mail.unread as usize > mail.items.len() {
                 items.push(
                     StandardItem {
-                        label: format!("View all {} unread…", mail.unread),
+                        label: i18n_f("View all {n} unread…", &[("n", &mail.unread.to_string())]),
                         activate: Box::new(|t: &mut Self| {
                             let _ = t.sender.send(AppMsg::PresentWindow);
                             let _ = t.sender.send(AppMsg::TrayViewUnread);
@@ -217,7 +218,7 @@ impl Tray for VireoTray {
             // The settings window sits on the main window, so that comes
             // back first when it was hidden.
             StandardItem {
-                label: "Accounts".to_string(),
+                label: i18n("Accounts"),
                 activate: Box::new(|t: &mut Self| {
                     let _ = t.sender.send(AppMsg::PresentWindow);
                     let _ = t.sender.send(AppMsg::OpenAccounts);
@@ -226,7 +227,7 @@ impl Tray for VireoTray {
             }
             .into(),
             StandardItem {
-                label: "Settings".to_string(),
+                label: i18n("Settings"),
                 activate: Box::new(|t: &mut Self| {
                     let _ = t.sender.send(AppMsg::PresentWindow);
                     let _ = t.sender.send(AppMsg::OpenPreferences);
@@ -236,7 +237,7 @@ impl Tray for VireoTray {
             .into(),
             MenuItem::Separator,
             StandardItem {
-                label: "Quit".to_string(),
+                label: i18n("Quit"),
                 activate: Box::new(|t: &mut Self| {
                     let _ = t.sender.send(AppMsg::QuitFromTray);
                 }),
@@ -488,7 +489,7 @@ mod tests {
     fn every_icon_renders_at_every_size() {
         for icon in [TrayIcon::Vireo, TrayIcon::EnvelopeLight, TrayIcon::EnvelopeDark] {
             for dotted in [false, true] {
-                let set = render_set(icon, dotted);
+                let set = render_set(icon, crate::app_icon::png_for(crate::app_icon::DEFAULT_ID), dotted);
                 assert_eq!(set.len(), SIZES.len(), "{icon:?} dotted={dotted}");
                 for (i, size) in SIZES.iter().enumerate() {
                     assert_eq!(set[i].width, *size);
@@ -515,8 +516,8 @@ mod tests {
     #[test]
     fn the_dot_is_red_and_only_when_asked() {
         let size = 32usize;
-        let plain = render(TrayIcon::EnvelopeLight, false, size as i32, 1.0).unwrap();
-        let dotted = render(TrayIcon::EnvelopeLight, true, size as i32, 1.0).unwrap();
+        let plain = render(TrayIcon::EnvelopeLight, crate::app_icon::png_for(crate::app_icon::DEFAULT_ID), false, size as i32, 1.0).unwrap();
+        let dotted = render(TrayIcon::EnvelopeLight, crate::app_icon::png_for(crate::app_icon::DEFAULT_ID), true, size as i32, 1.0).unwrap();
         // The dot's centre, per `render`.
         let s = size as f64;
         let r = s * 0.19;
@@ -534,7 +535,7 @@ mod tests {
     #[test]
     fn a_half_fill_leaves_a_clear_margin_and_moves_the_dot() {
         let size = 32usize;
-        let icon = render(TrayIcon::Vireo, true, size as i32, 0.5).unwrap();
+        let icon = render(TrayIcon::Vireo, crate::app_icon::png_for(crate::app_icon::DEFAULT_ID), true, size as i32, 0.5).unwrap();
         assert_eq!(icon.data.len(), size * size * 4);
         let at = |x: usize, y: usize| {
             let i = (y * size + x) * 4;
