@@ -147,7 +147,8 @@ fn main() {
     // welcome wizard alone; the main window appears when the wizard finishes
     // or is closed (app.rs presents it from the wizard's hand-off).
     let first_run = std::env::var("VIREO_DEMO").is_err()
-        && config::load().unwrap_or_default().is_empty();
+        && config::load().unwrap_or_default().is_empty()
+        && !config::wizard_completed();
     let app = RelmApp::from_app(adw_app)
         .with_args(args)
         .visible_on_activate(!hidden && !first_run);

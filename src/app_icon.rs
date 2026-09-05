@@ -618,7 +618,16 @@ pub fn run_restart_helper() -> ! {
     }
     drop(conn);
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("vireo"));
-    let err = std::process::Command::new(exe).exec();
+    // A one-off launch's review and capture switches must not carry over
+    // into the instance that comes back.
+    let err = std::process::Command::new(exe)
+        .env_remove("VIREO_WELCOME")
+        .env_remove("VIREO_SHOWCASE")
+        .env_remove("VIREO_SHOWCASE_PAGE")
+        .env_remove("VIREO_SHOWCASE_SETTINGS")
+        .env_remove("VIREO_SHOWCASE_SCROLL")
+        .env_remove("VIREO_SHOWCASE_DELAY")
+        .exec();
     eprintln!("vireo: restart failed: {err}");
     std::process::exit(1);
 }

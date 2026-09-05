@@ -1919,8 +1919,12 @@ impl SimpleComponent for AppModel {
         if model.config.is_empty() || std::env::var("VIREO_WELCOME").is_ok() {
             model.rebuild_sidebar();
             // VIREO_WELCOME=1 forces the wizard over an existing config, for
-            // design review and screenshots.
-            if !demo_mode() || std::env::var("VIREO_WELCOME").is_ok() {
+            // design review and screenshots. A wizard already completed once
+            // (Start Reading pressed, even with no account added) doesn't
+            // come back on its own — a restart right after it must not loop.
+            if std::env::var("VIREO_WELCOME").is_ok()
+                || (!demo_mode() && !config::wizard_completed())
+            {
                 model.open_wizard(&sender);
             }
         }
@@ -4907,6 +4911,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppMsg::ApplyWelcomePrefs(p) => {
+                config::mark_wizard_completed();
                 // Route every choice through its normal handler (each saves and
                 // updates the live UI); drop the wizard controller afterwards.
                 sender.input(AppMsg::SetAutoRemoteContent(!p.block_remote));

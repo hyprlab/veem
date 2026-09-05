@@ -1706,6 +1706,11 @@ struct StateFile {
     /// dragged: the panel opens at its computed default.
     #[serde(default)]
     split_reply_height: i32,
+    /// The welcome wizard has been completed once (Start Reading pressed),
+    /// so an install with no accounts is not greeted with it again — a
+    /// restart right after the wizard, for the app icon, must not loop.
+    #[serde(default)]
+    wizard_completed: bool,
     /// The chosen app icon (an id from `app_icon::catalog`). Absent until
     /// the first start of a build that offers the choice settles it — see
     /// `app_icon::init_on_startup`.
@@ -1757,6 +1762,19 @@ fn save_state(state: &StateFile) {
     }
     if let Ok(toml) = toml::to_string_pretty(state) {
         let _ = std::fs::write(&path, toml);
+    }
+}
+
+/// Whether the welcome wizard has been completed before.
+pub fn wizard_completed() -> bool {
+    load_state().wizard_completed
+}
+
+pub fn mark_wizard_completed() {
+    let mut s = load_state();
+    if !s.wizard_completed {
+        s.wizard_completed = true;
+        save_state(&s);
     }
 }
 
