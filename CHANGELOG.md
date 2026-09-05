@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.21.1 — 2026-09-05
+
+Refreshed icon artwork.
+
+- **Icons.** Every app icon regenerated from the new files: the shipped
+  default, the beta channel's ribboned icon, and the sixteen gallery
+  alternatives. A second bird variant carrying an @ joins the gallery as
+  "Bird, @" (`data/icons/alt/bird-blue-at-symbol.png`).
+
 ## 1.21.0 — 2026-09-05
 
 Choose the app icon, a new default icon, and the redrawn wordmark.
