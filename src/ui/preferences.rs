@@ -1057,13 +1057,13 @@ impl Component for Preferences {
             body.append(&title);
             body.append(&subtitle);
             let s = sender.clone();
-            let grid = crate::ui::icon_picker::gallery(
+            let strip = crate::ui::icon_picker::strip(
                 &init.app_icon,
                 56,
                 std::rc::Rc::new(move |id: &str| s.input(PrefInput::ChangeAppIcon(id.to_string()))),
             );
-            grid.set_margin_top(6);
-            body.append(&grid);
+            strip.set_margin_top(6);
+            body.append(&strip);
             widgets.app_icon_row.set_child(Some(&body));
         }
 

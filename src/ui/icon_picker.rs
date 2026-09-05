@@ -6,17 +6,45 @@ use std::rc::Rc;
 
 use gtk::prelude::*;
 
-/// Build the gallery with `selected` ringed; `on_pick` runs for every
-/// change the user makes (not for the initial selection).
+/// Build the gallery as a fixed six-wide grid (three even rows) with
+/// `selected` ringed; `on_pick` runs for every change the user makes (not
+/// for the initial selection).
 pub fn gallery(selected: &str, tile: i32, on_pick: Rc<dyn Fn(&str)>) -> gtk::FlowBox {
+    build(selected, tile, 6, on_pick)
+}
+
+/// The gallery as one row that scrolls sideways, for a settings row.
+pub fn strip(selected: &str, tile: i32, on_pick: Rc<dyn Fn(&str)>) -> gtk::ScrolledWindow {
+    let n = crate::app_icon::catalog().count() as u32;
+    let row = build(selected, tile, n.max(1), on_pick);
+    row.set_halign(gtk::Align::Start);
+    row.set_hexpand(false);
+    let sw = gtk::ScrolledWindow::new();
+    sw.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    sw.set_propagate_natural_height(true);
+    sw.set_overlay_scrolling(true);
+    sw.set_child(Some(&row));
+    // Open on the current choice rather than the start of the row.
+    if let Some(child) = row.selected_children().into_iter().next() {
+        let sw2 = sw.clone();
+        gtk::glib::idle_add_local_once(move || {
+            let x = child.allocation().x() as f64;
+            let w = child.allocation().width() as f64;
+            let page = sw2.hadjustment().page_size();
+            sw2.hadjustment().set_value((x + w / 2.0 - page / 2.0).max(0.0));
+        });
+    }
+    sw
+}
+
+fn build(selected: &str, tile: i32, per_line: u32, on_pick: Rc<dyn Fn(&str)>) -> gtk::FlowBox {
     let grid = gtk::FlowBox::new();
     grid.add_css_class("icon-gallery");
     grid.set_selection_mode(gtk::SelectionMode::Single);
     grid.set_homogeneous(true);
     grid.set_activate_on_single_click(true);
-    // A fixed six-wide grid: three even rows of the eighteen choices.
-    grid.set_min_children_per_line(6);
-    grid.set_max_children_per_line(6);
+    grid.set_min_children_per_line(per_line);
+    grid.set_max_children_per_line(per_line);
     grid.set_column_spacing(2);
     grid.set_row_spacing(2);
     grid.set_halign(gtk::Align::Fill);
