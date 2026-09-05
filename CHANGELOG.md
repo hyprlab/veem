@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.22.0-beta.2 — 2026-09-05
+
+The beta channel catches up with stable 1.21.1: the refreshed icon set,
+the beta's own ribboned icon included, and the new "Bird, @" gallery
+entry. Everything since 1.22.0-beta.1 is in the 1.21.1 section below.
+
+## 1.21.1 — 2026-09-05
+
+Refreshed icon artwork.
+
+- **Icons.** Every app icon regenerated from the new files: the shipped
+  default, the beta channel's ribboned icon, and the sixteen gallery
+  alternatives. A second bird variant carrying an @ joins the gallery as
+  "Bird, @" (`data/icons/alt/bird-blue-at-symbol.png`).
+
 ## 1.22.0-beta.1 — 2026-09-05
 
 The interface can be translated.

@@ -56,6 +56,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.21.1" date="2026-09-05">
+
+      <description><p>Refreshed icon artwork throughout, and a second bird variant in the app icon gallery.</p></description>
+
+    </release>
     <release version="1.21.0" date="2026-09-05">
 
       <description><p>Choose the app icon from a set of eighteen in Settings or the welcome wizard, with a new default icon; existing installs keep the classic envelope. Redrawn wordmark.</p></description>
