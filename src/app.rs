@@ -4114,14 +4114,10 @@ impl SimpleComponent for AppModel {
                 // brings the new window up under the old one, old icon and
                 // all. Wait it out with the window still up.
                 let wait = crate::app_icon::launcher_settle_remaining();
+                self.show_restarting_dialog();
                 if wait.is_zero() {
                     sender.input(AppMsg::RestartNow);
                 } else {
-                    self.notifications.emit(NotifyInput::Push {
-                        text: "Restarting in a moment…".into(),
-                        error: false,
-                        connectivity: false,
-                    });
                     let s = sender.clone();
                     gtk::glib::timeout_add_local_once(wait, move || s.input(AppMsg::RestartNow));
                 }
@@ -6763,6 +6759,33 @@ impl AppModel {
         );
     }
 
+    /// The window a dialog about the icon change belongs over: Settings
+    /// while it is open, else the main window.
+    fn icon_dialog_parent(&self) -> gtk::Window {
+        match self.prefs.as_ref().filter(|p| p.widget().is_visible()) {
+            Some(p) => p.widget().clone().upcast(),
+            None => self.window.clone().upcast(),
+        }
+    }
+
+    /// While a restart waits for the desktop to take the launcher in: a
+    /// modal with a spinner, so the pause reads as progress rather than a
+    /// stuck app. It has no way to close — the app quits from under it.
+    fn show_restarting_dialog(&self) {
+        let dialog = adw::MessageDialog::new(
+            Some(&self.icon_dialog_parent()),
+            Some("Restarting Vireo"),
+            Some("Applying your new app icon. Vireo will close and reopen in a moment."),
+        );
+        let spinner = gtk::Spinner::new();
+        spinner.set_size_request(32, 32);
+        spinner.set_halign(gtk::Align::Center);
+        spinner.set_margin_top(6);
+        spinner.start();
+        dialog.set_extra_child(Some(&spinner));
+        dialog.present();
+    }
+
     /// The heads-up after an icon change. The launcher already carries the
     /// new icon, so the app grid shows it — but GNOME Shell keeps a running
     /// app's windows bound to the app object it created for the old
@@ -6772,12 +6795,8 @@ impl AppModel {
     /// restart. Offered, never forced, over whichever window the change
     /// came from.
     fn offer_restart_for_icon(&self, sender: &ComponentSender<Self>) {
-        let parent: gtk::Window = match self.prefs.as_ref().filter(|p| p.widget().is_visible()) {
-            Some(p) => p.widget().clone().upcast(),
-            None => self.window.clone().upcast(),
-        };
         let dialog = adw::MessageDialog::new(
-            Some(&parent),
+            Some(&self.icon_dialog_parent()),
             Some("Restart to finish switching icons?"),
             Some(
                 "The new icon is in place: the app grid shows it already. The dock keeps \
