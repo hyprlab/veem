@@ -11,7 +11,7 @@ use relm4::prelude::*;
 use webkit6::prelude::{PolicyDecisionExt, WebViewExt};
 
 use crate::models::Message;
-use crate::i18n::{i18n, i18n_f};
+use crate::i18n::{i18n, i18n_f, ni18n_f};
 
 pub struct MessageView {
     /// Render a lone message as an inset card, same as a conversation's
@@ -1770,8 +1770,13 @@ impl MessageView {
                         1 if always_show_recipients => String::new(),
                         n => format!(
                             "<button type=\"button\" class=\"vireo-rcpt-toggle{open}\" \
-                             title=\"{title}\">{n} recipient{s}</button>",
-                            s = if n == 1 { "" } else { "s" },
+                             title=\"{title}\">{label}</button>",
+                            label = gtk::glib::markup_escape_text(&ni18n_f(
+                                "{n} recipient",
+                                "{n} recipients",
+                                n as u32,
+                                &[("n", &n.to_string())],
+                            )),
                             open = if always_show_recipients { " open" } else { "" },
                             title = if always_show_recipients {
                                 i18n("Hide recipients")
