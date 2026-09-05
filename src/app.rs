@@ -6775,7 +6775,7 @@ impl AppModel {
         let dialog = adw::MessageDialog::new(
             Some(&self.icon_dialog_parent()),
             Some("Restarting Vireo"),
-            Some("Vireo will close and reopen in a moment."),
+            Some("Applying your new app icon. Vireo will close and reopen in a moment."),
         );
         let spinner = gtk::Spinner::new();
         spinner.set_size_request(32, 32);
@@ -6798,11 +6798,7 @@ impl AppModel {
         let dialog = adw::MessageDialog::new(
             Some(&self.icon_dialog_parent()),
             Some("Restart to finish switching icons?"),
-            Some(
-                "The new icon is in place: the app grid shows it already. The dock keeps \
-                 the old one for the running app, and so do Vireo's own windows, until \
-                 Vireo restarts.",
-            ),
+            Some("The dock and Vireo's own windows keep the old icon until Vireo restarts."),
         );
         dialog.add_responses(&[("later", "Later"), ("restart", "Restart Now")]);
         dialog.set_response_appearance("restart", adw::ResponseAppearance::Suggested);
