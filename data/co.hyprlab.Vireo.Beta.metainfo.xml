@@ -59,7 +59,7 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
-    <release version="1.21.2-beta.1" date="2026-09-05" type="development">
+    <release version="1.22.0-beta.1" date="2026-09-05" type="development">
 
       <description><p>The interface can be translated: gettext plumbing and the translation template, ready for translators.</p></description>
 

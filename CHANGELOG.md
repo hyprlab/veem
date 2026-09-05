@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.21.2-beta.1 — 2026-09-05
+## 1.22.0-beta.1 — 2026-09-05
 
 The interface can be translated.
 
