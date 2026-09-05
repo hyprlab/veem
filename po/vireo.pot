@@ -1248,6 +1248,11 @@ msgstr ""
 msgid "View source"
 msgstr ""
 
+msgid "{n} recipient"
+msgid_plural "{n} recipients"
+msgstr[0] ""
+msgstr[1] ""
+
 msgid "Hide recipients"
 msgstr ""
 
@@ -2174,6 +2179,9 @@ msgid "Could not delete message: {e}"
 msgstr ""
 
 msgid "POP3 accounts don't support folders"
+msgstr ""
+
+msgid "Inbox"
 msgstr ""
 
 msgid "Could not move messages: {e}"

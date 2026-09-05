@@ -6080,7 +6080,7 @@ pub(crate) fn folder_order(kind: FolderKind) -> u8 {
 /// special-cased.
 fn display_name(path: &str, delimiter: Option<&str>) -> String {
     if path.eq_ignore_ascii_case("inbox") {
-        return "Inbox".to_string();
+        return i18n("Inbox");
     }
     let leaf = match delimiter {
         Some(d) if !d.is_empty() => path.rsplit(d).next().unwrap_or(path),
