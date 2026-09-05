@@ -1321,7 +1321,7 @@ headerbar.reader-toolbar button.image-button {
 /* The whole window wears the icon's yellow; every page floats on it. */
 window.welcome-window,
 .welcome-window > * {
-  background-color: #ffc600;
+  background-color: #fec200;
 }
 .welcome-window headerbar {
   background: transparent;
@@ -1433,6 +1433,13 @@ window.welcome-window,
 .icon-gallery flowboxchild:selected .icon-gallery-label {
   opacity: 1;
   font-weight: 700;
+}
+/* The strip's edges melt into the card where more icons lie beyond. */
+.icon-strip-fade.left {
+  background: linear-gradient(to right, @card_bg_color, alpha(@card_bg_color, 0));
+}
+.icon-strip-fade.right {
+  background: linear-gradient(to left, @card_bg_color, alpha(@card_bg_color, 0));
 }
 /* On the wizard's yellow the selection ring wears the wordmark blue. */
 .welcome-window .icon-gallery flowboxchild:hover {

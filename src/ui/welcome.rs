@@ -1,7 +1,7 @@
 //! First-run welcome wizard: a guided, five-step setup shown when Vireo starts
 //! with no accounts configured.
 //!
-//! The whole window wears the icon's yellow (#feb900) with the wordmark as the
+//! The whole window wears the icon's yellow (#fec200) with the wordmark as the
 //! hero, and content floating on window-coloured cards — deliberate and warm,
 //! not a form dump. Steps: welcome → add an account (one-click GNOME Online
 //! Accounts imports + a manual IMAP form with provider presets) → privacy →
@@ -501,7 +501,8 @@ impl Component for Welcome {
         pers_card.append(&sw_threading);
         pers.append(&pers_card);
 
-        // The app icon: the whole gallery on its own card, the default ringed.
+        // The app icon: the whole set as one sideways-scrolling row on its
+        // own card, the default ringed.
         let icon_hdr = gtk::Label::new(Some("Pick your app icon"));
         icon_hdr.add_css_class("welcome-section");
         icon_hdr.set_halign(gtk::Align::Start);
@@ -514,19 +515,18 @@ impl Component for Welcome {
         let icon_row = gtk::ListBoxRow::new();
         icon_row.set_activatable(false);
         icon_row.set_focusable(false);
-        let grid = {
+        let strip = {
             let choice = icon_choice.clone();
-            crate::ui::icon_picker::gallery(
+            crate::ui::icon_picker::strip(
                 &icon_choice.borrow(),
                 52,
                 std::rc::Rc::new(move |id: &str| *choice.borrow_mut() = id.to_string()),
             )
         };
-        grid.set_margin_top(8);
-        grid.set_margin_bottom(6);
-        grid.set_margin_start(6);
-        grid.set_margin_end(6);
-        icon_row.set_child(Some(&grid));
+        strip.set_margin_top(8);
+        strip.set_margin_start(6);
+        strip.set_margin_end(6);
+        icon_row.set_child(Some(&strip));
         icon_card.append(&icon_row);
         pers.append(&icon_card);
         carousel.append(&scrolled(&page(&pers)));

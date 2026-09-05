@@ -13,18 +13,31 @@ pub fn gallery(selected: &str, tile: i32, on_pick: Rc<dyn Fn(&str)>) -> gtk::Flo
     build(selected, tile, 6, on_pick)
 }
 
-/// The gallery as one row that scrolls sideways, for a settings row.
-pub fn strip(selected: &str, tile: i32, on_pick: Rc<dyn Fn(&str)>) -> gtk::ScrolledWindow {
+/// The gallery as one row that scrolls sideways, its edges fading into the
+/// card wherever there is more to scroll to.
+pub fn strip(selected: &str, tile: i32, on_pick: Rc<dyn Fn(&str)>) -> gtk::Overlay {
     let n = crate::app_icon::catalog().count() as u32;
     let row = build(selected, tile, n.max(1), on_pick);
     row.set_halign(gtk::Align::Start);
     row.set_hexpand(false);
+    // Natural height only: in a taller host (the wizard's card) the cells
+    // would otherwise stretch, and the selection ring with them.
+    row.set_valign(gtk::Align::Start);
+    row.set_vexpand(false);
     // Room under the row for the scrollbar, so it never sits on the labels.
     row.set_margin_bottom(8);
     let sw = gtk::ScrolledWindow::new();
     sw.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
-    sw.set_propagate_natural_height(true);
+    // A fixed height: the cell (padding, tile, gap, two label lines,
+    // padding) plus the scrollbar margin. A flow box asked for its
+    // natural height at a width narrower than its one row over-reports
+    // it, which left a band of empty card under the icons.
+    let height = 8 + tile + 4 + 32 + 6 + 8;
+    sw.set_min_content_height(height);
+    sw.set_max_content_height(height);
     sw.set_overlay_scrolling(true);
+    sw.set_vexpand(false);
+    sw.set_valign(gtk::Align::Start);
     sw.set_child(Some(&row));
     // Open on the current choice rather than the start of the row.
     if let Some(child) = row.selected_children().into_iter().next() {
@@ -36,7 +49,41 @@ pub fn strip(selected: &str, tile: i32, on_pick: Rc<dyn Fn(&str)>) -> gtk::Scrol
             sw2.hadjustment().set_value((x + w / 2.0 - page / 2.0).max(0.0));
         });
     }
-    sw
+
+    // The fades: a gradient from the card's colour to nothing over each
+    // edge, drawn only as far as there is content hidden beyond it, so a
+    // row scrolled fully to one end shows a clean edge there.
+    const FADE: f64 = 36.0;
+    let fade = |side: &str, align: gtk::Align| {
+        let f = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        f.add_css_class("icon-strip-fade");
+        f.add_css_class(side);
+        f.set_can_target(false);
+        f.set_width_request(FADE as i32);
+        f.set_halign(align);
+        f.set_valign(gtk::Align::Fill);
+        f.set_opacity(0.0);
+        f
+    };
+    let left = fade("left", gtk::Align::Start);
+    let right = fade("right", gtk::Align::End);
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&sw));
+    overlay.add_overlay(&left);
+    overlay.add_overlay(&right);
+    let update = {
+        let (left, right) = (left.clone(), right.clone());
+        move |a: &gtk::Adjustment| {
+            let v = a.value();
+            let end = (a.upper() - a.page_size()).max(0.0);
+            left.set_opacity((v / FADE).clamp(0.0, 1.0));
+            right.set_opacity(((end - v) / FADE).clamp(0.0, 1.0));
+        }
+    };
+    let adj = sw.hadjustment();
+    adj.connect_value_changed(update.clone());
+    adj.connect_changed(update);
+    overlay
 }
 
 fn build(selected: &str, tile: i32, per_line: u32, on_pick: Rc<dyn Fn(&str)>) -> gtk::FlowBox {
