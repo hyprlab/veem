@@ -23,6 +23,8 @@ for size in 256x256 512x512; do
     install -Dm644 "$ROOT/data/icons/hicolor/$size/apps/$APP_ID.png" \
         "$PREFIX/share/icons/hicolor/$size/apps/$APP_ID.png"
 done
+install -Dm644 "$ROOT/data/icons/hicolor/scalable/apps/$APP_ID.svg" \
+    "$PREFIX/share/icons/hicolor/scalable/apps/$APP_ID.svg"
 # (Symbolic UI icons are embedded in the binary as a GResource, so nothing to
 # install here — they render identically regardless of the host icon theme.)
 

@@ -135,6 +135,7 @@ modules:
       - install -d /app/share/applications && msgfmt --desktop --template=data/co.hyprlab.Vireo.desktop -d po -o /app/share/applications/co.hyprlab.Vireo.desktop
       - install -Dm644 data/icons/hicolor/256x256/apps/co.hyprlab.Vireo.png /app/share/icons/hicolor/256x256/apps/co.hyprlab.Vireo.png
       - install -Dm644 data/icons/hicolor/512x512/apps/co.hyprlab.Vireo.png /app/share/icons/hicolor/512x512/apps/co.hyprlab.Vireo.png
+      - install -Dm644 data/icons/hicolor/scalable/apps/co.hyprlab.Vireo.svg /app/share/icons/hicolor/scalable/apps/co.hyprlab.Vireo.svg
       # The restart helper's D-Bus service (Settings → App icon → Restart Now):
       # exported by Flatpak, so the bus can start a fresh sandbox instance.
       - install -Dm644 data/co.hyprlab.Vireo.Restart.service /app/share/dbus-1/services/co.hyprlab.Vireo.Restart.service

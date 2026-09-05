@@ -34,6 +34,8 @@ for size in 256x256 512x512; do
     install -Dm644 icons/$size/%{appid}.png \
         %{buildroot}%{_datadir}/icons/hicolor/$size/apps/%{appid}.png
 done
+install -Dm644 icons/scalable/%{appid}.svg \
+    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/%{appid}.svg
 
 %files
 %license LICENSE
@@ -41,6 +43,7 @@ done
 %{_datadir}/applications/%{appid}.desktop
 %{_datadir}/metainfo/%{appid}.metainfo.xml
 %{_datadir}/icons/hicolor/*/apps/%{appid}.png
+%{_datadir}/icons/hicolor/scalable/apps/%{appid}.svg
 
 %changelog
 * Mon Aug 03 2026 Hyprlab <hyprlab@proton.me> - 1.6.0-1
