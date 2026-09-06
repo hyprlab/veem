@@ -737,6 +737,10 @@ struct PrivacyFile {
     /// needing the ⋯ click.
     #[serde(default)]
     list_palette_hover: bool,
+    /// Swap the message list's swipe-gesture sides: off (default) swipes
+    /// left to delete and right to archive, on reverses them.
+    #[serde(default)]
+    swipe_reversed: bool,
     /// Whether "New message" opens inline over the reading pane (like a
     /// reply) rather than in its own window.
     #[serde(default = "default_compose_inline")]
@@ -964,6 +968,7 @@ impl Default for PrivacyFile {
             card_actions_auto: default_card_actions_auto(),
             list_palette: default_list_palette(),
             list_palette_hover: false,
+            swipe_reversed: false,
             compose_inline: default_compose_inline(),
             paste_plain: default_paste_plain(),
             spellcheck: default_spellcheck(),
@@ -1341,6 +1346,11 @@ pub fn load_list_palette_hover() -> bool {
     load_privacy().list_palette_hover
 }
 
+/// Whether the message list's swipe-gesture sides are swapped.
+pub fn load_swipe_reversed() -> bool {
+    load_privacy().swipe_reversed
+}
+
 /// Whether "New message" composes inline over the reading pane.
 pub fn load_compose_inline() -> bool {
     load_privacy().compose_inline
@@ -1441,6 +1451,7 @@ pub fn save_privacy(
     card_actions_auto: bool,
     list_palette: bool,
     list_palette_hover: bool,
+    swipe_reversed: bool,
     compose_inline: bool,
     paste_plain: bool,
     spellcheck: bool,
@@ -1497,6 +1508,7 @@ pub fn save_privacy(
         card_actions_auto,
         list_palette,
         list_palette_hover,
+        swipe_reversed,
         compose_inline,
         paste_plain,
         spellcheck,

@@ -41,6 +41,8 @@ pub struct PrefInit {
     pub list_palette: bool,
     /// The list's Actions Palette opens on row hover (no ⋯ click).
     pub list_palette_hover: bool,
+    /// The message list's swipe-gesture sides are swapped (#swipe).
+    pub swipe_reversed: bool,
     /// "New message" composes inline over the reading pane (vs a window).
     pub compose_inline: bool,
     pub paste_plain: bool,
@@ -203,6 +205,7 @@ pub enum PrefInput {
     ChangeCardActionsMode(u32),
     ToggleListPalette(bool),
     ToggleListPaletteHover(bool),
+    ToggleSwipeReversed(bool),
     ToggleComposeInline(bool),
     TogglePastePlain(bool),
     ToggleSpellcheck(bool),
@@ -260,6 +263,7 @@ pub enum PrefOutput {
     SetCardActionsMode { hover_toggle: bool, hover_auto: bool },
     SetListPalette(bool),
     SetListPaletteHover(bool),
+    SetSwipeReversed(bool),
     SetComposeInline(bool),
     SetPastePlain(bool),
     SetSpellcheck(bool),
@@ -515,6 +519,17 @@ impl Component for Preferences {
                                            by itself while the pointer rests on a row."),
                             connect_active_notify[sender] => move |row| {
                                 sender.input(PrefInput::ToggleListPaletteHover(row.is_active()));
+                            },
+                        },
+
+                        #[name = "swipe_reversed_row"]
+                        adw::SwitchRow {
+                            set_title: &i18n("Reverse swipe directions"),
+                            set_subtitle: &i18n("Swipe (mouse-drag or trackpad) a message left \
+                                           to delete it and right to archive it. Turning this \
+                                           on swaps the two: left archives, right deletes."),
+                            connect_active_notify[sender] => move |row| {
+                                sender.input(PrefInput::ToggleSwipeReversed(row.is_active()));
                             },
                         },
 
@@ -1128,6 +1143,7 @@ impl Component for Preferences {
         });
         widgets.list_palette_row.set_active(init.list_palette);
         widgets.list_palette_hover_row.set_active(init.list_palette_hover);
+        widgets.swipe_reversed_row.set_active(init.swipe_reversed);
         widgets.compose_inline_row.set_active(init.compose_inline);
         widgets.paste_plain_row.set_active(init.paste_plain);
         widgets.spellcheck_row.set_active(init.spellcheck);
@@ -1335,6 +1351,9 @@ impl Component for Preferences {
             }
             PrefInput::ToggleListPaletteHover(on) => {
                 let _ = sender.output(PrefOutput::SetListPaletteHover(on));
+            }
+            PrefInput::ToggleSwipeReversed(on) => {
+                let _ = sender.output(PrefOutput::SetSwipeReversed(on));
             }
             PrefInput::ToggleComposeInline(on) => {
                 let _ = sender.output(PrefOutput::SetComposeInline(on));
