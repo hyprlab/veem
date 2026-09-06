@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS messages (
     reply_to       TEXT    NOT NULL DEFAULT '',
     PRIMARY KEY (account_id, folder_path, uid)
 );
+CREATE INDEX IF NOT EXISTS messages_by_message_id ON messages (message_id);
 CREATE TABLE IF NOT EXISTS bodies (
     account_id  INTEGER NOT NULL,
     folder_path TEXT NOT NULL,
@@ -162,6 +163,24 @@ fn restrict(path: &std::path::Path, mode: u32) {
 fn restrict(_path: &std::path::Path, _mode: u32) {}
 
 impl Cache {
+    /// Every cached copy of a message with this (normalized: no brackets,
+    /// lowercase) Message-ID, as `(account_id, folder_path, uid)`, newest
+    /// first — a `mid:` link (#130) is resolved from here before any server
+    /// is asked.
+    pub fn locate_by_message_id(&self, message_id: &str) -> Vec<(u32, String, u32)> {
+        if message_id.is_empty() {
+            return Vec::new();
+        }
+        let Ok(mut stmt) = self.conn.prepare(
+            "SELECT account_id, folder_path, uid FROM messages WHERE message_id = ?1 ORDER BY ts DESC",
+        ) else {
+            return Vec::new();
+        };
+        stmt.query_map([message_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default()
+    }
+
     /// Open (creating if needed) the cache DB at `~/.local/share/vireo/cache.db`.
     pub fn open() -> rusqlite::Result<Cache> {
         // No `temp_dir` fallback: this database holds message bodies, attachment

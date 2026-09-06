@@ -205,6 +205,10 @@ pub enum MailRequest {
     /// changed in transit) in `path`, where a move just put them, and move
     /// them back to `dest`, then reload that folder so they reappear.
     UndoMove { path: String, dest: String, dest_folder_id: u32, message_ids: Vec<String> },
+    /// Find a message by its (normalized) RFC Message-ID across every folder
+    /// of the account, for a `mid:` link (#130) the cache could not resolve.
+    /// Answered with [`WorkerEvent::Located`] either way.
+    Locate { message_id: String },
     /// Move/rename a mailbox (drag-and-drop in the sidebar, #51). The server
     /// renames any child hierarchy along with it (RFC 3501 §6.3.5).
     RenameFolder { old_path: String, new_path: String },
@@ -295,6 +299,10 @@ pub enum WorkerEvent {
     /// folder's fresh [`WorkerEvent::Messages`] so the app can land the user
     /// on the restored message instead of wherever the reload left the list.
     Restored { folder_id: u32, message_ids: Vec<String> },
+    /// The answer to [`MailRequest::Locate`]: where the message with that
+    /// Message-ID lives (`folder_path`, `uid`), or `None` when no folder of
+    /// this account has it.
+    Located { message_id: String, hit: Option<(String, u32)> },
     /// Cached attachments for an inbox, for the attachments gallery.
     Gallery { items: Vec<crate::models::GalleryItem> },
     /// The background backfill for a folder finished — its whole index is now
@@ -1424,6 +1432,36 @@ async fn run_imap(
                 }
                 // Always signal completion so the UI's bulk spinner clears.
                 emit(WorkerEvent::BulkComplete);
+            }
+
+            MailRequest::Locate { message_id } => {
+                // A folder at a time: SELECT, then a HEADER search. Servers
+                // whose header index lags (see UndoMove below) are the reason
+                // the cache is asked first; this is the fallback for a message
+                // Vireo has never listed.
+                let sess = session.as_mut().unwrap();
+                let mut hit: Option<(String, u32)> = None;
+                match list_folders(account_id, sess).await {
+                    Ok(folders) => {
+                        for f in folders {
+                            if sess.select(&f.path).await.is_err() {
+                                continue;
+                            }
+                            let Ok(set) = sess
+                                .uid_search(format!("HEADER Message-ID \"{message_id}\""))
+                                .await
+                            else {
+                                continue;
+                            };
+                            if let Some(uid) = set.into_iter().max() {
+                                hit = Some((f.path.clone(), uid));
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!("[account {account_id}] locate: listing folders failed: {e}"),
+                }
+                emit(WorkerEvent::Located { message_id: message_id.clone(), hit });
             }
 
             MailRequest::UndoMove { path, dest, dest_folder_id, message_ids } => {
@@ -3483,15 +3521,24 @@ async fn purge_messages(
     }
     let set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
     session.select(path).await?;
+    flag_deleted_and_expunge(session, &set).await
+}
+
+/// Flag a UID set `\Deleted` and expunge it: `UID EXPUNGE` where the server
+/// has UIDPLUS, a plain `EXPUNGE` otherwise.
+async fn flag_deleted_and_expunge(
+    session: &mut ImapSession,
+    set: &str,
+) -> Result<(), async_imap::error::Error> {
     let _: Vec<Fetch> = session
-        .uid_store(&set, "+FLAGS (\\Deleted)")
+        .uid_store(set, "+FLAGS (\\Deleted)")
         .await?
         .try_collect()
         .await?;
     // A server without UIDPLUS answers `BAD`, which surfaces while draining the
     // response stream rather than from the call itself — so judge it on the
     // collected result, not with `?`.
-    let uid_expunged = match session.uid_expunge(&set).await {
+    let uid_expunged = match session.uid_expunge(set).await {
         Ok(stream) => stream.try_collect::<Vec<u32>>().await.is_ok(),
         Err(_) => false,
     };
@@ -3499,6 +3546,30 @@ async fn purge_messages(
         let _: Vec<u32> = session.expunge().await?.try_collect().await?;
     }
     Ok(())
+}
+
+/// `UID MOVE` where the server offers it (RFC 6851), else what every client
+/// did before there was a MOVE: `UID COPY`, flag the originals `\Deleted`,
+/// expunge (issue #128 — a server without MOVE answers `UID MOVE` with
+/// "command not permitted with UID", and every move, deleting included,
+/// failed on it). The capability is asked for each time: it is one short
+/// round trip, and a session's answer can change after login on some
+/// servers, so it is not worth caching wrong.
+async fn uid_move(
+    session: &mut ImapSession,
+    set: &str,
+    dest: &str,
+) -> Result<(), async_imap::error::Error> {
+    let can_move = match session.capabilities().await {
+        Ok(caps) => caps.has_str("MOVE"),
+        // If even CAPABILITY fails, let MOVE produce the real error.
+        Err(_) => true,
+    };
+    if can_move {
+        return session.uid_mv(set, dest).await;
+    }
+    session.uid_copy(set, dest).await?;
+    flag_deleted_and_expunge(session, set).await
 }
 
 /// SMTP host: the configured value, or derived from the IMAP host.
@@ -3542,7 +3613,7 @@ async fn move_or_create(
     dest: &str,
 ) -> Result<bool, async_imap::error::Error> {
     session.select(path).await?;
-    if session.uid_mv(uid.to_string(), dest).await.is_ok() {
+    if uid_move(session, &uid.to_string(), dest).await.is_ok() {
         return Ok(false);
     }
     // The move failed — most likely the destination mailbox doesn't exist (the
@@ -3551,7 +3622,7 @@ async fn move_or_create(
     let created = session.create(dest).await.is_ok();
     let _ = session.subscribe(dest).await;
     session.select(path).await?;
-    session.uid_mv(uid.to_string(), dest).await?;
+    uid_move(session, &uid.to_string(), dest).await?;
     Ok(created)
 }
 
@@ -3579,7 +3650,7 @@ async fn move_messages(
     let mut ensured_dest = false;
     for chunk in uids.chunks(300) {
         let set = chunk.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
-        if session.uid_mv(&set, dest).await.is_ok() {
+        if uid_move(session, &set, dest).await.is_ok() {
             continue;
         }
         // First failure is most likely a missing destination mailbox — create,
@@ -3590,7 +3661,7 @@ async fn move_messages(
             ensured_dest = true;
             session.select(path).await?;
         }
-        session.uid_mv(&set, dest).await?;
+        uid_move(session, &set, dest).await?;
     }
     Ok(created)
 }
@@ -3630,11 +3701,11 @@ async fn delete_folder(
         if let Some(trash) = trash {
             if !trash.eq_ignore_ascii_case(path) {
                 // Move everything to Trash; create it first if the move fails.
-                if session.uid_mv("1:*", trash).await.is_err() {
+                if uid_move(session, "1:*", trash).await.is_err() {
                     let _ = session.create(trash).await;
                     let _ = session.subscribe(trash).await;
                     session.select(path).await?;
-                    session.uid_mv("1:*", trash).await?;
+                    uid_move(session, "1:*", trash).await?;
                 }
             }
         }
@@ -5645,6 +5716,11 @@ async fn run_pop3(
 
     while let Some(req) = rx.recv().await {
         match req {
+            MailRequest::Locate { message_id } => {
+                // No folders to search here beyond what the cache already
+                // held: answer "not found" so the app can report the miss.
+                emit(WorkerEvent::Located { message_id: message_id.clone(), hit: None });
+            }
             MailRequest::LoadGallery => {
                 if let Some(c) = cache.as_ref() {
                     let items = c.gallery_items(account_id, GALLERY_DATA_CAP, GALLERY_LIMIT);
@@ -6001,6 +6077,11 @@ async fn run_mock(
 
     while let Some(req) = rx.recv().await {
         match req {
+            MailRequest::Locate { message_id } => {
+                // No folders to search here beyond what the cache already
+                // held: answer "not found" so the app can report the miss.
+                emit(WorkerEvent::Located { message_id: message_id.clone(), hit: None });
+            }
             // The mock backend has no attachment cache.
             MailRequest::LoadGallery => {
                 emit(WorkerEvent::Gallery { items: Vec::new() });
@@ -7027,6 +7108,11 @@ async fn run_graph(
             }
         };
         match req {
+            MailRequest::Locate { message_id } => {
+                // No folders to search here beyond what the cache already
+                // held: answer "not found" so the app can report the miss.
+                emit(WorkerEvent::Located { message_id: message_id.clone(), hit: None });
+            }
             MailRequest::LoadGallery => {
                 if let Some(c) = cache.as_ref() {
                     let items = c.gallery_items(account_id, GALLERY_DATA_CAP, GALLERY_LIMIT);

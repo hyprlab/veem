@@ -1356,8 +1356,8 @@ fn local_image_data_uri(value: &str, base: Option<&std::path::Path>, max: u64) -
     Some(format!("data:{mime};base64,{}", crate::oauth::base64_encode(&data)))
 }
 
-/// `%20` and friends back to characters, for a path that came as a URL.
-fn percent_decode(s: &str) -> String {
+/// `%20` and friends back to characters, for a path or id that came as a URL.
+pub(crate) fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
