@@ -131,7 +131,7 @@ const THREAD_ID_LIMIT: usize = 24;
 /// How many messages one conversation may pull in from other folders. A
 /// conversation is rendered as a single document with every member's body
 /// inlined, so this bounds both the fetching and the rendering.
-const THREAD_MEMBER_LIMIT: usize = 50;
+const THREAD_MEMBER_LIMIT: usize = 100;
 
 /// (Adding a *new* table needs no bump: `SCHEMA` runs `CREATE TABLE IF NOT
 /// EXISTS` on every open, so an existing cache gains it in place. A bump is for
