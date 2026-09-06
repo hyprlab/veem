@@ -276,6 +276,10 @@ upstream — their work ships in the app and is credited in the About window:
   rejoining filenames split across RFC 2047 encoded-words; and pictures
   dropped or pasted from a file manager landing in the message, keeping their
   filename, with resizing by handle or menu and an optional recompress on send.
+- [**frenchy82**](https://github.com/frenchy82) ([#122](https://github.com/hyprlab/vireo/issues/122),
+  [#131](https://github.com/hyprlab/vireo/pull/131)) — the French translation,
+  Vireo's first, and the report that found the labels the app was showing in
+  English despite having the translation.
 - [**Anton Palgunov**](https://github.com/Toxblh) ([#7](https://github.com/hyprlab/vireo/pull/7),
   [#8](https://github.com/hyprlab/vireo/pull/8)) — sender avatars from GNOME
   Contacts photos, and GNOME Online Accounts refinements: custom server ports
@@ -286,8 +290,11 @@ upstream — their work ships in the app and is credited in the About window:
 Not every contribution is code. Thanks to
 [**p-mitana**](https://github.com/p-mitana) for a thorough round of design
 feedback — reader, composer and GNOME-HIG suggestions, and a string of sharp
-bug reports — that shaped the 1.15 releases, and to everyone who files issues
-and ideas.
+bug reports — that shaped the 1.15 releases; to
+[**7system7**](https://github.com/7system7) for the HTML-signature and `mid:`
+link requests and [**EmmanuelP**](https://github.com/EmmanuelP) for tracking
+down the deletes that failed on Zimbra, both in 1.22; and to everyone who
+files issues and ideas.
 
 Pull requests are welcome. There's no CLA — by opening one you agree your
 contribution ships under the [AGPL-3.0-or-later](LICENSE), and it may be adapted
