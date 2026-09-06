@@ -33,7 +33,7 @@ build_rpm() {
     local work stage
     work="$(mktemp -d)"
     stage="$work/vireo-$VERSION-bin"
-    mkdir -p "$stage/icons/256x256" "$stage/icons/512x512"
+    mkdir -p "$stage/icons/256x256" "$stage/icons/512x512" "$stage/icons/scalable"
     cp "$ROOT/target/release/vireo"              "$stage/vireo"
     cp "$ROOT/LICENSE"                          "$stage/LICENSE"
     # Launcher and metainfo with their translated fields merged in, and a
@@ -49,6 +49,7 @@ build_rpm() {
     for size in 256x256 512x512; do
         cp "$ROOT/data/icons/hicolor/$size/apps/$APP_ID.png" "$stage/icons/$size/$APP_ID.png"
     done
+    cp "$ROOT/data/icons/hicolor/scalable/apps/$APP_ID.svg" "$stage/icons/scalable/$APP_ID.svg"
     mkdir -p "$work/rpmbuild/SOURCES"
     tar -C "$work" -cf "$work/rpmbuild/SOURCES/vireo-$VERSION-bin.tar" "vireo-$VERSION-bin"
 

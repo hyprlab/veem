@@ -50,11 +50,14 @@ macro_rules! alt {
     };
 }
 
-/// The gallery, in display order: the build's own icon first, the colours,
-/// and the envelope last. The beta's ribboned icon is its "Default" and is
-/// never offered as a colour of its own.
+/// The gallery, in display order: the build's own icon, the envelope and the
+/// birds first, then the colours, and the classic icon last. The beta's
+/// ribboned icon is its "Default" and is never offered as a colour of its own.
 const CATALOG: &[IconChoice] = &[
     IconChoice { id: DEFAULT_ID, label: i18n_noop("Default"), png: DEFAULT_PNG },
+    alt!("envelope", "Envelope"),
+    alt!("bird-blue", "Bird"),
+    alt!("bird-blue-at-symbol", "Bird, @"),
     alt!("yellow-blue", "Yellow & blue"),
     alt!("blue", "Blue"),
     alt!("blue-dark", "Dark blue"),
@@ -70,8 +73,6 @@ const CATALOG: &[IconChoice] = &[
     alt!("pattern-blue", "Pattern, blue"),
     alt!("pattern-pink", "Pattern, pink"),
     alt!("pattern-teal", "Pattern, teal"),
-    alt!("bird-blue", "Bird"),
-    alt!("bird-blue-at-symbol", "Bird, @"),
     alt!("legacy", "Classic"),
 ];
 
