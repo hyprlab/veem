@@ -197,6 +197,16 @@ pub enum AccountsInput {
     Save,
     /// Second phase of Save, once the signature HTML has been read from the editor.
     SaveWithSig(String),
+    /// "Edit HTML…" under the signature: read the editor, then open the source dialog.
+    SignatureEditSource,
+    /// The editor's current HTML, for the source dialog.
+    SignatureSourceLoaded(String),
+    /// The source dialog's Apply: sanitize the text and load it into the editor.
+    SignatureApplySource(String),
+    /// "Import File…" under the signature: pick an HTML or text file.
+    SignatureImport,
+    /// A signature file was chosen.
+    SignatureImportFile(std::path::PathBuf),
     /// Clicked "Remove Account" — ask for confirmation first.
     RemoveCurrent,
     /// Confirmed in the dialog — actually remove the account being edited.
@@ -798,6 +808,24 @@ impl Component for AccountsWindow {
                                 set_description: Some(
                                     i18n("Appended to new messages sent from this account.").as_str()
                                 ),
+                                // A designed signature usually exists as HTML
+                                // already (#120): bring it in from its file, or
+                                // paste and edit the source directly.
+                                #[wrap(Some)]
+                                set_header_suffix = &gtk::Box {
+                                    set_spacing: 6,
+                                    set_valign: gtk::Align::Center,
+                                    gtk::Button {
+                                        set_label: &i18n("Edit HTML…"),
+                                        add_css_class: "flat",
+                                        connect_clicked => AccountsInput::SignatureEditSource,
+                                    },
+                                    gtk::Button {
+                                        set_label: &i18n("Import File…"),
+                                        add_css_class: "flat",
+                                        connect_clicked => AccountsInput::SignatureImport,
+                                    },
+                                },
 
                                 #[name = "sig_holder"]
                                 gtk::Box {
@@ -1241,6 +1269,93 @@ impl Component for AccountsWindow {
             AccountsInput::SetFolderChoices(map) => {
                 self.folders_by_email = map;
             }
+
+            AccountsInput::SignatureEditSource => {
+                let s = sender.clone();
+                self.sig_editor
+                    .extract_html(move |html| s.input(AccountsInput::SignatureSourceLoaded(html)));
+            }
+            AccountsInput::SignatureSourceLoaded(html) => {
+                let host = root.root().and_downcast::<gtk::Window>();
+                let dialog = adw::MessageDialog::new(
+                    host.as_ref(),
+                    Some(i18n("Signature HTML").as_str()),
+                    Some(
+                        i18n("Paste or edit the signature's HTML. Scripts and style sheets are \
+                              removed; inline styles, tables and images are kept.")
+                            .as_str(),
+                    ),
+                );
+                dialog.add_response("cancel", &i18n("Cancel"));
+                dialog.add_response("apply", &i18n("Apply"));
+                dialog.set_response_appearance("apply", adw::ResponseAppearance::Suggested);
+                dialog.set_default_response(Some("apply"));
+                let view = gtk::TextView::new();
+                view.set_monospace(true);
+                view.set_wrap_mode(gtk::WrapMode::WordChar);
+                view.set_top_margin(8);
+                view.set_bottom_margin(8);
+                view.set_left_margin(8);
+                view.set_right_margin(8);
+                view.buffer().set_text(&html);
+                let scroller = gtk::ScrolledWindow::new();
+                scroller.set_child(Some(&view));
+                scroller.set_size_request(620, 320);
+                scroller.add_css_class("card");
+                dialog.set_extra_child(Some(&scroller));
+                let s = sender.clone();
+                dialog.connect_response(None, move |_, resp| {
+                    if resp == "apply" {
+                        let b = view.buffer();
+                        let text = b.text(&b.start_iter(), &b.end_iter(), true).to_string();
+                        s.input(AccountsInput::SignatureApplySource(text));
+                    }
+                });
+                dialog.present();
+            }
+            AccountsInput::SignatureApplySource(source) => {
+                self.sig_editor.set_html(&rich_editor::signature_from_source(&source, None));
+            }
+            AccountsInput::SignatureImport => {
+                let dialog = gtk::FileDialog::new();
+                dialog.set_title(&i18n("Import Signature"));
+                let filter = gtk::FileFilter::new();
+                filter.set_name(Some(&i18n("HTML and text files")));
+                filter.add_mime_type("text/html");
+                filter.add_mime_type("text/plain");
+                filter.add_suffix("html");
+                filter.add_suffix("htm");
+                filter.add_suffix("txt");
+                let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
+                filters.append(&filter);
+                dialog.set_filters(Some(&filters));
+                dialog.set_default_filter(Some(&filter));
+                let parent = root.root().and_downcast::<gtk::Window>();
+                let s = sender.input_sender().clone();
+                dialog.open(parent.as_ref(), gtk::gio::Cancellable::NONE, move |res| {
+                    if let Some(path) = res.ok().and_then(|f| f.path()) {
+                        let _ = s.send(AccountsInput::SignatureImportFile(path));
+                    }
+                });
+            }
+            AccountsInput::SignatureImportFile(path) => match std::fs::read(&path) {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    self.sig_editor
+                        .set_html(&rich_editor::signature_from_source(&text, path.parent()));
+                }
+                Err(e) => {
+                    let host = root.root().and_downcast::<gtk::Window>();
+                    let dialog = adw::MessageDialog::new(
+                        host.as_ref(),
+                        Some(i18n("Could Not Read the File").as_str()),
+                        Some(&format!("{}\n{e}", path.display())),
+                    );
+                    dialog.add_response("ok", &i18n("OK"));
+                    dialog.present();
+                }
+            },
+
             AccountsInput::SaveWithSig(sig_html) => {
                 widgets.host_row.remove_css_class("error");
                 let mut account = read_account(widgets, self.emoji.clone());

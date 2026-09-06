@@ -833,6 +833,13 @@ msgstr "Signature"
 msgid "Appended to new messages sent from this account."
 msgstr "Ajoutée aux nouveaux messages envoyés depuis ce compte."
 
+msgid "Edit HTML…"
+msgstr ""
+
+#, fuzzy
+msgid "Import File…"
+msgstr "Échec de l'importation : {e}"
+
 msgid "Remove Account"
 msgstr "Supprimer le compte"
 
@@ -863,6 +870,35 @@ msgstr ""
 msgid "Opening browser… complete sign-in there."
 msgstr "Ouverture du navigateur… terminez la connexion à partir de là."
 
+#, fuzzy
+msgid "Signature HTML"
+msgstr "Signature"
+
+msgid ""
+"Paste or edit the signature's HTML. Scripts and style sheets are removed; "
+"inline styles, tables and images are kept."
+msgstr ""
+
+msgid "Cancel"
+msgstr "Annuler"
+
+msgid "Apply"
+msgstr ""
+
+#, fuzzy
+msgid "Import Signature"
+msgstr "Signature"
+
+msgid "HTML and text files"
+msgstr ""
+
+#, fuzzy
+msgid "Could Not Read the File"
+msgstr "Impossible de récupérer le courrier : {e}"
+
+msgid "OK"
+msgstr ""
+
 msgid "Enter a client ID and sign in before saving"
 msgstr "Saisissez un ID client et connectez-vous avant d'enregistrer"
 
@@ -886,9 +922,6 @@ msgstr "Envoie via ce compte"
 
 msgid "Remove this alias"
 msgstr "Supprimer cet alias"
-
-msgid "Cancel"
-msgstr "Annuler"
 
 msgid "Display name (optional)"
 msgstr "Nom d'affichage (optionnel)"
