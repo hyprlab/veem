@@ -773,6 +773,12 @@ msgstr ""
 msgid "Appended to new messages sent from this account."
 msgstr ""
 
+msgid "Edit HTML…"
+msgstr ""
+
+msgid "Import File…"
+msgstr ""
+
 msgid "Remove Account"
 msgstr ""
 
@@ -799,6 +805,32 @@ msgstr ""
 msgid "Opening browser… complete sign-in there."
 msgstr ""
 
+msgid "Signature HTML"
+msgstr ""
+
+msgid ""
+"Paste or edit the signature's HTML. Scripts and style sheets are removed; "
+"inline styles, tables and images are kept."
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Apply"
+msgstr ""
+
+msgid "Import Signature"
+msgstr ""
+
+msgid "HTML and text files"
+msgstr ""
+
+msgid "Could Not Read the File"
+msgstr ""
+
+msgid "OK"
+msgstr ""
+
 msgid "Enter a client ID and sign in before saving"
 msgstr ""
 
@@ -821,9 +853,6 @@ msgid "Sends through this account"
 msgstr ""
 
 msgid "Remove this alias"
-msgstr ""
-
-msgid "Cancel"
 msgstr ""
 
 msgid "Display name (optional)"
