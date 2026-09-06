@@ -55,7 +55,7 @@ macro_rules! alt {
 /// ribboned icon is its "Default" and is never offered as a colour of its own.
 const CATALOG: &[IconChoice] = &[
     IconChoice { id: DEFAULT_ID, label: i18n_noop("Default"), png: DEFAULT_PNG },
-    alt!("envelope", "Envelope"),
+    alt!("envelope", "Envelope, yellow"),
     alt!("envelope-cream", "Envelope, cream"),
     alt!("envelope-blue", "Envelope, blue"),
     alt!("envelope-white", "Envelope, white"),
