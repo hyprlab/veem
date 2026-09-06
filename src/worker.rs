@@ -205,6 +205,10 @@ pub enum MailRequest {
     /// changed in transit) in `path`, where a move just put them, and move
     /// them back to `dest`, then reload that folder so they reappear.
     UndoMove { path: String, dest: String, dest_folder_id: u32, message_ids: Vec<String> },
+    /// Find a message by its (normalized) RFC Message-ID across every folder
+    /// of the account, for a `mid:` link (#130) the cache could not resolve.
+    /// Answered with [`WorkerEvent::Located`] either way.
+    Locate { message_id: String },
     /// Move/rename a mailbox (drag-and-drop in the sidebar, #51). The server
     /// renames any child hierarchy along with it (RFC 3501 §6.3.5).
     RenameFolder { old_path: String, new_path: String },
@@ -295,6 +299,10 @@ pub enum WorkerEvent {
     /// folder's fresh [`WorkerEvent::Messages`] so the app can land the user
     /// on the restored message instead of wherever the reload left the list.
     Restored { folder_id: u32, message_ids: Vec<String> },
+    /// The answer to [`MailRequest::Locate`]: where the message with that
+    /// Message-ID lives (`folder_path`, `uid`), or `None` when no folder of
+    /// this account has it.
+    Located { message_id: String, hit: Option<(String, u32)> },
     /// Cached attachments for an inbox, for the attachments gallery.
     Gallery { items: Vec<crate::models::GalleryItem> },
     /// The background backfill for a folder finished — its whole index is now
@@ -1424,6 +1432,36 @@ async fn run_imap(
                 }
                 // Always signal completion so the UI's bulk spinner clears.
                 emit(WorkerEvent::BulkComplete);
+            }
+
+            MailRequest::Locate { message_id } => {
+                // A folder at a time: SELECT, then a HEADER search. Servers
+                // whose header index lags (see UndoMove below) are the reason
+                // the cache is asked first; this is the fallback for a message
+                // Vireo has never listed.
+                let sess = session.as_mut().unwrap();
+                let mut hit: Option<(String, u32)> = None;
+                match list_folders(account_id, sess).await {
+                    Ok(folders) => {
+                        for f in folders {
+                            if sess.select(&f.path).await.is_err() {
+                                continue;
+                            }
+                            let Ok(set) = sess
+                                .uid_search(format!("HEADER Message-ID \"{message_id}\""))
+                                .await
+                            else {
+                                continue;
+                            };
+                            if let Some(uid) = set.into_iter().max() {
+                                hit = Some((f.path.clone(), uid));
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!("[account {account_id}] locate: listing folders failed: {e}"),
+                }
+                emit(WorkerEvent::Located { message_id: message_id.clone(), hit });
             }
 
             MailRequest::UndoMove { path, dest, dest_folder_id, message_ids } => {
@@ -5678,6 +5716,11 @@ async fn run_pop3(
 
     while let Some(req) = rx.recv().await {
         match req {
+            MailRequest::Locate { message_id } => {
+                // No folders to search here beyond what the cache already
+                // held: answer "not found" so the app can report the miss.
+                emit(WorkerEvent::Located { message_id: message_id.clone(), hit: None });
+            }
             MailRequest::LoadGallery => {
                 if let Some(c) = cache.as_ref() {
                     let items = c.gallery_items(account_id, GALLERY_DATA_CAP, GALLERY_LIMIT);
@@ -6034,6 +6077,11 @@ async fn run_mock(
 
     while let Some(req) = rx.recv().await {
         match req {
+            MailRequest::Locate { message_id } => {
+                // No folders to search here beyond what the cache already
+                // held: answer "not found" so the app can report the miss.
+                emit(WorkerEvent::Located { message_id: message_id.clone(), hit: None });
+            }
             // The mock backend has no attachment cache.
             MailRequest::LoadGallery => {
                 emit(WorkerEvent::Gallery { items: Vec::new() });
@@ -7060,6 +7108,11 @@ async fn run_graph(
             }
         };
         match req {
+            MailRequest::Locate { message_id } => {
+                // No folders to search here beyond what the cache already
+                // held: answer "not found" so the app can report the miss.
+                emit(WorkerEvent::Located { message_id: message_id.clone(), hit: None });
+            }
             MailRequest::LoadGallery => {
                 if let Some(c) = cache.as_ref() {
                     let items = c.gallery_items(account_id, GALLERY_DATA_CAP, GALLERY_LIMIT);

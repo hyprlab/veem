@@ -112,6 +112,9 @@ fn main() {
                 let uri = f.uri().to_string();
                 if uri.starts_with("mailto:") {
                     app::queue_mailto(uri);
+                } else if uri.starts_with("mid:") || uri.starts_with("MID:") {
+                    // A Message-ID link (#130): open that message.
+                    app::queue_mid(uri);
                 } else if let Some(path) = f.path() {
                     // A file handed in from a file manager's "Open With" (or
                     // the command line): open a fresh composer with it
@@ -193,7 +196,7 @@ fn relay_to_primary(args: &[String]) {
         .iter()
         .skip(1)
         .map(|a| {
-            if a.starts_with("mailto:") {
+            if a.starts_with("mailto:") || a.starts_with("mid:") || a.starts_with("MID:") {
                 a.clone()
             } else {
                 // A plain path or a non-mailto URI (e.g. file://): normalize

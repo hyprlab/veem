@@ -127,6 +127,9 @@ struct ReaderCompose {
 pub struct AppModel {
     /// One mail worker per account (account_id → request sender).
     workers: HashMap<u32, UnboundedSender<MailRequest>>,
+    /// `mid:` lookups out at the servers (#130): the Message-ID and how many
+    /// accounts have yet to answer, so a miss is reported once, at the end.
+    mid_searches: HashMap<String, usize>,
     config: Vec<AccountConfig>,
     window: adw::ApplicationWindow,
     prefs: Option<Controller<Preferences>>,
@@ -729,6 +732,11 @@ pub enum AppMsg {
     AddToContacts,
     AddContactAddr(String),
     OpenMailto(String),
+    /// A `mid:` link (RFC 2392) from anywhere on the system (#130): open the
+    /// message with that Message-ID.
+    OpenMid(String),
+    /// An account's answer to a server-side Message-ID search.
+    MidLocated { account_id: u32, message_id: String, hit: Option<(String, u32)> },
     /// Files handed in from outside the app (a file manager's "Open With
     /// Vireo", or the command line): open a fresh composer with them attached
     /// (Isaac's PR #96).
@@ -1683,6 +1691,7 @@ impl SimpleComponent for AppModel {
 
         let mut model = AppModel {
             workers: HashMap::new(),
+            mid_searches: HashMap::new(),
             config,
             window: root.clone(),
             prefs: None,
@@ -2742,6 +2751,9 @@ impl SimpleComponent for AppModel {
         let _ = MAILTO_SENDER.set(sender.input_sender().clone());
         for uri in MAILTO_PENDING.lock().unwrap().drain(..) {
             sender.input(AppMsg::OpenMailto(uri));
+        }
+        for uri in MID_PENDING.lock().unwrap().drain(..) {
+            sender.input(AppMsg::OpenMid(uri));
         }
         for paths in ATTACH_PENDING.lock().unwrap().drain(..) {
             sender.input(AppMsg::OpenWithFiles(paths));
@@ -4511,6 +4523,69 @@ impl SimpleComponent for AppModel {
                     self.open_inline_reply(account, prefill, None, &sender);
                 } else {
                     self.open_compose(account, prefill, &sender);
+                }
+            }
+
+            AppMsg::OpenMid(uri) => {
+                // The cache first: it holds every message Vireo has listed,
+                // across accounts, and answers at once. Only a miss asks the
+                // servers, one HEADER search per folder per account.
+                let Some(id) = parse_mid(&uri) else {
+                    tracing::warn!("mid: link not understood: {uri}");
+                    return;
+                };
+                let hits: Vec<(u32, String, u32)> = crate::cache::Cache::open()
+                    .map(|c| c.locate_by_message_id(&id))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|(acc, path, _)| {
+                        self.folders.get(acc).is_some_and(|fs| fs.iter().any(|f| f.path == *path))
+                    })
+                    .collect();
+                // The copy in the account currently in view wins when several
+                // accounts hold the message (a mail sent to two of them).
+                let preferred = self.current.as_ref().map(|m| m.account_id);
+                if let Some((account_id, folder_path, uid)) = hits
+                    .iter()
+                    .find(|(acc, _, _)| Some(*acc) == preferred)
+                    .or_else(|| hits.first())
+                    .cloned()
+                {
+                    tracing::info!("mid: {id} is cached in account {account_id}, {folder_path} uid {uid}");
+                    sender.input(AppMsg::OpenAttachmentMessage { account_id, folder_path, uid });
+                    return;
+                }
+                if self.workers.is_empty() {
+                    self.notifications.emit(NotifyInput::Push {
+                        text: i18n_f("No message with the ID {id} was found", &[("id", &id)]),
+                        error: true,
+                        connectivity: false,
+                    });
+                    return;
+                }
+                self.mid_searches.insert(id.clone(), self.workers.len());
+                for w in self.workers.values() {
+                    let _ = w.send(MailRequest::Locate { message_id: id.clone() });
+                }
+            }
+
+            AppMsg::MidLocated { account_id, message_id, hit } => {
+                let Some(remaining) = self.mid_searches.get_mut(&message_id) else { return };
+                if let Some((folder_path, uid)) = hit {
+                    tracing::info!("mid: {message_id} found on account {account_id}, {folder_path} uid {uid}");
+                    self.mid_searches.remove(&message_id);
+                    sender.input(AppMsg::OpenAttachmentMessage { account_id, folder_path, uid });
+                    return;
+                }
+                *remaining = remaining.saturating_sub(1);
+                if *remaining == 0 {
+                    tracing::info!("mid: {message_id} not found on any account");
+                    self.mid_searches.remove(&message_id);
+                    self.notifications.emit(NotifyInput::Push {
+                        text: i18n_f("No message with the ID {id} was found", &[("id", &message_id)]),
+                        error: true,
+                        connectivity: false,
+                    });
                 }
             }
 
@@ -10677,6 +10752,40 @@ pub fn queue_attach_files(paths: Vec<std::path::PathBuf>) {
     }
 }
 
+/// `mid:` links that arrived before the component was up (see `MAILTO_PENDING`).
+static MID_PENDING: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Route a `mid:` URI to the app (from main's `connect_open`).
+pub fn queue_mid(uri: String) {
+    match MAILTO_SENDER.get() {
+        Some(s) => {
+            let _ = s.send(AppMsg::OpenMid(uri));
+        }
+        None => MID_PENDING.lock().unwrap().push(uri),
+    }
+}
+
+/// The Message-ID a `mid:` URI (RFC 2392) names, normalized the way the cache
+/// stores them: percent-decoded, angle brackets and whitespace stripped,
+/// lowercased, and without any `/cid` part. `None` for anything else.
+fn parse_mid(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("mid:").or_else(|| uri.strip_prefix("MID:"))?;
+    // GLib normalizes a scheme it does not know to `mid:///…` on the way
+    // through GFile (and decodes some of the escapes), so leading slashes
+    // are not part of the id.
+    let decoded = crate::ui::rich_editor::percent_decode(rest.trim_start_matches('/'));
+    // An optional `/content-id` follows the message-id. Slashes are legal
+    // inside a message-id's left part (GitHub's have several), so only a
+    // slash after the `@`, in the domain part, ends the id.
+    let at = decoded.find('@')?;
+    let id = match decoded[at..].find('/') {
+        Some(i) => &decoded[..at + i],
+        None => &decoded,
+    };
+    let id = id.trim().trim_start_matches('<').trim_end_matches('>').trim().to_ascii_lowercase();
+    (!id.is_empty()).then_some(id)
+}
+
 /// Route a `mailto:` URI to the app (from main's `connect_open`).
 pub fn queue_mailto(uri: String) {
     match MAILTO_SENDER.get() {
@@ -11032,6 +11141,7 @@ fn map_event(account_id: u32, event: WorkerEvent) -> AppMsg {
         WorkerEvent::MessagesAppend { folder_id, messages } => {
             AppMsg::MessagesAppend { account_id, folder_id, messages }
         }
+        WorkerEvent::Located { message_id, hit } => AppMsg::MidLocated { account_id, message_id, hit },
         WorkerEvent::Restored { folder_id, message_ids } => {
             AppMsg::UndoRestored { account_id, folder_id, message_ids }
         }
@@ -11474,6 +11584,27 @@ fn next_after_vanish(
 
 #[cfg(test)]
 mod tests {
+    /// A `mid:` link names a Message-ID the way the cache stores it: no
+    /// brackets, lowercase, percent-decoded, without a `/cid` part.
+    #[test]
+    fn mid_links_normalize_to_the_cached_form() {
+        let want = Some("cah5b6q=abc123@example.com".to_string());
+        assert_eq!(super::parse_mid("mid:CAH5B6Q=abc123@example.com"), want);
+        assert_eq!(super::parse_mid("mid:CAH5B6Q%3Dabc123%40example.com"), want);
+        assert_eq!(super::parse_mid("mid:%3CCAH5B6Q%3Dabc123%40example.com%3E"), want);
+        assert_eq!(super::parse_mid("mid:<CAH5B6Q=abc123@example.com>/part1"), want);
+        assert_eq!(super::parse_mid("MID:CAH5B6Q=abc123@example.com"), want);
+        assert_eq!(super::parse_mid("mid:///%3CCAH5B6Q=abc123@example.com%3E"), want);
+        // Slashes inside the id are part of it; one after the domain is a cid.
+        assert_eq!(
+            super::parse_mid("mid:hyprlab/vireo/issues/128/5558573653@github.com/att1"),
+            Some("hyprlab/vireo/issues/128/5558573653@github.com".to_string())
+        );
+        assert_eq!(super::parse_mid("mid:"), None);
+        assert_eq!(super::parse_mid("mid:not-an-id"), None);
+        assert_eq!(super::parse_mid("mailto:a@b.c"), None);
+    }
+
     #[test]
     fn folder_roles_override_detection_and_demote_the_old_holder() {
         use crate::models::{Folder, FolderKind};

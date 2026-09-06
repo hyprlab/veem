@@ -165,6 +165,9 @@ msgstr "Rien à annuler"
 msgid "Undoing move…"
 msgstr "Annulation du déplacement…"
 
+msgid "No message with the ID {id} was found"
+msgstr ""
+
 msgid "No Drafts folder available for this account"
 msgstr "Aucun dossier Brouillons disponible pour ce compte"
 
