@@ -300,6 +300,9 @@ pub enum MessageViewInput {
     CardClicked { account_id: u32, id: u32, mode: SelectMode },
     /// Ctrl+A in the conversation — select every card.
     SelectAllCards,
+    /// Ctrl+C reached the window rather than this view: copy the selection
+    /// made in a message body, if there is one.
+    CopySelection,
     /// An email address in a card header was clicked — compose to it.
     ComposeTo(String),
     /// "Add to Contacts" from an address's right-click menu.
@@ -1132,6 +1135,15 @@ impl Component for MessageView {
                 self.selected_cards = keys.clone();
                 self.apply_card_selection();
                 let _ = sender.output(MessageViewOutput::SelectCards(keys));
+            }
+            MessageViewInput::CopySelection => {
+                self.webview.evaluate_javascript(
+                    "window.__vireoCopySel && window.__vireoCopySel()",
+                    None,
+                    None,
+                    gtk::gio::Cancellable::NONE,
+                    |_| {},
+                );
             }
             MessageViewInput::SelectAllCards => {
                 if self.thread.len() <= 1 {
@@ -3834,15 +3846,21 @@ window.addEventListener('keydown',selAll,true);\
    body frame and the native copy with nothing to copy. Copy from the\
    frame that holds the selection instead; if the engine refuses, hand the\
    text to the host, which sets the clipboard itself. */\
+function copyDoc(d,w){var sel=d&&d.getSelection();if(!sel||sel.isCollapsed||!String(sel).length)return false;\
+var ok=false;try{if(w!==window)w.focus();ok=d.execCommand('copy');}catch(_){}\
+try{if(w!==window)window.focus();}catch(_){}\
+if(!ok){try{window.webkit.messageHandlers.vireo.postMessage('copy:0:0:'+String(sel));}catch(_){}}\
+showCopied();return true;}\
+/* Copies whatever is selected, in this document or in a body frame. Called\
+   from the keydown below when this view has the keyboard, and by the host\
+   when it does not: the list takes GTK focus back after a click in the\
+   reader, so Ctrl+C usually lands on the window, not here. */\
+window.__vireoCopySel=function(){try{if(copyDoc(document,window))return true;\
+var fs=all();for(var i=0;i<fs.length;i++){try{if(copyDoc(fs[i].contentDocument,fs[i].contentWindow))return true;}catch(_){}}}catch(_){}\
+return false;};\
 function copySel(e){if(!(e.ctrlKey||e.metaKey)||e.altKey||e.shiftKey||(e.key!=='c'&&e.key!=='C'))return;\
 var s=window.getSelection();if(s&&!s.isCollapsed&&String(s).length)return;\
-var fs=all();for(var i=0;i<fs.length;i++){try{var d=fs[i].contentDocument,w=fs[i].contentWindow;\
-var fsel=d&&d.getSelection();if(!fsel||fsel.isCollapsed||!String(fsel).length)continue;\
-e.preventDefault();e.stopPropagation();\
-var ok=false;try{w.focus();ok=d.execCommand('copy');}catch(_){}\
-try{window.focus();}catch(_){}\
-if(!ok){try{window.webkit.messageHandlers.vireo.postMessage('copy:0:0:'+String(fsel));}catch(_){}}\
-showCopied();return;}catch(_){}}}\
+if(window.__vireoCopySel()){e.preventDefault();e.stopPropagation();}}\
 function showCopied(){var b=document.body;if(!b)return;\
 var p=document.getElementById('vireo-copied');\
 if(!p){p=document.createElement('div');p.id='vireo-copied';p.className='vireo-copied';b.appendChild(p);}\

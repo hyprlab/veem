@@ -732,6 +732,8 @@ pub enum AppMsg {
     AddToContacts,
     AddContactAddr(String),
     OpenMailto(String),
+    /// Ctrl+C while the reader's view does not hold the keyboard.
+    CopyReaderSelection,
     /// A `mid:` link (RFC 2392) from anywhere on the system (#130): open the
     /// message with that Message-ID.
     OpenMid(String),
@@ -2476,6 +2478,20 @@ impl SimpleComponent for AppModel {
                     }
                     s.input(AppMsg::Undo);
                     return gtk::glib::Propagation::Stop;
+                }
+                // Ctrl+C with the keyboard on the list or the window itself:
+                // a selection made in the reader still wants copying (the
+                // list takes focus back after a click over a message body).
+                // The reader's own document handles the key when it has focus;
+                // a text field or composer keeps its native copy.
+                if ctrl
+                    && !shift
+                    && keyval == gtk::gdk::Key::c
+                    && !focus_takes_keys(&window)
+                    && !focus_in_compose(&window)
+                {
+                    s.input(AppMsg::CopyReaderSelection);
+                    return gtk::glib::Propagation::Proceed;
                 }
                 if ctrl || state.contains(gtk::gdk::ModifierType::ALT_MASK) {
                     return gtk::glib::Propagation::Proceed;
@@ -4524,6 +4540,10 @@ impl SimpleComponent for AppModel {
                 } else {
                     self.open_compose(account, prefill, &sender);
                 }
+            }
+
+            AppMsg::CopyReaderSelection => {
+                self.message_view.emit(MessageViewInput::CopySelection);
             }
 
             AppMsg::OpenMid(uri) => {
