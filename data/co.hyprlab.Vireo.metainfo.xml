@@ -56,6 +56,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.22.0" date="2026-09-06">
+
+      <description><p>A translatable interface with a French translation; pictures dropped from the file manager and picture resizing in the composer; HTML signatures; mid: links open a message by its Message-ID; deleting works on servers without the IMAP MOVE extension; Ctrl+C copies from the reader; a redrawn envelope icon in four colours.</p></description>
+
+    </release>
     <release version="1.21.1" date="2026-09-05">
 
       <description><p>Refreshed icon artwork throughout, and a second bird variant in the app icon gallery.</p></description>

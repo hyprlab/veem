@@ -60,7 +60,7 @@ msgid "Mark as Unread"
 msgstr "Marquer comme non lu"
 
 msgid "Flag"
-msgstr "Signaler"
+msgstr "Suivre"
 
 msgid "Find in message (Ctrl+F)"
 msgstr "Rechercher dans le message (Ctrl+F)"
@@ -195,9 +195,8 @@ msgstr "Paramètres importés"
 msgid "Later"
 msgstr "Plus tard"
 
-#, fuzzy
 msgid "Restart Vireo"
-msgstr "Redémarrage de Vireo"
+msgstr "Redémarrer Vireo"
 
 msgid "Import failed: {e}"
 msgstr "Échec de l'importation : {e}"
@@ -283,9 +282,8 @@ msgstr "Supprimer cette conversation ?"
 msgid "Cancel"
 msgstr "Annuler"
 
-#, fuzzy
 msgid "Delete Conversation"
-msgstr "Supprimer cette conversation ?"
+msgstr "Supprimer la conversation"
 
 msgid "Delete this message permanently?"
 msgid_plural "Delete {n} messages permanently?"
@@ -335,7 +333,7 @@ msgid "Create a new folder for this account."
 msgstr "Créer un nouveau dossier pour ce compte."
 
 msgid "Create"
-msgstr ""
+msgstr "Créer"
 
 msgid "Folder name"
 msgstr "Nom du dossier"
@@ -343,9 +341,8 @@ msgstr "Nom du dossier"
 msgid "Sub-folders keep their place under the new name."
 msgstr "Les sous-dossiers conservent leur emplacement sous le nouveau nom."
 
-#, fuzzy
 msgid "Rename"
-msgstr "Nom d'utilisateur"
+msgstr "Renommer"
 
 msgid "A folder named {new_name} is already there."
 msgstr "Un dossier nommé {new_name} existe déjà."
@@ -562,9 +559,8 @@ msgstr "En attente depuis {ago}"
 msgid "New message"
 msgstr "Nouveau message"
 
-#, fuzzy
 msgid "Open Vireo"
-msgstr "Vireo"
+msgstr "Ouvrir Vireo"
 
 msgid "No unread mail"
 msgstr "Aucun message non lu"
@@ -862,11 +858,10 @@ msgid "Appended to new messages sent from this account."
 msgstr "Ajoutée aux nouveaux messages envoyés depuis ce compte."
 
 msgid "Edit HTML…"
-msgstr ""
+msgstr "Editer HTML…"
 
-#, fuzzy
 msgid "Import File…"
-msgstr "Échec de l'importation : {e}"
+msgstr "Importer le fichier…"
 
 msgid "Remove Account"
 msgstr "Supprimer le compte"
@@ -898,31 +893,31 @@ msgstr ""
 msgid "Opening browser… complete sign-in there."
 msgstr "Ouverture du navigateur… terminez la connexion à partir de là."
 
-#, fuzzy
 msgid "Signature HTML"
-msgstr "Signature"
+msgstr "Signature HTML"
 
 msgid ""
 "Paste or edit the signature's HTML. Scripts and style sheets are removed; "
 "inline styles, tables and images are kept."
 msgstr ""
+"Collez ou modifiez le code HTML de la signature. Les scripts et les feuilles "
+"de style sont supprimés ;Les styles en ligne, les tableaux et les images "
+"sont conservés."
 
 msgid "Apply"
-msgstr ""
+msgstr "Appliquer"
 
-#, fuzzy
 msgid "Import Signature"
-msgstr "Signature"
+msgstr "Importer la signature"
 
 msgid "HTML and text files"
-msgstr ""
+msgstr "Fichier HTML et texte"
 
-#, fuzzy
 msgid "Could Not Read the File"
-msgstr "Impossible de récupérer le courrier : {e}"
+msgstr "Le fichier ne peut être lu"
 
 msgid "OK"
-msgstr ""
+msgstr "OK"
 
 msgid "Enter a client ID and sign in before saving"
 msgstr "Saisissez un ID client et connectez-vous avant d'enregistrer"
@@ -990,13 +985,11 @@ msgstr "Utiliser ce compte dans Vireo"
 msgid "Remove filter"
 msgstr "Supprimer le filtre"
 
-#, fuzzy
 msgid "Edit Filter"
-msgstr "Ajouter un filtre…"
+msgstr "Modifier le filtre"
 
-#, fuzzy
 msgid "Add Filter"
-msgstr "Ajouter un filtre…"
+msgstr ""
 
 msgid "Where"
 msgstr "Champ"
@@ -1303,13 +1296,11 @@ msgstr "Aucun message"
 msgid "There's nothing here right now."
 msgstr "Il n'y a rien ici pour le moment."
 
-#, fuzzy
 msgid "Remove Stars"
-msgstr "Retirer l'étoile"
+msgstr "Supprimer les marquages"
 
-#, fuzzy
 msgid "Star Conversation"
-msgstr "Conversations"
+msgstr "Marquer la conversation"
 
 msgid "Remove Star"
 msgstr "Retirer l'étoile"
@@ -1317,9 +1308,8 @@ msgstr "Retirer l'étoile"
 msgid "Mark All as Read"
 msgstr "Tout marquer comme lu"
 
-#, fuzzy
 msgid "Mark All as Unread"
-msgstr "Tout marquer comme lu"
+msgstr ""
 
 msgid "Add Sender to Contacts"
 msgstr "Ajouter l'expéditeur aux contacts"
@@ -1370,6 +1360,9 @@ msgstr "Fermer la recherche"
 msgid "Loading…"
 msgstr "Chargement…"
 
+msgid "Copied"
+msgstr ""
+
 #. Same order as the reader toolbar and the list's
 #. Actions Palette, View Source closing the line.
 msgid "Reply to this message"
@@ -1385,7 +1378,7 @@ msgid "Mark as read or unread"
 msgstr "Marquer comme lu ou non lu"
 
 msgid "Flag this message"
-msgstr "Signaler ce message"
+msgstr "Marquer ce message"
 
 msgid "Archive this message"
 msgstr "Archiver ce message"
@@ -1526,7 +1519,7 @@ msgstr ""
 "recpetionlorsque la liste par compte est repliée."
 
 msgid "Filtered folders under All Inboxes"
-msgstr "Dossiers filtrés sous Toutes les boîtes"
+msgstr "Dossiers filtrés sous toutes les boîtes"
 
 msgid ""
 "List the folders your filter rules file into in a collapsible section inside "
@@ -1997,9 +1990,8 @@ msgstr "1 ligne"
 msgid "2 lines"
 msgstr "2 lignes"
 
-#, fuzzy
 msgid "3 lines"
-msgstr "2 lignes"
+msgstr ""
 
 msgid "Shown in the dock, app grid and switcher, and by the tray icon."
 msgstr ""
@@ -2104,9 +2096,8 @@ msgstr "Effacer la mise en forme"
 msgid "Insert Link"
 msgstr "Insérer un lien"
 
-#, fuzzy
 msgid "Insert"
-msgstr "Insérer un lien"
+msgstr ""
 
 msgid "Add account"
 msgstr "Ajouter un compte"
@@ -2176,7 +2167,7 @@ msgid "Add your email account"
 msgstr "Ajoutez votre compte e-mail"
 
 msgid "Found in GNOME Online Accounts"
-msgstr "Trouvé dans Comptes en ligne de GNOME"
+msgstr "Trouvé dans GNOME Comptes en ligne"
 
 msgid "Your name"
 msgstr "Votre nom"
@@ -2400,7 +2391,7 @@ msgid "Could not update message: {e}"
 msgstr "Impossible de mettre à jour le message : {e}"
 
 msgid "Could not flag message: {e}"
-msgstr "Impossible de signaler le message : {e}"
+msgstr "Impossible de marquer le message : {e}"
 
 msgid "Could not mark folder read: {e}"
 msgstr "Impossible de marquer le dossier comme lu : {e}"

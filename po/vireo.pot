@@ -1287,6 +1287,9 @@ msgstr ""
 msgid "Loading…"
 msgstr ""
 
+msgid "Copied"
+msgstr ""
+
 #. Same order as the reader toolbar and the list's
 #. Actions Palette, View Source closing the line.
 msgid "Reply to this message"

@@ -2,6 +2,27 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.22.1-beta.1
+
+The beta channel catches up with stable 1.22.0: everything in the next section, including the Ctrl+C copy in the reader and the latest French corrections. No beta-only changes.
+
+## What's new in 1.22.0
+
+**Vireo speaks French, and can learn other languages.** The whole interface, the launcher and the app description now follow your desktop's language once a translation exists. French is the first, contributed by [@frenchy82](https://github.com/frenchy82) (#122, #131), who also caught the places where the app kept showing English despite having the translation. If you would like to translate Vireo into your language, `po/README.md` in the repository explains how; it takes no programming.
+
+**Pictures from the file manager, and picture resizing.** Drag a picture in from Files, or copy one there and paste, and it lands in the message instead of arriving as a path, keeping its filename. Any other file becomes an attachment. Click a picture for corner handles, or right-click it for Small, Medium, Large and Original Size. Resizing only changes how big the picture is shown; "Recompress to This Size on Send" in the same menu shrinks the bytes as the message goes out. Contributed by [@typedev](https://github.com/typedev) (#127, for #126), who also fixed the test build (#125).
+
+**HTML signatures.** If your signature exists as an HTML file, the account editor's Signature section can take it: "Import File…" loads the file, pictures included, and "Edit HTML…" lets you paste or edit the signature's source. Requested by [@7system7](https://github.com/7system7) (#120).
+
+**Open a message by its Message-ID.** Vireo handles `mid:` links: `xdg-open 'mid:<Message-ID>'` opens that message in the running app, searching your local index first and then every account's server. Launchers and extensions that link to mail this way, such as Vicinae, can now open messages in Vireo. Requested by [@7system7](https://github.com/7system7) (#130).
+
+**Deleting works on every server.** Some mail servers, Zimbra among them, lack the IMAP MOVE command Vireo used for every move, so deleting, archiving and filing failed there. Vireo now checks what the server supports and falls back to the older way. Reported by [@EmmanuelP](https://github.com/EmmanuelP) (#128), who also spotted a stray line under the empty blacklist field (#129).
+
+**Ctrl+C in the reader.** Text selected in a message body can be copied with Ctrl+C, with a "Copied" pill to confirm it; before, only the right-click menu worked.
+
+**A redrawn envelope, in four colours.** The envelope icon is new, and cream, blue and white versions join it in the gallery.
+
+Thanks to everyone above for the patches, the translations and the reports.
 ## What's new in 1.22.0-beta.7
 
 **Deleting works on every server.** Some mail servers, Zimbra among them, lack the IMAP MOVE command Vireo used for every move, so deleting, archiving and filing failed there with "command not permitted with UID". Vireo now checks what the server supports and falls back to the older copy-and-expunge way. Reported in #128.

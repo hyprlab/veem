@@ -300,6 +300,9 @@ pub enum MessageViewInput {
     CardClicked { account_id: u32, id: u32, mode: SelectMode },
     /// Ctrl+A in the conversation — select every card.
     SelectAllCards,
+    /// Ctrl+C reached the window rather than this view: copy the selection
+    /// made in a message body, if there is one.
+    CopySelection,
     /// An email address in a card header was clicked — compose to it.
     ComposeTo(String),
     /// "Add to Contacts" from an address's right-click menu.
@@ -745,6 +748,15 @@ impl Component for MessageView {
                     "ready" => open_sender.input(MessageViewInput::Rendered),
                     "desel" => open_sender.input(MessageViewInput::ClearCards),
                     "selall" => open_sender.input(MessageViewInput::SelectAllCards),
+                    // Ctrl+C over a body frame the engine would not copy from
+                    // itself: the selected text, for the clipboard.
+                    "copy" => {
+                        if let Some(text) = extra.filter(|t| !t.is_empty()) {
+                            if let Some(display) = gtk::gdk::Display::default() {
+                                display.clipboard().set_text(text);
+                            }
+                        }
+                    }
                     // An address was clicked (or "New Message" picked from its
                     // little menu) — compose to it. `extra` is the bare address.
                     "composeto" => {
@@ -1124,6 +1136,15 @@ impl Component for MessageView {
                 self.apply_card_selection();
                 let _ = sender.output(MessageViewOutput::SelectCards(keys));
             }
+            MessageViewInput::CopySelection => {
+                self.webview.evaluate_javascript(
+                    "window.__vireoCopySel && window.__vireoCopySel()",
+                    None,
+                    None,
+                    gtk::gio::Cancellable::NONE,
+                    |_| {},
+                );
+            }
             MessageViewInput::SelectAllCards => {
                 if self.thread.len() <= 1 {
                     return;
@@ -1498,9 +1519,10 @@ impl MessageView {
             crate::config::ReadMark::Delay => " data-vireo-readmark=\"2000\"",
             crate::config::ReadMark::Manual => "",
         };
+        let copied = format!(" data-vireo-copied=\"{}\"", i18n("Copied").replace('"', "&quot;"));
         let html = html.replacen(
             "<body",
-            &format!("<body{noscroll}{hover}{delay}{newest}{readmark}"),
+            &format!("<body{noscroll}{hover}{delay}{newest}{readmark}{copied}"),
             1,
         );
         self.did_autoscroll = true;
@@ -2077,6 +2099,13 @@ impl MessageView {
                  user-select:text;overflow-wrap:anywhere;margin:2px 0 0 34px;}}\
                .vireo-rcpt div{{margin-top:2px;}}\
                .vireo-loading{{opacity:0.5;padding:16px;}}\
+               /* The Copied pill after Ctrl+C: a toast the page draws itself,\
+                  since the reader has no toast overlay of its own. */\
+               .vireo-copied{{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(8px);\
+                 padding:8px 18px;border-radius:999px;background:rgba(40,40,40,0.92);color:#fff;\
+                 font:inherit;font-size:0.9em;box-shadow:0 2px 10px rgba(0,0,0,0.25);\
+                 opacity:0;pointer-events:none;transition:opacity 180ms ease,transform 180ms ease;z-index:50;}}\
+               .vireo-copied.on{{opacity:1;transform:translateX(-50%) translateY(0);}}\
              </style>{sizer}\
              </head><body{body_class}>{sections}</body></html>"
         )
@@ -3624,7 +3653,7 @@ if(f.dataset.key&&!f._c){f._c=1;d.addEventListener('click',function(e){\
 if(e.target&&e.target.closest&&e.target.closest('a'))return;pick(f.dataset.key,e);});}\
 if(!f._u){f._u=1;['wheel','touchstart','mousedown','keydown'].forEach(function(ev){\
 d.addEventListener(ev,function(){follow=null;hold=null;},{passive:true,capture:true});});\
-d.addEventListener('keydown',selAll,true);}\
+d.addEventListener('keydown',selAll,true);d.addEventListener('keydown',copySel,true);}\
 var im=d.images||[];for(var i=0;i<im.length;i++){if(!im[i].complete){im[i].addEventListener('load',function(){s(f);});im[i].addEventListener('error',function(){s(f);});}}}}catch(_){}\
 setTimeout(function(){s(f);},250);setTimeout(function(){s(f);},1000);}\
 function all(){return document.querySelectorAll('iframe.vireo-frame');}\
@@ -3812,6 +3841,33 @@ if(!document.body||!document.body.classList.contains('vireo-conv'))return;\
 e.preventDefault();e.stopPropagation();\
 try{window.webkit.messageHandlers.vireo.postMessage('selall:0:0');}catch(_){}}\
 window.addEventListener('keydown',selAll,true);\
+/* Ctrl+C. Focus is kept in this document (see the blur handler below) so\
+   the single-key shortcuts keep working, which leaves the selection in a\
+   body frame and the native copy with nothing to copy. Copy from the\
+   frame that holds the selection instead; if the engine refuses, hand the\
+   text to the host, which sets the clipboard itself. */\
+function copyDoc(d,w){var sel=d&&d.getSelection();if(!sel||sel.isCollapsed||!String(sel).length)return false;\
+var ok=false;try{if(w!==window)w.focus();ok=d.execCommand('copy');}catch(_){}\
+try{if(w!==window)window.focus();}catch(_){}\
+if(!ok){try{window.webkit.messageHandlers.vireo.postMessage('copy:0:0:'+String(sel));}catch(_){}}\
+showCopied();return true;}\
+/* Copies whatever is selected, in this document or in a body frame. Called\
+   from the keydown below when this view has the keyboard, and by the host\
+   when it does not: the list takes GTK focus back after a click in the\
+   reader, so Ctrl+C usually lands on the window, not here. */\
+window.__vireoCopySel=function(){try{if(copyDoc(document,window))return true;\
+var fs=all();for(var i=0;i<fs.length;i++){try{if(copyDoc(fs[i].contentDocument,fs[i].contentWindow))return true;}catch(_){}}}catch(_){}\
+return false;};\
+function copySel(e){if(!(e.ctrlKey||e.metaKey)||e.altKey||e.shiftKey||(e.key!=='c'&&e.key!=='C'))return;\
+var s=window.getSelection();if(s&&!s.isCollapsed&&String(s).length)return;\
+if(window.__vireoCopySel()){e.preventDefault();e.stopPropagation();}}\
+function showCopied(){var b=document.body;if(!b)return;\
+var p=document.getElementById('vireo-copied');\
+if(!p){p=document.createElement('div');p.id='vireo-copied';p.className='vireo-copied';b.appendChild(p);}\
+p.textContent=b.dataset.vireoCopied||'Copied';\
+void p.offsetHeight;p.classList.add('on');clearTimeout(p._t);\
+p._t=setTimeout(function(){p.classList.remove('on');},1400);}\
+window.addEventListener('keydown',copySel,true);\
 function chase(){if(!follow)return;try{follow.scrollIntoView({block:'start'});}catch(_){}}\
 function pin(){if(follow||!hold)return;try{var r=hold.el.getBoundingClientRect();\
 var d=Math.round(r.top+hold.off);if(d)window.scrollBy(0,d);}catch(_){}}\
