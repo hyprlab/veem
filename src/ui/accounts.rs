@@ -920,6 +920,10 @@ impl Component for AccountsWindow {
 
         let senders_box = model.senders.widget();
         let blacklist_box = model.blacklist.widget();
+        // An empty boxed list still draws its frame: a stray line under the
+        // entry that adds to it (#129). Shown only once it has a row.
+        senders_box.set_visible(!model.sender_addrs.is_empty());
+        blacklist_box.set_visible(!model.blacklist_addrs.is_empty());
         let widgets = view_output!();
         model.filters_list = Some(widgets.filters_list.clone());
         model.rebuild_filter_rows(&sender);
@@ -1658,6 +1662,7 @@ impl Component for AccountsWindow {
                 if !addr.is_empty() && !self.sender_addrs.contains(&addr) {
                     self.sender_addrs.push(addr.clone());
                     self.senders.guard().push_back(addr.clone());
+                    self.senders.widget().set_visible(true);
                     let _ = sender.output(AccountsOutput::AddSender(addr));
                 }
             }
@@ -1665,6 +1670,7 @@ impl Component for AccountsWindow {
                 if let Some(pos) = self.sender_addrs.iter().position(|a| *a == addr) {
                     self.sender_addrs.remove(pos);
                     self.senders.guard().remove(pos);
+                    self.senders.widget().set_visible(!self.sender_addrs.is_empty());
                     let _ = sender.output(AccountsOutput::RemoveSender(addr));
                 }
             }
@@ -1673,6 +1679,7 @@ impl Component for AccountsWindow {
                 if !addr.is_empty() && !self.blacklist_addrs.contains(&addr) {
                     self.blacklist_addrs.push(addr.clone());
                     self.blacklist.guard().push_back(addr.clone());
+                    self.blacklist.widget().set_visible(true);
                     let _ = sender.output(AccountsOutput::AddBlacklist(addr));
                 }
             }
@@ -1680,6 +1687,7 @@ impl Component for AccountsWindow {
                 if let Some(pos) = self.blacklist_addrs.iter().position(|a| *a == addr) {
                     self.blacklist_addrs.remove(pos);
                     self.blacklist.guard().remove(pos);
+                    self.blacklist.widget().set_visible(!self.blacklist_addrs.is_empty());
                     let _ = sender.output(AccountsOutput::RemoveBlacklist(addr));
                 }
             }
