@@ -2888,7 +2888,7 @@ impl MessageList {
             let s = sender.clone();
             let members = members_for_star.clone();
             MenuEntry::new(
-                if any { "Remove Stars" } else { "Star Conversation" },
+                if any { i18n("Remove Stars") } else { i18n("Star Conversation") },
                 move || {
                     let _ = s.output(MessageListOutput::Bulk {
                         action: if any { BulkAction::Unflag } else { BulkAction::Flag },
@@ -2920,7 +2920,7 @@ impl MessageList {
             let s = sender.clone();
             flag_section.push(
                 MenuEntry::new(
-                    if any_unread { "Mark All as Read" } else { "Mark All as Unread" },
+                    if any_unread { i18n("Mark All as Read") } else { i18n("Mark All as Unread") },
                     move || {
                         let _ = s.output(MessageListOutput::Bulk {
                             action: if any_unread {

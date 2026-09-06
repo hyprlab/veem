@@ -701,7 +701,7 @@ fn build_toolbar(webview: &webkit6::WebView) -> gtk::Box {
             continue;
         }
         let btn = gtk::Button::from_icon_name(icon);
-        btn.set_tooltip_text(Some(tip));
+        btn.set_tooltip_text(Some(i18n(tip).as_str()));
         // Don't take focus, so the editor keeps its selection.
         btn.set_can_focus(false);
         btn.add_css_class("flat");
@@ -722,8 +722,8 @@ fn build_toolbar(webview: &webkit6::WebView) -> gtk::Box {
 fn prompt_link(webview: &webkit6::WebView, anchor: &gtk::Button) {
     let parent = anchor.root().and_downcast::<gtk::Window>();
     let dialog = adw::MessageDialog::new(parent.as_ref(), Some(i18n("Insert Link").as_str()), None);
-    dialog.add_response("cancel", "Cancel");
-    dialog.add_response("ok", "Insert");
+    dialog.add_response("cancel", &i18n("Cancel"));
+    dialog.add_response("ok", &i18n("Insert"));
     dialog.set_default_response(Some("ok"));
     dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
     let entry = gtk::Entry::new();

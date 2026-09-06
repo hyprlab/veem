@@ -183,6 +183,12 @@ msgstr ""
 msgid "Settings Imported"
 msgstr ""
 
+msgid "Later"
+msgstr ""
+
+msgid "Restart Vireo"
+msgstr ""
+
 msgid "Import failed: {e}"
 msgstr ""
 
@@ -222,9 +228,6 @@ msgid ""
 "The dock and Vireo's own windows keep the old icon until Vireo restarts."
 msgstr ""
 
-msgid "Later"
-msgstr ""
-
 msgid "Restart Now"
 msgstr ""
 
@@ -259,6 +262,12 @@ msgid "New Message"
 msgstr ""
 
 msgid "Delete this conversation?"
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Delete Conversation"
 msgstr ""
 
 msgid "Delete this message permanently?"
@@ -300,10 +309,16 @@ msgstr ""
 msgid "Create a new folder for this account."
 msgstr ""
 
+msgid "Create"
+msgstr ""
+
 msgid "Folder name"
 msgstr ""
 
 msgid "Sub-folders keep their place under the new name."
+msgstr ""
+
+msgid "Rename"
 msgstr ""
 
 msgid "A folder named {new_name} is already there."
@@ -321,6 +336,9 @@ msgstr ""
 msgid "Add to Contacts"
 msgstr ""
 
+msgid "Add"
+msgstr ""
+
 msgid "Name"
 msgstr ""
 
@@ -331,6 +349,9 @@ msgid "Address book"
 msgstr ""
 
 msgid "Remove Account?"
+msgstr ""
+
+msgid "Remove"
 msgstr ""
 
 #. One-sentence description, directly under the version chip.
@@ -506,6 +527,9 @@ msgid "Waiting since {ago}"
 msgstr ""
 
 msgid "New message"
+msgstr ""
+
+msgid "Open Vireo"
 msgstr ""
 
 msgid "No unread mail"
@@ -716,9 +740,6 @@ msgstr ""
 msgid "Optional — shown instead of initials"
 msgstr ""
 
-msgid "Add"
-msgstr ""
-
 msgid "Use initials"
 msgstr ""
 
@@ -813,9 +834,6 @@ msgid ""
 "inline styles, tables and images are kept."
 msgstr ""
 
-msgid "Cancel"
-msgstr ""
-
 msgid "Apply"
 msgstr ""
 
@@ -895,6 +913,12 @@ msgid "Use this account in Vireo"
 msgstr ""
 
 msgid "Remove filter"
+msgstr ""
+
+msgid "Edit Filter"
+msgstr ""
+
+msgid "Add Filter"
 msgstr ""
 
 msgid "Where"
@@ -1161,9 +1185,6 @@ msgstr ""
 msgid "Add website"
 msgstr ""
 
-msgid "Remove"
-msgstr ""
-
 msgid "Mark as read"
 msgstr ""
 
@@ -1203,7 +1224,19 @@ msgstr ""
 msgid "There's nothing here right now."
 msgstr ""
 
+msgid "Remove Stars"
+msgstr ""
+
+msgid "Star Conversation"
+msgstr ""
+
 msgid "Remove Star"
+msgstr ""
+
+msgid "Mark All as Read"
+msgstr ""
+
+msgid "Mark All as Unread"
 msgstr ""
 
 msgid "Add Sender to Contacts"
@@ -1765,6 +1798,15 @@ msgstr ""
 msgid "Right"
 msgstr ""
 
+msgid "1 line"
+msgstr ""
+
+msgid "2 lines"
+msgstr ""
+
+msgid "3 lines"
+msgstr ""
+
 msgid "Shown in the dock, app grid and switcher, and by the tray icon."
 msgstr ""
 
@@ -1866,6 +1908,9 @@ msgstr ""
 msgid "Insert Link"
 msgstr ""
 
+msgid "Insert"
+msgstr ""
+
 msgid "Add account"
 msgstr ""
 
@@ -1876,9 +1921,6 @@ msgid "No accounts yet"
 msgstr ""
 
 msgid "Show each inbox"
-msgstr ""
-
-msgid "Mark All as Read"
 msgstr ""
 
 msgid "Refresh"
@@ -2005,12 +2047,6 @@ msgid "Message text shown under each subject"
 msgstr ""
 
 msgid "None"
-msgstr ""
-
-msgid "1 line"
-msgstr ""
-
-msgid "2 lines"
 msgstr ""
 
 msgid "Colourful initials beside each message"

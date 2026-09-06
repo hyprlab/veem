@@ -1499,8 +1499,8 @@ impl Component for AccountsWindow {
                 let host = root.root().and_downcast::<gtk::Window>();
                 let dialog =
                     adw::MessageDialog::new(host.as_ref(), Some(i18n("Remove Account?").as_str()), Some(&body));
-                dialog.add_response("cancel", "Cancel");
-                dialog.add_response("remove", "Remove");
+                dialog.add_response("cancel", &i18n("Cancel"));
+                dialog.add_response("remove", &i18n("Remove"));
                 dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
                 dialog.set_default_response(Some("cancel"));
                 dialog.set_close_response("cancel");
@@ -2221,7 +2221,8 @@ impl AccountsWindow {
         // OAuth still needs its server addresses and client details entered.
         let show_servers = is_password || is_custom;
 
-        widgets.provider_row.set_subtitle(p.hint);
+        let hint = if p.hint.is_empty() { String::new() } else { i18n(p.hint) };
+        widgets.provider_row.set_subtitle(&hint);
 
         // Server/credential fields (password or Custom-OAuth manual servers).
         widgets.protocol_row.set_visible(is_password);
@@ -2776,10 +2777,14 @@ impl AccountsWindow {
             return;
         }
         let parent = relm4::main_application().active_window();
-        let (title, verb) = if edit.is_some() { ("Edit Filter", "Save") } else { ("Add Filter", "Add Filter") };
-        let dialog = adw::MessageDialog::new(parent.as_ref(), Some(title), None);
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("add", verb);
+        let (title, verb) = if edit.is_some() {
+            (i18n("Edit Filter"), i18n("Save"))
+        } else {
+            (i18n("Add Filter"), i18n("Add Filter"))
+        };
+        let dialog = adw::MessageDialog::new(parent.as_ref(), Some(&title), None);
+        dialog.add_response("cancel", &i18n("Cancel"));
+        dialog.add_response("add", &verb);
         dialog.set_response_appearance("add", adw::ResponseAppearance::Suggested);
         dialog.set_default_response(Some("add"));
 

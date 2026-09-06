@@ -179,7 +179,7 @@ impl Tray for VireoTray {
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let mut items: Vec<MenuItem<Self>> = vec![StandardItem {
-            label: "Open Vireo".to_string(),
+            label: i18n("Open Vireo"),
             activate: Box::new(|t: &mut Self| {
                 let _ = t.sender.send(AppMsg::PresentWindow);
             }),
