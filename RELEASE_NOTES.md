@@ -2,6 +2,14 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.22.0-beta.4
+
+**Pictures from the file manager.** Drag a picture in from Files, or copy one there and paste, and it lands in the message instead of arriving as a path. It keeps its filename, so the recipient sees a name rather than a generated one. Any other file dropped on the body becomes an attachment. Contributed by @typedev (#127, for #126).
+
+**Resize a picture.** Click one to get corner handles, or right-click it for Small, Medium, Large and Original Size. Resizing only changes how big the picture is shown; the full-quality original still travels. If you want the message lighter, "Recompress to This Size on Send" in the same menu shrinks the bytes to the size shown, once, as the message goes out. The picture shows a red outline while that is armed.
+
+**Icons.** A new "Envelope" icon joins the gallery, which now leads with Default, Envelope and the two birds.
+
 ## What's new in 1.22.0-beta.3
 
 **Vireo speaks French.** The first translation, contributed by @frenchy82. If your desktop is set to French, the whole interface, the launcher entry and the app description in software centres appear in French. Other languages can follow the same route; see `po/README.md` in the repository.

@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.22.0-beta.4 — 2026-09-05
+
+Pictures from the file manager, and picture resizing in the composer.
+
+- **Files from a file manager reach the message** (#126, PR #127 by
+  @typedev). WebKitGTK hands the editor document a `text/uri-list` it then
+  refuses to serve, so a dropped or pasted file arrived as a link or a bare
+  path. The widget now takes such files itself: a `GtkDropTarget` declaring
+  only `GdkFileList` (every other drag still goes to WebKit), and a
+  synchronous clipboard-formats check before a paste is handed over.
+  Images go inline through the document's existing downscale-and-insert;
+  anything else, a picture over 32 MB, or an image type outside a fixed
+  list the engine is known to decode becomes an attachment.
+- **A picture keeps its filename.** It rides on the `<img>` as `alt`, and
+  `build_email` names the inline `cid:` part with it. Only a bare filename
+  is accepted: `alt` arrives from outside on a quoted reply and ends up in a
+  Content-Disposition header, so the value is reduced to its last path
+  segment and rejected if it carries a quote, a backslash or a control
+  character. Two tests cover both.
+- **Pictures can be resized.** Clicking one raises a frame with four corner
+  handles; the context menu leads with Small, Medium, Large and Original
+  Size, as fractions of the writing width. The width goes to the inline
+  style and the `width` attribute. The frame and handles carry
+  `data-vireo-ui` and the body is read through `__vireoBodyHtml()`, which
+  clones it and drops them.
+- **Recompress to This Size on Send.** Resizing changes how big a picture
+  is drawn, not how many bytes travel. This menu entry arms a picture (red
+  frame, red dashed outline) to be recut once, as the message is sent;
+  drafts never touch the pixels, and a draft keeps the arming so a reopened
+  one still shows and honours it.
+- The new menu labels and the arming hint are translatable; `po/vireo.pot`
+  and `po/fr.po` regenerated (six new strings, untranslated in French).
+- Icons: the dark blue and beta icons come from PNG masters again, since
+  librsvg rendered the dark blue gradient as a plain blue; the default icon
+  is also installed as a scalable SVG (install.sh, Flatpak, RPM). Icon
+  sources live in `data/icons/src` with `tools/gen-app-icons.py` to
+  regenerate them; the gallery gains an "Envelope" entry and now leads
+  with Default, Envelope, Bird and Bird, @.
+
 ## 1.22.0-beta.3 — 2026-09-05
 
 French, and two strings that had stayed English.
