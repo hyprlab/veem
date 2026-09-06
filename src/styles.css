@@ -759,6 +759,37 @@ button.star-active {
   -gtk-icon-size: 14px;
 }
 
+/* Swipe-to-act strip (#swipe): sits fixed under the row, revealed as the
+   message content slides off it — dimmed until the drag passes the commit
+   threshold, then full colour ("armed") to say a release will fire it. */
+.swipe-indicator {
+  opacity: 0.55;
+}
+
+.swipe-indicator.armed {
+  opacity: 1;
+}
+
+.swipe-indicator.swipe-delete {
+  background: @destructive_bg_color;
+  color: @destructive_fg_color;
+}
+
+.swipe-indicator.swipe-archive {
+  /* The traditional archive green — libadwaita's "success" tokens, not
+     accent, so it stays green regardless of the user's accent colour. */
+  background: @success_bg_color;
+  color: @success_fg_color;
+}
+
+.swipe-indicator image {
+  -gtk-icon-size: 18px;
+}
+
+.swipe-indicator label {
+  font-weight: bold;
+}
+
 .unread-dot {
   min-width: 10px;
   min-height: 10px;

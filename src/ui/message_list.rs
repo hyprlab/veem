@@ -2,6 +2,7 @@
 //! with a search field and live filtering.
 
 use adw::prelude::*;
+use gtk::glib;
 use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
 
@@ -87,7 +88,19 @@ pub struct RowInit {
     /// it slides open instead of simply appearing; everything else starts
     /// (and stays) `true`.
     pub revealed: bool,
+    /// Swap which side a swipe gesture archives/deletes on (preference,
+    /// shared and read live so a change in Settings applies without a
+    /// rebuild — false: left deletes, right archives; true: reversed).
+    pub swipe_reversed: std::rc::Rc<std::cell::Cell<bool>>,
 }
+
+/// A full swipe (#swipe): also `AdwSwipeable`'s reported `distance`, the px
+/// one full drag (progress ±1.0) spans.
+const SWIPE_MAX: f64 = 120.0;
+/// Distance past which the indicator reads as "armed" (full colour) — purely
+/// a visual cue; `AdwSwipeTracker` makes the real commit decision on
+/// release, factoring in velocity too.
+const SWIPE_ARM: f64 = 72.0;
 
 /// The shown rows' (account, folder, uid, id) keys, in list order — rebuilt with
 /// the list and read live when a drag starts.
@@ -211,6 +224,24 @@ pub struct MessageRow {
     /// newly-expanded reply is sliding open, or a collapsing one is sliding
     /// shut before it's removed from the list.
     revealed: bool,
+    /// Shared "swap swipe sides" preference, read live on each drag (#swipe).
+    swipe_reversed: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Current swipe distance in px (negative = dragged left) — the source
+    /// of truth while a gesture is live; reset to 0 the instant a release is
+    /// resolved (post_view animates the strip back out of view).
+    swipe_progress: f64,
+    /// Which side last had a nonzero `swipe_progress` (-1 left, 1 right, 0
+    /// never dragged) — kept once `swipe_progress` returns to 0 so the
+    /// revealed side and action don't flip mid-shrink after a release.
+    swipe_side: i8,
+    /// A mouse-button or trackpad gesture is actively dragging this row.
+    swipe_dragging: bool,
+    /// The row's `AdwSwipeTracker`, built once against its `SwipeSurface` in
+    /// post_view — also doubles as the wiring guard, since the tracker has
+    /// to stay alive for as long as the row does or it stops firing.
+    swipe_tracker: std::cell::RefCell<Option<adw::SwipeTracker>>,
+    /// In-flight snap-back-to-rest animation, if any.
+    swipe_anim: std::cell::RefCell<Option<adw::TimedAnimation>>,
 }
 
 #[derive(Debug)]
@@ -243,6 +274,15 @@ pub enum MessageRowInput {
     /// (the head row survives a toggle) so the chevron actually rotates
     /// instead of mounting pre-set to its final angle.
     SetThreadExpanded(bool),
+    /// A mouse-drag or trackpad swipe moved (#swipe): the distance dragged so
+    /// far in px, negative = left.
+    SwipeUpdate(f64),
+    /// The swipe gesture was released. Whether it fires an action is decided
+    /// on `swipe_progress` alone (see the handler) rather than trusting
+    /// `AdwSwipeTracker`'s own velocity-aware snap-point choice — a quick
+    /// flick short of the commit distance reads as a false positive when
+    /// the intent was clearly to back out, not to commit fast.
+    SwipeEnd,
 }
 
 #[derive(Debug)]
@@ -299,6 +339,225 @@ fn drag_selection(src: &gtk::DragSource, keys: &DragKeys) -> Vec<(u32, u32, u32,
         .collect()
 }
 
+// A two-layer container implementing `AdwSwipeable`, so a real
+// `AdwSwipeTracker` — the gesture engine behind `AdwFlap` and `AdwCarousel` —
+// can drive the row's swipe-to-act gesture (#swipe): `background` is the
+// fixed action strip, always allocated full-size and never moving;
+// `foreground` is the row's real content, translated across it via a
+// `GskTransform` on its allocation as the swipe drags it, Gmail-style.
+glib::wrapper! {
+    pub struct SwipeSurface(ObjectSubclass<swipe_surface_imp::SwipeSurface>)
+        @extends gtk::Widget,
+        @implements adw::Swipeable;
+}
+
+impl Default for SwipeSurface {
+    fn default() -> Self {
+        glib::Object::new()
+    }
+}
+
+impl SwipeSurface {
+    /// The fixed action strip underneath — set first, so it ends up behind
+    /// `foreground` in paint order.
+    fn set_background(&self, child: &impl IsA<gtk::Widget>) {
+        child.set_parent(self);
+    }
+
+    /// The row's real content, on top — translated by [`Self::set_progress_px`]
+    /// to reveal `background` underneath it.
+    fn set_foreground(&self, child: &impl IsA<gtk::Widget>) {
+        child.set_parent(self);
+    }
+
+    /// The live swipe distance, in `AdwSwipeTracker`'s own px convention
+    /// (`AdwSwipeable::progress` reports it back verbatim). Queues a fresh
+    /// allocation so the translation actually moves — setting this alone
+    /// touches no property GTK would otherwise notice.
+    fn set_progress_px(&self, px: f64) {
+        use gtk::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().progress_px.set(px);
+        self.queue_allocate();
+    }
+
+    /// Read back by `post_view` as the "from" value when animating a
+    /// released drag smoothly back to rest.
+    fn progress_px(&self) -> f64 {
+        use gtk::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().progress_px.get()
+    }
+}
+
+mod swipe_surface_imp {
+    use std::cell::Cell;
+
+    use adw::subclass::prelude::*;
+    use gtk::glib;
+    use gtk::prelude::*;
+
+    #[derive(Default)]
+    pub struct SwipeSurface {
+        pub progress_px: Cell<f64>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for SwipeSurface {
+        const NAME: &'static str = "VireoSwipeSurface";
+        type Type = super::SwipeSurface;
+        type ParentType = gtk::Widget;
+        type Interfaces = (adw::Swipeable,);
+    }
+
+    impl ObjectImpl for SwipeSurface {
+        fn dispose(&self) {
+            while let Some(child) = self.obj().first_child() {
+                child.unparent();
+            }
+        }
+    }
+
+    impl SwipeSurface {
+        /// The action strip: always the first (bottom-most) child.
+        fn background(&self) -> Option<gtk::Widget> {
+            self.obj().first_child()
+        }
+
+        /// The row's real content: always the second (top-most) child.
+        fn foreground(&self) -> Option<gtk::Widget> {
+            self.background().and_then(|bg| bg.next_sibling())
+        }
+
+        /// `progress_px` flipped into the row model's "dragged left is
+        /// negative" convention — shared by `size_allocate` and `snapshot`
+        /// so they can't disagree about which side is revealed.
+        fn visual_offset(&self) -> f32 {
+            -self.progress_px.get() as f32
+        }
+    }
+
+    impl WidgetImpl for SwipeSurface {
+        // The background strip never dictates the row's size — only the
+        // real content does; the strip is simply stretched to match it.
+        fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
+            self.foreground()
+                .map(|c| c.measure(orientation, for_size))
+                .unwrap_or((0, 0, -1, -1))
+        }
+
+        fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
+            if let Some(bg) = self.background() {
+                bg.allocate(width, height, baseline, None);
+            }
+            if let Some(fg) = self.foreground() {
+                let offset = self.visual_offset();
+                let transform = (offset != 0.0).then(|| {
+                    gtk::gsk::Transform::new()
+                        .translate(&gtk::graphene::Point::new(offset, 0.0))
+                });
+                fg.allocate(width, height, baseline, transform);
+            }
+        }
+
+        // Only ever paints the exact gap the content has slid away from,
+        // clipped from `offset` directly — a row has no background of its
+        // own until hovered or selected, so an opaque foreground can't be
+        // relied on to hide the strip the rest of the time. Also supplies
+        // the clip the default snapshot lacks for `foreground`, so a drag
+        // can't paint over the row above or below.
+        fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            let obj = self.obj();
+            let (w, h) = (obj.width() as f32, obj.height() as f32);
+            snapshot.push_clip(&gtk::graphene::Rect::new(0.0, 0.0, w, h));
+
+            let offset = self.visual_offset();
+            if let (Some(bg), true) = (self.background(), offset != 0.0) {
+                // offset < 0: content slid left, uncovering a gap on the
+                // RIGHT. offset > 0: slid right, gap on the LEFT.
+                let gap = if offset < 0.0 {
+                    gtk::graphene::Rect::new(w + offset, 0.0, -offset, h)
+                } else {
+                    gtk::graphene::Rect::new(0.0, 0.0, offset, h)
+                };
+                snapshot.push_clip(&gap);
+                obj.snapshot_child(&bg, snapshot);
+                snapshot.pop();
+            }
+            if let Some(fg) = self.foreground() {
+                obj.snapshot_child(&fg, snapshot);
+            }
+            snapshot.pop();
+        }
+    }
+
+    impl SwipeableImpl for SwipeSurface {
+        // One full swipe (progress ±1.0) spans `SWIPE_MAX` px.
+        fn distance(&self) -> f64 {
+            super::SWIPE_MAX
+        }
+
+        fn progress(&self) -> f64 {
+            self.progress_px.get() / super::SWIPE_MAX
+        }
+
+        fn cancel_progress(&self) -> f64 {
+            0.0
+        }
+
+        // Three stops: fully committed left, at rest, fully committed
+        // right. `AdwSwipeTracker` picks whichever is nearest on release,
+        // factoring in velocity — a fast flick short of the full distance
+        // still commits, exactly like a real swipe-to-dismiss should.
+        fn snap_points(&self) -> Vec<f64> {
+            vec![-1.0, 0.0, 1.0]
+        }
+
+        fn swipe_area(
+            &self,
+            _navigation_direction: adw::NavigationDirection,
+            _is_drag: bool,
+        ) -> gtk::gdk::Rectangle {
+            let w = self.obj();
+            gtk::gdk::Rectangle::new(0, 0, w.width(), w.height())
+        }
+    }
+}
+
+/// Build the `AdwSwipeTracker` driving `surface`'s swipe-to-act gesture
+/// (#swipe): mouse-drag and trackpad both arrive as the same signals.
+/// Called once per row from `post_view`; the tracker must be kept alive by
+/// the caller for as long as the row lives.
+fn wire_swipe_tracker(surface: &SwipeSurface, sender: &FactorySender<MessageRow>) -> adw::SwipeTracker {
+    use gtk::prelude::OrientableExt;
+
+    let tracker = adw::SwipeTracker::new(surface);
+    tracker.set_orientation(gtk::Orientation::Horizontal);
+    tracker.set_allow_mouse_drag(true);
+
+    // `AdwSwipeTracker`'s progress/snap-point convention runs opposite to
+    // the row model's "dragged left is negative" one for a horizontal
+    // tracker, hence the negation below — kept only where each value is
+    // actually consumed, since `AdwSwipeable::progress` still has to answer
+    // the tracker back in its own native convention (`swipe_surface_imp`).
+    {
+        let surface = surface.clone();
+        let sender = sender.clone();
+        tracker.connect_update_swipe(move |_, progress| {
+            let raw_px = progress * SWIPE_MAX;
+            surface.set_progress_px(raw_px);
+            sender.input(MessageRowInput::SwipeUpdate(-raw_px));
+        });
+    }
+    {
+        let sender = sender.clone();
+        // The release's own resolved snap point (`to`) isn't used — see
+        // `MessageRowInput::SwipeEnd`.
+        tracker.connect_end_swipe(move |_, _velocity, _to| {
+            sender.input(MessageRowInput::SwipeEnd);
+        });
+    }
+    tracker
+}
+
 #[relm4::factory(pub)]
 impl FactoryComponent for MessageRow {
     type Init = RowInit;
@@ -352,8 +611,43 @@ impl FactoryComponent for MessageRow {
             #[watch]
             set_reveal_child: self.revealed,
 
+            // Wrapped in a `SwipeSurface` (#swipe): `background` is the fixed
+            // action strip, only ever revealed as `foreground` — the row's
+            // real content Overlay, unchanged otherwise — physically slides
+            // away from it under a mouse-drag or trackpad swipe.
             #[wrap(Some)]
-            set_child = &gtk::Overlay {
+            #[name = "swipe_surface"]
+            set_child = &SwipeSurface {
+
+            #[name = "swipe_background"]
+            set_background = &gtk::Box {
+                set_overflow: gtk::Overflow::Hidden,
+                #[watch]
+                set_css_classes: &self.swipe_indicator_classes(),
+
+                gtk::Box {
+                    set_halign: gtk::Align::Fill,
+                    set_valign: gtk::Align::Center,
+                    set_hexpand: true,
+                    set_spacing: 6,
+                    set_margin_start: 16,
+                    set_margin_end: 16,
+                    #[watch]
+                    set_halign: self.swipe_halign(),
+
+                    gtk::Image {
+                        #[watch]
+                        set_icon_name: Some(self.swipe_icon()),
+                    },
+                    gtk::Label {
+                        #[watch]
+                        set_label: &self.swipe_label(),
+                    },
+                },
+            },
+
+            #[name = "row_overlay"]
+            set_foreground = &gtk::Overlay {
             // The node dot where this member meets the group's dotted rail
             // (thread children only): overlaid at the row's left edge and
             // pulled onto the rail itself by .thread-node's negative margin.
@@ -555,7 +849,6 @@ impl FactoryComponent for MessageRow {
                 },
             },
 
-
             #[wrap(Some)]
             set_child = &gtk::Box {
             set_orientation: gtk::Orientation::Horizontal,
@@ -715,6 +1008,7 @@ impl FactoryComponent for MessageRow {
             },
             },
             },
+            },
         }
         }
     }
@@ -767,6 +1061,53 @@ impl FactoryComponent for MessageRow {
                 a.play();
             }
         }
+
+        // One-time gesture wiring (#swipe): no hook to attach an imperative
+        // controller once from the declarative view, so it happens here on
+        // the row's first render. The tracker doubles as the wiring guard —
+        // kept alive in the model, since it stops firing once dropped.
+        if self.swipe_tracker.borrow().is_none() {
+            let tracker = wire_swipe_tracker(&widgets.swipe_surface, &sender);
+            self.swipe_tracker.replace(Some(tracker));
+        }
+
+        // A live drag already tracks 1:1 — `wire_swipe_tracker`'s
+        // `update-swipe` handler sets the surface's progress directly, every
+        // event. Once released, this animates the rest of the way smoothly
+        // instead of letting `swipe_progress` resetting snap it.
+        if self.swipe_dragging {
+            if let Some(a) = self.swipe_anim.borrow_mut().take() {
+                a.pause();
+            }
+        } else {
+            // Negated back to `AdwSwipeTracker`'s own convention, matching
+            // `size_allocate`'s translation.
+            let target = -self.swipe_progress;
+            let current = widgets.swipe_surface.progress_px();
+            if (current - target).abs() > 0.5 {
+                let surface = widgets.swipe_surface.clone();
+                let setter = {
+                    let surface = surface.clone();
+                    adw::CallbackAnimationTarget::new(move |v| surface.set_progress_px(v))
+                };
+                // Bound to the row overlay (always mapped), not the
+                // surface — adw skips animations on unmapped widgets.
+                let anim = adw::TimedAnimation::new(
+                    &widgets.row_overlay,
+                    current,
+                    target,
+                    180,
+                    setter,
+                );
+                anim.set_easing(adw::Easing::EaseOutCubic);
+                if let Some(old) = self.swipe_anim.replace(Some(anim)) {
+                    old.pause();
+                }
+                if let Some(a) = self.swipe_anim.borrow().as_ref() {
+                    a.play();
+                }
+            }
+        }
     }
 
     fn init_model(init: Self::Init, index: &DynamicIndex, sender: FactorySender<Self>) -> Self {
@@ -794,6 +1135,7 @@ impl FactoryComponent for MessageRow {
             drag_keys,
             show_recipient,
             revealed,
+            swipe_reversed,
         } = init;
         let mut model = Self {
             msg,
@@ -826,6 +1168,12 @@ impl FactoryComponent for MessageRow {
             index: index.clone(),
             palette_target: std::cell::Cell::new(0),
             palette_anim: std::cell::RefCell::new(None),
+            swipe_reversed,
+            swipe_progress: 0.0,
+            swipe_side: 0,
+            swipe_dragging: false,
+            swipe_tracker: std::cell::RefCell::new(None),
+            swipe_anim: std::cell::RefCell::new(None),
         };
 
         // No point fetching anything for a circle that isn't drawn — and a
@@ -912,6 +1260,20 @@ impl FactoryComponent for MessageRow {
             MessageRowInput::SetThreadStarred(starred) => self.thread_starred = starred,
             MessageRowInput::SetRevealed(revealed) => self.revealed = revealed,
             MessageRowInput::SetThreadExpanded(expanded) => self.thread_expanded = expanded,
+            MessageRowInput::SwipeUpdate(offset) => {
+                self.swipe_dragging = true;
+                self.swipe_progress = offset.clamp(-SWIPE_MAX, SWIPE_MAX);
+                if self.swipe_progress != 0.0 {
+                    self.swipe_side = if self.swipe_progress < 0.0 { -1 } else { 1 };
+                }
+            }
+            MessageRowInput::SwipeEnd => {
+                self.swipe_dragging = false;
+                if self.swipe_progress.abs() >= SWIPE_ARM {
+                    sender.input(MessageRowInput::Action(self.swipe_action()));
+                }
+                self.swipe_progress = 0.0;
+            }
         }
     }
 
@@ -1020,6 +1382,74 @@ impl MessageRow {
             Some(c) => vec![c.as_str()],
             None => Vec::new(),
         }
+    }
+
+    /// What a swipe to the left currently does (preference: Delete unless
+    /// the sides are swapped).
+    fn swipe_left_action(&self) -> RowAction {
+        if self.swipe_reversed.get() {
+            RowAction::Archive
+        } else {
+            RowAction::Delete
+        }
+    }
+
+    /// What a swipe to the right currently does.
+    fn swipe_right_action(&self) -> RowAction {
+        if self.swipe_reversed.get() {
+            RowAction::Delete
+        } else {
+            RowAction::Archive
+        }
+    }
+
+    /// The action the indicator panel is currently showing — the last side
+    /// it grew from, so it stays put while a release's snap-back shrinks it.
+    fn swipe_action(&self) -> RowAction {
+        if self.swipe_side < 0 {
+            self.swipe_left_action()
+        } else {
+            self.swipe_right_action()
+        }
+    }
+
+    /// The panel hugs the edge the swipe is dragging toward: right (End) for
+    /// a left drag, left (Start) for a right drag — Gmail's own reveal side.
+    fn swipe_halign(&self) -> gtk::Align {
+        if self.swipe_side < 0 {
+            gtk::Align::End
+        } else {
+            gtk::Align::Start
+        }
+    }
+
+    fn swipe_icon(&self) -> &'static str {
+        match self.swipe_action() {
+            RowAction::Delete => "co.hyprlab.Vireo-user-trash-symbolic",
+            _ => "co.hyprlab.Vireo-mail-archive-symbolic",
+        }
+    }
+
+    fn swipe_label(&self) -> String {
+        match self.swipe_action() {
+            RowAction::Delete => i18n("Delete"),
+            _ => i18n("Archive"),
+        }
+    }
+
+    /// The indicator panel's classes: coloured for whichever action is
+    /// active, and "armed" once the drag has cleared the commit distance —
+    /// full colour says a release now fires it, matching Gmail's own cue.
+    fn swipe_indicator_classes(&self) -> Vec<&'static str> {
+        let mut v = vec!["swipe-indicator"];
+        v.push(match self.swipe_action() {
+            RowAction::Delete => "swipe-delete",
+            _ => "swipe-archive",
+        });
+        if self.swipe_progress.abs() >= SWIPE_ARM {
+            v.push("armed");
+        }
+        v
     }
 
     /// The row's name line: the sender — or, in a Sent folder, who the message
@@ -1353,6 +1783,8 @@ pub struct MessageList {
     palette_collapse_secs: std::rc::Rc<std::cell::Cell<u64>>,
     /// Shared with every row: open the palette on row hover.
     palette_hover: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Shared with every row: swap the swipe-gesture sides (#swipe).
+    swipe_reversed: std::rc::Rc<std::cell::Cell<bool>>,
     /// The message currently being viewed, kept selected across list rebuilds.
     /// Keyed by (account_id, id) since UIDs collide across accounts in the
     /// unified "All Inboxes" view.
@@ -1591,6 +2023,8 @@ pub enum MessageListInput {
     SetPaletteCollapse(u64),
     /// Open the Actions Palette on row hover, without the ⋯ click.
     SetPaletteHover(bool),
+    /// Swap the swipe-gesture sides (#swipe).
+    SetSwipeReversed(bool),
     /// Folder switch: reset infinite-scroll paging back to the first page and
     /// scroll to the top (a plain `SetMessages` now preserves paging for refreshes).
     ResetPaging,
@@ -1930,6 +2364,9 @@ impl SimpleComponent for MessageList {
             palette_collapse_secs: std::rc::Rc::new(std::cell::Cell::new(5)),
             palette_hover: std::rc::Rc::new(std::cell::Cell::new(
                 crate::config::load_list_palette_hover(),
+            )),
+            swipe_reversed: std::rc::Rc::new(std::cell::Cell::new(
+                crate::config::load_swipe_reversed(),
             )),
             thread_links: Vec::new(),
             drag_keys: DragKeys::default(),
@@ -2758,6 +3195,7 @@ impl SimpleComponent for MessageList {
             }
             MessageListInput::SetPaletteCollapse(secs) => self.palette_collapse_secs.set(secs),
             MessageListInput::SetPaletteHover(on) => self.palette_hover.set(on),
+            MessageListInput::SetSwipeReversed(on) => self.swipe_reversed.set(on),
             MessageListInput::SetSelected(id) => {
                 match id {
                     // Account-less id resolved against the shown list (the app
@@ -3224,6 +3662,7 @@ impl MessageList {
                         drag_keys: self.drag_keys.clone(),
                         show_recipient: self.show_recipient,
                         revealed: false,
+                        swipe_reversed: self.swipe_reversed.clone(),
                     },
                 );
             }
@@ -3501,6 +3940,7 @@ impl MessageList {
                     // A full rebuild never needs a row to mount closed —
                     // that's only for `expand_thread`'s surgical insert.
                     revealed: true,
+                    swipe_reversed: self.swipe_reversed.clone(),
                 });
             }
         }
