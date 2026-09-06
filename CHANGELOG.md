@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.22.0-beta.6 — 2026-09-06
+
+Labels that stayed English in a translated interface.
+
+- **Marked but untranslated labels** (#122, reported by @frenchy82 on
+  1.22.0-beta.3). Tables of labels marked with `i18n_noop` must be
+  translated where they are shown, and several consumers passed them
+  straight through: the sidebar's folder context menus (Mark as Read,
+  Refresh, Rename Folder…, Delete Folder…), the editor toolbar's
+  tooltips, the shortcuts help and the provider hint under the provider
+  row. Also translated now: the message list's conversation entries
+  (Star Conversation, Mark All as Read/Unread), the preview-lines
+  dropdown, the tray's Open Vireo, the filter dialog's title, and every
+  dialog button that was a bare literal (Cancel, Delete, Remove, Add,
+  Create, Rename, Insert, Later, Restart Vireo, Delete Conversation).
+  `po/vireo.pot` gains nineteen strings; eleven remain untranslated in
+  `po/fr.po`, all from this week's new features.
+
 ## 1.22.0-beta.5 — 2026-09-06
 
 HTML signatures.

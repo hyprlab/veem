@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.22.0-beta.6" date="2026-09-06" type="development">
+
+      <description><p>Labels that stayed English in a translated interface now translate: folder menus, toolbar tooltips, the shortcuts help and dialog buttons.</p></description>
+
+    </release>
     <release version="1.22.0-beta.5" date="2026-09-06" type="development">
 
       <description><p>Signatures can be imported from an HTML file or edited as HTML.</p></description>
