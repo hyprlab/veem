@@ -745,6 +745,15 @@ impl Component for MessageView {
                     "ready" => open_sender.input(MessageViewInput::Rendered),
                     "desel" => open_sender.input(MessageViewInput::ClearCards),
                     "selall" => open_sender.input(MessageViewInput::SelectAllCards),
+                    // Ctrl+C over a body frame the engine would not copy from
+                    // itself: the selected text, for the clipboard.
+                    "copy" => {
+                        if let Some(text) = extra.filter(|t| !t.is_empty()) {
+                            if let Some(display) = gtk::gdk::Display::default() {
+                                display.clipboard().set_text(text);
+                            }
+                        }
+                    }
                     // An address was clicked (or "New Message" picked from its
                     // little menu) — compose to it. `extra` is the bare address.
                     "composeto" => {
@@ -3624,7 +3633,7 @@ if(f.dataset.key&&!f._c){f._c=1;d.addEventListener('click',function(e){\
 if(e.target&&e.target.closest&&e.target.closest('a'))return;pick(f.dataset.key,e);});}\
 if(!f._u){f._u=1;['wheel','touchstart','mousedown','keydown'].forEach(function(ev){\
 d.addEventListener(ev,function(){follow=null;hold=null;},{passive:true,capture:true});});\
-d.addEventListener('keydown',selAll,true);}\
+d.addEventListener('keydown',selAll,true);d.addEventListener('keydown',copySel,true);}\
 var im=d.images||[];for(var i=0;i<im.length;i++){if(!im[i].complete){im[i].addEventListener('load',function(){s(f);});im[i].addEventListener('error',function(){s(f);});}}}}catch(_){}\
 setTimeout(function(){s(f);},250);setTimeout(function(){s(f);},1000);}\
 function all(){return document.querySelectorAll('iframe.vireo-frame');}\
@@ -3812,6 +3821,21 @@ if(!document.body||!document.body.classList.contains('vireo-conv'))return;\
 e.preventDefault();e.stopPropagation();\
 try{window.webkit.messageHandlers.vireo.postMessage('selall:0:0');}catch(_){}}\
 window.addEventListener('keydown',selAll,true);\
+/* Ctrl+C. Focus is kept in this document (see the blur handler below) so\
+   the single-key shortcuts keep working, which leaves the selection in a\
+   body frame and the native copy with nothing to copy. Copy from the\
+   frame that holds the selection instead; if the engine refuses, hand the\
+   text to the host, which sets the clipboard itself. */\
+function copySel(e){if(!(e.ctrlKey||e.metaKey)||e.altKey||e.shiftKey||(e.key!=='c'&&e.key!=='C'))return;\
+var s=window.getSelection();if(s&&!s.isCollapsed&&String(s).length)return;\
+var fs=all();for(var i=0;i<fs.length;i++){try{var d=fs[i].contentDocument,w=fs[i].contentWindow;\
+var fsel=d&&d.getSelection();if(!fsel||fsel.isCollapsed||!String(fsel).length)continue;\
+e.preventDefault();e.stopPropagation();\
+var ok=false;try{w.focus();ok=d.execCommand('copy');}catch(_){}\
+try{window.focus();}catch(_){}\
+if(!ok){try{window.webkit.messageHandlers.vireo.postMessage('copy:0:0:'+String(fsel));}catch(_){}}\
+return;}catch(_){}}}\
+window.addEventListener('keydown',copySel,true);\
 function chase(){if(!follow)return;try{follow.scrollIntoView({block:'start'});}catch(_){}}\
 function pin(){if(follow||!hold)return;try{var r=hold.el.getBoundingClientRect();\
 var d=Math.round(r.top+hold.off);if(d)window.scrollBy(0,d);}catch(_){}}\
