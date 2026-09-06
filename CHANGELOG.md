@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.22.0-beta.7 — 2026-09-06
+
+Deleting on servers without MOVE, mid: links, and a redrawn envelope.
+
+- **Moves work on a server without the MOVE extension** (#128, reported
+  by @EmmanuelP on a Zimbra account). Every move, deleting included, went
+  through `UID MOVE`; a server without MOVE answers "command not permitted
+  with UID", so nothing could be deleted, archived or filed there.
+  `worker::uid_move` now asks `CAPABILITY` and, without MOVE, does `UID
+  COPY`, flags the originals `\Deleted` and expunges (`UID EXPUNGE` with
+  UIDPLUS, plain `EXPUNGE` otherwise). The delete helper shares that step.
+- **No stray frame under an empty sender list** (#129, @EmmanuelP). An
+  empty boxed list still drew its border under the "Address or domain"
+  entry; the allowed-senders and blacklist lists are hidden until they
+  have a row.
+- **`mid:` links open the message with that Message-ID** (#130, requested
+  by @7system7 for the Vicinae extension). Vireo registers for the `mid`
+  URI scheme (RFC 2392) in both desktop entries. The id is normalized as
+  the cache stores it (percent-decoded, brackets optional, lowercase, an
+  optional `/content-id` after the domain dropped; slashes inside the id
+  kept; GLib's `mid:///` form accepted). The local index is asked first,
+  through a new index on `message_id`; on a miss every IMAP account runs
+  `UID SEARCH HEADER Message-ID` folder by folder (POP3 and Graph answer
+  from the index only), and a miss is reported once in the notification
+  bar. A running instance takes the link over D-Bus.
+- **Icons.** The envelope is redrawn from SVG under the same id, now
+  labelled "Envelope, yellow", and cream, blue and white variants join it
+  in the gallery, which runs Default, the four envelopes, the birds, the
+  colours, the patterns, Classic.
+
 ## 1.22.0-beta.6 — 2026-09-06
 
 Labels that stayed English in a translated interface.

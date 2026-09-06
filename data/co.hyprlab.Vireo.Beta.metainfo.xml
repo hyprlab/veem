@@ -59,6 +59,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.22.0-beta.7" date="2026-09-06" type="development">
+
+      <description><p>Deleting works on servers without the IMAP MOVE extension; mid: links open a message by its Message-ID; the envelope icon redrawn in four colours.</p></description>
+
+    </release>
     <release version="1.22.0-beta.6" date="2026-09-06" type="development">
 
       <description><p>Labels that stayed English in a translated interface now translate: folder menus, toolbar tooltips, the shortcuts help and dialog buttons.</p></description>

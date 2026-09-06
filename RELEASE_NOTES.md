@@ -2,6 +2,14 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.22.0-beta.7
+
+**Deleting works on every server.** Some mail servers, Zimbra among them, lack the IMAP MOVE command Vireo used for every move, so deleting, archiving and filing failed there with "command not permitted with UID". Vireo now checks what the server supports and falls back to the older copy-and-expunge way. Reported in #128.
+
+**Open a message by its Message-ID.** Vireo handles `mid:` links: `xdg-open 'mid:<Message-ID>'` opens that message in the running app, searching your local index first and then every account's server. Launchers and extensions that link to mail this way, such as Vicinae, can now open messages in Vireo. Requested in #130.
+
+**Four envelopes.** The envelope icon has been redrawn, and cream, blue and white versions join it in the gallery. A stray line under the empty blacklist field in the account settings is gone (#129).
+
 ## What's new in 1.22.0-beta.6
 
 **Translation fixes.** A number of labels stayed English in a translated interface even though the translation existed: the folder right-click menu, the editor toolbar tooltips, the keyboard shortcuts help and most dialog buttons. Reported on the French beta in #122. A few strings from this week's new features are not yet translated into French.
