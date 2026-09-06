@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.22.0-beta.5 — 2026-09-06
+
+HTML signatures.
+
+- **Signatures from an HTML file, or edited as HTML** (#120, reported by
+  @7system7). Signatures were already stored as HTML and edited in place;
+  the account editor's Signature group now has "Import File…" (an HTML or
+  text file, through `gtk::FileDialog`) and "Edit HTML…" (the current
+  signature's source in a dialog, to paste into or edit). Both go through
+  `rich_editor::signature_from_source`: plain text is escaped like a typed
+  signature; HTML is sanitized with ammonia keeping tables, inline `style`
+  and images and dropping scripts, style sheets and event handlers; an
+  image referenced by a local path (relative to the file, or absolute) is
+  embedded as a `data:` URI, up to 8 MB, so the send path lifts it into a
+  `cid:` part like any inline picture. Remote images stay remote. Three
+  unit tests.
+
 ## 1.22.0-beta.4 — 2026-09-05
 
 Pictures from the file manager, and picture resizing in the composer.

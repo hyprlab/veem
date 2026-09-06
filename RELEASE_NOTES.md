@@ -2,6 +2,10 @@
 
 Vireo is a clean, fast, GNOME-native email client built with Rust and libadwaita for Wayland desktops. Privacy-first: no telemetry, remote content blocked by default, and credentials kept in the system keyring.
 
+## What's new in 1.22.0-beta.5
+
+**HTML signatures.** If your signature already exists as an HTML file, the account editor's Signature section can now take it: "Import File…" loads the file, pictures included, and "Edit HTML…" lets you paste or edit the signature's source directly. Requested in #120.
+
 ## What's new in 1.22.0-beta.4
 
 **Pictures from the file manager.** Drag a picture in from Files, or copy one there and paste, and it lands in the message instead of arriving as a path. It keeps its filename, so the recipient sees a name rather than a generated one. Any other file dropped on the body becomes an attachment. Contributed by @typedev (#127, for #126).
