@@ -803,9 +803,10 @@ impl Component for Compose {
                 let from_alias = self.accounts.get(idx).and_then(|a| a.alias_from.clone());
 
                 // Pull the HTML and a plain-text version out of the editor (async),
-                // then finish sending via SendBody.
+                // then finish sending via SendBody. The send-time reader also
+                // recuts any picture armed for it; a draft save below does not.
                 let s = sender.clone();
-                self.editor.extract(move |html, text| {
+                self.editor.extract_for_send(move |html, text| {
                     s.input(ComposeInput::SendBody {
                         html,
                         text,

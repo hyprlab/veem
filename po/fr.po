@@ -1960,6 +1960,24 @@ msgstr "Enregistrer au format PDF…"
 msgid "Send as Attachment Instead"
 msgstr "Envoyer plutôt en pièce jointe"
 
+msgid "Small"
+msgstr ""
+
+msgid "Medium"
+msgstr ""
+
+msgid "Large"
+msgstr ""
+
+msgid "Original Size"
+msgstr ""
+
+msgid "Will be recompressed to the size shown when this is sent"
+msgstr ""
+
+msgid "Recompress to This Size on Send"
+msgstr ""
+
 msgid "Paste with Formatting"
 msgstr "Coller avec la mise en forme"
 
