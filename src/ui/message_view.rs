@@ -1507,9 +1507,10 @@ impl MessageView {
             crate::config::ReadMark::Delay => " data-vireo-readmark=\"2000\"",
             crate::config::ReadMark::Manual => "",
         };
+        let copied = format!(" data-vireo-copied=\"{}\"", i18n("Copied").replace('"', "&quot;"));
         let html = html.replacen(
             "<body",
-            &format!("<body{noscroll}{hover}{delay}{newest}{readmark}"),
+            &format!("<body{noscroll}{hover}{delay}{newest}{readmark}{copied}"),
             1,
         );
         self.did_autoscroll = true;
@@ -2086,6 +2087,13 @@ impl MessageView {
                  user-select:text;overflow-wrap:anywhere;margin:2px 0 0 34px;}}\
                .vireo-rcpt div{{margin-top:2px;}}\
                .vireo-loading{{opacity:0.5;padding:16px;}}\
+               /* The Copied pill after Ctrl+C: a toast the page draws itself,\
+                  since the reader has no toast overlay of its own. */\
+               .vireo-copied{{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(8px);\
+                 padding:8px 18px;border-radius:999px;background:rgba(40,40,40,0.92);color:#fff;\
+                 font:inherit;font-size:0.9em;box-shadow:0 2px 10px rgba(0,0,0,0.25);\
+                 opacity:0;pointer-events:none;transition:opacity 180ms ease,transform 180ms ease;z-index:50;}}\
+               .vireo-copied.on{{opacity:1;transform:translateX(-50%) translateY(0);}}\
              </style>{sizer}\
              </head><body{body_class}>{sections}</body></html>"
         )
@@ -3834,7 +3842,13 @@ e.preventDefault();e.stopPropagation();\
 var ok=false;try{w.focus();ok=d.execCommand('copy');}catch(_){}\
 try{window.focus();}catch(_){}\
 if(!ok){try{window.webkit.messageHandlers.vireo.postMessage('copy:0:0:'+String(fsel));}catch(_){}}\
-return;}catch(_){}}}\
+showCopied();return;}catch(_){}}}\
+function showCopied(){var b=document.body;if(!b)return;\
+var p=document.getElementById('vireo-copied');\
+if(!p){p=document.createElement('div');p.id='vireo-copied';p.className='vireo-copied';b.appendChild(p);}\
+p.textContent=b.dataset.vireoCopied||'Copied';\
+void p.offsetHeight;p.classList.add('on');clearTimeout(p._t);\
+p._t=setTimeout(function(){p.classList.remove('on');},1400);}\
 window.addEventListener('keydown',copySel,true);\
 function chase(){if(!follow)return;try{follow.scrollIntoView({block:'start'});}catch(_){}}\
 function pin(){if(follow||!hold)return;try{var r=hold.el.getBoundingClientRect();\
