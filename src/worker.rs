@@ -3483,15 +3483,24 @@ async fn purge_messages(
     }
     let set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
     session.select(path).await?;
+    flag_deleted_and_expunge(session, &set).await
+}
+
+/// Flag a UID set `\Deleted` and expunge it: `UID EXPUNGE` where the server
+/// has UIDPLUS, a plain `EXPUNGE` otherwise.
+async fn flag_deleted_and_expunge(
+    session: &mut ImapSession,
+    set: &str,
+) -> Result<(), async_imap::error::Error> {
     let _: Vec<Fetch> = session
-        .uid_store(&set, "+FLAGS (\\Deleted)")
+        .uid_store(set, "+FLAGS (\\Deleted)")
         .await?
         .try_collect()
         .await?;
     // A server without UIDPLUS answers `BAD`, which surfaces while draining the
     // response stream rather than from the call itself — so judge it on the
     // collected result, not with `?`.
-    let uid_expunged = match session.uid_expunge(&set).await {
+    let uid_expunged = match session.uid_expunge(set).await {
         Ok(stream) => stream.try_collect::<Vec<u32>>().await.is_ok(),
         Err(_) => false,
     };
@@ -3499,6 +3508,30 @@ async fn purge_messages(
         let _: Vec<u32> = session.expunge().await?.try_collect().await?;
     }
     Ok(())
+}
+
+/// `UID MOVE` where the server offers it (RFC 6851), else what every client
+/// did before there was a MOVE: `UID COPY`, flag the originals `\Deleted`,
+/// expunge (issue #128 — a server without MOVE answers `UID MOVE` with
+/// "command not permitted with UID", and every move, deleting included,
+/// failed on it). The capability is asked for each time: it is one short
+/// round trip, and a session's answer can change after login on some
+/// servers, so it is not worth caching wrong.
+async fn uid_move(
+    session: &mut ImapSession,
+    set: &str,
+    dest: &str,
+) -> Result<(), async_imap::error::Error> {
+    let can_move = match session.capabilities().await {
+        Ok(caps) => caps.has_str("MOVE"),
+        // If even CAPABILITY fails, let MOVE produce the real error.
+        Err(_) => true,
+    };
+    if can_move {
+        return session.uid_mv(set, dest).await;
+    }
+    session.uid_copy(set, dest).await?;
+    flag_deleted_and_expunge(session, set).await
 }
 
 /// SMTP host: the configured value, or derived from the IMAP host.
@@ -3542,7 +3575,7 @@ async fn move_or_create(
     dest: &str,
 ) -> Result<bool, async_imap::error::Error> {
     session.select(path).await?;
-    if session.uid_mv(uid.to_string(), dest).await.is_ok() {
+    if uid_move(session, &uid.to_string(), dest).await.is_ok() {
         return Ok(false);
     }
     // The move failed — most likely the destination mailbox doesn't exist (the
@@ -3551,7 +3584,7 @@ async fn move_or_create(
     let created = session.create(dest).await.is_ok();
     let _ = session.subscribe(dest).await;
     session.select(path).await?;
-    session.uid_mv(uid.to_string(), dest).await?;
+    uid_move(session, &uid.to_string(), dest).await?;
     Ok(created)
 }
 
@@ -3579,7 +3612,7 @@ async fn move_messages(
     let mut ensured_dest = false;
     for chunk in uids.chunks(300) {
         let set = chunk.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
-        if session.uid_mv(&set, dest).await.is_ok() {
+        if uid_move(session, &set, dest).await.is_ok() {
             continue;
         }
         // First failure is most likely a missing destination mailbox — create,
@@ -3590,7 +3623,7 @@ async fn move_messages(
             ensured_dest = true;
             session.select(path).await?;
         }
-        session.uid_mv(&set, dest).await?;
+        uid_move(session, &set, dest).await?;
     }
     Ok(created)
 }
@@ -3630,11 +3663,11 @@ async fn delete_folder(
         if let Some(trash) = trash {
             if !trash.eq_ignore_ascii_case(path) {
                 // Move everything to Trash; create it first if the move fails.
-                if session.uid_mv("1:*", trash).await.is_err() {
+                if uid_move(session, "1:*", trash).await.is_err() {
                     let _ = session.create(trash).await;
                     let _ = session.subscribe(trash).await;
                     session.select(path).await?;
-                    session.uid_mv("1:*", trash).await?;
+                    uid_move(session, "1:*", trash).await?;
                 }
             }
         }
