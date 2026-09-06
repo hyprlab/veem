@@ -189,6 +189,13 @@ msgstr "Importer des paramètres"
 msgid "Settings Imported"
 msgstr "Paramètres importés"
 
+msgid "Later"
+msgstr "Plus tard"
+
+#, fuzzy
+msgid "Restart Vireo"
+msgstr "Redémarrage de Vireo"
+
 msgid "Import failed: {e}"
 msgstr "Échec de l'importation : {e}"
 
@@ -234,9 +241,6 @@ msgstr ""
 "Le dock et les fenêtres de Vireo conserveront l'ancienne icône jusqu'au "
 "redémarrage de Vireo."
 
-msgid "Later"
-msgstr "Plus tard"
-
 msgid "Restart Now"
 msgstr "Redémarrer maintenant"
 
@@ -271,6 +275,13 @@ msgid "New Message"
 msgstr "Nouveau message"
 
 msgid "Delete this conversation?"
+msgstr "Supprimer cette conversation ?"
+
+msgid "Cancel"
+msgstr "Annuler"
+
+#, fuzzy
+msgid "Delete Conversation"
 msgstr "Supprimer cette conversation ?"
 
 msgid "Delete this message permanently?"
@@ -320,11 +331,18 @@ msgstr "Nouveau dossier"
 msgid "Create a new folder for this account."
 msgstr "Créer un nouveau dossier pour ce compte."
 
+msgid "Create"
+msgstr ""
+
 msgid "Folder name"
 msgstr "Nom du dossier"
 
 msgid "Sub-folders keep their place under the new name."
 msgstr "Les sous-dossiers conservent leur emplacement sous le nouveau nom."
+
+#, fuzzy
+msgid "Rename"
+msgstr "Nom d'utilisateur"
 
 msgid "A folder named {new_name} is already there."
 msgstr "Un dossier nommé {new_name} existe déjà."
@@ -342,6 +360,9 @@ msgstr "Aucun carnet d'adresses disponible pour ajouter des contacts"
 msgid "Add to Contacts"
 msgstr "Ajouter aux contacts"
 
+msgid "Add"
+msgstr "Ajouter"
+
 msgid "Name"
 msgstr "Nom"
 
@@ -353,6 +374,9 @@ msgstr "Carnet d'adresses"
 
 msgid "Remove Account?"
 msgstr "Supprimer le compte ?"
+
+msgid "Remove"
+msgstr "Supprimer"
 
 #. One-sentence description, directly under the version chip.
 msgid "A clean, fast, GNOME-native email client."
@@ -534,6 +558,10 @@ msgstr "En attente depuis {ago}"
 
 msgid "New message"
 msgstr "Nouveau message"
+
+#, fuzzy
+msgid "Open Vireo"
+msgstr "Vireo"
 
 msgid "No unread mail"
 msgstr "Aucun message non lu"
@@ -771,9 +799,6 @@ msgstr "Émoji"
 msgid "Optional — shown instead of initials"
 msgstr "Optionnel — affiché à la place des initiales"
 
-msgid "Add"
-msgstr "Ajouter"
-
 msgid "Use initials"
 msgstr "Utiliser les initiales"
 
@@ -879,9 +904,6 @@ msgid ""
 "inline styles, tables and images are kept."
 msgstr ""
 
-msgid "Cancel"
-msgstr "Annuler"
-
 msgid "Apply"
 msgstr ""
 
@@ -964,6 +986,14 @@ msgstr "Utiliser ce compte dans Vireo"
 
 msgid "Remove filter"
 msgstr "Supprimer le filtre"
+
+#, fuzzy
+msgid "Edit Filter"
+msgstr "Ajouter un filtre…"
+
+#, fuzzy
+msgid "Add Filter"
+msgstr "Ajouter un filtre…"
 
 msgid "Where"
 msgstr "Champ"
@@ -1231,9 +1261,6 @@ msgstr "Ajouter un numéro de téléphone"
 msgid "Add website"
 msgstr "Ajouter un site web"
 
-msgid "Remove"
-msgstr "Supprimer"
-
 msgid "Mark as read"
 msgstr "Marquer comme lu"
 
@@ -1273,8 +1300,23 @@ msgstr "Aucun message"
 msgid "There's nothing here right now."
 msgstr "Il n'y a rien ici pour le moment."
 
+#, fuzzy
+msgid "Remove Stars"
+msgstr "Retirer l'étoile"
+
+#, fuzzy
+msgid "Star Conversation"
+msgstr "Conversations"
+
 msgid "Remove Star"
 msgstr "Retirer l'étoile"
+
+msgid "Mark All as Read"
+msgstr "Tout marquer comme lu"
+
+#, fuzzy
+msgid "Mark All as Unread"
+msgstr "Tout marquer comme lu"
 
 msgid "Add Sender to Contacts"
 msgstr "Ajouter l'expéditeur aux contacts"
@@ -1946,6 +1988,16 @@ msgstr "Gauche"
 msgid "Right"
 msgstr "Droite"
 
+msgid "1 line"
+msgstr "1 ligne"
+
+msgid "2 lines"
+msgstr "2 lignes"
+
+#, fuzzy
+msgid "3 lines"
+msgstr "2 lignes"
+
 msgid "Shown in the dock, app grid and switcher, and by the tray icon."
 msgstr ""
 "Affiché dans le dock, la grille d'applications, le sélecteur de fenêtres et "
@@ -2049,6 +2101,10 @@ msgstr "Effacer la mise en forme"
 msgid "Insert Link"
 msgstr "Insérer un lien"
 
+#, fuzzy
+msgid "Insert"
+msgstr "Insérer un lien"
+
 msgid "Add account"
 msgstr "Ajouter un compte"
 
@@ -2060,9 +2116,6 @@ msgstr "Aucun compte pour le moment"
 
 msgid "Show each inbox"
 msgstr "Afficher chaque boîte de réception"
-
-msgid "Mark All as Read"
-msgstr "Tout marquer comme lu"
 
 msgid "Refresh"
 msgstr "Actualiser"
@@ -2199,12 +2252,6 @@ msgstr "Texte du message affiché sous chaque objet"
 
 msgid "None"
 msgstr "Aucun"
-
-msgid "1 line"
-msgstr "1 ligne"
-
-msgid "2 lines"
-msgstr "2 lignes"
 
 msgid "Colourful initials beside each message"
 msgstr "Initiales colorées à côté de chaque message"

@@ -2647,7 +2647,7 @@ fn show_sidebar_menu(
         .into_iter()
         .map(|(label, action)| {
             let s = sender.clone();
-            MenuEntry::new(label, move || {
+            MenuEntry::new(i18n(label), move || {
                 let _ = s.output(SidebarOutput::Context(action.clone()));
             })
         })

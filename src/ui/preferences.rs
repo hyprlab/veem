@@ -1020,7 +1020,8 @@ impl Component for Preferences {
         widgets.chevron_side_row.set_model(Some(&gtk::StringList::new(&[i18n("Left").as_str(), i18n("Right").as_str()])));
         widgets.chevron_side_row.set_selected(if init.chevrons_left { 0 } else { 1 });
         widgets.sidebar_hover_expand_row.set_active(init.sidebar_hover_expand);
-        let preview_labels = ["Off", "1 line", "2 lines", "3 lines"];
+        let preview_labels_owned = [i18n("Off"), i18n("1 line"), i18n("2 lines"), i18n("3 lines")];
+        let preview_labels: Vec<&str> = preview_labels_owned.iter().map(String::as_str).collect();
         widgets
             .preview_lines_row
             .set_model(Some(&gtk::StringList::new(&preview_labels)));

@@ -541,8 +541,8 @@ impl Component for ContactsPage {
                         c.name
                     )),
                 );
-                dialog.add_response("cancel", "Cancel");
-                dialog.add_response("delete", "Delete");
+                dialog.add_response("cancel", &i18n("Cancel"));
+                dialog.add_response("delete", &i18n("Delete"));
                 dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
                 dialog.set_default_response(Some("cancel"));
                 dialog.set_close_response("cancel");

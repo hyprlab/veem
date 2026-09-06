@@ -4861,8 +4861,8 @@ impl SimpleComponent for AppModel {
                                  connection if this is a new machine."
                             )),
                         );
-                        alert.add_response("later", "Later");
-                        alert.add_response("restart", "Restart Vireo");
+                        alert.add_response("later", &i18n("Later"));
+                        alert.add_response("restart", &i18n("Restart Vireo"));
                         alert
                             .set_response_appearance("restart", adw::ResponseAppearance::Suggested);
                         alert.connect_response(None, |_, resp| {
@@ -5984,7 +5984,7 @@ impl AppModel {
         }
 
         for (section, keys) in SHORTCUT_HELP {
-            let title = gtk::Label::new(Some(section));
+            let title = gtk::Label::new(Some(i18n(section).as_str()));
             title.add_css_class("heading");
             title.set_halign(gtk::Align::Start);
             title.set_margin_top(14);
@@ -5995,7 +5995,7 @@ impl AppModel {
             list.add_css_class("boxed-list");
             list.set_selection_mode(gtk::SelectionMode::None);
             for (key, what) in *keys {
-                let row = adw::ActionRow::builder().title(*what).build();
+                let row = adw::ActionRow::builder().title(i18n(what)).build();
                 let label = gtk::Label::new(Some(key));
                 label.add_css_class("shortcut-key");
                 label.set_valign(gtk::Align::Center);
@@ -7174,7 +7174,7 @@ impl AppModel {
                     entry!(i18n("Mark as Spam"), "mail-mark-junk", AppMsg::MarkSpam, acts),
                     entry!(i18n("Archive"), "mail-archive", AppMsg::Archive, acts),
                     entry!(
-                        "Delete",
+                        i18n("Delete"),
                         "user-trash",
                         AppMsg::Delete,
                         acts || self.list_selection.len() > 1
@@ -8400,8 +8400,8 @@ impl AppModel {
         );
         let dialog =
             adw::MessageDialog::new(Some(&self.window), Some(&heading), Some(body.as_str()));
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("delete", "Delete Conversation");
+        dialog.add_response("cancel", &i18n("Cancel"));
+        dialog.add_response("delete", &i18n("Delete Conversation"));
         dialog.set_default_response(Some("cancel"));
         dialog.set_close_response("cancel");
         dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
@@ -8427,8 +8427,8 @@ impl AppModel {
              This can’t be undone.")
         };
         let dialog = adw::MessageDialog::new(Some(&self.window), Some(&heading), Some(&body));
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("delete", "Delete");
+        dialog.add_response("cancel", &i18n("Cancel"));
+        dialog.add_response("delete", &i18n("Delete"));
         dialog.set_default_response(Some("cancel"));
         dialog.set_close_response("cancel");
         dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
@@ -8855,8 +8855,8 @@ impl AppModel {
             Some(i18n("New Folder").as_str()),
             Some(i18n("Create a new folder for this account.").as_str()),
         );
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("ok", "Create");
+        dialog.add_response("cancel", &i18n("Cancel"));
+        dialog.add_response("ok", &i18n("Create"));
         dialog.set_default_response(Some("ok"));
         dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
         let entry = gtk::Entry::new();
@@ -8888,8 +8888,8 @@ impl AppModel {
             Some(&format!("Rename {name:?}")),
             Some(i18n("Sub-folders keep their place under the new name.").as_str()),
         );
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("ok", "Rename");
+        dialog.add_response("cancel", &i18n("Cancel"));
+        dialog.add_response("ok", &i18n("Rename"));
         dialog.set_default_response(Some("ok"));
         dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
         let entry = gtk::Entry::new();
@@ -8956,8 +8956,8 @@ impl AppModel {
             Some(&format!("Delete “{name}”?")),
             Some(i18n("Its messages are moved to Trash and the folder is removed.").as_str()),
         );
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("delete", "Delete");
+        dialog.add_response("cancel", &i18n("Cancel"));
+        dialog.add_response("delete", &i18n("Delete"));
         dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
         let s = sender.clone();
         dialog.connect_response(None, move |_, resp| {
@@ -9118,8 +9118,8 @@ impl AppModel {
             Some(i18n("Add to Contacts").as_str()),
             None,
         );
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("add", "Add");
+        dialog.add_response("cancel", &i18n("Cancel"));
+        dialog.add_response("add", &i18n("Add"));
         dialog.set_response_appearance("add", adw::ResponseAppearance::Suggested);
         dialog.set_default_response(Some("add"));
         dialog.set_close_response("cancel");
@@ -9404,8 +9404,8 @@ impl AppModel {
                  Mail on the server is not affected."
             )),
         );
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("remove", "Remove");
+        dialog.add_response("cancel", &i18n("Cancel"));
+        dialog.add_response("remove", &i18n("Remove"));
         dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
         dialog.set_default_response(Some("cancel"));
         dialog.set_close_response("cancel");
